@@ -186,6 +186,33 @@ static void alias_lifecycle(void) {
     assert(pages(1, alias + g_alias_cap - P, 2 * P) == BAD);
 }
 
+// Device-shared memory (an NVN memory pool's storage, hle_nvn.c) is not given back: UnmapPhysicalMemory or a shrinking SetHeapSize over any page of it fails with InvalidCurrentMemory and
+// leaves every page and byte as it was, as on Horizon; once the pool is gone (each registration removed) both work again (PR #1616, Monster Jam Steel Titans 2)
+static void device_shared_refused(void) {
+    assert(!pages(1, alias, 16 * P));
+    memset((void *)alias, 0x6d, 16 * P);
+    int64_t mapped = g_alias_mapped;
+    dm_device_share((void *)(alias + 4 * P), 4 * P, 1); dm_device_share((void *)(alias + 4 * P), 4 * P, 1);   // two pools over the same storage
+    assert(pages(0, alias + 7 * P, 2 * P) == BAD && pages(0, alias, 16 * P) == BAD && pages(0, alias + 4 * P, 4 * P) == BAD);
+    assert(g_alias_mapped == mapped);
+    for (size_t i = 0; i < 16 * P; ++i) assert(((uint8_t *)alias)[i] == 0x6d);
+    assert(!pages(0, alias + 12 * P, 4 * P) && !pages(0, alias, 2 * P));   // beside it: given back
+    assert(!pages(1, alias + 2 * P, 2 * P) && !pages(1, alias + 8 * P, 2 * P));   // touching it on either side: still allowed
+    dm_device_share((void *)(alias + 4 * P), 4 * P, 0);
+    assert(pages(0, alias + 4 * P, P) == BAD);   // the other pool still holds it
+    dm_device_share((void *)(alias + 4 * P), 4 * P, 0);
+    assert(!pages(0, alias, 16 * P) && !g_alias_mapped);
+    assert(!resize(4 * 1024 * 1024));
+    dm_device_share((void *)(heap + 3 * 1024 * 1024), P, 1);
+    assert(resize(2 * 1024 * 1024) == BAD && g_heap_cur == 4 * 1024 * 1024);
+    dm_device_share((void *)(heap + 3 * 1024 * 1024), P, 0);
+    dm_device_share((void *)(heap + 1024 * 1024), P, 1);
+    assert(!resize(2 * 1024 * 1024) && g_heap_cur == 2 * 1024 * 1024);   // below the new end: left alone
+    assert(resize(0) == BAD);
+    dm_device_share((void *)(heap + 1024 * 1024), P, 0);
+    assert(!resize(0));
+}
+
 static void ownership(void) {
     assert(!pages(1, alias, 16 * P));
     memset((void *)alias, 0x34, 16 * P);
@@ -573,7 +600,7 @@ int main(int argc, char **argv) {
     for (unsigned i = 0; i < 8; ++i) assert(!pthread_create(&threads[i], NULL, init_worker, &addresses[i]));
     for (unsigned i = 0; i < 8; ++i) { assert(!pthread_join(threads[i], NULL)); assert(addresses[i] == addresses[0]); }
     alias = addresses[0]; stack = info(I_StackAddr); heap = info(I_HeapAddr);
-    lazy_commit(); alias_lifecycle(); ownership(); unmap_gives_pages_back(); module_sources(); module_back_patch(); failures(); release_fallback(); concurrency(); fragmented_queries();
+    lazy_commit(); alias_lifecycle(); device_shared_refused(); ownership(); unmap_gives_pages_back(); module_sources(); module_back_patch(); failures(); release_fallback(); concurrency(); fragmented_queries();
     guest_helper(); read_mapped_race();
     if (!DM_GAME_MEM_MAP_LIMIT) metadata_limit();
     else reported_lower();
