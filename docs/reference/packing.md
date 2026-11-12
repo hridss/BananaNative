@@ -98,6 +98,13 @@
 - **Check:** `dm/host/tests/t_fs.c` (a copy with the zstd extent zeroed mounts, the file does not open, the line says "all zeros"), `dm/tools/tests/test_nup.py` `test_verify_names_every_damaged_file`, `CopyPlanJvmTest` (`shortBy`; `GameCopy`'s own loop is not run in a test, not compiled here without the Android SDK).
 - **Found on:** [Mario Kart World](../../dm/games/0400C3F00006E000/README.md) (#291, update 917504), [The Legend of Zelda: Ocarina of Time](../../dm/games/0400486024DEC000/README.md) (#342, 122 `Tex` files from `Ice_Base_ColorMask_00_Fi` to `MaterialCmb`; #290 earlier was a cut copy too).
 
+### A dump tool's `.listing` files in the game's folders
+
+- **Symptom:** a game built from a dump folder crashes in its own code while it loads, where builds from other dumps of the same version play: Nintendo Switch Sports Resort at `main+0x9d7c60`, listing its `Parameter` folders.
+- **Cause:** an FTP dump keeps the server's directory listing as `.listing` in every folder, which the NUP spec (§6.3) allows a producer to keep. The RomFS image packed it as a game file, so a game that lists a folder saw one more entry. Switch Sports Resort cuts each name at its first `.`, got an empty name, loaded `Parameter/<folder>/` and found no resource.
+- **Fix:** `ARTIFACTS` in `dm/tools/romfs_image.py`, the dump-tool files that are not game files (`.listing`), is left out of the image, out of a NUP's RomFS (`scripts/pack_nup.py`) and out of the survey's file list (`dm/games/profile_guess.py`). Other dot files stay game files. Test: `test_romfs_image.py` (`test_dump_tool_listings_are_left_out`).
+- **Found on:** [Nintendo Switch Sports Resort](../../dm/games/04008E001F098000/README.md#found-on-this-game) (v65536, from a dump folder).
+
 ## Add-on content
 
 ### DLC in Documents is ignored or removed DLC remains installed
