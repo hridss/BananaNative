@@ -945,6 +945,11 @@ HLE_FORCE("_ZN2nn3hid24IsVibrationDeviceMountedERKNS0_21VibrationDeviceHandleE",
 HLE_FORCE("_ZN2nn3hid29IsOunceVibrationDeviceMountedERKNS0_21VibrationDeviceHandleE", "vibration: Ounce device mounted when the channel has an output", unsigned, h_hid_VibMountedOunce, const uint32_t *h) {
     return h && vib_targets(*h);
 }
+// A forced vibration session lets the application vibrate while the system's vibration setting is off (hid's Begin/EndPermitVibrationSession). The host has no such system setting: its own
+// rumble switch is the player's and a session does not override it, so there is nothing to begin or end. The SDK's own calls read the null hid service object: Super Mario Party (SDK 9.4)
+// crashed at sdk+0x3526bc in hid::detail::EndPermitVibrationSession while booting (issue #2513)
+HLE_FORCE("_ZN2nn3hid27BeginForcedVibrationSessionEv", "forced vibration session: the host has no system vibration setting for it to override", void, h_hid_VibForceBegin, void) {}
+HLE_FORCE("_ZN2nn3hid25EndForcedVibrationSessionEv", "forced vibration session ends: nothing to restore", void, h_hid_VibForceEnd, void) {}
 HLE_FORCE("_ZN2nn3hid23GetActualVibrationValueEPNS0_14VibrationValueERKNS0_21VibrationDeviceHandleE", "vibration: last accepted channel value", void, h_hid_VibActual, dm_vibration *v, const uint32_t *h) {
     uint32_t targets = h ? vib_targets(*h) : 0;
     *v = targets ? dm_haptics_actual(__builtin_ctz(targets), *h >> 16 & 1) : (dm_vibration){0, 160, 0, 320};
