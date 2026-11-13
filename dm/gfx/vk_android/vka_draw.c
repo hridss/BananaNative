@@ -14,6 +14,7 @@
 #include "game_profile.h"
 #include "vka_memu_abi.h"
 #include "vka_prepass.h"
+#include "vka_spvpatch.h"
 #include <math.h>
 #include <stdio.h>
 #include <stddef.h>
@@ -2696,9 +2697,10 @@ static VkPipeline img_retype(vka_shader *cs, const vka_layout *lay, VkPipeline p
 // 1 a bilinear sample, 2 the nearest texel. 0 = not done (no push descriptors, another output format, no view): the caller blits or lets the network run
 #include "vka_ndsr_fsr.h"
 enum { NF_EASU, NF_EASU_MID, NF_EASU_PACKED, NF_RCAS, NF_RCAS_PACKED, NF_N };
-static struct { int state; VkDescriptorSetLayout dsl; VkPipelineLayout lay; VkSampler samp; VkPipeline p[NF_N][2][3]; signed char bad[NF_N][2][3];
+static struct { int state; VkDescriptorSetLayout dsl; VkPipelineLayout lay; VkSampler samp; VkPipeline p[NF_N][3][3]; signed char bad[NF_N][3][3];
                 VkImage mid; VkDeviceMemory mem; VkImageView mv; uint32_t mw, mh; } g_nf;
 static void nf_mid_free(void *p) { VkImage *a = p; vk.vkDestroyImageView(V.dev, (VkImageView)(uintptr_t)a[1], NULL); vk.vkDestroyImage(V.dev, a[0], NULL); vk.vkFreeMemory(V.dev, (VkDeviceMemory)(uintptr_t)a[2], NULL); free(p); }
+static const char *nd_enc_name(int sq) { return sq == 1 ? "sqrt(colour), squared at the end" : sq == 2 ? "sRGB-encoded colour, decoded to linear at the end" : "linear"; }
 static int nf_ready(void) {
     if (g_nf.state) return g_nf.state > 0;
     g_nf.state = -1;
@@ -2728,7 +2730,7 @@ static VkPipeline nf_pipe(int which, int sq, int kernel) {   // made at first us
                                       .module = m, .pName = "main", .pSpecializationInfo = &spi}, .layout = g_nf.lay};
     if (!r) r = vk.vkCreateComputePipelines(V.dev, VK_NULL_HANDLE, 1, &ci, NULL, out);
     if (m) vk.vkDestroyShaderModule(V.dev, m, NULL);
-    if (r) { *out = VK_NULL_HANDLE; g_nf.bad[which][sq][kernel] = 1; VRED("NDSR FSR: pipeline %d (input %s, kernel %d): %d", which, sq ? "sqrt" : "linear", kernel, r); }
+    if (r) { *out = VK_NULL_HANDLE; g_nf.bad[which][sq][kernel] = 1; VRED("NDSR FSR: pipeline %d (input %s, kernel %d): %d", which, nd_enc_name(sq), kernel, r); }
     return *out;
 }
 static int nf_mid(uint32_t w, uint32_t h) {   // the intermediate image for RCAS (RGBA16F, storage and sampled, kept in GENERAL); the old one goes once the GPU is past it
@@ -2786,10 +2788,10 @@ static int ndsr_fsr(int tin, int tout, vka_img *a, vka_img *b, VkFormat fb, int 
         nf_pass(p2, g_nf.mv, VK_IMAGE_LAYOUT_GENERAL, vb, lb, pc, b->w, b->h);
     }
     vka_barrier(g_cb);
-    static uint32_t lw, lh, lo, lk; if (a->w != lw || a->h != lh || b->w != lo || (uint32_t)(kernel << 2 | sq << 1 | rcas) != lk) {   // logged again at every size or mode change
-        lw = a->w; lh = a->h; lo = b->w; lk = (uint32_t)(kernel << 2 | sq << 1 | rcas);
+    static uint32_t lw, lh, lo, lk; if (a->w != lw || a->h != lh || b->w != lo || (uint32_t)(kernel << 3 | sq << 1 | rcas) != lk) {   // logged again at every size or mode change
+        lw = a->w; lh = a->h; lo = b->w; lk = (uint32_t)(kernel << 3 | sq << 1 | rcas);
         VLOG("NDSR upscaler replaced by %s: %ux%u -> %ux%u, input %s, output %s (DM_VK_NDSR: 0 the game's network, 1 the stretch, 2 FSR 1, 3 nearest)",
-             kernel == 1 ? "a bilinear sample" : kernel == 2 ? "the nearest texel" : rcas ? "FSR 1 (EASU + RCAS)" : "FSR 1 (EASU)", a->w, a->h, b->w, b->h, sq ? "sqrt(colour), squared at the end" : "linear",
+             kernel == 1 ? "a bilinear sample" : kernel == 2 ? "the nearest texel" : rcas ? "FSR 1 (EASU + RCAS)" : "FSR 1 (EASU)", a->w, a->h, b->w, b->h, nd_enc_name(sq),
              packed ? "packed words (R32_UINT view)" : "floats"); }
     return 1;
 }
@@ -2823,7 +2825,7 @@ static int ndsr_iface(const vka_shader *s) {
 // sharpening in one compute pass, made for Adreno. The same contract as FSR's passes (ndsr_fsr): the layouts, sampler and pass of nf_ready / nf_pass, the stores of
 // fsr/ndsr_out.h (B10G11R11 as floats where it has storage use, else packed words through an R32_UINT view), sq squares at the end. 0 = not done: the caller runs FSR 1
 #include "vka_ndsr_sgsr.h"
-static struct { VkPipeline p[2][2]; signed char bad[2][2]; } g_sg;   // [packed][sq]
+static struct { VkPipeline p[2][3]; signed char bad[2][3]; } g_sg;   // [packed][sq]
 static int ndsr_sgsr(int tin, int tout, vka_img *a, vka_img *b, VkFormat fb, int sq) {   // fb: the output texture's format (vka_tex_id_vkfmt)
     if (!nf_ready() || fb != VK_FORMAT_B10G11R11_UFLOAT_PACK32 || !(a->usage & VK_IMAGE_USAGE_SAMPLED_BIT)) return 0;
     static int st_ok = -1;
@@ -2839,7 +2841,7 @@ static int ndsr_sgsr(int tin, int tout, vka_img *a, vka_img *b, VkFormat fb, int
                                           .module = m, .pName = "main", .pSpecializationInfo = &spi}, .layout = g_nf.lay};
         if (!r) r = vk.vkCreateComputePipelines(V.dev, VK_NULL_HANDLE, 1, &ci, NULL, pp);
         if (m) vk.vkDestroyShaderModule(V.dev, m, NULL);
-        if (r) { *pp = VK_NULL_HANDLE; g_sg.bad[packed][sq] = 1; VRED("NDSR SGSR: pipeline (%s, input %s): %d: FSR 1 instead", packed ? "packed" : "floats", sq ? "sqrt" : "linear", r); }
+        if (r) { *pp = VK_NULL_HANDLE; g_sg.bad[packed][sq] = 1; VRED("NDSR SGSR: pipeline (%s, input %s): %d: FSR 1 instead", packed ? "packed" : "floats", nd_enc_name(sq), r); }
     }
     if (!*pp) return 0;
     VkImageLayout la = VK_IMAGE_LAYOUT_GENERAL, lb = VK_IMAGE_LAYOUT_GENERAL;
@@ -2854,7 +2856,7 @@ static int ndsr_sgsr(int tin, int tout, vka_img *a, vka_img *b, VkFormat fb, int
     static uint32_t lw, lh, lo, lk; if (a->w != lw || a->h != lh || b->w != lo || (uint32_t)(sq << 1 | packed) != lk) {   // logged again at every size or mode change
         lw = a->w; lh = a->h; lo = b->w; lk = (uint32_t)(sq << 1 | packed);
         VLOG("NDSR upscaler replaced by SGSR 1: %ux%u -> %ux%u, input %s, output %s (DM_VK_NDSR: 0 the game's network, 1 the stretch, 2 FSR 1, 3 nearest, 4 SGSR 1)",
-             a->w, a->h, b->w, b->h, sq ? "sqrt(colour), squared at the end" : "linear", packed ? "packed words (R32_UINT view)" : "floats"); }
+             a->w, a->h, b->w, b->h, nd_enc_name(sq), packed ? "packed words (R32_UINT view)" : "floats"); }
     return 1;
 }
 // ---------- Dispatch order ----------
@@ -3084,6 +3086,7 @@ void vka_dispatch(vka_dstate *d, const p_dispatch *dp) {
         VkFormat fa = tin ? vka_tex_id_vkfmt(tin) : VK_FORMAT_UNDEFINED, fb = tout ? vka_tex_id_vkfmt(tout) : VK_FORMAT_UNDEFINED;
         int sq = -1; char iv[16];
         if (a) sq = fa == VK_FORMAT_B10G11R11_UFLOAT_PACK32 || known ? 0 : fa == VK_FORMAT_E5B9G9R9_UFLOAT_PACK32 ? 1 : -1;
+        if (a && sh[5]->up_color == VKA_UP_SRGB) sq = 2;   // read from the network's own code (vka_up_color): sRGB-encoded input, linear output (Splatoon Raiders), whatever the input's format
         if (vka_env_str("DM_VK_NDSR_INPUT", iv, sizeof iv) > 0 && iv[0]) sq = !strcmp(iv, "sqrt") ? 1 : !strcmp(iv, "linear") ? 0 : sq;
         int fits = a && b && sq >= 0 && a->aspect == VK_IMAGE_ASPECT_COLOR_BIT && b->aspect == VK_IMAGE_ASPECT_COLOR_BIT && a->samples <= 1 && b->samples <= 1
                    && (known || fb == VK_FORMAT_B10G11R11_UFLOAT_PACK32);

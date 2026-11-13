@@ -41,7 +41,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 //============================================================================================================
 // In place of a game's neural upscaler dispatch (vka_draw.c / vka_ndsr_sgsr.h, DM_VK_NDSR=4): the game's input texture scaled to its output image in one pass,
-// one output pixel per invocation; the store and its variants are FSR's (../fsr/ndsr_out.h: floats into B10G11R11, or packed words through an R32_UINT view; SQ squares).
+// one output pixel per invocation; the store and its variants are FSR's (../fsr/ndsr_out.h: floats into B10G11R11, or packed words through an R32_UINT view; ENC: squares or decodes sRGB).
 // Qualcomm's configuration: OperationMode 1 (RGBA: green leads the edge test), UseEdgeDirection on (the edge-direction weights, as in the high-quality and VR targets of
 // Qualcomm's Unreal plugin), EdgeThreshold 8/255 (Qualcomm's value for mobile), EdgeSharpness 2.0 (its default). Changes from the fragment shader: the texture
 // coordinate is the output pixel's centre; ViewportInfo comes in push constants; no highp on the constructors (desktop GLSL); the result is clamped below at 0 but not above at 1 (the input is a float colour

@@ -79,6 +79,7 @@ The work folder's `run/drive.sh <name> <secs> "<sec> <control line>"…` boots i
 
 ## Found on this game
 
+- [An upscaler that reads sRGB-encoded colour was not replaced (Android)](../../../docs/reference/rendering.md#an-upscaler-that-reads-srgb-encoded-colour-was-not-replaced-android): `agl_ndsr.pck`'s float16 sRGB-decode variants; the Upscaler setting now replaces them (open: phone check).
 - [Shared fonts depend on the phone's fonts (one Roboto for six types)](../../../docs/reference/services.md#shared-fonts-depend-on-the-phones-fonts-one-roboto-for-six-types): issue #223; the APK's Noto Sans is now `standard.ttf`, per-type order in the host. Phone check open.
 - [Graphics scale changes while the game runs (message 300)](../../../docs/reference/services.md#graphics-scale-changes-while-the-game-runs-message-300): its notification handler re-reads the scale on message 300 ([Android](#android)); phone check open.
 - [A game whose speed follows its present interval runs slow when frames come late](../../../docs/reference/frame-rate.md#a-game-whose-speed-follows-its-present-interval-runs-slow-when-frames-come-late): the rewriter finds sead's frame-rate controller here (`main+0x3df0e28`, `sdiv w2, w8, w20`, the controller in x0) and leaves it as it is: the profile has no `fps_decouple sead`. Open: whether the game steps by that rate (needs a phone check, which this game does not get).
