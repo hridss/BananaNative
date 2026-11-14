@@ -397,9 +397,12 @@ KIND = {abi.KIND_CBUF: 'CBUF', abi.KIND_C1: 'C1', abi.KIND_DRVCB: 'DRVCB', abi.K
         abi.KIND_TEX: 'TEX', abi.KIND_TBUF: 'TBUF', abi.KIND_IMG: 'IMG', abi.KIND_SAMP: 'SAMP', abi.KIND_SAMP_TEX: 'SAMP_TEX', abi.KIND_SAMP_ID: 'SAMP_ID', abi.KIND_TEX_UBO: 'TEX_UBO',
         abi.KIND_SAMP_UBO: 'SAMP_UBO', abi.KIND_TEX_C2A: 'TEX_C2A', abi.KIND_SAMP_C2A: 'SAMP_C2A', abi.KIND_TEX_POOL: 'TEX_POOL', abi.KIND_SAMP_POOL: 'SAMP_POOL',
         abi.KIND_GMEM_MAP: 'GMEM_MAP', abi.KIND_GMEM_LOG: 'GMEM_LOG', abi.KIND_SHARED_SPILL: 'SHARED_SPILL', abi.KIND_IMG_UBO: 'IMG_UBO', abi.KIND_UNKNOWN: 'UNKNOWN'}
+# A buffer texture whose handle is in the uniform buffer, read as a uniform texel buffer (vk_android_spv.py row_fetch_buffers): a kind of the Android library only
+KIND_TBUF_UBO = getattr(abi, 'KIND_TBUF_UBO', 'tbuf_ubo')
+KIND[KIND_TBUF_UBO] = 'TBUF_UBO'
 KIND_NUM = {k: VK['KIND_' + v] for k, v in KIND.items()}
 SLOT_KINDS = {abi.KIND_CBUF, abi.KIND_SAMP, abi.KIND_SAMP_TEX, abi.KIND_TEX, abi.KIND_IMG, abi.KIND_TBUF, abi.KIND_SBUF, abi.KIND_UBO_PTR, abi.KIND_SBUF_UBO, abi.KIND_TEX_UBO, abi.KIND_SAMP_UBO, abi.KIND_SAMP_ID,
-              abi.KIND_IMG_UBO}
+              abi.KIND_IMG_UBO, KIND_TBUF_UBO}
 POOL_SUFFIX = '_cb0_40000000'   # a handle traced to no slot indexes the pools by its IDs (Program.cs QueryTextureArrayLengthFromPool; dmsh_build.py pool_arrays)
 
 
@@ -442,7 +445,7 @@ def classify(stage, r, res, m):
     elif texlike and NS['decode_ubo_tex'](nm):
         ut, us = NS['decode_ubo_tex'](nm)
         if desc == spv.VK_SAMPLER: e.update(kind=abi.KIND_SAMP_ID, reg=us[1]) if us[0] == 'id' else e.update(kind=abi.KIND_SAMP_UBO, reg=us[0], off=us[1])
-        elif desc == spv.VK_UNIFORM_TEXEL: e['kind'] = abi.KIND_UNKNOWN   # a bindless buffer texture: not implemented in the replay (as on Metal)
+        elif desc == spv.VK_UNIFORM_TEXEL: e.update(kind=KIND_TBUF_UBO, reg=ut[0], off=ut[1])   # a buffer texture whose handle is in the uniform buffer (row_fetch_buffers)
         else: e.update(kind=abi.KIND_TEX_UBO, reg=ut[0], off=ut[1])
     elif desc in (spv.VK_STORAGE_IMAGE, spv.VK_STORAGE_TEXEL) and (iu := ubo_img(nm)):
         e.update(kind=abi.KIND_IMG_UBO, reg=iu[0], off=iu[1])
@@ -606,6 +609,7 @@ def finish(key, w, job, c1):
     # returns a load of the Function variable its parameter was stored to, not the parameter, and the pass matched none (Pokopia's af8f64d9f5542ef2: 0 calls replaced, 5,224 after)
     spv.scale_identity(m)
     if not hmma: spv.loop_pool_search(m)   # the raw helpers' pool table search one loop of one step (vk_android_spv.py loop_pool_search)
+    spv.row_fetch_buffers(m)   # 2D slots read only as rows of 16384 texels: uniform texel buffers, a view of the buffer texture's storage (vk_android_spv.py row_fetch_buffers; after promote_locals, whose SSA it reads)
     binds = [classify(stage, r, res, m) for r in m.resources()]
     storage_slots(stage, binds, res)
     try: place(stage, binds, m)

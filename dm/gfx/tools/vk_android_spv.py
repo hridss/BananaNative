@@ -1450,7 +1450,107 @@ def txq_extra_components(m):
     return n
 
 
-IMAGE_OPERAND_WORDS = [(0x01, 1), (0x02, 1), (0x04, 2), (0x08, 1), (0x10, 1), (0x20, 1), (0x40, 1), (0x80, 1)]   # Bias, Lod, Grad, ConstOffset, Offset, ConstOffsets, Sample, MinLod
+OP_FUNCTION_CALL, OP_IMAGE_FETCH, OP_IMAGE, OP_COMPOSITE_CONSTRUCT, OP_SHIFT_RIGHT_LOGICAL, OP_BITWISE_AND = 57, 95, 100, 80, 194, 199
+
+
+def id_operands(x):
+    """The words of instruction x that are ids it reads (not its result type and result, not its literals), as far as these rewrites need: m.uses() also counts
+    literals, which in a module whose ids are small numbers matched loads and variables (a BuiltIn 26 decoration, a Lod mask of 2)"""
+    op = x[0] & 0xffff
+    if op <= 17 or 19 <= op <= 52 or 71 <= op <= 77 or op in (330, 331, 332): return ()   # debug, mode setting, types, constants, annotations
+    if op in (OP_COMPOSITE_EXTRACT,): return x[3:4]
+    if op in (OP_COMPOSITE_INSERT, 79): return x[3:5]   # OpVectorShuffle: then its component literals
+    if op == OP_EXT_INST: return (x[3], *x[5:])
+    if op == OP_LOAD: return x[3:4]
+    if op == OP_STORE: return x[1:3]
+    if op == OP_VARIABLE: return x[4:5]
+    if op == OP_FUNCTION: return x[4:5]
+    if op == 247: return x[1:2]   # OpSelectionMerge
+    if op == 246: return x[1:3]   # OpLoopMerge
+    if op == 250: return x[1:4]   # OpBranchConditional: then its weights
+    if op == 251: return (x[1], x[2], *x[4::2])   # OpSwitch: (literal, label) pairs
+    if op in (87, 88, 91, 92, OP_IMAGE_FETCH, OP_IMAGE_READ): return (x[3], x[4], *x[6:])   # an image, a coordinate, then a mask and its ids
+    if op in (89, 90, 93, 94, 96, 97): return (x[3], x[4], x[5], *x[7:])   # with a Dref or a component
+    if op == OP_IMAGE_WRITE: return (x[1], x[2], x[3], *x[5:])
+    if 349 <= op <= 363 or 364 <= op <= 366: return (x[3], *x[5:])   # OpGroupNonUniform arithmetic: a scope, a group operation literal
+    if op in (OP_LABEL, 249, 253, 254, 255, 252, 224, 225): return x[1:]   # no result type: OpBranch, returns, kills, barriers
+    return x[3:]
+
+
+def row_fetch_buffers(m):
+    """A 2D slot read only by 1D integer fetches the translator addressed as rows of 16384 texels, ((x & 0x3FFF, x >> 14), each through Ryujinx's render-scale helper,
+    which leaves an unscaled texture's coordinate as it is: dmsh_build.py fetch1d) becomes a uniform texel buffer read at x: the binding a buffer texture there gets is a
+    view of its storage (vka_tex.c vka_tex_id_bufview), as the Mac's rows are views of its pool (nvn_mtl.m tbuf_as_2d), with no copy. A slot with any other use (a size
+    query, a sample, a fetch of another shape) is left as it is. Unreal Engine's typed Buffer<> SRVs on the Switch 2 are such slots. → the number of slots rewritten"""
+    defs = {}
+    for x in m.ins:
+        op = x[0] & 0xffff
+        if op in (OP_FUNCTION_CALL, OP_IMAGE_FETCH, OP_IMAGE, OP_COMPOSITE_CONSTRUCT, OP_SHIFT_RIGHT_LOGICAL, OP_BITWISE_AND, OP_BITCAST, OP_LOAD) and len(x) >= 4: defs[x[2]] = x
+    def cval(i):
+        c = m.consts.get(i); return c[1][0] if c and len(c[1]) == 1 else None
+    def strip(i):   # through bitcasts and the scale helper's call (its first argument is the coordinate)
+        while i in defs and defs[i][0] & 0xffff in (OP_BITCAST, OP_FUNCTION_CALL):
+            x = defs[i]; i = x[3] if x[0] & 0xffff == OP_BITCAST else (x[4] if len(x) >= 5 else None)
+        return i
+    def linear(coord):   # the x of (x & 0x3FFF, x >> 14), or None
+        x = defs.get(coord)
+        if not x or x[0] & 0xffff != OP_COMPOSITE_CONSTRUCT or len(x) != 5: return None
+        a, b = defs.get(strip(x[3])), defs.get(strip(x[4]))
+        if not a or not b or a[0] & 0xffff != OP_BITWISE_AND or b[0] & 0xffff != OP_SHIFT_RIGHT_LOGICAL: return None
+        xa = a[3] if cval(a[4]) == 0x3FFF else a[4] if cval(a[3]) == 0x3FFF else None
+        if xa is None or cval(b[4]) != 14 or strip(b[3]) != xa and b[3] != xa: return None
+        return xa
+    uses = m.uses(); n = 0; made = set()
+    for vid, (ptr, sc) in list(m.vars.items()):
+        if sc != SC_UNIFORM_CONSTANT or DEC_BINDING not in m.decos.get(vid, {}): continue
+        t = m.pointee(ptr)[1]; comb = m.op(t) == OP_TYPE_SAMPLED_IMAGE; img = m.types[t][2] if comb else t
+        if m.op(img) != OP_TYPE_IMAGE: continue
+        st, dim, depth, arr, ms, sampled = m.types[img][2:8]
+        if dim != 1 or arr or ms or sampled != 1: continue
+        loads, images, fetches, ok = [], [], [], True
+        for k in uses.get(vid, ()):
+            y = m.ins[k]; op = y[0] & 0xffff
+            if vid not in id_operands(y): continue   # (uses() also counts literals and the declaration)
+            if op != OP_LOAD or y[3] != vid: ok = False; break
+            loads.append(y)
+        for ld in loads if ok else ():
+            for k in uses.get(ld[2], ()):
+                y = m.ins[k]; op = y[0] & 0xffff
+                if y is ld or ld[2] not in id_operands(y): continue
+                if comb and op == OP_IMAGE and y[3] == ld[2]: images.append(y)
+                elif not comb and op == OP_IMAGE_FETCH and y[3] == ld[2]: fetches.append(y)
+                else: ok = False
+        for im in images if ok else ():
+            for k in uses.get(im[2], ()):
+                y = m.ins[k]
+                if y is im or im[2] not in id_operands(y): continue
+                if y[0] & 0xffff == OP_IMAGE_FETCH and y[3] == im[2]: fetches.append(y)
+                else: ok = False
+        if not ok or not fetches: continue
+        xs = [linear(f[4]) for f in fetches]
+        if any(x is None for x in xs) or any(len(f) > 5 and not (f[5] == 0x2 and len(f) == 7) for f in fetches): continue   # only the Lod operand, which a buffer has none of
+        buf = m.add_type(OP_TYPE_IMAGE, st, DIM_BUFFER, 0, 0, 0, 1, 0)   # sampled, Unknown format
+        bptr = m.add_type(OP_TYPE_POINTER, SC_UNIFORM_CONSTANT, buf); made |= {buf, bptr}
+        for x in m.ins:
+            if x[0] & 0xffff == OP_VARIABLE and x[2] == vid: x[1] = bptr
+        m.vars[vid] = (bptr, sc)
+        for ld in loads: ld[1] = buf
+        for im in images: im[:] = [4 << 16 | OP_COPY_OBJECT, buf, im[2], im[3]]
+        for f, x in zip(fetches, xs): f[:] = [5 << 16 | OP_IMAGE_FETCH, f[1], f[2], f[3], x]
+        n += 1; uses = m.uses()   # (add_type inserted declarations: the indices moved)
+    if n:   # the types made above (add_type puts them before the first function) go before the first global variable, which may use them
+        fn = next(k for k, x in enumerate(m.ins) if x[0] & 0xffff == OP_FUNCTION)
+        gv = next((k for k in range(fn) if m.ins[k][0] & 0xffff == OP_VARIABLE), fn)
+        late = [x for x in m.ins[gv:fn] if x[0] & 0xffff in (OP_TYPE_IMAGE, OP_TYPE_POINTER) and x[1] in made]
+        for x in late: m.ins.remove(x)
+        for j, x in enumerate(late): m.ins.insert(gv + j, x)
+    if n and 46 not in m.caps:   # SampledBuffer
+        at = next(k for k, x in enumerate(m.ins) if x[0] & 0xffff == OP_CAPABILITY)
+        m.ins.insert(at + 1, [2 << 16 | OP_CAPABILITY, 46]); m.caps.append(46)
+    return n
+
+
+IMAGE_OPERAND_WORDS =[(0x01, 1), (0x02, 1), (0x04, 2), (0x08, 1), (0x10, 1), (0x20, 1), (0x40, 1), (0x80, 1)]   # Bias, Lod, Grad, ConstOffset, Offset, ConstOffsets, Sample, MinLod
 
 
 def lower_sample_offsets(m):

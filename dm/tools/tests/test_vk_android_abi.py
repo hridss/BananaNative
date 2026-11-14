@@ -332,6 +332,76 @@ OpFunctionEnd
 '''
 
 
+# A compute shader as the translator writes a 1D integer fetch of a 2D slot: (x & 0x3FFF, x >> 14) through Ryujinx's render-scale helper, then OpImageFetch with Lod 0.
+# "rows" is read only so (row_fetch_buffers makes it a texel buffer); "sized" is also size-queried (left as it is)
+ROWS_CS = '''OpCapability Shader
+OpCapability ImageQuery
+OpMemoryModel Logical GLSL450
+OpEntryPoint GLCompute %main "main"
+OpExecutionMode %main LocalSize 1 1 1
+OpName %rows "rows"
+OpName %sized "sized"
+OpName %x "x"
+OpName %i1 "i1"
+OpDecorate %rows DescriptorSet 0
+OpDecorate %rows Binding 1
+OpDecorate %sized DescriptorSet 0
+OpDecorate %sized Binding 2
+OpDecorate %out DescriptorSet 0
+OpDecorate %out Binding 3
+OpDecorate %ob Block
+OpMemberDecorate %ob 0 Offset 0
+%void = OpTypeVoid
+%fn = OpTypeFunction %void
+%int = OpTypeInt 32 1
+%uint = OpTypeInt 32 0
+%float = OpTypeFloat 32
+%v2int = OpTypeVector %int 2
+%v4float = OpTypeVector %float 4
+%img = OpTypeImage %float 2D 0 0 0 1 Unknown
+%simg = OpTypeSampledImage %img
+%pimg = OpTypePointer UniformConstant %simg
+%ob = OpTypeStruct %v4float
+%pob = OpTypePointer StorageBuffer %ob
+%pv4 = OpTypePointer StorageBuffer %v4float
+%sfn = OpTypeFunction %int %int %int
+%c16383 = OpConstant %int 16383
+%c14 = OpConstant %int 14
+%c0 = OpConstant %int 0
+%c70000 = OpConstant %int 70000
+%rows = OpVariable %pimg UniformConstant
+%sized = OpVariable %pimg UniformConstant
+%out = OpVariable %pob StorageBuffer
+%scale = OpFunction %int None %sfn
+%a = OpFunctionParameter %int
+%b = OpFunctionParameter %int
+%sl = OpLabel
+OpReturnValue %a
+OpFunctionEnd
+%main = OpFunction %void None %fn
+%l = OpLabel
+%x = OpCopyObject %int %c70000
+%lo = OpBitwiseAnd %int %x %c16383
+%hi = OpShiftRightLogical %int %x %c14
+%hu = OpBitcast %uint %hi
+%hs = OpBitcast %int %hu
+%cx = OpFunctionCall %int %scale %lo %c0
+%cy = OpFunctionCall %int %scale %hs %c0
+%co = OpCompositeConstruct %v2int %cx %cy
+%s1 = OpLoad %simg %rows
+%i1 = OpImage %img %s1
+%f1 = OpImageFetch %v4float %i1 %co Lod %c0
+%s2 = OpLoad %simg %sized
+%i2 = OpImage %img %s2
+%q = OpImageQuerySizeLod %v2int %i2 %c0
+%f2 = OpImageFetch %v4float %i2 %co Lod %c0
+%po = OpAccessChain %pv4 %out %c0
+OpStore %po %f1
+OpReturn
+OpFunctionEnd
+'''
+
+
 @unittest.skipUnless(shutil.which('spirv-as') and shutil.which('spirv-val'), 'SPIRV-Tools not installed')
 class Rewrites(unittest.TestCase):
     def module(self, text):
@@ -346,6 +416,18 @@ class Rewrites(unittest.TestCase):
             r = subprocess.run(['spirv-val', '--target-env', 'vulkan1.3', str(p)], capture_output=True, text=True)
             self.assertEqual(r.returncode, 0, r.stderr)
             return subprocess.run(['spirv-dis', str(p)], capture_output=True, text=True).stdout if shutil.which('spirv-dis') else ''
+
+    def test_row_fetch_buffers(self):
+        """A slot read only as rows of 16384 texels becomes a uniform texel buffer read at x; one that is also size-queried stays a 2D slot"""
+        m = self.module(ROWS_CS)
+        self.assertEqual(spv.row_fetch_buffers(m), 1)
+        r = {e['name']: e for e in m.resources()}
+        self.assertEqual((r['rows']['desc'], r['rows']['dim']['dim']), (spv.VK_UNIFORM_TEXEL, spv.DIM_BUFFER))
+        self.assertEqual((r['sized']['desc'], r['sized']['dim']['dim']), (spv.VK_COMBINED, 1))
+        text = self.valid(m)
+        if text:
+            self.assertIn('SampledBuffer', text)
+            self.assertIn('OpImageFetch %v4float %i1 %x', text)   # x itself, no Lod
 
     def test_vertex_rewrites(self):
         m = self.module(VS)
