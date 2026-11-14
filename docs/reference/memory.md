@@ -308,6 +308,13 @@ The guest address space, heaps, pools, virtual address memory and the allocators
 - **Fix:** with the host allocator installed, a source outside the guest block that the host has mapped readable and writable is taken too (`dm_ue_heap_owns`, `hle_uemalloc.c`; `plat_mem_region`: `vm_region_64` on Apple, `/proc/self/maps` on Android, since malloc has no cheap lookup from an interior pointer). The source may span several host mappings, each taken in turn with no gap between them: Android's Scudo maps its heap in pieces that `/proc/self/maps` lists as separate entries, and Orbitals' first thread stack (16 KB at `0x6fd233f000`) lay across `0x6fd2301000+0x40000` and the next one, which a check against one mapping refused. A refused map logs its arguments and why (the destination mapped already, the source mapped elsewhere, or the host mapping where the source stops being backed).
 - **Found on:** [OCTOPATH TRAVELER II](../../dm/games/0100A3501946E000/README.md), after the stricter source check of `MapMemory`; [Pikmin 4](../../dm/games/0100B7C00933A000/README.md) boots with the same host. On Android: [Orbitals](../../dm/games/040032B023CA4000/README.md), the first Unreal game with the host allocator there (a stack across two Scudo mappings).
 
+### Wwise loses the span header in a virtual block from Unreal's heap
+
+- **Symptom:** Wwise crashes in `AK::MemoryMgr::Init` while reallocating or freeing a block, after Unreal switches to the host heap. Whether a boot crashes depends on where the heap puts the block, and the fault address can be a null read or garbage.
+- **Cause:** Wwise requests page-aligned virtual memory through Unreal and locates a span header by clearing the low 16 bits of an interior pointer. A host allocation aligned to only 4 or 16 KiB can put that address before the block. Unreal's virtual allocator supplies 64 KiB alignment for these spans.
+- **Fix:** the host preserves the 64 KiB boundary for allocations and reallocations of at least 64 KiB, and honors larger requested alignments (`hle_uemalloc.c` `align_of`). A reallocation still calls the zone's `realloc` first and copies only a block that comes back off the boundary. Ported from nxnative f1766444.
+- **Found on:** upstream's Princess Peach: Showtime! 1.0.0 (nxnative issue 996), whose Wwise integration requests 4 KiB alignment; [Orbitals](../../dm/games/040032B023CA4000/README.md) uses Wwise through the same heap.
+
 ### Unreal 5.6's page allocator never gives address space back
 
 - **Symptom:** `nn::diag` abort from `main+0x11bc`, no message, in the first battle, with about 1 GB mapped (FINAL FANTASY RESONANCE with DRAGON QUEST VII Reimagined's 2 GB region).
