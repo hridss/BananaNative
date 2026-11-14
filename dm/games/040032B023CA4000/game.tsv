@@ -29,6 +29,13 @@ zip_store	.bk2:.pak:.ttf:.txt:.ucas:.utoc
 # The game sets near-zero NVN depth (nvnDeviceSetDepthMode); offline pipeline bases use main0_z.
 depth_mode	zero
 
+# ---- Recommended settings (the launcher, Recommend.java; dm/games/README.md recommend) ----
+# Qualcomm's own driver before 512.800 (driverID 8, major 512, minor below 800) -> an installed Turnip (driverID 18). README.md "Android": on the AYN Thor (Adreno 740) the stock
+# 512.676 corrupts the process heap (malloc_debug free_track caught it reading freed memory in libadreno_app_profiles.so ApplyApplicationProfile under vkCreateInstance;
+# the host's and the game's heap blocks overwritten, a crash within 25-75 s in every one of 12 runs), GPU about 25 ms a frame at the first screens; Turnip T30 ran 8 minutes
+# to the level load with none of it, GPU about 10.6 ms
+recommend	driver.id=8,driver.version&0xffc00000=0x80000000,driver.version&0x3ff000<0x320000	driver=18
+
 # ---- Memory ----
 # Unreal Engine 5.6: nninitStartup reserves one 62 GB region for the engine; the rewriter's engine-wide rules cut the FMallocBinned3 constructor call (the host runs Unreal's heap on a malloc zone,
 # dm/tools/ue_malloc.py, hle_uemalloc.c) and give the region what the alias region has room for (dm/tools/ue_region.py, hle_svc.c), after the SDK's node area cut to 62 MB (sdk_patches.py, the

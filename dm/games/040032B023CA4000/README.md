@@ -56,6 +56,14 @@ From a save past the first-start screens: at about 40 s the title, `A`; 22 s lat
 
 On a first start the language, gamma and terms screens come before the title: `A` (title), `Down` three times and `A` (Apply), `A` (gamma), `A` (terms).
 
+## Android
+
+AYN Thor Max (Snapdragon 8 Gen 2, Adreno 740, 16 GB, Android 13), the Deluxe NUP, the test app (2026-11-14):
+
+- **Shaders:** the two IoStore libraries are Oodle-compressed, decoded with the game's own Oodle on the phone (`DM_OODLE_JOB`, one job of 2,748 container blocks, none failed; the shader groups themselves are not compressed again): [Unreal Engine 5.6 IoStore shader libraries for the Switch 2](../../../docs/reference/shaders.md#unreal-engine-56-iostore-shader-libraries-for-the-switch-2). The split gives upstream's 23,432 keys exactly. The Android library: 22,173 translate, 1,046 fail in the translator (mostly `SUATOM handle in bank N`, which upstream's translator takes since its 9507c221), 213 in spirv-val (`ID … has not been defined` 189, an explicit layout on Workgroup memory 24).
+- **Driver (current): Turnip, not the stock driver.** On Qualcomm's 512.676 every run crashed within 25 to 75 s, each time elsewhere: the host's completion-effect arrays and the game's own objects (an RHI command list's memory stack, an upload allocation) overwritten with values of other live blocks. Not the shared heap (the same with the Unreal heap in address space of its own), not a write after the game's free (a poisoned quarantine saw none), not the host's double free or a race on its arrays (both checked). Run under `malloc_debug` `free_track`, the process stopped at once on a read of freed memory inside the driver: `libadreno_app_profiles.so` `ApplyApplicationProfile` under `vkCreateInstance`. With Turnip T30 (PurpleVK 26.3.0) the game ran 8 minutes, through the first-start screens, the title, the main menu, Play Local with both players (the second through `DM_CTL` `P2 A`) and the character select, at 30 fps (frame time p50 33.3 ms, p95 about 36 ms), GPU p50 10.6 ms against about 25 ms on the stock driver, the app at 1.4 to 1.9 GB. The profile's `recommend` row picks Turnip on Qualcomm's drivers before 512.800.
+- **Open:** the device was lost (GPU hang, `VK_EXT_device_fault` absent) in a submission of 86 draws at the load after the character select (frame 14,467), on Turnip. The title's 3D background is black; the menus draw.
+
 ## Found on this game
 
 - Unreal Engine 5.6 IoStore shader libraries for the Switch 2: the split stopped at `shader 0 is not an LSLG record`.
