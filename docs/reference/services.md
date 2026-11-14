@@ -721,8 +721,15 @@ Most service calls can be found before they crash, before the first boot or the 
 
 - **Symptom:** SIGSEGV in `android::Surface::getQueuedFrameNumber` under `nn::vi::GetLatestFrameNumber`.
 - **Cause:** Unreal paces frames by the layer's frame number (`main+0x10140e8`); the SDK reads the vi service's surface, which the host never made.
-- **Fix:** `hle_vi.c` answers with the frames presented so far; `ListFrameHistory` returns no entries.
+- **Fix:** `hle_vi.c` answers with the frames presented so far; `ListFrameHistory` lists them ([Layer frame history](#layer-frame-history)).
 - **Found on:** [Octopath Traveler 0](../../dm/games/01005270232F2000/README.md).
+
+### Layer frame history
+
+- **Symptom:** right after a logo movie or a load nothing is presented again, with no red line; the watchdog reports `no progress … stage present frame`. The game thread is in Unreal's `FlushRenderingCommands` or `FFrameEndSync`, waking each millisecond, while the render, RHI, frame-flip and interrupt threads wait idle; minutes later Unreal may abort with `GameThread timed out waiting for %s after %.02f secs`.
+- **Cause:** Unreal Engine 5's Switch RHI learns which frames reached the screen only from `nn::vi::ListFrameHistory`: its "Viewport Thread" waits for each vsync, asks for the entry count (a null buffer: the SDK answers 8, the history's size), reads the 40-byte `FrameInfo` entries and takes the first one shown as the latest flip. Those flips complete the frame-end fences that wait for the swap chain (`r.GTSyncType` 2). With no entries no flip ever comes; with a frame listed as queued for ever (one the host did not put on screen), the game waits for that frame's flip before it presents another, as a Switch's compositor shows every frame it is handed, in order.
+- **Fix:** `dm/gfx/hle_vi.c` keeps the last 8 presents (recorded at each NVN present, `dm_vi_frame_queued`, numbered as `GetLatestFrameNumber`, with the present queue's ticket) and answers as the SDK fills `FrameInfo` (`sdk+0x4510a0` in SDK 20.5.15): status (2 shown with a present time, 1 queued and not shown yet), frame number, queue tick and present tick twice, newest first. A frame is shown once the present queue has handed it on (`mtl_present_progress`: `vka_present.c` on Android), whether or not it reached the panel; its present time is the display timing's when the driver reports one, else the time it was first seen handed on. Ported from nxnative 51cc8bce and 23af6283.
+- **Found on:** upstream's Minecraft Dungeons II and [Orbitals](../../dm/games/040032B023CA4000/README.md) on the Mac; [Octopath Traveler 0](../../dm/games/01005270232F2000/README.md) and [OCTOPATH TRAVELER II](../../dm/games/0100A3501946E000/README.md) call it from the same RHI code.
 
 ### Default display panel identifier
 

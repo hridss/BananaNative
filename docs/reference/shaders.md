@@ -424,6 +424,13 @@ Finding, keying and translating shaders (`dm/gfx/tools/shader_split.py`, `dmsh_b
 - **Cause:** the translator's SPIR-V generator reuses an identical type, so a shared (or local) memory of 8 words took the support buffer's `uint[8]`, which carries `ArrayStride 16`; Workgroup and Private variables may have no explicit layout.
 - **Fix:** shared and local memory arrays get a type of their own (`CodeGen/Spirv/Declarations.cs` `DeclareMemories`, `TypeArray(…, forceIdAllocation: true)`).
 - **Found on:** [Orbitals](../../dm/games/040032B023CA4000/README.md): 24 compute shaders.
+### Unreal Engine 5.6 IoStore shader libraries for the Switch 2
+
+- **Symptom:** the split stops at once: `[RED] /ue_shaders/ShaderArchive-Global-…: shader 0 is not an LSLG record`.
+- **How it is stored:** as [the Switch's 5.6 libraries](#unreal-engine-56-iostore-shader-libraries), but each decoded shader is the NVN2 record of Unreal Engine 5.4 and later for the Switch 2 (`uepak.sage_record`: a header with no magic, the source name, the code area, an NVN2 control section of version `0xc9`), with no `LSLG` tag to give the stage. The frequency byte is in Unreal Engine 5's numbering (0 vertex, 1 mesh, 2 amplification, 3 pixel, 4 geometry, 5 compute), where Unreal Engine 4 had hull and domain at 1 and 2.
+- **Fix:** `shader_split.py` `ue_shaders` takes such a record when it is not `LSLG`, its stage from the record itself (`nvn2_stage`: the control section's stage byte, else the SPH), and checks the stage against the frequency in that numbering. Covered by `dm/tools/tests/test_uepak_iostore.py` (a synthetic decoded archive). Ported from nxnative 9507c221 (`sage_record`) and ad4e161a.
+- **Decoding them without a Mac:** the libraries are Oodle-compressed twice (container blocks, then each shader group), and only the game's own decoder reads them. Where no Mac host runs it (`uepak.OodleHost`), the phone's host can: `DM_OODLE_JOB` (`dm/host/hle_oodle.c`) decodes a job file with the game's Oodle before `nnMain` and exits, so the two layers take two jobs, each made from the previous one's results.
+- **Found on:** [Orbitals](../../dm/games/040032B023CA4000/README.md) (Unreal Engine 5.6.1): 40,995 shaders in the two libraries (4,515 + 36,480), 23,432 unique (3,556 vertex, 16,459 pixel, 3,415 compute, 2 geometry).
 
 ### IoStore patch containers keep their shader groups in the base container
 

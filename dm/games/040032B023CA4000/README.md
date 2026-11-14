@@ -4,11 +4,13 @@ A Switch 2 game: the Deluxe Edition, update v327680 (1.1.2.0-178968 on the title
 
 **Plays on the Mac** (M6, 16 GB, macOS 27.2, 2026-11-14), two players, in a window: the first-start language, gamma and terms screens, the title, Play Local with both players joined, the character select, the opening anime (Bink) and the first area of the story, both characters walking, at the game's own 30 fps with no red line beyond one known one. The same route also plays in an iPhone's address space on the Mac (`DM_ALIAS_SIZE=0x118000000`, 2026-11-14). Not run on an iPhone or iPad.
 
+**Status on Android:** in bring-up (2026-11-14), ported from upstream's Mac profile; first runs on an AYN Thor Max (Snapdragon 8 Gen 2, Adreno 740, 16 GB, Android 13). The rewriter's Unreal and SDK rules apply to its modules as on the Mac (the FMallocBinned3 cut, the engine region, the SDK 21.4 node area). Its shaders need the game's own Oodle to be read: see [Shaders](#shaders).
+
 ## What it needs
 
 | Setting | Where | Why |
 |---|---|---|
-| `mem_reserve 0x140000000`, `mem_alias 0x118000000`, `mem_stack 0x10000000`, `app_pool 0x240000000` | [`game.tsv`](game.tsv) | Engage's 5 GB block for an iPhone (the Mac reserves 64 GB): see [Memory](#memory). The Switch 2's 9 GB pool |
+| `mem_reserve 0x550000000`, `mem_alias 0x400000000`, `mem_stack 0x10000000`, `app_pool 0x240000000` | [`game.tsv`](game.tsv) | Android: the 16 GB alias region of the other Switch 2 profiles, address space only (upstream's profile has Engage's 5 GB block for an iPhone): see [Memory](#memory). The Switch 2's 9 GB pool |
 | `sys_resource 0x1400000` | `game.tsv` | the NPDM declares 20 MB, so virtual address memory is on |
 | `depth_mode zero` | `game.tsv` | the game sets near = 0 (`nvnDeviceSetDepthMode`), so pipeline bases made offline use `main0_z` |
 | `pad_layout full` | `game.tsv` | a 3D field, both sticks in use |
@@ -26,8 +28,8 @@ Orbitals cannot be played alone: Play Local waits for a second player to join, a
 
 ## Shaders
 
-- 23,432 unique in [`shader_map.tsv`](shader_map.tsv) (3,556 vertex, 16,459 pixel, 3,415 compute, 2 geometry) from the container's two IoStore shader libraries (global 4,515, game 36,480 shaders), split in 57 s: Unreal Engine 5.6 IoStore shader libraries for the Switch 2. All build: a full Mac build took 19 minutes on the M6 the first time, 6 minutes on chain `73b94575300e` with the Metal compile cache warm.
-- Resolved: 5 global compute shaders (`3ea35c5a0f1ea749`, `45389d82b79dbf0c`, `50c768e8620cf18e`, `868f60d0648f0110`, `c2f9e9baad57e2d0`) stopped at `Ampere instruction 394 … is not implemented`: Unreal's ShaderPrint counter, an image atomic whose handle is in a register (Ampere forms with a handle in a register).
+- 23,432 unique in [`shader_map.tsv`](shader_map.tsv) (3,556 vertex, 16,459 pixel, 3,415 compute, 2 geometry) from the container's two IoStore shader libraries (global 4,515, game 36,480 shaders), split in 57 s: [Unreal Engine 5.6 IoStore shader libraries for the Switch 2](../../../docs/reference/shaders.md#unreal-engine-56-iostore-shader-libraries-for-the-switch-2). All build: a full Mac build took 19 minutes on the M6 the first time, 6 minutes on chain `73b94575300e` with the Metal compile cache warm.
+- Open on Android (resolved upstream by nxnative 4032a11e, not ported yet): 5 global compute shaders (`3ea35c5a0f1ea749`, `45389d82b79dbf0c`, `50c768e8620cf18e`, `868f60d0648f0110`, `c2f9e9baad57e2d0`) stopped at `Ampere instruction 394 … is not implemented`: Unreal's ShaderPrint counter, an image atomic whose handle is in a register.
 
 ## Frame rate
 
