@@ -321,6 +321,13 @@ The guest address space, heaps, pools, virtual address memory and the allocators
 - **Fix:** the host reports each loaded module's real layout and reports other host memory as free (`hle_svc.c`).
 - **Found on:** [Fire Emblem Engage](../../dm/games/0100A6301214E000/README.md) (its note lists it among the host changes first needed there). IL2CPP throws a C++ exception for every managed exception, so Unity games need this; Mario ([Super Mario Bros. Wonder](../../dm/games/010015100B514000/README.md)) never threw.
 
+### The main thread's stack reported with its guard page (Android)
+
+- **Symptom:** (Android) a Unity game faults about 1 s after `nnMain` in its garbage collector's mark loop (Fire Emblem Engage: `main+0x4731f4`, `GC_mark_from`), the fault address just below the main thread's stack.
+- **Cause:** `plat_thread_stack` took the range Bionic's `pthread_getattr_np` gives, which starts at the mapping's base and so includes the `PROT_NONE` guard page below the stack (glibc and Darwin leave it out). `svcQueryMemory` reports that range as the main thread's stack, and IL2CPP's collector scans all of it.
+- **Fix:** the guard (`pthread_attr_getguardsize`) is left out of the range (`plat/plat_android.c`).
+- **Found on:** [Fire Emblem Engage](../../dm/games/0100A6301214E000/README.md).
+
 ### `MapPhysicalMemory` in 16 KB host pages
 
 - **Symptom:** `MapPhysicalMemory` faults on part of a page.
