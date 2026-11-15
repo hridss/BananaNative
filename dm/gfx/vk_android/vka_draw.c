@@ -2835,6 +2835,10 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
     // The draw
     uint32_t inst = (uint32_t)((dw ? dw->instances : di->instances) > 0 ? (dw ? dw->instances : di->instances) : 1), binst = d->b.base_instance;
     if (vka_gp_active) vka_gp_note(mesh ? 'm' : 'v', mesh ? sh[7]->key : sh[0] ? sh[0]->key : 0, sh[1] ? sh[1]->key : 0, mesh ? (ind ? 0 : (uint64_t)dw->count) : (uint64_t)(dw ? dw->count : di->count) * inst);
+    // DM_VK_GPUPROF_PSTATS: the draw call inside a pipeline statistics query of the profiled frame (vka_gprof.c)
+    #define PSQ(call) do { int q_ = vka_gp_active ? vka_gp_draw_begin(g_cb, sh[0] ? sh[0]->key : 0, sh[1] ? sh[1]->key : 0, (uint32_t)(vp.width < 0 ? -vp.width : vp.width), \
+                                                                    (uint32_t)(vp.height < 0 ? -vp.height : vp.height), \
+                                                                    di ? di->ibuf : 0, (uint32_t)(di ? di->count : dw->count), di ? di->base_vertex : dw->first, vp.x) : -1; call; vka_gp_draw_end(g_cb, q_); } while (0)
     if (memu_e) {   // through compute: the record's arguments, which the batch's passes wrote (vka_memu_draw.inc)
         VkDeviceSize ro = MB.rec.off + ((VkDeviceSize)memu_e->rec * VKA_MEMU_REC_WORDS + VKA_MEMU_R_DRAW) * 4;
         if (memu_e->indexed) { ib_bind(MB.arena, 0, VK_INDEX_TYPE_UINT32); vk.vkCmdDrawIndexedIndirect(g_cb, MB.rec.buf, ro, 1, 20); }
@@ -2876,8 +2880,8 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
                    VRED_ONCE("indirect draws: outside vertex shaders, the driver segment's base instance (c0 + 0x644) reads the record's, not the GPU's");
                    if (mdi_n) { if (mdi_ranges(ind, mdi, mdi_n, mdi_st, 16, &b, &o, &cb, &co)) vk.vkCmdDrawIndirectCount(g_cb, b, o, cb, co, mdi_n, mdi_st); else mdi_cpu(0, ind, mdi, mdi_n, mdi_st); }
                    else { if (!vka_addr(ind, 16, &b, &o, NULL) || (o & 3)) SKIPD(VKS_GUESTMEM, "indirect draw arguments at %#llx are not in placed guest RAM: skipped", (unsigned long long)ind);
-                          vk.vkCmdDrawIndirect(g_cb, b, o, 1, 16); } }
-        else vk.vkCmdDraw(g_cb, (uint32_t)dw->count, inst, (uint32_t)dw->first, binst);
+                          PSQ(vk.vkCmdDrawIndirect(g_cb, b, o, 1, 16)); } }
+        else PSQ(vk.vkCmdDraw(g_cb, (uint32_t)dw->count, inst, (uint32_t)dw->first, binst));
     } else {
         VkBuffer ib; VkDeviceSize io; VkIndexType it = di->itype == 0 ? VK_INDEX_TYPE_UINT8 : di->itype == 1 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32;
         size_t isz = di->itype == 0 ? 1 : di->itype == 1 ? 2 : 4;
@@ -2900,13 +2904,14 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
         if (ind) { VkBuffer b, cb; VkDeviceSize o, co; if (ind_peek(sh, ind, mdi, mdi_n, mdi_st, 1)) { g_skipped++; return; }
                    if (mdi_n) { if (mdi_ranges(ind, mdi, mdi_n, mdi_st, 20, &b, &o, &cb, &co)) vk.vkCmdDrawIndexedIndirectCount(g_cb, b, o, cb, co, mdi_n, mdi_st); else mdi_cpu(1, ind, mdi, mdi_n, mdi_st); }
                    else { if (!vka_addr(ind, 20, &b, &o, NULL) || (o & 3)) SKIPD(VKS_GUESTMEM, "indirect draw arguments at %#llx are not in placed guest RAM: skipped", (unsigned long long)ind);
-                          vk.vkCmdDrawIndexedIndirect(g_cb, b, o, 1, 20); } }
+                          PSQ(vk.vkCmdDrawIndexedIndirect(g_cb, b, o, 1, 20)); } }
         else if (istart) {   // the run's first draw: indirect, its instance count raised by the draws that join
             RUN.args[0] = (uint32_t)di->count; RUN.args[1] = 1; RUN.args[2] = 0; RUN.args[3] = (uint32_t)di->base_vertex; RUN.args[4] = 0;
             vk.vkCmdDrawIndexedIndirect(g_cb, i_aa.buf, i_aa.off, 1, 20); RUN.mark = vka_enc_total(); g_inst_runs++;
             inst_fast_arm(d, rt, has_rt, sc, has_sc, di, 1);
-        } else vk.vkCmdDrawIndexed(g_cb, (uint32_t)di->count, inst, 0, di->base_vertex, binst);
+        } else PSQ(vk.vkCmdDrawIndexed(g_cb, (uint32_t)di->count, inst, 0, di->base_vertex, binst));
     }
+    #undef PSQ
     g_draws++;
     if (icand && !istart && !RUN.open) { if (inst_snap(&g_ia, p, i_ib, i_io, i_it, di, d)) g_ia.mark = vka_enc_total(); } else g_ia.valid = 0;   // a run may start from this draw
     PT(8);

@@ -406,6 +406,8 @@ int vka_gp_split(void);   // DM_VK_GPUPROF_SPLIT of the frame being profiled, 0 
 void vka_gp_mark(VkCommandBuffer cb, const char *file, int line);
 void vka_gp_pass(const char *desc);
 void vka_gp_note(char k, uint64_t key, uint64_t pkey, uint64_t work);   // DM_VK_GPUPROF: a draw ('v' / 'm') or dispatch ('c') in the open step
+int vka_gp_draw_begin(VkCommandBuffer cb, uint64_t vs, uint64_t fs, uint32_t w, uint32_t h, uint64_t ib, uint32_t cnt, int32_t bv, float vx);   // DM_VK_GPUPROF_PSTATS: a draw call's pipeline statistics query (-1 = none)
+void vka_gp_draw_end(VkCommandBuffer cb, int q);
 void vka_gp_part(VkCommandBuffer cb);
 void vka_gp_sub_begin(VkCommandBuffer cb, uint64_t frame);
 void vka_gp_commit(VkCommandBuffer cb, uint64_t fence);
