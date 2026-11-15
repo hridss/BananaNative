@@ -1042,16 +1042,29 @@ def pkz_shaders(path, rel, ents, out):
             scan_blob(d, f'/{rel}/{name}', out)
 
 CPK = b'CPK '
-def cpk_jobs(files, parts=64):
+def cpk_jobs(files, parts=64, names=None):
     """Every entry of every CRI CPK archive in ranges of about equal length (Bayonetta 2: six in the RomFS root, 9.5 GB, 6,091 files, 12 GB of them CRILAYLA-compressed; its shaders are BNSH
-    files in shader.dat, shader2.dat and shadereff.dat, but no file name is relied on). → ([(path, rel, entries), …], the CPK paths)"""
+    files in shader.dat, shader2.dat and shadereff.dat, but no file name is relied on). → ([(path, rel, entries), …], the CPK paths)
+    names ({rel: entry names}, the targeted scan's, cpk_map_entries): only those entries of that CPK, when it has every one of them (Persona 5 Royal: its 30,646 shaders are in 10
+    GSC files of ALL_USEU.CPK, which the scan otherwise reads whole in 63 ranges, about 30 min of the phone's split); else every entry. The targeted scan's tables are compared with
+    the profile's afterwards (profile_differs), and a difference falls back to the full scan, so a shader outside these entries is never lost"""
     import cpk
     with_head = []
     for p, r in files:
         if p.lower().endswith('.cpk'):
             with open(p, 'rb') as f: h = f.read(4)
             if h != CPK: continue
-            try: with_head.append((p, r, cpk.files(p)))
+            try:
+                es = cpk.files(p)
+                if names and names.get(r):
+                    # a name is an entry, or a member path inside one ('<entry>/<member>': an archive in the CPK)
+                    ent = {e[0] for e in es}
+                    hit = {n: next((n[:i] for i in [len(n)] + [i for i in range(len(n) - 1, 0, -1) if n[i] == '/'] if n[:i] in ent), None) for n in names[r]}
+                    if all(hit.values()):
+                        want_e = set(hit.values()); keep = [e for e in es if e[0] in want_e]
+                        print(f'targeted CPK: /{r}: {len(keep):,} of {len(es):,} entries hold the shaders of the profile\'s shader_map.tsv; only these are read', flush=True); es = keep
+                    else: print(f'[RED] /{r}: {sum(1 for v in hit.values() if not v):,} of the map\'s entries are not in the CPK; every entry is read', flush=True)
+                with_head.append((p, r, es))
             except (ValueError, struct.error, KeyError, UnicodeDecodeError) as e:   # a layout cpk.py does not read: scanned as a loose file, as before CPKs were read (13 Sentinels and Catherine: Full Body were not checked)
                 print(f'[RED] /{r}: the CPK cannot be read ({e}); scanned as one file', flush=True)
     jobs, step = [], sum(e[3] for _, _, es in with_head for e in es) / parts
@@ -3720,8 +3733,8 @@ NOT_ROMFS = ('/glslc_capture/', '/ue_shaders/', '/nvn_shdump')   # map sources t
 def profile_files(files, main_v):
     """DM_SPLIT_TARGETED=1 (the phone's split, pack_android.py's): the RomFS files that hold the shaders of the profile's shader_map.tsv, when each main's build is one
     of the profile's build rows. A map row's source names where its key first appears: a RomFS file, or a member inside one ('/Lib/agl/agl_resource.sarc.zs/agl_technique_pfx.sharcb#BAHS@...'
-    is in the RomFS file Lib/agl/agl_resource.sarc.zs), with the scan's version tags (v327680/..., aoc/...). Its file is the prefix of the source, ending at a '/' or '#'
-    or the end, that is a file of the dump. With them the files of the profile's shader_files.tsv, when it has one. → ({relative path}, None), or (None, why the
+    is in the RomFS file Lib/agl/agl_resource.sarc.zs), with the scan's version tags (v327680/..., aoc/...). Its file is the prefix of the source, ending at a '/', '#' or ':'
+    or the end, that is a file of the dump (source_file). With them the files of the profile's shader_files.tsv, when it has one. → ({relative path}, None), or (None, why the
     targeted scan is not taken)"""
     m = GAME.table('shader_map.tsv')
     if not os.path.isfile(m): return None, 'the profile has no shader_map.tsv'
@@ -3729,14 +3742,9 @@ def profile_files(files, main_v):
     for p in main_v:
         b = build_id(p)
         if b not in builds: return None, f'main\'s build {b} is not one the profile was made from ({", ".join(sorted(builds)) or "it has no build rows"})'
-    srcs = set()
-    with open(m, encoding='utf-8') as f:
-        for ln in f:
-            c = ln.rstrip('\n').split('\t')
-            if len(c) > 4 and c[0].endswith('.bin') and c[4].startswith('/') and not c[4].startswith(NOT_ROMFS): srcs.add(c[4][1:])
     rels, want = {r for _, r in files}, set()
-    for s in srcs:
-        r = next((s[:i] for i in [i for i, ch in enumerate(s) if ch in '/#'] + [len(s)] if s[:i] in rels), None)
+    for s in map_sources():
+        r = source_file(s, rels)
         if r is None: return None, f'the profile\'s shader_map.tsv names /{s}, and the dump has no such file'
         want.add(r)
     # the files that hold only copies of shaders found earlier name no row's source, but their variations can pair them anew (Donkey Kong Bananza: 42 of its 15,576
@@ -3746,6 +3754,32 @@ def profile_files(files, main_v):
     if os.path.isfile(fl):
         with open(fl, encoding='utf-8') as f: want |= {r for ln in f if not ln.startswith('#') and (r := ln.rstrip('\n')) in rels}
     return want, None
+
+def map_sources():
+    """The RomFS sources of the profile's shader_map.tsv, without their leading '/' (main's and the captures' are not RomFS files: NOT_ROMFS)"""
+    srcs = set()
+    with open(GAME.table('shader_map.tsv'), encoding='utf-8') as f:
+        for ln in f:
+            c = ln.rstrip('\n').split('\t')
+            if len(c) > 4 and c[0].endswith('.bin') and c[4].startswith('/') and not c[4].startswith(NOT_ROMFS): srcs.add(c[4][1:])
+    return srcs
+
+def source_file(s, rels):
+    """The RomFS file of a map source (without its leading '/'): the shortest prefix ending at a '/', '#' or ':' or the end that is a file of the dump (rels), or None.
+    ':' ends a Unity bundle's file before its member ('/Data/data.unity3d:Resources/...'): without it Fire Emblem Engage, Castlevania: Belmont's Curse and Pokémon
+    Brilliant Diamond found no file for such a source, and the targeted scan was not taken"""
+    return next((s[:i] for i in [i for i, ch in enumerate(s) if ch in '/#:'] + [len(s)] if s[:i] in rels), None)
+
+def cpk_map_entries(files):
+    """The targeted scan's CPK entries (cpk_jobs' names): {rel of a .cpk of files: {entry names}} from the map's sources '/<cpk>/<entry>#…' (cpk_shaders labels each
+    shader '/<rel>/<entry name>' and its container), the entry being the source between the CPK's path and its first '#'"""
+    cpks = {r for _, r in files if r.lower().endswith('.cpk')}
+    if not cpks: return {}
+    out = {}
+    for s in map_sources():
+        r = source_file(s, cpks)
+        if r and len(s) > len(r) + 1 and s[len(r)] == '/': out.setdefault(r, set()).add(s[len(r) + 1:].split('#', 1)[0])
+    return out
 
 def profile_differs(t, pairsout, psopairsout):
     """None when each table the targeted scan made is the profile's byte for byte (the profile's tables are a full scan's of the same build), else which is not.
@@ -3803,7 +3837,7 @@ def scan_jobs(files, want=None, mains=(), nros=()):
     bd_jobs, bdts = bdt_jobs(files)   # Dark Souls Remastered's dvdbnd archives: the entries of each .bdt by its .bhd5 index, in ranges
     arc_jobs, arcs = smash_arc_jobs(files)   # Super Smash Bros. Ultimate's data.arc: its current files, in ranges
     pz_jobs, pkzs = pkz_jobs(files)   # Bayonetta 3's PKZ archives, Oodle Kraken decoded by the game's own decoder in the Mac host
-    ck_jobs, cpks = cpk_jobs(files)   # Bayonetta 2's CRI CPK archives (CRILAYLA entries)
+    ck_jobs, cpks = cpk_jobs(files, names=cpk_map_entries(files) if want is not None else None)   # Bayonetta 2's CRI CPK archives (CRILAYLA entries); targeted, the map's entries only
     # Portal's game.zip (Deflate members), Mario Tennis Fever's CRA archive, and Kirby Air Riders' PDAT archives. Each is found by its first bytes, so this opens each
     # file it is given: only the wanted ones, since none of them needs another file (Mario Kart World's 206,326 RomFS files took 29 s here on a Mac and minutes on a
     # Windows PC before the targeted scan had printed anything)
@@ -3831,7 +3865,8 @@ def split_tables(results, big, files, dumps, J, common, zdicts, cache, targeted=
     for rel, uniq, pr, extra in results:
         if extra == 'defer': defer.append(rel)
         elif isinstance(extra, dict): trees.update(extra)
-    if defer and targeted: raise Fallback(f'found Unity serialized files without type trees ({defer[0]}), whose trees may come from files it left out')
+    # targeted, the second pass is tried too (Fire Emblem Engage's Unity default resources borrow a tree the targeted bundles or KNOWN_TREES hold: the targeted scan used to be
+    # abandoned for all 206,874 files); only a file still without a tree falls back, and the tables are compared with the profile's afterwards as always (profile_differs)
     if defer:
         # a hash no bundle supplied takes the layout unityfs.py has for it (KNOWN_TREES); only here, so files a bundle lends a tree to keep their place in the tables (Ace Attorney's built-ins)
         import unityfs
@@ -3840,6 +3875,7 @@ def split_tables(results, big, files, dumps, J, common, zdicts, cache, targeted=
         with pool(J, common, trees, zdicts) as ex: again = ([scan_file((byrel[r], r)) for r in defer] if isinstance(ex, InProcess) else   # workers' large results through a file (scan_batch_spilled)
                      [x for v in ex.map(scan_batch_spilled, [[(byrel[r], r)] for r in defer]) for x in unspill(v)])
         for rel, uniq, pr, extra in again:
+            if extra == 'defer' and targeted: raise Fallback(f'found Unity serialized files without type trees ({rel}), whose trees may come from files it left out')
             if extra == 'defer': red(f'{rel}: Unity serialized file without type trees, and no bundle has a Shader type tree of the same hash to borrow')
         results = [r for r in results if r[3] != 'defer'] + again
     if dumps:

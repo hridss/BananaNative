@@ -46,6 +46,7 @@ Update 1.1.0 (v65536) over the base game, SDK 19.3.16. Unity 2022.3.62f2 IL2CPP 
 
 ## Found on this game
 
+- **The targeted split took the full scan** (a Unity bundle member's source, a Unity file without type trees, or a whole CPK): [The targeted split misses Unity bundle members, Unity files without type trees and CPK entries](../../../docs/reference/packing.md#the-targeted-split-misses-unity-bundle-members-unity-files-without-type-trees-and-cpk-entries-android).
 - Existing [Function-matched cuts](../../../docs/reference/rewriter.md#function-matched-cuts-for-unregistered-builds) work on this `sdk` build without a row of its own.
 
 ## Open

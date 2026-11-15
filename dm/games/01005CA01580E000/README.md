@@ -40,6 +40,7 @@ Choose offline mode at the network prompt, then New Game and English voices. Adv
 
 ## Found on this game
 
+- **The targeted split took the full scan** (a Unity bundle member's source, a Unity file without type trees, or a whole CPK): [The targeted split misses Unity bundle members, Unity files without type trees and CPK entries](../../../docs/reference/packing.md#the-targeted-split-misses-unity-bundle-members-unity-files-without-type-trees-and-cpk-entries-android).
 - [Linear render-target storage without the LINEAR flag](../../../docs/reference/nvn-objects.md#linear-render-target-storage-without-the-linear-flag): sizing, row pitch and deswizzle eligibility must all recognize `LINEAR_RENDER_TARGET` independently.
 - [Needle shader containers in main and GFD archives](../../../docs/reference/shaders.md#needle-shader-containers-in-main-and-gfd-archives): descriptor-based extraction of NVN control/code sections.
 

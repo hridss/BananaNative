@@ -52,6 +52,7 @@ Build with `scripts/build_ipa_from_nsp.py <dump folder> --platform mac`; its fin
 
 ## Found on this game
 
+- **The targeted split took the full scan** (a Unity bundle member's source, a Unity file without type trees, or a whole CPK): [The targeted split misses Unity bundle members, Unity files without type trees and CPK entries](../../../docs/reference/packing.md#the-targeted-split-misses-unity-bundle-members-unity-files-without-type-trees-and-cpk-entries-android).
 - SDK 11.4.3's instance of [the SDK's address-region node area](../../../docs/reference/memory.md#the-sdks-address-region-node-area), with the cut keyed by the shared SDK build ID.
 - Legacy kernels held directly in [Unity ComputeShader objects](../../../docs/reference/shaders.md#unity-computeshader-objects).
 - [VP8 decoding through libvpx](../../../docs/reference/movies.md#vp8-uses-the-same-libvpx-worker-and-output-paths).
