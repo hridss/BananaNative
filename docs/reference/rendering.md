@@ -289,6 +289,13 @@ The replay on Metal (`dm/gfx/nvn/nvn_mtl.m`) and the Vulkan and OpenGL layers. E
   - **Checks:** `pfbprobe` with the set-2 layout is to show 20/20 on both drivers, and the phone round is pending (open).
 - **Found on:** [The Legend of Zelda: Ocarina of Time](../../dm/games/0400486024DEC000/README.md), Adreno 840, Qualcomm's driver 0x8034a02c: Link's house walls stayed black there with texture pool reads on (Turnip V39 unaffected).
 
+### Textures read only through the pool stay black while the CPU is ahead (Android, experimental switch)
+
+- **Symptom:** (Android) on a loading spike, textures read only through the texture pool show black for several frames before they appear.
+- **Cause:** such a texture's image is made when the prepare finds the readback of the submission that first read it done ([Textures read only through the pool were never made](#textures-read-only-through-the-pool-were-never-made-android)); `pfb_consume_locked` takes only readbacks already done, so the gap is however many submissions the CPU recorded past that one before the GPU caught up, up to the readback ring's 8.
+- **Fix:** experimental, off by default: `DM_VK_POOL_EAGER=1` (live) makes the prepare wait, at most the hang time, for the oldest readback of a submission already queued, so the image comes about one submission after its first read. The wait stalls recording on frames that are already long, so it may lengthen them; after nx2android's Vulkan backend.
+- **Found on:** not measured here; carried over from nx2android's Vulkan backend for A/B runs (the "texture pool reads" line and long frames with first-use uploads are what to compare).
+
 ### Unreal's texture streaming pool
 
 - **Symptom:** in an Unreal Engine game, textures and lighting turn blurry and muddy about a second after an area loads and stay that way, whatever the frame rate, render scale or upscaling; no red line.
@@ -897,6 +904,13 @@ The replay on Metal (`dm/gfx/nvn/nvn_mtl.m`) and the Vulkan and OpenGL layers. E
 - **Check:** `t_rast_discard` passes 19 checks under Metal validation: array/indexed storage writes despite an empty scissor and both faces culled, two instances, unchanged clear colours, normal rendering between two discard phases, and an ordered storage-write consumer. `test_discard.py` compiles a generated entry with side effects before two different returns for Mac and iOS, and checks which vertex shaders get one.
 - **Found on:** [Xenoblade Chronicles 3](../../dm/games/010074F013262000/README.md#files-and-shaders); its note tracks the gameplay verification.
 - **Also found on:** [Metroid Prime Remastered](../../dm/games/010012101468C000/README.md): image stores only. Its volumetric fog fills a 100×57×64 RGBA16F froxel volume with `1cbc19f806a08166`, 5,700 points with rasterization off that each write the 3D image; a full-screen pass (`1b17e5a457135e3b`) then samples the volume at each pixel's depth and blends it over the scene (colour × alpha + inscatter). Only storage buffer writes counted, so the draw was skipped, the volume stayed zero, and every scene (the Frigate's hull, the gunship in the opening) came out black while the HUD drew over it. Neither the CPU nor any other GPU operation writes the volume (its guest memory stays zero, pool flags `0x22`); `DM_NVN_TEXSNAP` showed the scene intact until the fog pass.
+
+### Rasterizer-discard runs and stale low-resolution depth on Adreno (Android, experimental switches)
+
+- **Symptom:** (Android, Adreno) seen in nx2android's Vulkan backend, not yet here: slivers and grass drawn from vertices a rasterizer-discard draw had not written yet, and whole triangles culled by the low-resolution depth (LRZ) of another depth buffer (Xenoblade Chronicles 3's cloud dome, 13 Sentinels' checkerboard of stale bins).
+- **Cause:** NVN's GPU runs a pass's draws in order; Adreno runs the vertex shaders of a pass's draws in its binning pass, so a draw can read memory an earlier rasterizer-discard draw of the same pass has not written. And its driver may apply the LRZ of the depth buffer used before in the binning of later passes on other depth images.
+- **Fix:** experimental, each off by default until a game here is shown to need it (all live): `DM_VK_RD_SPLIT=1` gives runs of rasterizer-discard draws a render pass of their own, `DM_VK_RD_TOUCH=1` adds a 4-byte transfer read of each storage buffer such a run wrote where it ends (`vka_draw.c` rd_run / rd_touch); `DM_VK_LRZ_TOUCH=1` writes one texel of the depth image a pass switches away from back unchanged, and reads one of a depth image the pass loads, before the pass (`vka_tex.c` vka_lrz_touch, called by `rp_begin`), which drops a stale LRZ. After nx2android's Vulkan backend.
+- **Found on:** nx2android's runs of [Xenoblade Chronicles 3](../../dm/games/010074F013262000/README.md) and [13 Sentinels: Aegis Rim](../../dm/games/01003FC01670C000/README.md); Mario Kart 8 Deluxe has no such draws. Not run here.
 
 ### Primitive barriers order vertex storage writes
 

@@ -619,6 +619,7 @@ static int rp_begin(const p_set_rt *rt, int has_rt, const p_scissor *sc, int has
         else vka_clear_outside(c);
     }
     if (sp) sp = &sa;
+    if ((dp || sp) && VKA_ENV("DM_VK_LRZ_TOUCH", 0)) vka_lrz_touch(g_cb, s_im[8], dp && da.loadOp == VK_ATTACHMENT_LOAD_OP_LOAD);   // Adreno LRZ (vka_tex.c), outside the pass
     #undef INAREA
     #undef WHOLE
     vka_tex_feedback(fb_im, fb_lv, nfb);
@@ -2237,6 +2238,35 @@ static void mdi_cpu(int indexed, uint64_t ind, uint64_t cnt, uint32_t n, uint32_
         if (indexed) vk.vkCmdDrawIndexedIndirect(g_cb, b, o, 1, 20); else vk.vkCmdDrawIndirect(g_cb, b, o, 1, 16);
     }
 }
+// Runs of rasterizer-discard draws (vertex shaders that write memory later draws read) in render passes of their own, and a transfer read of what a run wrote where it ends,
+// after nx2android's Vulkan backend (Xenoblade Chronicles 3's slivers and grass there). NVN's GPU runs a pass's draws in order; Adreno runs the vertex shaders of a pass's draws
+// in its binning pass, so a draw can read vertices an earlier rasterizer-discard draw of the same pass has not written yet; with barriers alone later passes still met
+// unwritten data there, and a 4-byte copy of each written buffer at the run's end settled it. Experimental, default off until a game here is shown to need it:
+// DM_VK_RD_SPLIT=1 (live) gives runs a pass of their own; DM_VK_RD_TOUCH=1 (live) adds the read
+static int g_rd_prev; static uint64_t g_rd_wa[16]; static int g_rd_nwa; static uint64_t g_rd_runs, g_rd_reads;
+static void rd_touch(void) {
+    VkBuffer seen[16]; int ns = 0;
+    for (int i = 0; i < g_rd_nwa; i++) {
+        VkBuffer b; VkDeviceSize o; if (!vka_addr(g_rd_wa[i], 4, &b, &o, NULL)) continue;
+        int dup = 0; for (int j = 0; j < ns; j++) dup |= seen[j] == b;
+        if (dup) continue;
+        seen[ns++] = b;
+        vka_span s; if (!vka_scratch(4, 4, &s)) return;
+        VkBufferCopy r = {o, s.off, 4}; vka_barrier(g_cb); vk.vkCmdCopyBuffer(g_cb, b, s.buf, 1, &r); vka_barrier(g_cb); g_rd_reads++;
+    }
+}
+static void rd_run(const vka_dstate *d) {
+    int rd = d->rast_discard;
+    if (rd != g_rd_prev && VKA_ENV("DM_VK_RD_SPLIT", 0)) {
+        inst_close(); vka_rp_end();
+        if (rd && (++g_rd_runs == 1 || g_rd_runs % 4096 == 0)) VLOG("rasterizer-discard runs in passes of their own: %llu runs, %llu buffer reads at their ends", (unsigned long long)g_rd_runs, (unsigned long long)g_rd_reads);
+    }
+    if (rd) {
+        if (!g_rd_prev) g_rd_nwa = 0;
+        for (int r = 0; r < 16 && g_rd_nwa < 16; r++) { uint64_t x = d->b.ssbo[0][r].addr; int have = 0; for (int i = 0; i < g_rd_nwa; i++) have |= g_rd_wa[i] == x; if (x && !have) g_rd_wa[g_rd_nwa++] = x; }
+    } else if (g_rd_prev && !R.on && VKA_ENV("DM_VK_RD_TOUCH", 0)) rd_touch();
+    g_rd_prev = rd;
+}
 static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_scissor *sc, int has_sc, const p_draw *dw, const p_draw_idx *di) {
     if (!g_cb || !draws_on() || !statics()) { g_skipped++; return; }
     if (RUN.open && RUN.fast && di && !dw && g_inst_on && inst_fast(d, rt, has_rt, sc, has_sc, di)) {   // DM_VK_INSTANCE: the run's next object, no walk
@@ -2315,6 +2345,7 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
     { static char sk[1024]; static int got; if (!got) { const char *e = getenv("DM_VK_DRAW_SKIP_KEY"); snprintf(sk, sizeof sk, "%s", e ? e : ""); got = 1; }
       if (sk[0] && sh[1]) { char hex[17]; snprintf(hex, sizeof hex, "%016llx", (unsigned long long)sh[1]->key); if (strstr(sk, hex)) { g_skipped++; return; } } }
     if (d->poly.cull == NVN_FACE_FRONT_AND_BACK && !d->rast_discard) { vka_rtlog_skip(rt, has_rt, d, "not drawn: both faces culled"); return; }
+    if (!g_pp_side) rd_run(d);   // rasterizer-discard runs (above draw_body)
     int prim = dw ? dw->prim : di->prim, expand = 0;
     VkPrimitiveTopology topo = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;   // (a mesh pipeline's: every translated mesh shader outputs triangles)
     if (memu_e) topo = memu_e->points ? VK_PRIMITIVE_TOPOLOGY_POINT_LIST : VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
