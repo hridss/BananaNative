@@ -208,6 +208,13 @@ The game may also write into an NVN object directly, without an NVN call, throug
 - **Fix:** general: `nvnTexturePoolFinalize` and `nvnSamplerPoolFinalize` free the pool's range (`nvn_dpool_release`), and a new pool takes the smallest freed range that holds it before a new range is made at the table's end (`nvn_dpool_add`; test `t_nvn_dpool.c`). A pool that takes a freed range finds the old registrations there until it writes its own, as an NVN pool's new descriptors are whatever its memory held. Sixteen live pools of a kind still fill the table.
 - **Found on:** Mario Tennis Fever (`0400D4201C6EA000`, profile in pull request #268) (a texture and a sampler pool per sub-menu), Odin 3 (Adreno 830), Mainline Turnip v32, 2026-11-13.
 
+### Sampler IDs of a second sampler pool on the Vulkan replay (Android)
+
+- **Symptom:** a game that binds two sampler pools samples with the wrong sampler: textures that should clamp tile (Fire Emblem: Three Houses' window frames, whose edge textures run past 1 under a clamp sampler, showed their edges repeated); IDs past 4096 log `sampler ID … beyond the table (4096)`.
+- **Cause:** a bound handle carries its sampler ID with its pool's base added (`hle_nvn.c` bind_handles, [Descriptor pools made and finalized as the game goes](#descriptor-pools-made-and-finalized-as-the-game-goes)): up to 4 × 4,096 IDs, 14 bits. The replay cut it to the 12 bits of one pool's own IDs (`vka_bind.c` samp_of, and `vka_drv_fill`'s c2 for shaders that read the pools), so sampler 4356 of the second pool became the first pool's 260; and the bindless sampler table held 4,096 entries, one pool's span.
+- **Fix:** general: `SID_OF` keeps the 14 bits, `vka_drv_fill` takes the pool's base off the whole ID before it keeps a pool's 12 bits, and the sampler table holds 4 × 4,096 entries, capped by the device's limit (`vka_tex.c` bindless_init; `DM_VK_SAMP_SLOTS=4096` gives the one-pool table, for comparison).
+- **Found on:** [Fire Emblem: Three Houses](../../dm/games/010055D009F78000/README.md): a 3,856-entry scene pool and a 4,096-entry UI pool; the UI's samplers start at 4,096.
+
 ### A frame capture runs under the standard thread policy
 
 - **Symptom:** `regress.py capture` stops with `frame N was not captured within … s` although the game reached the frame before it; a capture takes 5 to 20 minutes where an earlier one of the same frame took 2 to 3, and a sample of the host shows the submitting thread in `lzfseEncodeBase` under `nvn_cap_submit`.

@@ -2527,7 +2527,10 @@ static void bindless_init(void) {
     enum { RESERVE = 5 * DMSH_VK_STAGE_BINDINGS };
 #define HEAD(lim) ((lim) > 2 * RESERVE ? (lim) - RESERVE : (lim) / 2)
     g_ntex_slots = MIN(1u << 20, HEAD(MIN(p12.maxDescriptorSetUpdateAfterBindSampledImages, p12.maxPerStageDescriptorUpdateAfterBindSampledImages)));
-    g_nsamp_slots = MIN(4096u, HEAD(MIN(p12.maxDescriptorSetUpdateAfterBindSamplers, p12.maxPerStageDescriptorUpdateAfterBindSamplers)));
+    // The sampler table holds every pool's span, not one: a game whose command buffers bind more than one sampler pool gets each later pool its own base above the first
+    // (hle_nvn.c dpool_add), and the registrations take 4 pools of 4096 (mtl_reg_samp). Fire Emblem: Three Houses: a 3,856-entry scene pool and a 4,096-entry UI pool
+    // overflowed a 4096-entry table at ID 4352. DM_VK_SAMP_SLOTS=4096: the one-pool table, for comparison
+    g_nsamp_slots = MIN((uint32_t)VKA_ENV("DM_VK_SAMP_SLOTS", 4096 * 4), HEAD(MIN(p12.maxDescriptorSetUpdateAfterBindSamplers, p12.maxPerStageDescriptorUpdateAfterBindSamplers)));
     g_nimg_slots = MIN(1u << 16, HEAD(MIN(p12.maxDescriptorSetUpdateAfterBindStorageImages, p12.maxPerStageDescriptorUpdateAfterBindStorageImages)));
 #undef HEAD
 #undef MIN
