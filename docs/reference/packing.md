@@ -343,6 +343,13 @@
 - **Fix:** `vk_android_win.py` `install()` sets `os.O_BINARY` on `os.open` calls that do not ask for `os.O_TEXT`, and supplies `os.pread` as a locked `os.lseek` + `os.read` loop (as `dm/tools/nup.py` does). `vk_android_build.py` is unchanged, so `DMSH_VK_CHAIN` does not move. Test: `dm/tools/tests/test_vk_android_locate.py` `test_real_package_files_and_windows_wrapper`; checked on Windows with a three-shader Donkey Kong Bananza key-list build (`delta check: 3 of 3 shaders as the manifest has them`).
 - **Found on:** [Donkey Kong Bananza](../../dm/games/040074A01BF12000/README.md#found-on-this-game) update 458752 on Windows. Applies to every game packed on Windows when any shader is translated.
 
+### The shader build on Linux stops at the translator: "Exec format error" (Android)
+
+- **Symptom:** on Linux, `scripts/pack_android.py` splits the shaders and then stops in `vk_android_build.py` when it starts the translator, with `OSError: [Errno 8] Exec format error` on `dm/gfx/tools/dmsh_xlate_bin/dmsh_xlate`, or the tool check reports that the translator does not run.
+- **Cause:** the apphost `dmsh_xlate` in the repository is the Mac's (a Mach-O file). Windows already started the portable `dmsh_xlate.dll` beside it with `dotnet` (`tool_lock.py` `xlate_command`, through `vk_android_win.py`), but on Linux the packer ran `vk_android_build.py` directly and `xlate_command` returned the apphost.
+- **Fix:** on Linux `xlate_command` returns `dotnet <path>.dll` when the `.dll` is there (`DOTNET_ROOT`'s `dotnet`, else the one on `PATH`), `no_run_message` names the .NET 10 runtime without the Mac's or Windows's install hints, and `pack_android.py` starts the build through `vk_android_win.py` on Linux too, whose `install()` there only wraps the translator's start (the `os.pread` and file adaptations stay Windows's). `vk_android_build.py` is unchanged, so `DMSH_VK_CHAIN` does not move.
+- **Found on:** a pack made on Linux. Applies to every game packed on Linux.
+
 ### The Mac's pack translates every shader of a selected profile at a new library version
 
 - **Symptom:** after an update with a new Android library version and no shader change (the release notes' stamp rows), `scripts/pack_android.py` on a Mac packs most games in seconds, but for a profile with a selected set it translates the whole shader map into `android-shaders/lib/v-<V>/results`: Pokopia's 131,426 shaders at about 6 hours, mostly on one core, though its older library plays fine. The same happened at the version before.
