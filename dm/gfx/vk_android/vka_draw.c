@@ -524,6 +524,16 @@ static int rp_area_fits(const p_scissor *sc, int has_sc, const vka_dstate *d, co
     if (rt && has_rt) { if (g_miss_n && rt_same(rt, 1, &g_miss_rt, 1)) g_miss_n++; else { g_miss_rt = *rt; g_miss_n = 1; } }
     return 0;
 }
+// Whether the pass's draws may be skipped while their pipeline is made in the background (DM_VK_PSO_ASYNC, vka_pso.c vka_pso_redrawn): only when the game drew every one of
+// its targets in one of the two frames before (each frame's targets, and those it draws every other frame). A target it draws once and keeps (Unreal Engine 5's colour
+// grading table, a 32x32x32 volume CombineLUTs fills when the post-process settings change) lost that draw for good: the tonemapper read zeros and Orbitals' menus were
+// black. Such a pass waits for its pipeline, as without DM_VK_PSO_ASYNC. Called after each attachment's vka_img_written: wr_prev is the frame of its write before this one
+static void pass_redrawn(vka_img *const *im, int n) {
+    uint64_t vka_frame(void);
+    uint64_t f = vka_frame(); int ok = 1;
+    for (int i = 0; i < n && ok; i++) ok = im[i] && im[i]->wr_prev && f - im[i]->wr_prev <= 2;
+    vka_pso_redrawn = ok;
+}
 // Opens the pass over the bound targets: 0 = it cannot (no target can be an attachment), logged
 static int rp_begin(const p_set_rt *rt, int has_rt, const p_scissor *sc, int has_sc, const vka_dstate *d) {
     if (R.on) { if (!g_pass_keep || (rt_same(rt, has_rt, &R.rt, R.has_rt) && rp_area_fits(sc, has_sc, d, rt, has_rt))) return 1; vka_rp_end(); }   // a new SET_RT of other targets ends the pass at its first draw (exec does not)   // a new SET_RT of other targets ends the pass at its first draw (exec does not)
@@ -586,6 +596,7 @@ static int rp_begin(const p_set_rt *rt, int has_rt, const p_scissor *sc, int has
             }
         } else if (im) VRED_ONCE("depth target (format %#x) cannot be a Vulkan depth attachment: drawn without depth", rt->depth->d.format);
     }
+    pass_redrawn(fb_im, nfb);
     if (w == UINT32_MAX) {   // no attachment at all (rasterizer discard, or targets Vulkan cannot take): the viewport's size, for side effects
         if (!d->has_vp) { VRED_ONCE("a draw with no render target and no viewport: skipped"); return 0; }
         w = (uint32_t)fabsf(d->vp[0][2]); h = (uint32_t)fabsf(d->vp[0][3]); if (!w) w = 1; if (!h) h = 1; layers = 1;
