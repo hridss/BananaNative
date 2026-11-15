@@ -62,6 +62,7 @@ On a first start the language, gamma and terms screens come before the title: `A
 - A frame the Mac dropped stays queued in the frame history: after both players readied up, the load stopped presenting, and Unreal aborted with `GameThread timed out waiting for …`.
 - [A second controller on a player the game does not read](../../../docs/reference/services.md#a-second-controller-on-a-player-the-game-does-not-read): on Android an Xbox controller paired during play ended up on player 3, which this two-player game never reads, and Play Local's controller applet was canceled at every try.
 - [The controller applet as a join screen](../../../docs/reference/services.md#the-controller-applet-as-a-join-screen): Play Local's controller screen (two players) shows on Android, where the second player joins by L + R.
+- [A draw skipped for a background pipeline left a kept texture empty](../../../docs/reference/rendering.md#a-draw-skipped-for-a-background-pipeline-left-a-kept-texture-empty-android): on Android, the colour grading table's one draw skipped on a first start; the main menu's backgrounds stayed black.
 
 ## Open
 

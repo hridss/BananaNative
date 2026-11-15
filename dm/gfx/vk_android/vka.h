@@ -297,6 +297,7 @@ typedef struct vka_img {
     int refs, inited, gpu_owned, cpu_dirty;
     int is_video;
     uint64_t last_frame;
+    uint64_t wr_frame, wr_prev;   // the frame of its last GPU write, and the frame of the write before that frame (vka_img_written): vka_draw.c pass_redrawn
     uint64_t pool_frame;     // the last prune that found a live texture pool slot naming it (vka_tex_prune_locked): shaders may read it through the pool, so it is in use
     uint64_t last_fence;
     int no_storage;          // remaking it with storage use was refused (img_storage_upgrade): not tried again
@@ -358,6 +359,7 @@ void vka_tex_drop_pool(const void *pool);            // drop all images belongin
 // The GPU writes im (render target, clear, copy destination, storage image): its content is the GPU's from now on (no re-upload from storage), and a linear texture's level 0
 // is copied back into its storage when the submission ends (vka_tex_writeback), where the CPU reads it as it would on the Switch
 void vka_img_written_at(vka_img *im, const char *file, int line);
+extern int vka_pso_redrawn;   // the open pass's targets were all drawn in the two frames before (vka_draw.c pass_redrawn): its draws may be skipped for a pipeline made in the background (vka_pso.c)
 #define vka_img_written(im) vka_img_written_at(im, __FILE_NAME__, __LINE__)   // (the site is logged for a large image's first write, DM_VK_BIGIMG_MB)
 // Before a write is recorded into im (an attachment, a clear, a copy destination, a storage image): a zero-shared image gets memory of its own, cleared (vka_tex.c img_own).
 // Call it before taking a view of im for the write. Any thread that records (takes the table lock); no render pass may be open in cb unless upload batches are on
