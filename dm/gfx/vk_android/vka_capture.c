@@ -585,6 +585,12 @@ void nvn_cap_submit(int n, const uint64_t *h) {
     g_cap_ns += now_ns() - t0;
 }
 
+// The capture's time brought forward to now (a diagnostic that sees its frame coming: vka_draw.c ind_peek, DM_VK_IND_PEEK=3): with DM_NVN_CAPTURE=@<far>:1:<path>, the frame
+// after the next present is captured. Nothing when no @seconds capture waits
+void vka_capture_trigger(void) {
+    if (g_cap_frame == 0 && g_cap_at_s > 0 && !g_cap_done) { g_cap_at_s = 1e-6; CLOG("triggered: the next frame is captured"); }
+}
+
 // Hook: nvnQueuePresentTexture, before the present is queued
 void nvn_cap_present(const tex_t *t, const int crop[4]) {
     if (!nvn_cap_enabled()) return;

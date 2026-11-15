@@ -2041,6 +2041,26 @@ static int bisect_drop(vka_shader *const *sh) {
     return 1;
 }
 
+// DM_VK_IND_PEEK=1 (diagnostic, live): each indirect draw's arguments as guest memory holds them while the draw is recorded (what the GPU wrote last: the previous frame's
+// values for arguments the game's compute writes every frame), with the draw's shaders. The first DM_VK_IND_PEEK_LINES (200) lines, and up to 200 more for arguments that
+// would draw more than 50 M vertices or 1 M instances (a GPU timeout: Orbitals' first gameplay frames, "gpu timeout" in the kernel log, no shader of its own to blame)
+// =2: such a draw is also skipped (returns 1), to tell whether those draws are what the GPU times out on
+static int ind_peek(vka_shader *const *sh, uint64_t ind, uint64_t mdi, uint32_t mdi_n, uint32_t mdi_st, int indexed) {
+    int mode = (int)VKA_ENV("DM_VK_IND_PEEK", 0);
+    if (!mode || !ind) return 0;
+    static _Atomic int lines, big_lines;
+    const volatile uint32_t *w = (const volatile uint32_t *)(uintptr_t)ind;
+    uint32_t cnt = w[0], inst = w[1], n = mdi_n && mdi ? *(const volatile uint32_t *)(uintptr_t)mdi : 1;
+    int big = (uint64_t)cnt * inst > 50000000ull || inst > 1000000u || (mdi_n && n > mdi_n);
+    if (big && mode == 3) { void vka_capture_trigger(void); vka_capture_trigger(); }   // =3: an @seconds DM_NVN_CAPTURE takes the next frame (vka_capture.c)
+    if (big ? atomic_fetch_add(&big_lines, 1) < 200 : atomic_fetch_add(&lines, 1) < VKA_ENV("DM_VK_IND_PEEK_LINES", 200)) {
+        uint64_t vka_frame(void);
+        VLOG("%sind peek: frame %llu %s indirect at %#llx: count %u instances %u first %u %u (records %u of at most %u, stride %u); vs %016llx ps %016llx%s", big ? "[RED] " : "",
+             (unsigned long long)vka_frame(), indexed ? "indexed" : "plain", (unsigned long long)ind, cnt, inst, w[2], w[3], n, mdi_n, mdi_st,
+             (unsigned long long)(sh[0] ? sh[0]->key : 0), (unsigned long long)(sh[1] ? sh[1]->key : 0), big && mode == 2 ? " (skipped: DM_VK_IND_PEEK=2)" : "");
+    }
+    return big && mode == 2;
+}
 void vka_draw(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_scissor *sc, int has_sc, const p_draw *dw, const p_draw_idx *di) {
     static int tick;
     if (!g_prof_all && (g_prof_every <= 0 || ++tick < g_prof_every)) { draw_body(d, rt, has_rt, sc, has_sc, dw, di); return; }
@@ -2680,7 +2700,7 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
         ib_bind(s.buf, s.off, VK_INDEX_TYPE_UINT32);
         vk.vkCmdDrawIndexed(g_cb, nout, inst, 0, di ? di->base_vertex : 0, binst);
     } else if (dw) {
-        if (ind) { VkBuffer b, cb; VkDeviceSize o, co;
+        if (ind) { VkBuffer b, cb; VkDeviceSize o, co; if (ind_peek(sh, ind, mdi, mdi_n, mdi_st, 0)) { g_skipped++; return; }
                    VRED_ONCE("indirect draws: outside vertex shaders, the driver segment's base instance (c0 + 0x644) reads the record's, not the GPU's");
                    if (mdi_n) { if (mdi_ranges(ind, mdi, mdi_n, mdi_st, 16, &b, &o, &cb, &co)) vk.vkCmdDrawIndirectCount(g_cb, b, o, cb, co, mdi_n, mdi_st); else mdi_cpu(0, ind, mdi, mdi_n, mdi_st); }
                    else { if (!vka_addr(ind, 16, &b, &o, NULL) || (o & 3)) SKIP("indirect draw arguments at %#llx are not in placed guest RAM: skipped", (unsigned long long)ind);
@@ -2705,7 +2725,7 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
             ijoin = 0; ib = i_ib; io = i_io; it = i_it;
         } else if (!vka_addr(di->ibuf, ind ? isz : isz * (uint64_t)(di->count > 0 ? di->count : 1), &ib, &io, NULL) || io % isz) SKIP("index buffer at %#llx is not in placed guest RAM: skipped", (unsigned long long)di->ibuf);
         ib_bind(ib, io, it);
-        if (ind) { VkBuffer b, cb; VkDeviceSize o, co;
+        if (ind) { VkBuffer b, cb; VkDeviceSize o, co; if (ind_peek(sh, ind, mdi, mdi_n, mdi_st, 1)) { g_skipped++; return; }
                    if (mdi_n) { if (mdi_ranges(ind, mdi, mdi_n, mdi_st, 20, &b, &o, &cb, &co)) vk.vkCmdDrawIndexedIndirectCount(g_cb, b, o, cb, co, mdi_n, mdi_st); else mdi_cpu(1, ind, mdi, mdi_n, mdi_st); }
                    else { if (!vka_addr(ind, 20, &b, &o, NULL) || (o & 3)) SKIP("indirect draw arguments at %#llx are not in placed guest RAM: skipped", (unsigned long long)ind);
                           vk.vkCmdDrawIndexedIndirect(g_cb, b, o, 1, 20); } }
