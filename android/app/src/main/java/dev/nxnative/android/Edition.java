@@ -67,6 +67,10 @@ final class Edition {
         String p1 = program1(new File(g.gameDir));
         File game = new File(g.gameDir).getAbsoluteFile();
         File[] places = {AppStorage.pack(c, p1), new File(game.getParentFile(), p1 + "-work/android-pack")};
+        // a pack with this APK's shader library first (Pack.libraryOf: a file check, on the main thread), so an app-storage pack without one (its library deleted, or
+        // a code-only Prepare) does not hide a complete pack beside the game; else the first pack, as before (its card then says what the shaders need)
+        for (File d : places)
+            if (new File(d, "pack.tsv").isFile() && Pack.libraryOf(d) != null) return new Game(p1, name(g), g.gameDir, d.getPath());
         for (File d : places)
             if (new File(d, "pack.tsv").isFile()) return new Game(p1, name(g), g.gameDir, d.getPath());
         return null;
