@@ -359,6 +359,22 @@ For a replaced DSP renderer the size query keeps the service's work-buffer contr
 - **Found on:** [DRAGON QUEST XI S: Echoes of an Elusive Age – Definitive Edition](../../dm/games/01006C300E9F0000/README.md).
 - **Check:** `audren: rendered N frames, M of them not silent` (every 15 s of a run since the line gained its window) shows whether a game's sound reaches the output.
 
+### Sound that drags and crackles: frames rendered in the output's bursts (Android)
+
+- **Symptom:** (Android) the sound drags and crackles under load; the log's `audren: render time mean … / max … ms … catch-up renders so far N` climbs (Fire Emblem: Three Houses: 550 catch-up frames per 2,000), and a recording shows many 5 ms blocks that are exact copies of the block 20 ms before.
+- **Cause:** four, one behind the other. The render thread rendered when the output handed a block back; AAudio without a fast track hands back a 20 ms burst, four blocks at once, so the thread rendered four frames in 1.6 ms and then nothing for 18 ms: the renderer event fired in bursts and the game's updates between them rendered catch-up frames. Each catch-up frame ran the voices 5 ms ahead of the clock, so a game that streams through a voice's four 5 ms wave buffers and refills them by the clock reached buffers not refilled yet. The thread chose a frame and then waited for a catch-up render in progress, so two blocks could be queued out of order; and it copied the chosen frame after releasing the queue, so a catch-up render could overwrite it first (the block four before played again). And the thread ran at the same OS priority as every game thread.
+- **Fix:** `hle_audren.c`: the render thread renders one frame per 5 ms by the clock (0.5 % fast, so the sound card stays the master; the cadence starts afresh after the output held it back), with 8 blocks in flight on Android; at Android's audio priority (nice −16). One recursive render lock covers the thread's choice, its render and the copy of the frame, and an update's catch-up render through its queuing. An update with nothing rendered since the one before first waits up to 15 ms for the render thread's next frame and renders a catch-up frame only when none came (`DM_AUDREN_WAIT=0`: no wait, as before).
+- **Found on:** [Fire Emblem: Three Houses](../../dm/games/010055D009F78000/README.md) (its music); [Animal Crossing: New Horizons](../../dm/games/01006F8002326000/README.md).
+- **Check:** `t_audren_work`; on a run log, the catch-up count in the `audren: render time` lines.
+
+### The audio renderer stops for good: a wait for the render lock counted as running
+
+- **Symptom:** the sound stops and a cutscene that runs by the audio clock freezes (Metroid Dread, at the game's 45,692nd render); the thread dump's `audren:` line shows the render count stopped while the updates go on.
+- **Cause:** the render thread holds the render lock through the SDK's signal of the game's renderer event. The signal wakes the game's sound thread, a higher priority on the same core, and the same-core handoff (`hle_thread.c`) waits until that thread blocks. Its update then waited for the render lock for a catch-up render, a wait the host counted as running: neither side went on.
+- **Fix:** the render lock is taken with `dm_host_mutex_lock`, and the update's waits for the render thread raise `dm_host_work`, so a guest thread waiting there counts as blocked (`hle_audren.c`). `svc_thread_dump` prints the renderer's state (`dm_audren_dump`) and marks the host's own threads `(host-created)`.
+- **Found on:** [Metroid Dread](../../dm/games/010093801237C000/README.md).
+- **Check:** `t_audren_work` (a thread waiting for the render lock counts as host work).
+
 ### No virtual audio input devices (SDK 22)
 
 - **Symptom:** abort at boot in SDK 22's audio input subsystem when listing virtual audio input devices.

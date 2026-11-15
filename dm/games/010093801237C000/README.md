@@ -91,6 +91,7 @@ After integration with main's pipeline archive and profiling changes (`7753b7b`)
 
 General host changes first needed here; each applies to every game:
 
+- **A wait for the audio render lock counts as blocked** (`hle_audren.c`, `dm_audren_dump`): [The audio renderer stops for good: a wait for the render lock counted as running](../../../docs/reference/audio.md#the-audio-renderer-stops-for-good-a-wait-for-the-render-lock-counted-as-running).
 - **Synchronization review gameplay validation:** [Final gameplay validation](#final-gameplay-validation-2026-10-26-current) records the #158/#213 comparison and its limits; the general fixes and synthetic regressions are linked under the earlier smoke routes.
 - **Patch areas before the module base** for modules with a giant bss (negative `PATCH_OFF`, `FILE_IMAGE_LEN`, `IMAGE_SIZE`): [Patch area before the module base for a large bss](../../../docs/reference/rewriter.md#patch-area-before-the-module-base-for-a-large-bss).
 - **Used memory counts the bss of front-patch modules** (`big_bss_bytes`): [Heap sized from the application pool less used memory](../../../docs/reference/memory.md#heap-sized-from-the-application-pool-less-used-memory).
