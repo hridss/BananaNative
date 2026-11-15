@@ -386,9 +386,12 @@ static void prot_readonly(const prun *r, int n) { for (int i = 0; i < n; i++) if
 // Place and unplace read the runs before swap_begin and put them back at the end, so a protection the dirty tracker (nvn_dirty.c) changed in the range in between would be
 // undone (a page it unprotected made read-only again: state NONE, read-only, a writer spins; one it protected made writable: its writes missed). Placing, the tracker is
 // held over the range (nvn_dirty_hold: its protected pages released, none protected until the swap ends), since a pool is placed when the GPU first gets an address in it
-// (mtl_pool_need), and its textures may be tracked by then. Unplace swaps only segments no pool references, and hle_nvn.c removes a pool's tracked range before
-// mtl_pool_del (unplace waits for fences, so it may not hold the tracker: the replay thread protects pages). Open (narrow): vka_mem_release over a live pool (a game
-// error, [RED] there) and the guest's permission SVCs on pool memory
+// (mtl_pool_need), and its textures may be tracked by then. Giving back, it is held too, once the GPU wait is over (the replay thread protects pages, and it must not
+// wait on the tracker while the give-back waits for its fence): a segment no pool references may still lie under a live pool. A pool made over memory a placed segment
+// still covers (the game finalized the pool there and made a new one on the same storage, while the segment lived on for another pool that shares it: a contiguous
+// join, an alignment granule) finds its addresses placed and takes no reference (mtl_pool_need); its tracker range is live, and the segment is given back under it when
+// its last reference goes (Orbitals: 10-24 times a run of its level load, the new pool's protected pages in the range). Open (narrow): the guest's permission SVCs
+// on pool memory
 static int prot_known(prun *r, int *n, uintptr_t lo, uintptr_t hi) {   // 1 = the runs were read and all are mapped; with none read, [lo, hi) read-write is assumed (0)
     if (!*n) { r[0] = (prun){lo, hi, PROT_READ | PROT_WRITE}; *n = 1; return 0; }
     for (int i = 0; i < *n; i++) if (r[i].prot < 0) return 0;
@@ -637,6 +640,7 @@ static void unplace(const seg_t *sp) {
     seg_t s = *sp; size_t n = s.hi - s.lo;
     uint64_t fence = vka_fence_last();
     int waited = vka_wait_done(fence, vka_hang_ns()) && !vka_hung();
+    nvn_dirty_hold((const void *)s.lo, n);   // (after the wait: see the note above prot_known; released after swap_end)
     prun pr[MAXRUN]; int npr = prot_runs(s.lo, s.hi, pr, MAXRUN), exact = prot_known(pr, &npr, s.lo, s.hi);
     swap_begin(s.lo, s.hi);
     prot_readonly(pr, npr);
@@ -685,6 +689,7 @@ static void unplace(const seg_t *sp) {
     for (int k = 0; k < npr; k++) if (pr[k].prot >= 0 && pr[k].prot != (PROT_READ | PROT_WRITE)) sw_mprotect(pr[k].lo, pr[k].hi - pr[k].lo, pr[k].prot);
     swap_end_ok(t != MAP_FAILED && exact);   // (marked as well when a call failed, e.g. the mremap and its fallback map)
     swap_end();
+    nvn_dirty_unhold();
     uint64_t left = vka_mem_placed_bytes(NULL);
     static int nlog; if (nlog++ < 4) VLOG("pool memory %#lx+%#zx given back as anonymous memory (%.2f GiB placed)", (unsigned long)s.lo, n, left / 1073741824.0);
 }
