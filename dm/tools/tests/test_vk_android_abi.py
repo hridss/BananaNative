@@ -343,10 +343,19 @@ OpName %rows "rows"
 OpName %sized "sized"
 OpName %x "x"
 OpName %i1 "i1"
+OpName %s1 "s1"
+OpName %xa "xa"
+OpName %twice "twice"
+OpName %texel0 "texel0"
+OpName %s4 "s4"
 OpDecorate %rows DescriptorSet 0
 OpDecorate %rows Binding 1
 OpDecorate %sized DescriptorSet 0
 OpDecorate %sized Binding 2
+OpDecorate %twice DescriptorSet 0
+OpDecorate %twice Binding 4
+OpDecorate %texel0 DescriptorSet 0
+OpDecorate %texel0 Binding 5
 OpDecorate %out DescriptorSet 0
 OpDecorate %out Binding 3
 OpDecorate %ob Block
@@ -365,12 +374,16 @@ OpMemberDecorate %ob 0 Offset 0
 %pob = OpTypePointer StorageBuffer %ob
 %pv4 = OpTypePointer StorageBuffer %v4float
 %sfn = OpTypeFunction %int %int %int
+%pfi = OpTypePointer Function %int
 %c16383 = OpConstant %int 16383
 %c14 = OpConstant %int 14
 %c0 = OpConstant %int 0
+%c1 = OpConstant %int 1
 %c70000 = OpConstant %int 70000
 %rows = OpVariable %pimg UniformConstant
 %sized = OpVariable %pimg UniformConstant
+%twice = OpVariable %pimg UniformConstant
+%texel0 = OpVariable %pimg UniformConstant
 %out = OpVariable %pob StorageBuffer
 %scale = OpFunction %int None %sfn
 %a = OpFunctionParameter %int
@@ -380,9 +393,13 @@ OpReturnValue %a
 OpFunctionEnd
 %main = OpFunction %void None %fn
 %l = OpLabel
+%lv = OpVariable %pfi Function
 %x = OpCopyObject %int %c70000
-%lo = OpBitwiseAnd %int %x %c16383
-%hi = OpShiftRightLogical %int %x %c14
+%xu = OpBitcast %uint %x
+%xa = OpBitcast %int %xu
+%xb = OpBitcast %int %xu
+%lo = OpBitwiseAnd %int %xa %c16383
+%hi = OpShiftRightLogical %int %xb %c14
 %hu = OpBitcast %uint %hi
 %hs = OpBitcast %int %hu
 %cx = OpFunctionCall %int %scale %lo %c0
@@ -395,8 +412,35 @@ OpFunctionEnd
 %i2 = OpImage %img %s2
 %q = OpImageQuerySizeLod %v2int %i2 %c0
 %f2 = OpImageFetch %v4float %i2 %co Lod %c0
+%ya = OpCopyObject %int %c70000
+%yb = OpCopyObject %int %c70000
+%l2 = OpBitwiseAnd %int %ya %c16383
+OpStore %lv %l2
+%l2r = OpLoad %int %lv
+%h2 = OpShiftRightLogical %int %yb %c14
+%cx2 = OpFunctionCall %int %scale %l2r %c0
+%cy2 = OpFunctionCall %int %scale %h2 %c0
+%co2 = OpCompositeConstruct %v2int %cx2 %cy2
+%s3 = OpLoad %simg %twice
+%i3 = OpImage %img %s3
+%f3 = OpImageFetch %v4float %i3 %co2 Lod %c0
+%k0 = OpFunctionCall %int %scale %c0 %c0
+%k1 = OpFunctionCall %int %scale %c1 %c0
+%kc0 = OpCompositeConstruct %v2int %k0 %k0
+%kc1 = OpCompositeConstruct %v2int %k1 %k0
+%s4 = OpLoad %simg %rows
+%i4 = OpImage %img %s4
+%f4 = OpImageFetch %v4float %i4 %kc0 Lod %c0
+%f5 = OpImageFetch %v4float %i4 %kc1 Lod %c0
+%s6 = OpLoad %simg %texel0
+%i6 = OpImage %img %s6
+%f6 = OpImageFetch %v4float %i6 %kc0 Lod %c0
+%sa = OpFAdd %v4float %f1 %f3
+%sb = OpFAdd %v4float %sa %f4
+%sc = OpFAdd %v4float %sb %f5
+%sum = OpFAdd %v4float %sc %f6
 %po = OpAccessChain %pv4 %out %c0
-OpStore %po %f1
+OpStore %po %sum
 OpReturn
 OpFunctionEnd
 '''
@@ -418,16 +462,25 @@ class Rewrites(unittest.TestCase):
             return subprocess.run(['spirv-dis', str(p)], capture_output=True, text=True).stdout if shutil.which('spirv-dis') else ''
 
     def test_row_fetch_buffers(self):
-        """A slot read only as rows of 16384 texels becomes a uniform texel buffer read at x; one that is also size-queried stays a 2D slot"""
+        """A slot read only as rows of 16384 texels (each half from its own bitcast of x, as Orbitals' f2a89c6cbf046098 has) becomes a uniform texel buffer read at x
+        with no OpImage left (the runtime retyper follows a load straight to its reads); one whose halves come from two loads of x, the low one through a local
+        (f1b3c237bfd5b871), read at hi << 14 | lo; one whose x the translator folded to a constant, beside row reads, read at that element; one read only at a constant texel, or also
+        size-queried, stays a 2D slot"""
         m = self.module(ROWS_CS)
-        self.assertEqual(spv.row_fetch_buffers(m), 1)
+        self.assertEqual(spv.row_fetch_buffers(m), 2)
         r = {e['name']: e for e in m.resources()}
         self.assertEqual((r['rows']['desc'], r['rows']['dim']['dim']), (spv.VK_UNIFORM_TEXEL, spv.DIM_BUFFER))
+        self.assertEqual((r['twice']['desc'], r['twice']['dim']['dim']), (spv.VK_UNIFORM_TEXEL, spv.DIM_BUFFER))
+        self.assertEqual((r['texel0']['desc'], r['texel0']['dim']['dim']), (spv.VK_COMBINED, 1))   # read only at a constant texel: may be a 2D texture
         self.assertEqual((r['sized']['desc'], r['sized']['dim']['dim']), (spv.VK_COMBINED, 1))
         text = self.valid(m)
         if text:
             self.assertIn('SampledBuffer', text)
-            self.assertIn('OpImageFetch %v4float %i1 %x', text)   # x itself, no Lod
+            self.assertIn('OpImageFetch %v4float %s1 %xa', text)   # x itself, from the load, no Lod
+            self.assertNotIn('%i1', text)
+            self.assertIn('OpImageFetch %v4float %s4 %int_0', text)   # rows' folded constant reads: elements 0 and 1
+            self.assertIn('OpImageFetch %v4float %s4 %int_1', text)
+            self.assertRegex(text, r'(%\w+) = OpShiftLeftLogical %int %\w+ %int_14\n +(%\w+) = OpBitwiseOr %int %\w+ \1\n +%\w+ = OpImageFetch %v4float %\w+ \2\n')   # twice: hi << 14 | lo
 
     def test_vertex_rewrites(self):
         m = self.module(VS)

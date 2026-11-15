@@ -1488,18 +1488,37 @@ def row_fetch_buffers(m):
         if op in (OP_FUNCTION_CALL, OP_IMAGE_FETCH, OP_IMAGE, OP_COMPOSITE_CONSTRUCT, OP_SHIFT_RIGHT_LOGICAL, OP_BITWISE_AND, OP_BITCAST, OP_LOAD) and len(x) >= 4: defs[x[2]] = x
     def cval(i):
         c = m.consts.get(i); return c[1][0] if c and len(c[1]) == 1 else None
-    def strip(i):   # through bitcasts and the scale helper's call (its first argument is the coordinate)
-        while i in defs and defs[i][0] & 0xffff in (OP_BITCAST, OP_FUNCTION_CALL):
-            x = defs[i]; i = x[3] if x[0] & 0xffff == OP_BITCAST else (x[4] if len(x) >= 5 else None)
+    load_at = {}
+    def through_local(i):   # a Function variable's load → the value its block stored there last (the translator keeps registers in locals)
+        k = load_at.get(i)
+        if k is None or m.vars.get(m.ins[k][3], (0, None))[1] != SC_FUNCTION: return i
+        p = m.ins[k][3]
+        for j in range(k - 1, -1, -1):
+            y = m.ins[j]; o = y[0] & 0xffff
+            if o == OP_LABEL or o == OP_FUNCTION_CALL and p in y[4:]: return i   # (a call given the pointer may store there)
+            if o == OP_STORE and y[1] == p: return y[2]
         return i
-    def linear(coord):   # the x of (x & 0x3FFF, x >> 14), or None
+    def strip(i):   # through bitcasts, the scale helper's call (its first argument is the coordinate) and locals
+        while True:
+            i = through_local(i); x = defs.get(i)
+            if not x or x[0] & 0xffff not in (OP_BITCAST, OP_FUNCTION_CALL): return i
+            i = x[3] if x[0] & 0xffff == OP_BITCAST else (x[4] if len(x) >= 5 else None)
+    def half(i, op):   # a component of the coordinate: (x & 0x3FFF or x >> 14, x), or (a constant, None): the translator folded a constant x
+        i = strip(i)
+        if cval(i) is not None: return i, None
+        a = defs.get(i)
+        if not a or a[0] & 0xffff != op: return None
+        if op == OP_BITWISE_AND: x = a[3] if cval(a[4]) == 0x3FFF else a[4] if cval(a[3]) == 0x3FFF else None
+        else: x = a[3] if cval(a[4]) == 14 else None
+        return None if x is None else (i, x)
+    def linear(coord):   # the x of (x & 0x3FFF, x >> 14); (lo, hi) when the halves are not provably the same x; ('const', lo, element); or None
         x = defs.get(coord)
         if not x or x[0] & 0xffff != OP_COMPOSITE_CONSTRUCT or len(x) != 5: return None
-        a, b = defs.get(strip(x[3])), defs.get(strip(x[4]))
-        if not a or not b or a[0] & 0xffff != OP_BITWISE_AND or b[0] & 0xffff != OP_SHIFT_RIGHT_LOGICAL: return None
-        xa = a[3] if cval(a[4]) == 0x3FFF else a[4] if cval(a[3]) == 0x3FFF else None
-        if xa is None or cval(b[4]) != 14 or strip(b[3]) != xa and b[3] != xa: return None
-        return xa
+        lo, hi = half(x[3], OP_BITWISE_AND), half(x[4], OP_SHIFT_RIGHT_LOGICAL)
+        if not lo or not hi or lo[1] is None and not 0 <= cval(lo[0]) < 0x4000: return None
+        if lo[1] is not None and hi[1] is not None and strip(lo[1]) == strip(hi[1]): return lo[1]   # (each side may bitcast x on its own)
+        if lo[1] is None and hi[1] is None: return ('const', lo[0], cval(hi[0]) << 14 | cval(lo[0]))   # (44d5b686d917f829 reads elements 0 and 1 so)
+        return (lo[0], hi[0])   # rebuilt as hi << 14 | lo: texel (lo, hi) of the 16384-wide rows is that element whatever x was (f1b3c237bfd5b871 loads x twice)
     uses = m.uses(); n = 0; made = set()
     for vid, (ptr, sc) in list(m.vars.items()):
         if sc != SC_UNIFORM_CONSTANT or DEC_BINDING not in m.decos.get(vid, {}): continue
@@ -1527,17 +1546,26 @@ def row_fetch_buffers(m):
                 if y[0] & 0xffff == OP_IMAGE_FETCH and y[3] == im[2]: fetches.append(y)
                 else: ok = False
         if not ok or not fetches: continue
+        load_at.clear(); load_at.update((y[2], k) for k, y in enumerate(m.ins) if y[0] & 0xffff == OP_LOAD and len(y) >= 4)
         xs = [linear(f[4]) for f in fetches]
         if any(x is None for x in xs) or any(len(f) > 5 and not (f[5] == 0x2 and len(f) == 7) for f in fetches): continue   # only the Lod operand, which a buffer has none of
+        if all(isinstance(x, tuple) and x[0] == 'const' for x in xs): continue   # constants alone: a 2D texture read at a fixed texel looks the same
         buf = m.add_type(OP_TYPE_IMAGE, st, DIM_BUFFER, 0, 0, 0, 1, 0)   # sampled, Unknown format
         bptr = m.add_type(OP_TYPE_POINTER, SC_UNIFORM_CONSTANT, buf); made |= {buf, bptr}
         for x in m.ins:
             if x[0] & 0xffff == OP_VARIABLE and x[2] == vid: x[1] = bptr
         m.vars[vid] = (bptr, sc)
         for ld in loads: ld[1] = buf
-        for im in images: im[:] = [4 << 16 | OP_COPY_OBJECT, buf, im[2], im[3]]
-        for f, x in zip(fetches, xs): f[:] = [5 << 16 | OP_IMAGE_FETCH, f[1], f[2], f[3], x]
-        n += 1; uses = m.uses()   # (add_type inserted declarations: the indices moved)
+        src = {im[2]: im[3] for im in images}   # a combined slot's OpImage goes: its fetches read the load (the runtime retyper, vka_spvpatch.c, follows loads to reads only)
+        for f, x in zip(fetches, xs):
+            if isinstance(x, tuple) and x[0] == 'const': x = m.add_const(m.consts[x[1]][0], x[2])
+            elif isinstance(x, tuple):   # x = hi << 14 | lo, right before the fetch (both halves dominate it: its coordinate is made of them)
+                lo, hi = x; t = m.consts[lo][0] if lo in m.consts else defs[lo][1]; c14 = m.add_const(t, 14)
+                at, sh, x = next(k for k, y in enumerate(m.ins) if y is f), m.new_id(), m.new_id()
+                m.ins[at:at] = [[5 << 16 | OP_SHL_LOGICAL, t, sh, hi, c14], [5 << 16 | OP_BITWISE_OR, t, x, lo, sh]]
+            f[:] = [5 << 16 | OP_IMAGE_FETCH, f[1], f[2], src.get(f[3], f[3]), x]
+        m.ins = [y for y in m.ins if not (y[0] & 0xffff in (OP_IMAGE, OP_NAME, OP_DECORATE) and y[1 + (y[0] & 0xffff == OP_IMAGE)] in src)]
+        n += 1; uses = m.uses()   # (add_type inserted declarations, the OpImages went: the indices moved)
     if n:   # the types made above (add_type puts them before the first function) go before the first global variable, which may use them
         fn = next(k for k, x in enumerate(m.ins) if x[0] & 0xffff == OP_FUNCTION)
         gv = next((k for k in range(fn) if m.ins[k][0] & 0xffff == OP_VARIABLE), fn)
