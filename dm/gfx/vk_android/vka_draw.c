@@ -24,7 +24,7 @@
 #include <time.h>
 #include <string.h>
 
-static VkCommandBuffer g_cb; static unsigned g_slot; static int g_prof, g_dyn_filter = 1, g_pass_keep = 1, g_vb_filter = 1;   // g_prof: this draw is timed (vka_draw)
+static VkCommandBuffer g_cb; static unsigned g_slot; static int g_prof, g_dyn_filter = 1, g_pass_keep = 1, g_vb_filter = 1, g_rt_serial = 1;   // g_prof: this draw is timed (vka_draw)
 static int g_prof_all, g_prof_every;   // DM_VK_PROF: every draw timed; the pace line's sample (DM_VK_PACE_PROF): one draw in g_prof_every
 static int g_vin_skip = 1;             // DM_VK_VIN_SKIP (vin_build_kept)
 static int g_inst_on;   // DM_VK_INSTANCE (the instanced runs below)
@@ -165,7 +165,7 @@ void vka_draw_sub_begin(VkCommandBuffer cb, unsigned slot) {
     rp_miss_reset();
     { void vka_mem_rec_thread(void); vka_mem_rec_thread(); }   // the address lookups' cache outside TLS for the recording thread (vka_mem.c)
     drv_memo_reset();   // the last submission's scratch spans go with its fence
-    g_prof_all = VKA_ENV("DM_VK_PROF", 0) != 0; g_prof = g_prof_all; g_prof_every = VKA_ENV("DM_VK_PACE_LOG", 5000) > 0 ? VKA_ENV("DM_VK_PACE_PROF", 16) : 0; g_dyn_filter = VKA_ENV("DM_VK_DYN_FILTER", 1); g_pass_keep = VKA_ENV("DM_VK_PASS_KEEP", 1); g_vb_filter = VKA_ENV("DM_VK_VB_FILTER", 1); g_inst_on = VKA_ENV("DM_VK_INSTANCE", 0) && inst_device_ok();   // live: from this submission
+    g_prof_all = VKA_ENV("DM_VK_PROF", 0) != 0; g_prof = g_prof_all; g_prof_every = VKA_ENV("DM_VK_PACE_LOG", 5000) > 0 ? VKA_ENV("DM_VK_PACE_PROF", 16) : 0; g_dyn_filter = VKA_ENV("DM_VK_DYN_FILTER", 1); g_pass_keep = VKA_ENV("DM_VK_PASS_KEEP", 1); g_rt_serial = VKA_ENV("DM_VK_RT_SERIAL", 1); g_vb_filter = VKA_ENV("DM_VK_VB_FILTER", 1); g_inst_on = VKA_ENV("DM_VK_INSTANCE", 0) && inst_device_ok();   // live: from this submission
     g_vin_skip = VKA_ENV("DM_VK_VIN_SKIP", 1);
     g_vattr_clear = VKA_ENV("DM_VK_VATTR_CLEAR", 1);
     for (int i = 0; i < g_ndp[g_slot]; i++) vk.vkResetDescriptorPool(V.dev, g_dp[g_slot][i], 0);   // the slot's last submission is done (mtl_sub_begin waited for it)
@@ -211,6 +211,7 @@ static struct {
     int swrite;                                          // a draw of the pass wrote memory (storage buffers or images, raw global stores, a geometry shader's claim)
     int bar_pending;                                     // a game barrier came inside the pass and was taken there (vka_rp_game_barrier): the draws after it are checked (bar_hazard)
     int rt_cont, dread;                                  // SET_RT continued the pass; a draw of the pass sampled its depth attachment
+    int dwrote;                                          // a draw of the pass had depth or stencil writes on (its depth attachment changed inside the pass)
     struct { vka_img *im, *sh; uint32_t lv, l0, nl, bw, bh; } bc[8]; int nbc;   // block-compressed targets drawn through their shadows (bcrt_attach), copied back at the pass end
 } R;
 // Inline uniform updates (OP_UPDATE_UB) that came with a render pass open (DM_VK_UB_DEFER, default 1): Vulkan forbids vkCmdCopyBuffer inside a rendering pass, and ending the
@@ -310,11 +311,14 @@ static int view_same(const view_t *a, const view_t *b) {
     return a->set_levels == b->set_levels && a->set_layers == b->set_layers && a->set_format == b->set_format && (!a->set_levels || (a->base_level == b->base_level && a->nlevels == b->nlevels)) &&
            (!a->set_layers || (a->min_layer == b->min_layer && a->nlayers == b->nlayers)) && (!a->set_format || a->format == b->format);
 }
+// The same texture: by its initialization serial, not the pointer (each SET_RT record holds its own snapshot of the objects, hle_nvn.c tex_snap, so two records of the
+// same targets never share pointers; with pointers every SET_RT ended the pass: Orbitals' G-buffer reopened ~280 times a frame over the same images)
+static int tex_same(const tex_t *a, const tex_t *b) { return a == b || (a && b && a->serial == b->serial && g_rt_serial); }   // (DM_VK_RT_SERIAL=0: by pointer, as before)
 static int rt_same(const p_set_rt *a, int ha, const p_set_rt *b, int hb) {
     if (!ha || !hb) return !ha && !hb;
-    if (a->n != b->n || a->depth != b->depth || !!a->has_dview != !!b->has_dview || (a->has_dview && !view_same(&a->dview, &b->dview))) return 0;
+    if (a->n != b->n || !tex_same(a->depth, b->depth) || !!a->has_dview != !!b->has_dview || (a->has_dview && !view_same(&a->dview, &b->dview))) return 0;
     for (int i = 0; i < a->n && i < 8; i++) {
-        if (a->color[i] != b->color[i] || !!a->has_cview[i] != !!b->has_cview[i]) return 0;
+        if (!tex_same(a->color[i], b->color[i]) || !!a->has_cview[i] != !!b->has_cview[i]) return 0;
         if (a->color[i] && a->has_cview[i] && !view_same(&a->cview[i], &b->cview[i])) return 0;
     }
     return 1;
@@ -470,9 +474,13 @@ void vka_rp_note_ts(void) { if (R.on && R.df) g_zs.nts++; if (g_zlog_pass && zlo
 // Game barriers (OP_BARRIER) that came with a pass open: taken inside it (DM_VK_BAR_KEEP), ended it at once, ended it later at a draw that needed it (bar_hazard)
 static uint64_t g_bar_in, g_bar_kept, g_bar_late;
 int vka_rp_on(void) { return R.on; }
-void vka_rp_end(void) {
+void vka_rp_end_at(const char *file, int line) {
     if (PC.n) pc_flush();
     if (!R.on) return;
+    if (VKA_ENV("DM_VK_RP_END_LOG", 0)) {   // DM_VK_RP_END_LOG=<n> (live): the first n pass ends of passes of DM_VK_RT_LOG's size (any size without it), with the call that ended them
+        static _Atomic int n; int lim = VKA_ENV("DM_VK_RP_END_LOG", 0); const char *f = strrchr(file, '/');
+        if ((!g_rtl_w || g_rtl_pass) && atomic_fetch_add(&n, 1) < lim) VLOG("rp end: pass %llu after %u draws, ended at %s:%d", (unsigned long long)vka_n_rp, g_rtl_d, f ? f + 1 : file, line);
+    }
     if (g_zlog_pass && zlog_room()) VLOG("zlog pass %llu end", (unsigned long long)vka_n_rp);
     g_zlog_pass = 0;
     vka_oq_pass_end();   // an occlusion query active in the pass ends inside it
@@ -575,9 +583,22 @@ static void pass_redrawn(vka_img *const *im, int n) {
     for (int i = 0; i < n && ok; i++) ok = im[i] && im[i]->wr_prev && f - im[i]->wr_prev <= 2;
     vka_pso_redrawn = ok;
 }
+// DM_VK_RP_END_LOG: which part of two SET_RT differs (the pass ends at the next draw over other targets)
+static const char *rt_diff(const p_set_rt *a, const p_set_rt *b, char *buf, size_t n) {
+    if (a->n != b->n) { snprintf(buf, n, "colour count %d -> %d", b->n, a->n); return buf; }
+    if (!tex_same(a->depth, b->depth)) { snprintf(buf, n, "depth texture %llu -> %llu", b->depth ? (unsigned long long)b->depth->serial : 0ull, a->depth ? (unsigned long long)a->depth->serial : 0ull); return buf; }
+    if (!!a->has_dview != !!b->has_dview || (a->has_dview && !view_same(&a->dview, &b->dview))) { snprintf(buf, n, "depth view"); return buf; }
+    for (int i = 0; i < a->n && i < 8; i++) {
+        if (!tex_same(a->color[i], b->color[i])) { snprintf(buf, n, "colour %d texture %llu -> %llu", i, b->color[i] ? (unsigned long long)b->color[i]->serial : 0ull, a->color[i] ? (unsigned long long)a->color[i]->serial : 0ull); return buf; }
+        if (!!a->has_cview[i] != !!b->has_cview[i] || (a->color[i] && a->has_cview[i] && !view_same(&a->cview[i], &b->cview[i]))) { snprintf(buf, n, "colour %d view", i); return buf; }
+    }
+    snprintf(buf, n, "the same targets (the render area)"); return buf;
+}
 // Opens the pass over the bound targets: 0 = it cannot (no target can be an attachment), logged
 static int rp_begin(const p_set_rt *rt, int has_rt, const p_scissor *sc, int has_sc, const vka_dstate *d) {
-    if (R.on) { if (!g_pass_keep || (rt_same(rt, has_rt, &R.rt, R.has_rt) && rp_area_fits(sc, has_sc, d, rt, has_rt))) return 1; vka_rp_end(); }   // a new SET_RT of other targets ends the pass at its first draw (exec does not)   // a new SET_RT of other targets ends the pass at its first draw (exec does not)
+    if (R.on) { if (!g_pass_keep || (rt_same(rt, has_rt, &R.rt, R.has_rt) && rp_area_fits(sc, has_sc, d, rt, has_rt))) return 1;
+        if (VKA_ENV("DM_VK_RP_END_LOG", 0) && g_rtl_pass && has_rt && R.has_rt) { char b[160]; VLOG("rp end why: %s", rt_diff(rt, &R.rt, b, sizeof b)); }
+        vka_rp_end(); }   // a new SET_RT of other targets ends the pass at its first draw (exec does not)   // a new SET_RT of other targets ends the pass at its first draw (exec does not)
     if (vka_ind_split()) { void vka_part_split(void); vka_part_split(); }   // DM_VK_IND_PEEK=4: the work before this pass in a part of its own (ind_peek)
     if (PC.n && !rt_same(rt, has_rt, &PC.rt, 1)) pc_flush();                             // clears of other targets: done before
     VkRenderingAttachmentInfo ca[8], da = {0}, sa; uint32_t w = UINT32_MAX, h = UINT32_MAX, layers = UINT32_MAX, samples = 0;
@@ -1678,13 +1699,18 @@ static int draw_writes(vka_shader *const sh[VKA_NSTAGE], const vka_dstate *d) {
 }
 // After a game barrier taken inside the pass (vka_rp_game_barrier): this draw needs the pass ended first when it writes memory (earlier draws of the pass may read what it
 // overwrites), reads the texture pool directly (any texture, the pass's targets among them), or samples a texture whose image the pass draws into
+// 0 = no hazard; why: 1 writes memory, 2 reads the texture pool, 3 bindings not resolved, 4 samples a colour target of the pass, 5 its depth target the pass has not
+// written, 6 its depth target the pass wrote (DM_VK_BAR_LOG)
+static int g_bar_why_tid, g_bar_why_b;   // the texture a hazard 4-6 named (DM_VK_BAR_LOG)
 static int bar_hazard(vka_shader *const sh[VKA_NSTAGE], const vka_dstate *d) {
     if (draw_writes(sh, d)) return 1;
     for (int st = 0; st < VKA_NSTAGE; st++) {
         if (!sh[st] || (st == 1 && d->rast_discard)) continue;
-        if (g_wk.pool[st] || g_wk.n[st] < 0) return 1;
+        if (g_wk.pool[st]) return 2;
+        if (g_wk.n[st] < 0) return 3;
         const vka_res *r = g_wk.r[st];
-        for (int i = 0; i < g_wk.n[st]; i++) if ((r[i].what == VKA_R_TEX || r[i].what == VKA_R_TBUF) && r[i].tid && vka_tex_id_in_pass_rec(r[i].tid, r[i].dim)) return 1;
+        for (int i = 0; i < g_wk.n[st]; i++) if ((r[i].what == VKA_R_TEX || r[i].what == VKA_R_TBUF) && r[i].tid) { int ip = vka_tex_id_in_pass_rec(r[i].tid, r[i].dim);
+            if (ip) { g_bar_why_tid = r[i].tid; g_bar_why_b = r[i].binding; return ip == 2 ? (R.dwrote ? 6 : 5) : 4; } }
     }
     return 0;
 }
@@ -2560,13 +2586,21 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
                      x->binding, x->elem, x->what, x->desc, x->dim, x->flags, x->tid, x->sid, (unsigned long long)x->addr, (unsigned long long)x->size, why); }
     }
     if (make_images(d, sh, 1)) { vka_rp_end(); make_images(d, sh, 0); }
-    if (R.on && R.bar_pending && bar_hazard(sh, d)) { g_bar_late++; vka_rp_end(); }   // the game barrier taken inside the pass is needed here: the pass ends (its full barrier) first
+    if (R.on && R.bar_pending) { int why = bar_hazard(sh, d);   // the game barrier taken inside the pass is needed here: the pass ends (its full barrier) first
+        if (why) { static _Atomic int nbl; if (VKA_ENV("DM_VK_BAR_LOG", 0) > atomic_fetch_add(&nbl, 1)) {   // DM_VK_BAR_LOG=<n>: the first n such pass ends, why and by which shaders
+                static const char *const wn[] = {"", "writes memory", "reads the texture pool", "bindings not resolved", "samples a colour target of the pass", "samples the depth target, not written in the pass", "samples the depth target the pass wrote"};
+                char td[320] = ""; if (why >= 4) vka_tex_id_desc(g_bar_why_tid, td, sizeof td);
+                VLOG("bar log: pass %llu ended at a draw after a kept game barrier: %s; vertex %016llx fragment %016llx%s binding %d texture ID %d: %s", (unsigned long long)vka_n_rp, wn[why],
+                     (unsigned long long)(sh[0] ? sh[0]->key : 0), (unsigned long long)(sh[1] ? sh[1]->key : 0), why >= 4 ? ";" : "", why >= 4 ? g_bar_why_b : -1, why >= 4 ? g_bar_why_tid : 0, td); }
+            g_bar_late++; vka_rp_end(); } }
     if (R.on && UB.n && ub_hazard(d, sh, mesh, dw, di)) vka_rp_end();
     if (R.on && (R.df || R.sf) && rt_same(rt, has_rt, &R.rt, R.has_rt)) {   // SetRenderTargets of the same targets between a depth write and sampling depth (or sampling depth then writing it)
         int ds = (R.rt_cont || !R.dread) ? depth_sampled(sh, d) : 0;
         int hd_ = R.df != VK_FORMAT_UNDEFINED, hs_ = R.sf != VK_FORMAT_UNDEFINED;
         int dw_ = !d->rast_discard && ((hd_ && d->ds.dt && d->ds.dw) || (hs_ && d->ds.st && (d->st_wmask[0] || d->st_wmask[1])));
-        if ((ds && R.rt_cont) || (dw_ && R.dread)) vka_rp_end();
+        // (sampling depth after a SET_RT of the same targets needs the pass ended only when the pass wrote depth or stencil: unwritten, the sampled image holds what the
+        // pass loaded; DM_VK_RT_CONT_WRITTEN=0 ends it at any such sample, as before)
+        if ((ds && R.rt_cont && (R.dwrote || !VKA_ENV("DM_VK_RT_CONT_WRITTEN", 1))) || (dw_ && R.dread)) vka_rp_end();
         else if (ds) R.dread = 1;
     }
     uint64_t tstats = 0;   // DM_VK_TEX_STATS: this draw's fragment shader, its inputs' level 0 scanned and logged
@@ -2585,6 +2619,7 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
     if (!rp_begin(rt, has_rt, sc, has_sc, d)) { g_skipped++; return; }
     if ((R.df || R.sf) && !R.dread && depth_sampled(sh, d)) R.dread = 1;
     if (!R.swrite && draw_writes(sh, d)) R.swrite = 1;   // (a game barrier in this pass from now on ends it: vka_rp_game_barrier)
+    if (!R.dwrote && !d->rast_discard && (R.df || R.sf) && ((d->ds.dt && d->ds.dw) || (d->ds.st && (d->st_wmask[0] || d->st_wmask[1])))) R.dwrote = 1;
     d->b.samples = R.samples;
     vka_gkey k; memset(&k, 0, V.vin_dyn ? offsetof(vka_gkey, va) : sizeof k);   // (va, vb: only without vertex input dynamic state, vin_build; the pipeline lookup reads no further then)
     k.ncolor = (uint8_t)R.ncolor; k.samples = (uint8_t)R.samples; k.dfmt = R.df; k.sfmt = R.sf;

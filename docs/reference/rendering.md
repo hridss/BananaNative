@@ -426,6 +426,13 @@ The replay on Metal (`dm/gfx/nvn/nvn_mtl.m`) and the Vulkan and OpenGL layers. E
 - **Fix:** a slot whose texture, level and layer repeat an earlier slot is left unattached (`rt_dup_slot`), also in pipeline prediction; a draw that really writes such a slot is reported once (`color slot … holds the same texture as an earlier slot`). Records hold copies of texture objects (`tex_snap`), so slots are compared by serial, not by pointer.
 - **Found on:** [The Legend of Zelda: Breath of the Wild](../../dm/games/01007EF00011E000/README.md): the G-buffer passes attach the albedo and another buffer twice each (c1 = c2, c3 = c4), the duplicate slots with write mask 0; the albedo held only scattered squares.
 
+### Every SetRenderTargets ended the pass, even over the same targets (Android)
+
+- **Symptom:** (Android, Vulkan) far more render passes than the game's target changes: Orbitals' split-screen frame had 584 passes in a capture replay, its G-buffer (eight 1080p targets and depth) cut into 13-34 passes and its ~215 deferred lights one pass each. `DM_VK_RP_END_LOG=<n>` with `DM_VK_RT_LOG` names the call that ended each pass; `rp end why: depth texture 490 -> 490` (the same texture) was the cause of ~280 a frame.
+- **Cause:** `vka_draw.c` `rt_same` compared the targets' `tex_t` pointers, but each SET_RT record holds its own snapshot of the texture objects (`hle_nvn.c` `tex_snap`), so two records of the same targets never share pointers and every SET_RT ended the open pass at its next draw. The rule that ends a pass when a draw samples its depth target after a SET_RT of the same targets (`R.rt_cont`) never fired for the same reason; once the targets compared equal it ended the pass at every such sample, though its purpose is a depth written in the pass and then sampled.
+- **Fix:** general: `rt_same` compares the objects' initialization serials (`tex_same`; `DM_VK_RT_SERIAL=0` compares pointers as before), and the depth-sample rule ends the pass only when the pass wrote depth or stencil (`R.dwrote`; `DM_VK_RT_CONT_WRITTEN=0` as before). Orbitals' capture: 584 → 274 passes a frame, the picture the same as before within the replay's run-to-run noise (at most 6/255 on ~7,000 pixels). No frame-rate change on Turnip (it draws these 1080p passes in system memory, where a pass end costs little); the CPU cost of the passes' begins and ends goes on drivers that render through tiles.
+- **Found on:** [Orbitals](../../dm/games/040032B023CA4000/README.md#found-on-this-game) (split-screen gameplay).
+
 ### Passes with no render target
 
 - **Symptom:** `no render target could get an MTLTexture` (the pass skipped).

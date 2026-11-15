@@ -573,7 +573,8 @@ int vka_state_op(vka_dstate *d, uint32_t op, const void *a);   // 1 = a state re
 // frame has ~12 submissions, one of them most of its GPU work: with 8, the next frame's recording waited for that one, so recording and GPU work added up
 enum { VKA_NSLOT = 16 };
 void vka_draw_sub_begin(VkCommandBuffer cb, unsigned slot);    // the slot's per-draw descriptor sets are free again (its last fence is done)
-void vka_rp_end(void);
+void vka_rp_end_at(const char *file, int line);
+#define vka_rp_end() vka_rp_end_at(__FILE__, __LINE__)   // (DM_VK_RP_END_LOG: which call ends each pass)
 int vka_rp_split_ok(const p_set_rt *rt, int has_rt);
 void vka_draw_cb_switch(VkCommandBuffer cb);
 void vka_dyn_invalidate(void);                       // the draws' dynamic state is set again in full at the next draw (another pipeline was bound)
