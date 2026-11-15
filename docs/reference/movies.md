@@ -71,6 +71,21 @@ The SDK's movie library (`movie::Decoder`, `movie::Extractor`), which the host t
 - **Fix:** also as with MediaCodec, an input marked end-of-stream is the last until `Flush` / `Stop`: no input index is handed out or announced after it (`in_eos` in `hle_movie.c`).
 - **Found on:** [Metroid Dread](../../dm/games/010093801237C000/README.md) (movie sub-list); [DRAGON QUEST XI S](../../dm/games/01006C300E9F0000/README.md).
 
+### Inputs sent after an end-of-stream packet
+
+- **Symptom:** a Unity game crashes when a movie ends: a use after free of the decoder's event list during its completion callbacks.
+- **Cause:** inputs the player acquired before the end-of-stream packet can still arrive after it, with or without the flag. Tied Together's Unity player submits all four held indices as end-of-stream: each was decoded and signalled, four completion callbacks, and the first freed the event list the others were still walking. MediaCodec takes such a buffer back but decodes nothing once its input has reached end of stream.
+- **Fix:** `SendInputBufferForDecode` after end of stream returns the client's buffer, once, without another decode or signal (`hle_movie.c`); the duplicate and full-queue checks come before any state change, and `in_eos` is set only for an accepted packet.
+- **Found on:** Tied Together (Unity).
+
+### A player torn down while its worker is inside a decode call
+
+- **Symptom:** a movie player crashes on a null pointer at the opening movie's first skip or at a menu change (Mario Strikers: Battle League, `main+0xab4e18`, address 0).
+- **Cause:** the SDK queues a video packet and returns; its codec thread decodes it and signals each result. The host decoded inside the call (3-8 ms a packet). The game's worker (`MoviePlayerWorker`) was still inside `SendInputBufferForDecode` / `ReleaseOutputBufferIndex` while the owner thread stopped the movie, destroyed the player and cleared its pointer (`main+0xab55a4`); the worker then read the cleared player.
+- **Fix:** a video decoder decodes on a thread of its own (`hle_movie.c` `md_pump_thread`, `md_pump_async`): the send and release calls queue the work and return, so the teardown lands between the worker's iterations. Its results are signalled through the deferred queue, due at once (the pump thread is not a guest thread); Stop, Flush and the destructor drop one still pending, and the destructor joins the pump thread first. Audio decoders still decode on the caller and signal at once.
+- **Found on:** Mario Strikers: Battle League.
+- **Open:** 2 runs in 12 still crashed on one Mac (none in 30 on another), both after `GetOutputBuffer`, which in texture mode still writes the whole frame on the caller (`md_out_tex`) where the SDK starts a GPU copy and returns.
+
 ### End-of-stream packets with no data, and deleted decoders
 
 - **Symptom:** decoding the end-of-stream packet gave VideoToolbox −12909 and AudioToolbox −50.
