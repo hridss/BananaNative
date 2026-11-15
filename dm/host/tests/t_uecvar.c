@@ -1,5 +1,5 @@
 // Unreal console variables named in main's fixups (dm_ue_cvar: the rewriter's ue_cvar.py finds them; dm/tools/tests/test_ue_cvar.py tests the search) and the texture pool raise
-// (dm_ue_cvar_tick): the values the host raises, keeps and leaves, and a main without the variable
+// (dm_ue_cvar_tick): the values the host raises, keeps and leaves, and a main without the variable; the dynamic resolution floor (dm_ue_dynres_tick)
 #include "../hle_uecvar.c"
 #include <assert.h>
 #include <sys/mman.h>
@@ -35,12 +35,28 @@ static void check(int which) {
     munmap(base, SIZE);
 }
 
+// The dynamic resolution's floor (dm_ue_dynres_tick, DM_UE_DYNRES_MIN): set, set again when the game writes its own, left alone unset
+static void check_dynres(int set) {
+    uint8_t *base = mmap(NULL, SIZE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0); assert(base != MAP_FAILED);
+    g_nmod = 1; strcpy(g_mod[0].name, "main"); g_mod[0].base = base; g_mod[0].size = SIZE;
+    uint64_t obj = 0x20400; cvar("r.DynamicRes.MinScreenPercentage", obj);
+    float vals[2] = {83.3f, 83.3f};
+    *(uintptr_t *)(base + obj + 0x10) = (uintptr_t)vals;
+    if (!set) { unsetenv("DM_UE_DYNRES_MIN"); dm_ue_dynres_tick(); assert(vals[0] == 83.3f && writes == 0); return; }
+    setenv("DM_UE_DYNRES_MIN", "50", 1);
+    dm_ue_dynres_tick(); assert(vals[0] == 50 && vals[1] == 50 && writes == 2);
+    dm_ue_dynres_tick(); assert(writes == 2);                            // already set
+    vals[1] = 83.3f; dm_ue_dynres_tick(); assert(vals[1] == 50 && writes == 3);   // the game set its own again
+    vals[0] = 5; dm_ue_dynres_tick(); assert(vals[0] == 5 && writes == 3);        // a lower floor the game sets stays
+    munmap(base, SIZE);
+}
+
 int main(void) {
     // Each process starts the one-time lookup with fresh state
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < 5; i++) {
         pid_t p = fork(); assert(p >= 0);
-        if (!p) { check(i); _exit(0); }
+        if (!p) { if (i < 3) check(i); else check_dynres(i == 4); _exit(0); }
         int status; assert(waitpid(p, &status, 0) == p); assert(WIFEXITED(status) && WEXITSTATUS(status) == 0);
     }
-    puts("Unreal console variables: named by the rewriter, the texture pool raised, kept and left as set, a missing variable left alone");
+    puts("Unreal console variables: named by the rewriter, the texture pool raised, kept and left as set, a missing variable left alone, the dynamic resolution floor set and kept");
 }

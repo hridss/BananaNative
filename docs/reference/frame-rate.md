@@ -217,6 +217,13 @@ Frame pacing: the host's frame step, engine frame limiters, present intervals an
 - **Fix:** `monolith_fps.py` (upstream nxnative aa9e0ff7) recognizes reviewed engine implementations by their functions' fingerprints and derives the interval's global; `patch_nso.py` records `MONOLITH_INTERVAL` in main's fixups, and `hle_fpslock.c` writes 60 / cap there once the engine has set it (`VSYNCS_DEFAULT2_I32`: 0 counts as 2; -1 and unexpected values stay). A main whose required timing correction did not match (`NATIVE_FPS_BLOCKED` in its fixups) keeps its own limits. A game that assumes 30 updates a second somewhere still needs its own correction, so recognition does not make a cap a default: each profile must be tested before it sets one.
 - **Found on:** Xenoblade Chronicles X: Definitive Edition upstream; the same implementations in [Xenoblade Chronicles 2](../../dm/games/0100E95004038000/README.md) and [Xenoblade Chronicles 3](../../dm/games/010074F013262000/README.md). Open on Android: no game run with it yet.
 - **Check:** `dm/tools/tests/test_monolith_fps.py`; `t_fpslock` cases 28 to 35 (60, 30, no cap, zero's default, uninitialized and unexpected values, a cap while running and back, the engine's word after the interval left alone, a blocked main).
+### Unreal's dynamic resolution held at its ceiling, and its floor
+
+- **Symptom:** an Unreal Engine game whose GPU time is far over its frame budget renders at full resolution though its dynamic resolution is on (`r.DynamicRes.OperationMode` 2 read live with `peek`): Orbitals' split-screen gameplay at 10.5-11 fps with ~58 ms of GPU work a frame, at 100 % of its 83.3-100 % range.
+- **Cause:** the dynamic resolution reads the GPU time between a frame's timestamp reports; with one time for a whole submission (the default `gpu_timestamps submission`) it reads 0, as Breath of the Wild's controller did. And the game's own floor (83.3 %) leaves little room on a GPU that needs half the pixels.
+- **Fix:** the profile's `gpu_timestamps segment` lets the engine see its GPU time (Orbitals: 12.0 fps); `DM_UE_DYNRES_MIN=<percent>` lowers its floor (`hle_uecvar.c`, the variable found by name by `ue_cvar.py`, which `module_t` now holds names up to 47 characters for), and the engine picks the scale between it and its ceiling (Orbitals at 50: 13.8 fps, GPU 45 ms; forced to 50 % with the ceiling too, 16.5 fps and a visibly softer picture).
+- **Check:** `t_uecvar` (the floor lowered, kept, a lower one the game sets left; run on the phone, built with the NDK), `test_ue_cvar.py` (the names fit the loader's field).
+- **Found on:** [Orbitals](../../dm/games/040032B023CA4000/README.md#found-on-this-game).
 
 ### Frostbite's simulation rate, found by name
 

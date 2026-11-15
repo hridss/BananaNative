@@ -1,6 +1,7 @@
 """Unreal console variables found by their registered names (dm/tools/ue_cvar.py) on synthetic code, no game files: UE 4.18's constructor form with the object loaded before the
 name, UE 4.2x / 5's register call with the value pointer stored after it (and a base constructor between), a lookup that only reads the name, a name registered twice, UTF-32 names,
 the next variable's registration not taken for this one's; and every profile's ue_fps_cvar is a name the rewriter looks for."""
+import re
 import struct
 import sys
 import unittest
@@ -118,6 +119,16 @@ class FindTest(unittest.TestCase):
         found, why = ue_cvar.find_all(bytes(image(lambda a: register_form(a, NAME, OBJ))), TEXT, RO, DATA)
         self.assertEqual(found, {'t.MaxFPS': OBJ})
         self.assertEqual(len(why), len(ue_cvar.NAMES) - 1)
+
+
+class NamesTest(unittest.TestCase):
+    def test_names_fit_the_loader(self):
+        # dm/host/dm.h module_t ue_cvar[8], name[48]: loader.c dies on a fixups row past either (r.DynamicRes.MinScreenPercentage, 32 characters, did past name[32])
+        h = (Path(__file__).resolve().parents[3] / 'dm/host/dm.h').read_text(encoding='utf-8')
+        m = re.search(r'struct \{ char name\[(\d+)\]; uint64_t off; \} ue_cvar\[(\d+)\]', h)
+        self.assertIsNotNone(m, 'dm.h ue_cvar field not found')
+        self.assertLessEqual(len(ue_cvar.NAMES), int(m.group(2)))
+        for n in ue_cvar.NAMES: self.assertLess(len(n), int(m.group(1)), n)
 
 
 class ProfileTest(unittest.TestCase):

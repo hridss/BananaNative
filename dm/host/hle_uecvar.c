@@ -1,4 +1,4 @@
-// Unreal console variables found by their registered names, and the texture streaming pool the profile's ue_texture_pool raises.
+// Unreal console variables found by their registered names: the texture streaming pool the profile's ue_texture_pool raises, and the dynamic resolution's floor DM_UE_DYNRES_MIN sets.
 // The rewriter finds each TAutoConsoleVariable the host may write in main (dm/tools/ue_cvar.py: its static constructor's registration, in any Unreal 4 / 5 build) and names it in main's
 // fixups (UE_CVAR:<name>); the object holds at +0x10 the pointer to the variable's value, the game thread's copy, then the render thread's. Called on every present (hle_nvn.c)
 #include "hle.h"
@@ -38,5 +38,34 @@ void dm_ue_cvar_tick(void) {
         if (!rd((uint64_t)(uintptr_t)p, &cur, sizeof cur) || cur <= 0 || cur >= target) continue;
         dm_guest_write_prepare(p, sizeof *p); __atomic_store_n(p, target, __ATOMIC_RELAXED);
         if (nlog < 8) { nlog++; LOG("main: Unreal r.Streaming.PoolSize (%s thread) %d → %d MB (%s)", c ? "render" : "game", cur, target, src); }
+    }
+}
+
+// DM_UE_DYNRES_MIN=<percent>: r.DynamicRes.MinScreenPercentage, the lowest screen percentage Unreal's dynamic resolution may pick (it scales between it and
+// r.DynamicRes.MaxScreenPercentage from the GPU time it reads; the game's device profile sets it at boot). Lowered to it whenever the game sets a higher one (Orbitals: 83.3,
+// and 5 at times, which stays):
+// at 50 its split-screen gameplay went from 12.0 to 13.0-13.6 fps on the AYN Thor, the engine picking the scale. Unset: the game's own
+void dm_ue_dynres_tick(void) {
+    static int state = -1, nlog; static float target; static uint64_t obj_off;
+    if (!state) return;
+    if (state < 0) {
+        state = 0;
+        const char *e = getenv("DM_UE_DYNRES_MIN"); if (!e || !*e) return;
+        target = strtof(e, NULL);
+        if (!(target > 0 && target <= 100)) { LOG("[RED] main: DM_UE_DYNRES_MIN=%s is not a percentage in (0, 100]: not applied", e); return; }
+        obj_off = dm_ue_cvar("r.DynamicRes.MinScreenPercentage");
+        if (!obj_off) { LOG("[RED] main: Unreal r.DynamicRes.MinScreenPercentage not found in main by the rewriter (ue_cvar.py; DM_UE_DYNRES_MIN=%g not applied)", target); return; }
+        LOG("main: Unreal r.DynamicRes.MinScreenPercentage at main+%#llx, set to %g (DM_UE_DYNRES_MIN)", (unsigned long long)obj_off, target);
+        state = 1;
+    }
+    uint8_t *base = NULL;
+    for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) base = g_mod[i].base;
+    uint64_t val;
+    if (!base || !rd((uint64_t)(uintptr_t)(base + obj_off + 0x10), &val, sizeof val) || !val) return;   // not created yet
+    for (int c = 0; c < 2; c++) {
+        float cur, *p = (float *)(uintptr_t)(val + 4 * (uint64_t)c);
+        if (!rd((uint64_t)(uintptr_t)p, &cur, sizeof cur) || cur <= target) continue;   // only lowered: a lower floor the game sets itself stays
+        dm_guest_write_prepare(p, sizeof *p); *p = target;
+        if (nlog < 8) { nlog++; LOG("main: Unreal r.DynamicRes.MinScreenPercentage (%s thread) %g → %g (DM_UE_DYNRES_MIN)", c ? "render" : "game", cur, target); }
     }
 }
