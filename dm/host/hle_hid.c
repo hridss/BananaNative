@@ -222,6 +222,17 @@ void hid_keys_init(void) {
 #if defined(__ANDROID__)
 void dm_gfx_ctl_env(const char *key, const char *val); int dm_gfx_ctl(const char *line);
 #endif
+// "P<n> key[+key][~hold]" (n 2..8): the same press on player n's controller, for two-player menus driven from a shell (Orbitals' Play Local starts once player 2 has joined,
+// as upstream nxnative scripts it). Player n counts as connected from its first such line on (g_ctl_players, ORed into the front end's controllers by dm_pad_players)
+static _Atomic uint32_t g_ctl_players;
+static void players_refresh(void);
+static void ctl_press_player(int p, char *keys) {
+    key_step st = {0, 0.15, 0}; char *h = strchr(keys, '~'); if (h) { *h = 0; st.hold = atof(h + 1); }
+    parse_keys(keys, &st);
+    if (!(atomic_fetch_or(&g_ctl_players, 1u << p) >> p & 1)) { players_refresh(); usleep(200000); }   // connected first: the game sees the controller before its press
+    LOG("DM_CTL: player %d press %#llx (hold %.2f s)", p + 1, (unsigned long long)st.btn, st.hold);
+    dm_pad_set_player(p, st.btn, st.lx, st.ly, st.rx, st.ry); usleep((useconds_t)(st.hold * 1e6)); dm_pad_set_player(p, 0, 0, 0, 0, 0);
+}
 static void *ctl_main(void *arg) {
     const char *path = arg; long off = 0; char line[1100];
 #if defined(__ANDROID__)
@@ -236,6 +247,7 @@ static void *ctl_main(void *arg) {
                 off += (long)n; line[--n] = 0; if (n && line[n - 1] == '\r') line[--n] = 0;
                 if (!n || line[0] == '#') continue;
                 if (!strcmp(line, "dump")) { crash_dump_now("DM_CTL dump"); continue; }
+                if ((line[0] == 'P' || line[0] == 'p') && line[1] >= '2' && line[1] <= '8' && line[2] == ' ' && line[1] - '1' < DM_PLAYERS) { ctl_press_player(line[1] - '1', line + 3); continue; }
                 if (!strncmp(line, "shot ", 5)) { dm_gfx_shot_at(1, line + 5); LOG("DM_CTL: screenshot of the next frame → %s", line + 5); continue; }
                 if (!strncmp(line, "texlist ", 8)) { void dm_gfx_texlist(int target); dm_gfx_texlist(atoi(line + 8)); continue; }
                 if (!strncmp(line, "texraw ", 7)) { void dm_gfx_texraw(uint64_t serial, const char *path); char *e2; uint64_t s = strtoull(line + 7, &e2, 10); while (*e2 == ' ') e2++; dm_gfx_texraw(s, e2); continue; }
@@ -342,8 +354,11 @@ static void note_merged(void) {   // logs the players whose npad the game does n
         else LOG("hid: player %d's controller is not used: the game supports no npad %d", p + 1, p);
     }
 }
+static _Atomic uint32_t g_front_players = 1;   // the front end's last dm_pad_players mask (the scripted players of DM_CTL "P<n>" are added to it)
+static void players_refresh(void) { dm_pad_players(atomic_load(&g_front_players)); }
 void dm_pad_players(uint32_t mask) {
-    mask = (mask | 1u) & ((1u << DM_PLAYERS) - 1);
+    atomic_store(&g_front_players, mask);
+    mask = (mask | 1u | atomic_load(&g_ctl_players)) & ((1u << DM_PLAYERS) - 1);
     uint32_t old = atomic_exchange(&g_players, mask);
     for (int p = 1; p < DM_PLAYERS; p++) if ((old ^ mask) >> p & 1) {
         if (!(mask >> p & 1)) dm_pad_set_player(p, 0, 0, 0, 0, 0);   // a controller that went away leaves nothing pressed
