@@ -13,6 +13,9 @@ ipa	Orbitals.ipa
 app_category	public.app-category.adventure-games
 # a 3D field for two players, both sticks in use
 pad_layout	full
+# Handheld mode (README.md "Android", 2026-11-15): Unreal's Switch 2 handheld profile renders the scene into 1600x900 targets instead of 1920x1080 (the graphics
+# scale changes nothing); split-screen gameplay on the AYN Thor 14.4 -> 18.0 fps, GPU 69 -> 55 ms, the picture slightly softer
+op_mode	handheld
 
 # ---- Versions ----
 # v327680 is the update's title version, the title screen says 1.1.2.0-178968 (the NUP carries no display version)
