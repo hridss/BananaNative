@@ -155,7 +155,7 @@ static int statics(void) {
 }
 
 // ---------- Descriptor sets that do not fit a push (per submission slot) ----------
-enum { NSLOT = 8, MAXPOOLS = 64 };
+enum { NSLOT = VKA_NSLOT, MAXPOOLS = 64 };
 static VkDescriptorPool g_dp[NSLOT][MAXPOOLS]; static int g_ndp[NSLOT], g_cur_dp[NSLOT];
 void vka_dyn_invalidate(void);
 static void drv_memo_reset(void);

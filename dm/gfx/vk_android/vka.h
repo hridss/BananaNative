@@ -569,6 +569,9 @@ void vka_rp_refused(VkRenderPass rp, VkResult r);   // the driver refused a whol
 void vka_rp_crash_note(uint64_t rp);   // the crash report's line on a render pass being begun (signal handler)
 int vka_state_op(vka_dstate *d, uint32_t op, const void *a);   // 1 = a state record, taken
 // The render pass the draws of a submission go into: opened at a draw, closed by anything that is not a draw or state (vka_rp_end), and by a new SET_RT
+// Submission slots (vka_exec.c command buffers, vka_draw.c descriptor pools): the recording may run this many submissions ahead of the GPU. Orbitals' split-screen
+// frame has ~12 submissions, one of them most of its GPU work: with 8, the next frame's recording waited for that one, so recording and GPU work added up
+enum { VKA_NSLOT = 16 };
 void vka_draw_sub_begin(VkCommandBuffer cb, unsigned slot);    // the slot's per-draw descriptor sets are free again (its last fence is done)
 void vka_rp_end(void);
 int vka_rp_split_ok(const p_set_rt *rt, int has_rt);

@@ -22,7 +22,7 @@ typedef struct { uint64_t serial; p_set_rt rt; int has_rt; p_scissor sc; int has
 static qstate S;
 enum { NQS = 8 };
 static qstate g_qs[NQS]; static int g_nqs;
-enum { NSLOT = 8 };
+enum { NSLOT = VKA_NSLOT };
 enum { NCHUNK = 32 };
 static struct { VkCommandBuffer cb; uint64_t fence; VkCommandBuffer x[NCHUNK]; VkFence vf; int vf_on; } g_slot[NSLOT];   // vf: set when its commit had no timeline signal (vf_on)   // x: the command buffers a submission goes on in once it hands its first part to the queue (chunk)
 static unsigned g_slot_i;
@@ -305,7 +305,7 @@ static void oq_stats(char *b, size_t n, double frames) {   // every 300 frames w
     r0 = g_oqs_reset; p0 = g_oqs_rep; c0 = g_oqs_const; q0 = g_oqs_q; f0 = g_oqs_full; s0 = g_oqs_skip; u0 = un; z0 = ze; g_oqs_fly = 0;
 }
 uint64_t guest_ns(void);
-static _Atomic uint64_t g_cal_post[8];   // when a slot's submission had its completion processed (post_run): the tick's measure and DM_VK_TSCAL (below)
+static _Atomic uint64_t g_cal_post[NSLOT];   // when a slot's submission had its completion processed (post_run): the tick's measure and DM_VK_TSCAL (below)
 // Counter timestamps by segment (profile gpu_timestamps segment; DM_NVN_GPU_TS=segment / submission overrides it), as nvn_mtl.m's: a timestamp report also writes a GPU
 // timestamp where it is recorded (TOP_OF_PIPE for TIMESTAMP_TOP, else BOTTOM_OF_PIPE), and once the submission is done each report gets the completion time less the GPU time
 // from it to the submission's last report, so two reports of one submission bracket the GPU work between them (a game's dynamic resolution and frame pacing read that).
@@ -362,7 +362,7 @@ static void post_run(void *ops_, int n) {   // the completion thread, in submiss
     for (int i = 0, q = 0; i < n; i++) {
         if (ops[i].kind == 4) { atomic_store(&g_rc_done, ops[i].addr); continue; }   // DM_VK_RC_LOG: this submission's reports up to here are written
         if (ops[i].kind == 5 || ops[i].kind == 6) { oq_done(&ops[i], ticks); continue; }   // a counted samples-passed report, queries given back (Occlusion queries)
-        if (ops[i].kind == 7) { atomic_store(&g_cal_post[(ops[i].q0 - 1) % 8], now_ns()); continue; }   // this slot's submission had its completion processed now
+        if (ops[i].kind == 7) { atomic_store(&g_cal_post[(ops[i].q0 - 1) % NSLOT], now_ns()); continue; }   // this slot's submission had its completion processed now
         if (ops[i].kind == 3) {   // the frame's span to here (the adaptive GPU clock floor)
             uint64_t f = ops[i].addr; unsigned k = f % 64;
             vka_floor_done(ops[i].v);
@@ -398,7 +398,7 @@ static struct { PFN_vkCreateQueryPool create; PFN_vkCmdResetQueryPool reset; PFN
 static VkQueryPool g_qp; static int g_ts_ok = -1; static double g_ts_ns;   // nanoseconds per tick
 enum { GRING = 64 };
 static struct { _Atomic uint64_t frame, ns, t0, t1, span; _Atomic int pending; } g_gpu[GRING];
-static uint64_t g_slot_frame[8]; static uint8_t g_slot_ts[8]; static uint32_t g_slot_parts[8]; static uint32_t g_part_seen; static uint32_t g_part_draws[8][33];   // g_part_draws: draws recorded in each part of a slot's submission (vka_hangparts.h)
+static uint64_t g_slot_frame[NSLOT]; static uint8_t g_slot_ts[NSLOT]; static uint32_t g_slot_parts[NSLOT]; static uint32_t g_part_seen; static uint32_t g_part_draws[NSLOT][33];   // g_part_draws: draws recorded in each part of a slot's submission (vka_hangparts.h)
 enum { QPS = 2 * (NCHUNK + 1) };   // queries a slot: a top and a bottom per part
 static int ts_init(void) {
     if (g_ts_ok >= 0) return g_ts_ok;
@@ -420,18 +420,18 @@ static int ts_init(void) {
 // part's begin, when the GPU began each part and how long it ran. The host span less the GPU span is time that is not GPU time: the wait between the first submit
 // and the GPU beginning it plus the wait between the GPU's end and the completion being processed (for a small submission on an idle GPU, the path's fixed
 // latency). With calibrated timestamps (V.cal_ts) the two are told apart: the GPU's begin and end are put on the host clock
-static _Atomic uint64_t g_cal_sub[8][NCHUNK + 1]; static uint8_t g_cal_on[8]; static uint32_t g_cal_draws[8]; static uint64_t g_cal_sig[8]; static _Atomic int g_tscal;
+static _Atomic uint64_t g_cal_sub[NSLOT][NCHUNK + 1]; static uint8_t g_cal_on[NSLOT]; static uint32_t g_cal_draws[NSLOT]; static uint64_t g_cal_sig[NSLOT]; static _Atomic int g_tscal;
 uint64_t vka_tls_ret(uint64_t v);   // vka_dev.c: when the signal thread's wait for that value's fence returned (0: not known, or the GPU signals the timeline)
 // When the host could first read each of a submission's timestamps (the GPU wrote it: a part's begin or end), found by a thread that asks every 0.1 ms without
 // waiting while the log is on. That puts the GPU's begin and end of each part on the host clock, to 0.1 ms, on a device without calibrated timestamps: it says
 // on which side the time that is not GPU time lies. g_cal_arm: the slot is being watched; g_cal_prev: the values the slot's queries held after its previous use,
 // which stay readable until the GPU runs this use's reset
-static _Atomic uint8_t g_cal_arm[8]; static _Atomic uint64_t g_cal_seenq[8][2 * (NCHUNK + 1)]; static uint64_t g_cal_prev[8][2 * (NCHUNK + 1)];
+static _Atomic uint8_t g_cal_arm[NSLOT]; static _Atomic uint64_t g_cal_seenq[NSLOT][2 * (NCHUNK + 1)]; static uint64_t g_cal_prev[NSLOT][2 * (NCHUNK + 1)];
 static void *cal_poll_main(void *a) {
     (void)a; pthread_setname_np(pthread_self(), "vk-tscal");
     for (;;) {
         if (atomic_load(&g_tscal) <= 0) { struct timespec ts = {0, 5000000}; nanosleep(&ts, NULL); continue; }
-        for (unsigned k = 0; k < 8; k++) {
+        for (unsigned k = 0; k < NSLOT; k++) {
             if (!atomic_load(&g_cal_arm[k])) continue;
             uint32_t nq = 2 * g_slot_parts[k]; if (nq > 2 * (NCHUNK + 1)) nq = 2 * (NCHUNK + 1);
             for (uint32_t q = 0; q < nq; q++) { uint64_t t = 0;
@@ -448,7 +448,7 @@ static int tscal(void) {
 }
 static void cal_submit(uint32_t q) {   // a part goes to the queue: q is its bottom timestamp's query (the slot's range, two a part)
     if (q == UINT32_MAX || atomic_load_explicit(&g_tscal, memory_order_relaxed) <= 0) return;
-    atomic_store(&g_cal_sub[(q / (2 * (NCHUNK + 1))) % 8][(q % (2 * (NCHUNK + 1))) / 2], now_ns());
+    atomic_store(&g_cal_sub[(q / (2 * (NCHUNK + 1))) % NSLOT][(q % (2 * (NCHUNK + 1))) / 2], now_ns());
 }
 static int cal_now(uint64_t *ticks, uint64_t *host) {   // a GPU tick and the host time it was read at (the tightest of three reads); 0: the device cannot
     static PFN_vkGetCalibratedTimestampsKHR get; static int tried;
