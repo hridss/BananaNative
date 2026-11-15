@@ -886,6 +886,34 @@ static void pac_patch_text(module_t *m) {
 #endif
 }
 
+// The module arena (Android): modules back to back in load order, as Horizon's loader places them (main, subsdk*, sdk adjacent, each after the last), so a game that
+// reads a little past its own module gets the next one's bytes without a fault. The Legend of Zelda: Link's Awakening builds its main camera actor with actor profile
+// 0xFFFF and indexes the profile table with it unchecked (main+0x1c180): the byte read, main+0x214c889, lies in subsdk0 on the console, and on the Mac too, where
+// vm_allocate hands out ascending addresses and the modules happen to be adjacent; Linux's mmap goes top-down, left the address unmapped, and the read faulted.
+// One PROT_NONE arena is reserved for the modules' spans (the sizes map_image computes) and each image is placed at the next cursor, so the layout is the console's
+// up to the patch area each module carries. DM_MODULE_ARENA=0: separate mappings, as before (docs/reference/memory.md)
+static uint8_t *g_arena, *g_arena_cur, *g_arena_end;
+static size_t module_span(module_t *m, const char *dir) {   // what map_image maps for m, before it runs
+    char path[1024]; snprintf(path, sizeof path, "%s/%s.patched.bin", dir, m->name);
+    struct stat st; if (stat(path, &st)) die("stat %s", path);
+    return m->patch_off < 0 ? (size_t)-m->patch_off + m->image_size : ((size_t)st.st_size + 0x3FFF) & ~(size_t)0x3FFF;
+}
+static void arena_reserve(module_t *mods, int n, const char **mdir) {
+    const char *e = getenv("DM_MODULE_ARENA"); if (e && !strcmp(e, "0")) return;
+    size_t total = 0; for (int i = 0; i < n; i++) total += module_span(&mods[i], mdir[i]);
+    uint8_t *a = mmap(NULL, total, PROT_NONE, MAP_PRIVATE | MAP_ANON | MAP_NORESERVE, -1, 0);
+    if (a == MAP_FAILED) { LOG("[RED] module arena of %#zx bytes not reserved: modules mapped apart", total); return; }
+    g_arena = g_arena_cur = a; g_arena_end = a + total;
+    LOG("module arena %p +%#zx: %d modules back to back in load order", a, total, n);
+}
+static uint8_t *module_mmap(const char *name, size_t len) {   // the next len bytes of the arena, or a mapping of their own without one
+    if (!g_arena) return mmap(NULL, len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+    if (g_arena_cur + len > g_arena_end) die("%s: %#zx bytes do not fit in the module arena (%#zx left)", name, len, (size_t)(g_arena_end - g_arena_cur));
+    uint8_t *p = mmap(g_arena_cur, len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_FIXED, -1, 0);
+    if (p != MAP_FAILED) g_arena_cur += len;
+    return p;
+}
+
 // Seal the code area immediately after copying into anonymous pages (16 KB pages): [0, text_end) and the patch area are read-only+execute, and from then on any write to the code area crashes on the spot;
 // what lies between (ro and data on the same page can only go together) is writable
 static void map_image(module_t *m, const char *dir) {
@@ -898,7 +926,7 @@ static void map_image(module_t *m, const char *dir) {
         if (sz < fl + bl) die("%s is shorter than FILE_IMAGE_LEN %#llx + BACK_LEN %#llx", path, (unsigned long long)fl, (unsigned long long)bl);
         m->size = m->image_size; m->patch_len = (sz - bl - fl + 0x3FFF) & ~0x3FFFull;
         if (m->patch_len > pre) die("%s patch area of %#llx bytes does not fit in the %#llx before the base", path, (unsigned long long)m->patch_len, (unsigned long long)pre);
-        uint8_t *a = mmap(NULL, pre + m->size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+        uint8_t *a = module_mmap(m->name, pre + m->size);   // the module arena (see above)
         if (a == MAP_FAILED) die("%s mmap %#llx", m->name, (unsigned long long)(pre + m->size));
         m->base = a + pre;
         memcpy(m->base, raw, fl); memcpy(a, raw + fl, sz - bl - fl); if (bl) memcpy(m->base + m->back_off, raw + sz - bl, bl);
@@ -911,7 +939,7 @@ static void map_image(module_t *m, const char *dir) {
         return;
     }
     m->size = (sz + 0x3FFF) & ~0x3FFFull;
-    m->base = mmap(NULL, m->size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+    m->base = module_mmap(m->name, m->size);   // the module arena (see above)
     if (m->base == MAP_FAILED) die("%s mmap", m->name);
     memcpy(m->base, raw, sz); free(raw); install_key_page(m); window_apply(m); shape_apply(m); fiber_pac_apply(m); pac_patch_text(m); rt_pool_apply(m);
     uint64_t rx = (m->text_end + 0x3FFF) & ~0x3FFFull;
@@ -959,6 +987,9 @@ void load_modules(const char *dir, const char **names, int n) {
         read_layout(m, mdir[i]);
     }
     plat_slots_init();
+#if PLAT_ANDROID
+    arena_reserve(g_mod, n, mdir);   // the module arena (see map_image)
+#endif
     for (int i = 0; i < n; i++) {
         module_t *m = &g_mod[i];
         t = now_ns(); map_image(m, mdir[i]); tm += now_ns() - t;   // On return the code area is already read-only+execute; from here on the loader only writes data
@@ -968,6 +999,9 @@ void load_modules(const char *dir, const char **names, int n) {
         LOG("%s: base %p size %#zx", names[i], m->base, m->size);
         m->loaded = 1; g_loaded[g_nloaded++] = m; g_nmod++;
     }
+#if PLAT_ANDROID
+    g_arena = NULL;   // the arena holds the startup modules only: NROs (preload_nros) are mapped on their own, as the ro service maps them wherever there is room
+#endif
     force_init();
     t = now_ns(); for (int i = 0; i < g_nmod; i++) relocate(&g_mod[i]); tr = now_ns() - t;
     force_check();

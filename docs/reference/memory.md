@@ -328,6 +328,14 @@ The guest address space, heaps, pools, virtual address memory and the allocators
 - **Fix:** the guard (`pthread_attr_getguardsize`) is left out of the range (`plat/plat_android.c`).
 - **Found on:** [Fire Emblem Engage](../../dm/games/0100A6301214E000/README.md).
 
+### Modules mapped apart: a read past a module's end faults (Android)
+
+- **Symptom:** (Android) a game faults reading a few bytes past the end of `main`, where the console has the next module (Link's Awakening: `main+0x1c180` reads `main+0x214c889`, which lies in `subsdk0` on the console); the same build runs on the Mac.
+- **Cause:** Horizon's loader places the modules back to back in load order (`main`, `subsdk*`, `sdk`), so a read a little past a module's end gets the next one's bytes. The host mapped each module on its own: the Mac's `vm_allocate` hands out ascending addresses and the modules happened to be adjacent; Linux's `mmap` goes top-down and left the address unmapped. Link's Awakening builds its main camera actor with actor profile 0xFFFF and indexes the profile table with it unchecked.
+- **Fix:** `loader.c` reserves one `PROT_NONE` arena for the startup modules' spans (the sizes `map_image` maps, read before mapping) and places each image at the next cursor (`arena_reserve`, `module_mmap`), so the layout is the console's up to the patch area each module carries. NROs are still mapped on their own, as the ro service maps them. `DM_MODULE_ARENA=0` maps each module on its own, as before.
+- **Found on:** [The Legend of Zelda: Link's Awakening](../../dm/games/01006BB00C6F0000/README.md) (1.1.0).
+- **Check:** the log's `module arena <address> +<size>: N modules back to back in load order` and each module's `base` line.
+
 ### `MapPhysicalMemory` in 16 KB host pages
 
 - **Symptom:** `MapPhysicalMemory` faults on part of a page.
