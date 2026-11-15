@@ -170,7 +170,7 @@ static void test_walk(void) {
     s.tex[1][1] = 7 | 3u << 20; s.tex[1][DMSH_SEPTEX_SLOT0 + 2] = 9; s.samp[1][5] = 11u << 20; s.img[1][2] = 13;
     s.tex_base = 100; s.samp_base = 200; s.base_instance = 61; s.samples = 4;
     uint32_t h = 5 | 6u << 20; memcpy(g_mem + 0x10, &h, 4);   // a handle in uniform slot 0 at byte 0x10
-    uint64_t sa = 0x30000; memcpy(g_mem + 0x20, &sa, 8);
+    uint64_t sa = 0x30000; memcpy(g_mem + 0x20, &sa, 8); uint32_t sd[2] = {0x400, 0}; memcpy(g_mem + 0x28, sd, 8);   // NVN's storage buffer descriptor: address, size, zero
     dmsh_vk_bind b[] = {
         {.kind = DMSH_VK_KIND_CBUF, .desc = 6, .binding = 256, .count = 1, .reg = 2, .soff = 0xFFFF},
         {.kind = DMSH_VK_KIND_CBUF, .desc = 6, .binding = 257, .count = 1, .reg = 9, .soff = 0xFFFF},   // not bound
@@ -196,13 +196,21 @@ static void test_walk(void) {
         CHECK(r[3].what == VKA_R_TEX && r[3].tid == 9 && r[3].sid == 11, "separate texture 2 + sampler 5: %d/%d", r[3].tid, r[3].sid);
         CHECK(r[4].what == VKA_R_TEX && r[4].tid == 105 && r[4].sid == 206, "handle in a uniform buffer takes the pool bases: %d/%d", r[4].tid, r[4].sid);
         CHECK(r[5].what == VKA_R_BUF && r[5].addr == 0x20040 && r[5].size == 128, "storage buffer");
-        CHECK(r[6].what == VKA_R_BUF && r[6].addr == 0x30000 && r[6].size == 0, "storage buffer address from a uniform buffer");
+        CHECK(r[6].what == VKA_R_BUF && r[6].addr == 0x30000 && r[6].size == 0x400, "storage buffer address from a uniform buffer, with its descriptor's size: %#llx", (unsigned long long)r[6].size);
         CHECK(r[7].what == VKA_R_IMG && r[7].tid == 13, "image slot 2");
         CHECK(r[8].what == VKA_R_DRV && r[8].bank == 0, "c0");
         CHECK(r[9].what == VKA_R_NULL && r[10].what == VKA_R_TEX && r[10].tid == 7 && r[10].sid == (3 | 11) && r[10].elem == 1 && r[11].what == VKA_R_NULL,
               "c2 array: %d %d/%d %d", r[9].what, r[10].tid, r[10].sid, r[11].what);
         CHECK(r[12].what == VKA_R_SUPPORT, "support");
         CHECK(pool, "a pool record marks the draw as using set 1");
+    }
+    // A descriptor whose word after the size is not zero is no NVN storage buffer descriptor: the size stays unknown (to the end of the chunk)
+    {
+        uint32_t sd2[2] = {0x400, 7}; memcpy(g_mem + 0x28, sd2, 8);
+        dmsh_vk_bind ub = {.kind = DMSH_VK_KIND_SBUF_UBO, .desc = 7, .binding = 262, .count = 1, .reg = 0, .off = 0x20};
+        dmsh_vk_entry eu = {.stage = DMSH_VK_STAGE_FS, .bind_count = 1};
+        int nu = vka_walk(&s, 1, &eu, &ub, 0, 64, rd, NULL, r, 32, NULL, why, sizeof why);
+        CHECK(nu == 1 && r[0].addr == 0x30000 && r[0].size == 0, "storage buffer descriptor without its zero word: size %#llx", (unsigned long long)r[0].size);
     }
     // An array of handles in a uniform buffer (BindlessToArray, Fire Emblem Fortune's Weave's c[14][8 i + 0x340] cube maps): element k is the handle at the base + 8k, its sampler from the same word
     {

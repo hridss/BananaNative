@@ -75,7 +75,10 @@ int vka_walk(const vka_bstate *s, int st, const dmsh_vk_entry *e, const dmsh_vk_
                 break; }
             case DMSH_VK_KIND_SBUF_UBO: {
                 uint64_t a = noslot ? 0 : ubo_word(s, st, reg, b->off, 8, rd, ctx);
-                if (a) { r.what = VKA_R_BUF; r.addr = a; r.size = 0; }   // the size is not known: to the end of the chunk
+                // NVN's storage buffer descriptor is the address, then the size (32 bits) and a zero word: the binding takes that size, as the hardware bounds the access
+                // (without it the range ran to the end of the chunk, and a written one marked tens of MB written: Orbitals re-uploaded two 1024x1024 textures beside
+                // such buffers after every submission, ~9 ms of recording a frame). A descriptor whose next word is not zero keeps the size unknown
+                if (a) { uint64_t w = ubo_word(s, st, reg, b->off + 8, 8, rd, ctx); r.what = VKA_R_BUF; r.addr = a; r.size = (w >> 32) == 0 ? (uint32_t)w : 0; }
                 break; }
             case DMSH_VK_KIND_TEX: case DMSH_VK_KIND_TEX_UBO: case DMSH_VK_KIND_TEX_C2A: {
                 int tid = b->kind == DMSH_VK_KIND_TEX_UBO ? (noslot ? 0 : ubo_tex_id(s, (uint32_t)ubo_word(s, st, reg, b->off + ubo_elem(b, k), 4, rd, ctx)))

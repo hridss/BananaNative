@@ -3177,12 +3177,26 @@ VkSampler vka_samp_default(void) {
     return s;
 }
 
+// DM_VK_PREP_STATS=1 (live): vka_tex_prepare's time by phase (pool reads and prune, CPU re-uploads, region writes, GPU writes into storage, until the scan, the dirty-page scan
+// of the live images and the rest), every 120 calls
+static uint64_t g_prep_t[8], g_prep_last, g_prep_n, g_prep_scans; static int g_prep_on;
+static inline uint64_t prep_ns(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (uint64_t)t.tv_sec * 1000000000ull + (uint64_t)t.tv_nsec; }
+#define PREP_MARK(k) do { if (g_prep_on) { uint64_t t_ = prep_ns(); if (k) g_prep_t[(k) - 1] += t_ - g_prep_last; g_prep_last = t_; } } while (0)
+static void prep_stats(void) {
+    if (!g_prep_on) { if ((g_prep_n++ & 63) == 0) g_prep_on = VKA_ENV("DM_VK_PREP_STATS", 0); return; }
+    if (++g_prep_n % 120) return;
+    double k = 1e6 * 120;
+    VLOG("prep stats a call: pool reads %.3f, CPU re-uploads %.3f, region writes %.3f, GPU writes %.3f, to the scan %.3f, the scan %.3f ms (%llu scans of %d live images in 120 calls)",
+         g_prep_t[0] / k, g_prep_t[1] / k, g_prep_t[2] / k, g_prep_t[3] / k, g_prep_t[4] / k, g_prep_t[5] / k, (unsigned long long)g_prep_scans, g_nlive);
+    memset(g_prep_t, 0, sizeof g_prep_t); g_prep_scans = 0; g_prep_on = VKA_ENV("DM_VK_PREP_STATS", 0);
+}
 void vka_tex_prepare(VkCommandBuffer cb) {
+    PREP_MARK(0);
     bindless_init();
     nvn_pool_use(1);   // the re-uploads below read guest storage: no pool is finalized (and unmapped) under them. Taken before g_tmu, as write_tex does
     pthread_mutex_lock(&g_tmu);
     pfb_consume_locked();   // the texture IDs read through the pool in submissions done: their images stamped used, null slots written again with their images ("Texture pool reads")
-    vka_tex_prune_locked();   // (the limit measured again every 60 frames; nothing to do under it)
+    vka_tex_prune_locked(); PREP_MARK(1);   // (the limit measured again every 60 frames; nothing to do under it)
     int n_up = 0;
     for (int i = 0; i < g_nredo; i++) {   // CPU writes to textures that already have an image (WriteTexels): from now on they follow their storage
         smap_ent *e = map_get(g_redo[i]); vka_img *im = e ? e->im : NULL;
@@ -3196,7 +3210,7 @@ void vka_tex_prepare(VkCommandBuffer cb) {
         if (im->track) upload_tracked(im, &t, cb); else upload_fill(im, &t, cb);
         g_reup++; n_up++;
     }
-    g_nredo = 0;
+    g_nredo = 0; PREP_MARK(2);
     int any_rw = 0;
     if (n_up && g_nreg_writes) vka_barrier(cb);   // the whole-image uploads above before the region copies below, which may write the same texels
     for (int i = 0; i < g_nreg_writes; i++) {
@@ -3234,7 +3248,7 @@ void vka_tex_prepare(VkCommandBuffer cb) {
         unref_locked(im);
     }
     g_nreg_writes = 0;
-    if (any_rw) vka_barrier(cb);
+    if (any_rw) vka_barrier(cb); PREP_MARK(3);
     // GPU writes whose submission is done: the images over them that did not get their bytes are uploaded again (see gw_t above)
     gml_poll();
     if (vka_nan_on()) watch_scan(cb);
@@ -3282,18 +3296,19 @@ void vka_tex_prepare(VkCommandBuffer cb) {
         }
         #undef GW_TAKES
         g_ngw = k;
-    }
+    } PREP_MARK(4);
     // Tracked images whose pages the CPU wrote since their last upload (a write to a protected page moves the dirty clock, so nothing is scanned while it stands still)
     // Sparse pools' textures also when a mapping request came since (the page table's generation moved)
     // Video pictures: the scan below runs when a picture was written into a video pool or a pool came or went since the last one (before 2026-11-10 every live image
     // was asked dm_codec_is_video_mem, a lock and 64 slots, at every submission to find that out, and again in the scan: "Live images" above); an image is asked again
     // only after a pool came or went (vka_img.vep). The counts are read before the scan, so a picture written during it moves them for the next submission
+    PREP_MARK(5);
     static uint64_t seen, vseen, vw_seen, ve_seen; uint64_t now = nvn_dirty_now(), vnow = nvn_sparse_gen(), vw = dm_codec_video_writes(), ve = dm_codec_video_epoch();
     int vid_new = vw != vw_seen || ve != ve_seen;
     static int g_wbf_wait; static uint64_t g_wbf_up, g_wbf_waits; int g_wbf_on = VKA_ENV("DM_VK_WB_FOLLOW", 1) != 0; uint64_t done = vka_done();   // g_wbf_wait: a GPU-written linear texture waited for its copy-back in the last scan
     int full_scan = now != seen || vnow != vseen || vid_new;   // (else the scan runs only for the images that waited for a copy-back: vka_wbfollow.h wbf_visit)
     if (full_scan || g_wbf_wait) {
-        seen = now; vseen = vnow; vw_seen = vw; ve_seen = ve; g_wbf_wait = 0;
+        seen = now; vseen = vnow; vw_seen = vw; ve_seen = ve; g_wbf_wait = 0; g_prep_scans++;
         for (int i = 0; i < g_nlive; i++) {
             vka_img *im = g_live[i];
             if (!wbf_visit(full_scan, im->wbf_waiting)) continue;
@@ -3380,6 +3395,7 @@ void vka_tex_prepare(VkCommandBuffer cb) {
     g_nsd = 0;
     if (nw) vk.vkUpdateDescriptorSets(V.dev, (uint32_t)nw, w, 0, NULL);
     pthread_mutex_unlock(&g_tmu);
+    PREP_MARK(6); prep_stats();
 }
 
 // ---------- The frame capture (vka_capture.c, DM_NVN_CAPTURE) and its replayer (vka_replay.c) ----------

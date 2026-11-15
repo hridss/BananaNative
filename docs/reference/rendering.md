@@ -185,6 +185,14 @@ The replay on Metal (`dm/gfx/nvn/nvn_mtl.m`) and the Vulkan and OpenGL layers. E
 - **Found on:** [Orbitals](../../dm/games/040032B023CA4000/README.md): the title screen's background plane (vertex shader `995c2e803134d795` reads buffer texture ID 558, 8 RGBA texels, as a 2D image).
 - **Check:** a replay of the title-screen capture (`nxreplay … DM_VK_PLACE_LAZY=0`) binds 3 buffer textures as texel buffers and 3 as row images with no `[RED]` line, and the plane draws where the live frame was black.
 
+### Storage buffers from a uniform buffer's descriptor ran to the end of their chunk (Android)
+
+- **Symptom:** (Android, Vulkan) textures re-uploaded after every submission with no CPU or GPU write to them: `textures re-uploaded after a GPU write into their storage` counts in the thousands, `texture serial … a GPU write into its storage (store <address>+<tens of MB>) is done, re-uploaded`, and `texture prepare` in the `[vk] pace cost` line at 9-27 ms a frame (`DM_VK_PREP_STATS=1`: the `GPU writes` phase, ~0.7 ms a call). Orbitals re-uploaded two 1024x1024 textures that share a pool with such buffers.
+- **Cause:** a storage buffer whose address the shader reads from a uniform buffer ([Storage buffer addresses in the game's own uniform buffer](shaders.md#storage-buffer-addresses-in-the-games-own-uniform-buffer)) was bound with no size, so to the end of its chunk, and a written one recorded that whole range as written by the GPU (`vka_tex_gw_opaque`); every image over it was uploaded again once the submission was done. The size is in the descriptor: NVN's storage buffer descriptor is the 64-bit address, the 32-bit size and a zero word.
+- **Fix:** general: `vka_bind.c` takes the size after the address when the word after it is zero (the binding is then bounded as the hardware bounds the access); otherwise the size stays unknown as before. Orbitals: `texture prepare` 9.7-15 → 0.6-0.7 ms a frame, the picture the same in a capture replay.
+- **Check:** `t_android_shlib` (the size taken; a descriptor whose word after the size is not zero keeps it unknown).
+- **Found on:** [Orbitals](../../dm/games/040032B023CA4000/README.md#found-on-this-game).
+
 ### Automatic block height truncates
 
 - **Symptom:** torn digits and a background in blue steps (Rhythm Heaven Groove's latency calibration).
