@@ -14,6 +14,7 @@
 #include "vka_qsched.h"
 #include "vka_skipwarn.h"
 #include <math.h>
+#include <sys/prctl.h>
 #include <stdlib.h>
 #include <string.h>
 #include "vka_tstick.h"
@@ -124,6 +125,7 @@ void mtl_set_frame(uint64_t f) {
     g_frame = f; vka_ctl_frame(f);
     { if (atomic_load_explicit(&vka_synclog_n, memory_order_relaxed) > 0) VLOG("sync frame %llu begins at %.2f ms", (unsigned long long)f, (now_ns() % 1000000000000ull) / 1e6); }
     skipwarn_frame(f);
+    { static int last; int v = VKA_ENV("DM_VK_QS_TRACE_DUMP", 0); if (v && v != last) vka_qtrace_dump(0); last = v; }   // diagnostic: the GPU-wait trace now, once per new value
     static uint64_t f0, d0, rp0, b0, ub0, s0, r0, o0, pc0, ch0;
     int on = VKA_ENV("DM_VK_STATS", 1) != 0;
     if (on && f - f0 >= 300) {
@@ -519,6 +521,11 @@ static void gpu_slot_done(unsigned slot) {   // the slot's fence is done: its tw
         // A part's GPU time is what a driver's long-command watchdog sees (the kernel ends a submission that runs too long and the device is lost): the longest ones logged
         double pms = pmax * g_ts_ns / 1e6; static double logged = 200;
         if (pms >= logged) { logged = pms * 1.25; VLOG("GPU time: a part ran %.1f ms (part %u of %u of a submission of frame %llu; the longest so far)", pms, imax + 1, np, (unsigned long long)f); }
+        if (np > 1 && VKA_ENV("DM_VK_PARTLOG", 0)) {   // each part's top and bottom from the first part's top: a gap between a bottom and the next top is the GPU waiting for that part
+            char b[600]; size_t o = 0;
+            for (uint32_t i = 0; i < np && o < sizeof b; i++) o += (size_t)snprintf(b + o, sizeof b - o, " %.1f-%.1f", (t[2 * i] - t[0]) * g_ts_ns / 1e6, (t[2 * i + 1] - t[0]) * g_ts_ns / 1e6);
+            VLOG("GPU parts of a submission of frame %llu (ms from its first top):%s; busy %.1f", (unsigned long long)f, b, busy * g_ts_ns / 1e6);
+        }
         uint64_t s0 = (uint64_t)(t[0] * g_ts_ns), s1 = (uint64_t)(t[2 * np - 1] * g_ts_ns);
         atomic_fetch_add(&g_gpu[k].ns, (uint64_t)(busy * g_ts_ns)); atomic_fetch_add(&g_gpu[k].span, s1 - s0);
         if (s0 < atomic_load(&g_gpu[k].t0)) atomic_store(&g_gpu[k].t0, s0);
@@ -587,7 +594,7 @@ void vka_exec_hang_report(uint64_t fence) {
     unsigned k = (g_slot_i - 1) % NSLOT;
     if (g_slot_ts[k]) VRED("GPU hang: the submission being recorded (frame %llu) had handed %u parts to the queue, %u of them seen finished", (unsigned long long)g_slot_frame[k],
                            g_slot_parts[k] - 1, g_part_seen);
-    vka_qtrace_dump();   // the scheduler's and the submissions' last events (vka_worker.c, DM_VK_QS_TRACE)
+    vka_qtrace_dump(1);   // the scheduler's and the submissions' last events (vka_worker.c, DM_VK_QS_TRACE)
     void vka_crumbs_dump(void); vka_crumbs_dump();   // how far the GPU got (DM_VK_CRUMBS)
 }
 
@@ -959,8 +966,9 @@ static int synclog(void) { static int last; int v = VKA_ENV("DM_VK_SYNCLOG", 0);
 int mtl_wait(uint64_t fence, uint64_t timeout_ns) {
     if (timeout_ns && vka_done() < fence && synclog()) {
         double t0 = ms_now(); int r = vka_wait_done(fence, timeout_ns);
-        if (atomic_fetch_sub(&g_synclog, 1) > 0) VLOG("sync wait: frame %llu fence %llu (last reserved %llu, queued %llu, done %s): %.2f-%.2f ms, %.2f ms", (unsigned long long)g_frame, (unsigned long long)fence,
-                                                (unsigned long long)vka_fence_last(), (unsigned long long)vka_fence_queued(), r ? "yes" : "timeout", t0, ms_now(), ms_now() - t0);
+        char tn[20] = "?"; prctl(PR_GET_NAME, tn);   // the waiting thread (a game thread's name: which of them the GPU holds)
+        if (atomic_fetch_sub(&g_synclog, 1) > 0) VLOG("sync wait: frame %llu fence %llu (last reserved %llu, queued %llu, done %s): %.2f-%.2f ms, %.2f ms, thread '%s'", (unsigned long long)g_frame, (unsigned long long)fence,
+                                                (unsigned long long)vka_fence_last(), (unsigned long long)vka_fence_queued(), r ? "yes" : "timeout", t0, ms_now(), ms_now() - t0, tn);
         return r;
     }
     return vka_wait_done(fence, timeout_ns);

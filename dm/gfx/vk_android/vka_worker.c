@@ -115,7 +115,7 @@ void vka_qtrace(int kind, uint64_t q, uint64_t fence, uint64_t x, uint32_t a, ui
     pthread_mutex_unlock(&g_qtmu);
 }
 static const char *qt_op(uint32_t mode) { return mode ? ">=" : "=="; }
-void vka_qtrace_dump(void) {
+void vka_qtrace_dump(int hang) {   // hang: from vka_exec_hang_report; 0: asked for (DM_VK_QS_TRACE_DUMP)
     if (!vka_qtrace_on()) return;
     pthread_mutex_lock(&g_qtmu);
     uint64_t n = g_qti < g_qtn ? g_qti : g_qtn, i0 = g_qti - n, now = wns();
@@ -123,7 +123,8 @@ void vka_qtrace_dump(void) {
     if (c) for (uint64_t i = 0; i < n; i++) c[i] = g_qt[(i0 + i) % g_qtn];
     pthread_mutex_unlock(&g_qtmu);
     if (!c) return;
-    VRED("GPU hang: the last %llu events of the GPU-wait trace (DM_VK_QS_TRACE), oldest first; times are before this line", (unsigned long long)n);
+    if (hang) VRED("GPU hang: the last %llu events of the GPU-wait trace (DM_VK_QS_TRACE), oldest first; times are before this line", (unsigned long long)n);
+    else VLOG("GPU-wait trace on request (DM_VK_QS_TRACE_DUMP): the last %llu events, oldest first; times are before this line", (unsigned long long)n);
     static const char *const src[] = {"?", "a signal queued this frame", "a signal queued in an earlier frame", "memory"};
     for (uint64_t i = 0; i < n; i++) {
         const qt_t *e = &c[i]; double ms = now > e->t ? (now - e->t) / 1e6 : 0;

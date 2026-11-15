@@ -210,7 +210,7 @@ enum { QT_SUB = 1, QT_PARK, QT_PASS, QT_RELEASE, QT_GATE, QT_FORCE, QT_SIGNAL, Q
 void vka_tex_slot_counts(uint64_t *writes, uint64_t *changes);   // vka_tex.c: pool table slot writes, and of them changes of a slot's view
 void vka_qtrace(int kind, uint64_t q, uint64_t fence, uint64_t x, uint32_t a, uint32_t b, uint32_t c, uint32_t d, const volatile void *w);
 int vka_qtrace_on(void);
-void vka_qtrace_dump(void);
+void vka_qtrace_dump(int hang);   // hang: from the hang report; 0: asked for (DM_VK_QS_TRACE_DUMP)
 // GPU breadcrumbs (vka_exec.c, DM_VK_CRUMBS): the GPU writes a number into host memory at each point; after a lost device the last number written says how far it got
 enum { CR_PART_BEGIN = 1, CR_PART_END, CR_DISPATCH, CR_PASS_END, CR_GATE };   // (CR_GATE: past a gate's wait, level 1)
 void vka_crumb(VkCommandBuffer cb, int kind, uint64_t key);
