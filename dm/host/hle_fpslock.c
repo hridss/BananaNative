@@ -1010,6 +1010,18 @@ void dm_ctl_peek(uint64_t a, int n) {
         LOG("DM_CTL: peek %#llx: %g %g %g %g (%08x %08x %08x %08x)", (unsigned long long)(a + 4 * (uint64_t)i), f[0], f[1], f[2], f[3], w[0], w[1], w[2], w[3]);
     }
 }
+// "poke <guest address | main+offset> <value>": one 32-bit word of guest memory set (a float when the value has a '.', else an integer, 0x for hex), and what it held logged:
+// for trying a global the game reads every frame, such as the variable behind an Unreal FAutoConsoleVariableRef (the register call's x2), without a rebuild
+void dm_ctl_poke(const char *where, const char *value) {
+    uint64_t a = 0;
+    if (!strncmp(where, "main+", 5)) { for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) a = (uint64_t)(uintptr_t)g_mod[i].base + strtoull(where + 5, NULL, 16); }
+    else a = strtoull(where, NULL, 16);
+    uint32_t old, w; if (!a || !rd(a, &old, sizeof old)) { LOG("DM_CTL: poke %s: not readable", where); return; }
+    if (strchr(value, '.')) { float f = strtof(value, NULL); memcpy(&w, &f, 4); } else w = (uint32_t)strtoll(value, NULL, 0);
+    dm_guest_write_prepare((void *)(uintptr_t)a, 4); memcpy((void *)(uintptr_t)a, &w, 4);
+    float fo, fn; memcpy(&fo, &old, 4); memcpy(&fn, &w, 4);
+    LOG("DM_CTL: poke %s (%#llx): %#x (%g) -> %#x (%g)", where, (unsigned long long)a, old, fo, w, fn);
+}
 // "memdump <guest address> <bytes> <path>": guest memory to a file, read safely (stops at the first unreadable page)
 void dm_ctl_memdump(uint64_t a, uint64_t n, const char *path) {
     FILE *f = fopen(path, "wb"); if (!f) { LOG("[RED] DM_CTL: memdump: cannot open %s", path); return; }
