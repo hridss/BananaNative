@@ -64,7 +64,8 @@ final class Folders {
     static Game repack(Context a, Game g) {
         File pd = new File(g.packDir);
         boolean there = new File(pd, "pack.tsv").isFile();
-        if (there || !android.os.Environment.isExternalStorageManager() && !CopyPlan.inApp(AppStorage.root(a), g.packDir)) return g;   // there, or not to be told without access
+        if (there) return better(a, g, pd);
+        if (!android.os.Environment.isExternalStorageManager() && !CopyPlan.inApp(AppStorage.root(a), g.packDir)) return g;   // not to be told without access
         String picked = Prefs.folder(a, "pack_" + g.titleId);
         if (picked != null && !new File(picked).exists()) pickedPack(a, g.titleId, null);   // a picked pack folder that is gone: the search below takes over
         File found = packFor(a, new File(g.gameDir), g.titleId);
@@ -78,6 +79,27 @@ final class Folders {
             if (i >= 0 && list.get(i).packDir.equals(g.packDir)) { list.set(i, new Game(g.titleId, g.name, g.gameDir, fix, list.get(i).used)); Game.save(a, list); }
         }
         return n;
+    }
+
+    /**
+     * A card whose pack is there but has no shader library of this APK (its library deleted, a code-only Prepare, or a pack from before an update): the pack the usual
+     * search finds when it has one (packs copied beside the game since, Home's check at every start), else the card as it is. A pack the player picked stays. The
+     * list entry is updated. Reads packs: off the main thread
+     */
+    private static Game better(Context a, Game g, File pd) {
+        if (Pack.libraryOf(pd) != null) return g;
+        String picked = pickedPack(a, g.titleId);
+        if (picked != null && new File(picked).getAbsoluteFile().equals(pd.getAbsoluteFile())) return g;   // the player's choice
+        if (!android.os.Environment.isExternalStorageManager() && !CopyPlan.inApp(AppStorage.root(a), g.gameDir)) return g;   // nothing beside the game to look at
+        File found = packFor(a, new File(g.gameDir), g.titleId);
+        if (found == null || found.getAbsoluteFile().equals(pd.getAbsoluteFile()) || !isPackOf(found, g.titleId) || Pack.libraryOf(found) == null) return g;
+        android.util.Log.i("nxnative", g.titleId + ": the pack folder " + g.packDir + " has no shader library of this app; using " + found + ", which has");
+        synchronized (Game.class) {
+            List<Game> list = Game.load(a);
+            int i = GameFile.index(list, g.gameDir);
+            if (i >= 0 && list.get(i).packDir.equals(g.packDir)) { list.set(i, new Game(g.titleId, g.name, g.gameDir, found.getPath(), list.get(i).used)); Game.save(a, list); }
+        }
+        return new Game(g.titleId, g.name, g.gameDir, found.getPath(), g.used);
     }
 
     /** A picked save folder that is gone (GameFile.saveGone), else null */
