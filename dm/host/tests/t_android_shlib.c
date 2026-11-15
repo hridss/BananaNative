@@ -230,6 +230,16 @@ static void test_walk(void) {
         CHECK(ni == 2 && r[0].what == VKA_R_IMG && r[0].tid == 117 && (r[0].flags & DMSH_VK_BF_ATOMIC) && r[1].what == VKA_R_NULL,
               "image handle in a uniform buffer: %d, what %d tid %d, then %d (%s)", ni, ni > 0 ? r[0].what : -1, ni > 0 ? r[0].tid : -1, ni > 1 ? r[1].what : -1, why);
     }
+    // Separate handles in a uniform buffer: the shader ORs a texture word and a sampler word, in either order (Orbitals' deferred light 7d5d50be3bfa00f7 has the sampler first)
+    {
+        uint32_t tw = 41, sw = 51u << 20; memcpy(g_mem + 0x60, &sw, 4); memcpy(g_mem + 0x64, &tw, 4);
+        dmsh_vk_bind sb[] = {{.kind = DMSH_VK_KIND_TEX_UBO, .desc = 1, .binding = 256, .count = 1, .reg = 0, .off = 0x60, .skind = DMSH_VK_KIND_SAMP_UBO, .sreg = 0, .soff = 0x64, .dim = 1},
+                             {.kind = DMSH_VK_KIND_TEX_UBO, .desc = 1, .binding = 257, .count = 1, .reg = 0, .off = 0x64, .skind = DMSH_VK_KIND_SAMP_UBO, .sreg = 0, .soff = 0x60, .dim = 1}};
+        dmsh_vk_entry es = {.stage = DMSH_VK_STAGE_FS, .bind_count = 2};
+        int ns = vka_walk(&s, 1, &es, sb, 0, 64, rd, NULL, r, 32, NULL, why, sizeof why);
+        CHECK(ns == 2 && r[0].what == VKA_R_TEX && r[0].tid == 141 && r[0].sid == 251 && r[1].tid == 141 && r[1].sid == 251,
+              "separate handles, sampler word first and texture word first: %d, %d/%d %d/%d", ns, r[0].tid, r[0].sid, r[1].tid, r[1].sid);
+    }
     // A storage buffer off the device's alignment is refused (SHADERS.md open problem 2)
     dmsh_vk_bind un = {.kind = DMSH_VK_KIND_SBUF, .desc = 7, .binding = 256, .count = 1, .reg = 4};
     dmsh_vk_entry e1 = {.stage = DMSH_VK_STAGE_FS, .bind_count = 1};

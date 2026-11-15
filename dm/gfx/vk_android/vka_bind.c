@@ -78,6 +78,13 @@ int vka_walk(const vka_bstate *s, int st, const dmsh_vk_entry *e, const dmsh_vk_
                 if (a) { r.what = VKA_R_BUF; r.addr = a; r.size = 0; }   // the size is not known: to the end of the chunk
                 break; }
             case DMSH_VK_KIND_TEX: case DMSH_VK_KIND_TEX_UBO: case DMSH_VK_KIND_TEX_C2A: {
+                if (b->kind == DMSH_VK_KIND_TEX_UBO && b->skind == DMSH_VK_KIND_SAMP_UBO) {   // separate handles (or one word twice): the shader ORs the two words into the one handle
+                    // TEX.B takes, so either word may hold the texture ID; Orbitals' deferred light 7d5d50be3bfa00f7 names its G-buffer textures with the sampler word first
+                    uint32_t h = noslot ? 0 : (uint32_t)ubo_word(s, st, reg, b->off + ubo_elem(b, k), 4, rd, ctx) | (uint32_t)ubo_word(s, st, b->sreg, b->soff + ubo_elem(b, k), 4, rd, ctx);
+                    int tid = ubo_tex_id(s, h);
+                    if (tid) { r.what = VKA_R_TEX; r.tid = tid; r.sid = ubo_samp_id(s, h); }
+                    break;
+                }
                 int tid = b->kind == DMSH_VK_KIND_TEX_UBO ? (noslot ? 0 : ubo_tex_id(s, (uint32_t)ubo_word(s, st, reg, b->off + ubo_elem(b, k), 4, rd, ctx)))
                         : b->kind == DMSH_VK_KIND_TEX_C2A ? (int)(vka_c2_handle(s, st, b->off + 8u * k) & 0xfffff)
                         : noslot ? 0 : (int)(vka_tex_slot(s, st, (unsigned)reg) & 0xfffff);
