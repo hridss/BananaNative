@@ -330,6 +330,25 @@ class UeLodScale(unittest.TestCase):   # ue_lod_scale (hle_uecvar.c dm_ue_lod_ti
             rc, out = header(rows)
             self.assertNotEqual(rc, 0, rows)
             self.assertIn('ue_lod_scale must be', out, rows)
+
+
+class PlaceCoalescePct(unittest.TestCase):   # place_coalesce_pct (vka_mem.c coalesce_pressure): a percentage, -1 when unset (the host's default)
+    def test_rows(self):
+        for rows, want in (('', '-1'), ('place_coalesce_pct\t0\n', '0'), ('place_coalesce_pct\t75\n', '75')):
+            with tempfile.TemporaryDirectory() as d:
+                Path(d, ID).mkdir()
+                (Path(d, ID) / 'game.tsv').write_text(TSV + rows)
+                r = subprocess.run([sys.executable, str(GAME), 'header', ID, str(Path(d, ID) / 'game.h')], env={**os.environ, 'DM_GAMES_DIR': d}, capture_output=True, text=True)
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertIn('#define DM_GAME_PLACE_COALESCE_PCT ' + want + '\n', (Path(d, ID) / 'game.h').read_text())
+
+    def test_rejected(self):
+        for rows in ('place_coalesce_pct\t-1\n', 'place_coalesce_pct\t101\n', 'place_coalesce_pct\tmost\n'):
+            rc, out = header(rows)
+            self.assertNotEqual(rc, 0, rows)
+            self.assertIn('place_coalesce_pct must be', out, rows)
+
+
 class TurnipEnv(unittest.TestCase):   # turnip_env (vka_driver.c turnip_env): Mesa variables as NAME=value words, the header's string
     def macro(self, rows):
         with tempfile.TemporaryDirectory() as d:

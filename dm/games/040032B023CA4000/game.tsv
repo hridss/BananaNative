@@ -31,6 +31,10 @@ depth_mode	zero
 # Turnip renders every pass in system memory (README.md "Android", 2026-11-15): its bandwidth autotune puts the depth prepass (1,200 draws, 6.8 M vertices a frame) in GMEM,
 # where binning runs the vertex shader twice: 8.7 ms a 600-draw part against 5.4 in sysmem, every other pass the same. GPU 83 -> 72.5-75 ms a frame, 11.8 -> 13.1-13.7 fps
 turnip_env	TU_DEBUG=sysmem
+# Contiguous placed segments joined always, as before the host joined them only under memory-map pressure (vka_mem.c coalesce_pressure; README.md "Android",
+# 2026-11-15): the game finalizes pools and makes new ones on the same storage all through its gameplay; apart, each finalize gives its segment back and the new pool is
+# placed again, about 1.3 placements a frame: 16.5-17.5 fps against 17.7-18.1 with the joins (the maps stay at 11 % of the limit)
+place_coalesce_pct	0
 
 # ---- Recommended settings (the launcher, Recommend.java; dm/games/README.md recommend) ----
 # Qualcomm's own driver before 512.800 (driverID 8, major 512, minor below 800) -> an installed Turnip (driverID 18). README.md "Android": on the AYN Thor (Adreno 740) the stock

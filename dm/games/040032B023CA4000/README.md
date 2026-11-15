@@ -75,6 +75,7 @@ AYN Thor Max (Snapdragon 8 Gen 2, Adreno 740, 16 GB, Android 13), the Deluxe NUP
 - [Float storage images bound to integer textures on the Vulkan replay](../../../docs/reference/shaders.md#float-storage-images-bound-to-integer-textures-on-the-vulkan-replay): on Android the GPU timed out about 20 s into the first area; Niagara's draw-argument compute `742f0130cd7af9e4` read particle counts through a float image over an R32_UINT texel buffer and wrote instance counts of about 924 million.
 - [A draw skipped for a background pipeline left a kept texture empty](../../../docs/reference/rendering.md#a-draw-skipped-for-a-background-pipeline-left-a-kept-texture-empty-android): on Android, the colour grading table's one draw skipped on a first start; the main menu's backgrounds stayed black.
 - [A vertex-heavy depth prepass in GMEM on Turnip (Android)](../../../docs/reference/rendering.md#a-vertex-heavy-depth-prepass-in-gmem-on-turnip-android): 8.7 ms a 600-draw prepass part in GMEM, 5.4 in sysmem; the profile's `turnip_env`.
+- [Joining contiguous placed segments holds frames at the same spots](../../../docs/reference/memory.md#joining-contiguous-placed-segments-holds-frames-at-the-same-spots-android): the other way round here: without the joins (upstream's gate, ported on 2026-11-15) the game's pools remade on the same storage were given back and placed again, about 1.3 placements a frame, 16.5-17.5 fps against 17.7-18.1; the profile's `place_coalesce_pct 0`.
 
 ## Open
 

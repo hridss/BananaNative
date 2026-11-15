@@ -218,6 +218,8 @@ def header(g):
     av1 = g.get('av1_decoder', 'hardware')   # Android: AV1 movies on the phone's hardware decoder (MediaCodec, the default) or dav1d frame-parallel (hle_movie_av1.c mav1_send)
     if av1 not in ('hardware', 'dav1d'): sys.exit(f'{g.id}: av1_decoder must be hardware or dav1d: {av1}')
     # Android, devices of 12 GB or less (MemTotal up to 12 GiB; vka_lowram.h): defaults the Vulkan replay takes there only, for a profile that sets them. 0 = not set
+    pcp = g.get('place_coalesce_pct', '')   # Android: the share of vm.max_map_count from which contiguous placed segments are joined (vka_mem.c coalesce_pressure; DM_VK_COALESCE_PCT overrides): unset = the host's 40
+    if pcp and not (pcp.isdigit() and int(pcp) <= 100): sys.exit(f'{g.id}: place_coalesce_pct must be a percentage from 0 (joined always) to 100: {pcp}')
     lpp = g.get('low_ram_place_part_mb', '0')   # memory pools of at least this many MiB placed by parts (vka_mem.c part_min; the default elsewhere 1024, DM_VK_PLACE_PART_MB overrides)
     if not lpp.isdigit() or int(lpp) and not 16 <= int(lpp) <= 65536: sys.exit(f'{g.id}: low_ram_place_part_mb must be 0 (not set) or 16 to 65536 MiB: {lpp}')
     lic = g.get('low_ram_img_cache_max_mb', '0')   # a ceiling on the texture cache's measured limit, MiB (vka_tex.c img_limit_update; DM_VK_IMG_LIMIT_MB replaces both)
@@ -476,6 +478,7 @@ def header(g):
          f'#define DM_GAME_DRAW_BARRIERS_GAME {int(dbr == "game")}',
          f'#define DM_GAME_VCONV_RANGE {int(vcr == "on")}',
          f'#define DM_GAME_AV1_DAV1D {int(av1 == "dav1d")}',
+         f'#define DM_GAME_PLACE_COALESCE_PCT {int(pcp) if pcp else -1}',
          f'#define DM_GAME_LOW_RAM_PLACE_PART_MB {int(lpp)}', f'#define DM_GAME_LOW_RAM_IMG_CACHE_MAX_MB {int(lic)}', f'#define DM_GAME_LOW_RAM_APP_POOL_MB {int(lap)}',
          f'#define DM_GAME_ROMFS_SUBST {q(rsub)}',
          f'#define DM_GAME_TURNIP_ENV {q(tenv)}',

@@ -42,6 +42,12 @@
 #include "vka_placefail.h"
 #include "vka_fileback.h"
 #include "../../host/plat/plat_guestmap.h"
+#if __has_include("game_profile.h")
+#include "game_profile.h"
+#endif
+#ifndef DM_GAME_PLACE_COALESCE_PCT
+#define DM_GAME_PLACE_COALESCE_PCT -1   // (the replay tools: no game profile)
+#endif
 
 static void fb_placed(uintptr_t lo, uintptr_t hi);           // File-backed pools (below): a placement took [lo, hi) from the file
 static void fb_gone(uintptr_t lo, uintptr_t hi, int back);   // a pool's range finalized (back 1: its pieces go back to anonymous memory) or released (0: dropped)
@@ -1218,9 +1224,12 @@ static int join_alias(int k0, int k1, seglist *l) {
 // the dirty tracker starts coarsening) of vm.max_map_count or more; 0 = always, as before. A join saves one map a segment and costs a copy of all its bytes on the
 // replay thread with the queue idle: Kirby and the Forgotten Land places its 1.4 GiB pool in 16 MiB parts as the player walks, and joining them (up to 256 MiB, 32 a
 // submission) held the frame 100-700 ms at the same two spots of the first path at 7 % of the limit (130,000-770,000 page faults on the replay thread, 2026-11-13).
-// Ocarina of Time's thousands of small pools, which the joins are for, pass the share long before the 75 % budget. Not counted yet (the first count, DM_VK_MAPS=0): no joins
+// Ocarina of Time's thousands of small pools, which the joins are for, pass the share long before the 75 % budget. Not counted yet (the first count, DM_VK_MAPS=0): no joins.
+// A game's profile sets its own share (place_coalesce_pct): Orbitals finalizes pools and makes new ones on the same storage all through its gameplay; joined, the
+// segment under them lives on for the pools that share it and a new pool finds its addresses placed, where apart each finalize gives its segment back (waiting for the
+// GPU) and the new pool is placed again (copying its bytes): about 1.3 placements a frame, 17.1 fps against 18.1 with the joins always (2026-11-15)
 static int coalesce_pressure(void) {
-    int pct = VKA_ENV("DM_VK_COALESCE_PCT", 40); if (pct <= 0) return 1;
+    int pct = VKA_ENV("DM_VK_COALESCE_PCT", DM_GAME_PLACE_COALESCE_PCT >= 0 ? DM_GAME_PLACE_COALESCE_PCT : 40); if (pct <= 0) return 1;
     int n = atomic_load(&g_maps_n), mx = atomic_load(&g_maps_max);
     return n > 0 && mx > 0 && (int64_t)n * 100 >= (int64_t)mx * pct;
 }
