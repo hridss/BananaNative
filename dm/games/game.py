@@ -231,6 +231,8 @@ def header(g):
     if mml not in ('on', 'off'): sys.exit(f'{g.id}: mem_map_limit must be on or off: {mml}')
     gts = g.get('gpu_timestamps', 'submission')   # counter timestamps (nvn_mtl.m rep_ticks): submission = one time per submission, segment = the GPU start / end of the segment holding the report
     if gts not in ('submission', 'segment'): sys.exit(f'{g.id}: gpu_timestamps must be submission or segment: {gts}')
+    tenv = ' '.join(g.get('turnip_env', '').split())   # Turnip's own variables for this game (vka_driver.c turnip_env; the environment's win): NAME=value ...
+    if any(not re.fullmatch(r'(TU|FD|IR3|MESA)_[A-Z0-9_]+=[A-Za-z0-9_,.:+=-]+', w) for w in tenv.split()) or len(tenv) > 200: sys.exit(f'{g.id}: turnip_env takes NAME=value words of Mesa variables (TU_, FD_, IR3_, MESA_), 200 characters at most: {tenv}')
     rsub = ' '.join(g.get('romfs_substitute', '').split())   # damaged RomFS files (a .zs that is not a zstd stream) served as another image file (hle_fs.c img_serve; DM_ROMFS_SUBST overrides): <path>=<substitute path> ...
     if any(w.count('=') != 1 or w.startswith(('=', '/')) or w.endswith('=') or '=/' in w for w in rsub.split()): sys.exit(f'{g.id}: romfs_substitute takes <path>=<substitute path> pairs, RomFS paths without a leading /: {rsub}')
     dbr = g.get('draw_barriers', 'full')   # how draw passes are ordered (nvn_mtl.m barrier_game): full = each waits for all earlier GPU work, game = by the game's own barriers, so vertex work overlaps the previous pass's fragments
@@ -476,6 +478,7 @@ def header(g):
          f'#define DM_GAME_AV1_DAV1D {int(av1 == "dav1d")}',
          f'#define DM_GAME_LOW_RAM_PLACE_PART_MB {int(lpp)}', f'#define DM_GAME_LOW_RAM_IMG_CACHE_MAX_MB {int(lic)}', f'#define DM_GAME_LOW_RAM_APP_POOL_MB {int(lap)}',
          f'#define DM_GAME_ROMFS_SUBST {q(rsub)}',
+         f'#define DM_GAME_TURNIP_ENV {q(tenv)}',
          f'#define DM_GAME_WINDOW_FN {{{", ".join(wfn) or "{\"\", 0, 0, 0, 0}"}}}', f'#define DM_GAME_NWINDOW_FN {len(wfn)}',
          '#define DM_GAME_SHAPE_TABLE {' + (', '.join(shp) or '{"", "", {0}}') + '}', f'#define DM_GAME_NSHAPE_TABLE {len(shp)}',
          '#define DM_GAME_SUBGROUP_ONE_LANE {' + (', '.join(sol) or '0') + '}', f'#define DM_GAME_NSUBGROUP_ONE_LANE {len(sol)}',

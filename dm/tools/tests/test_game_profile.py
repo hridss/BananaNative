@@ -330,6 +330,25 @@ class UeLodScale(unittest.TestCase):   # ue_lod_scale (hle_uecvar.c dm_ue_lod_ti
             rc, out = header(rows)
             self.assertNotEqual(rc, 0, rows)
             self.assertIn('ue_lod_scale must be', out, rows)
+class TurnipEnv(unittest.TestCase):   # turnip_env (vka_driver.c turnip_env): Mesa variables as NAME=value words, the header's string
+    def macro(self, rows):
+        with tempfile.TemporaryDirectory() as d:
+            Path(d, ID).mkdir()
+            (Path(d, ID) / 'game.tsv').write_text(TSV + rows)
+            r = subprocess.run([sys.executable, str(GAME), 'header', ID, str(Path(d, ID) / 'game.h')], env={**os.environ, 'DM_GAMES_DIR': d}, capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            return [ln for ln in (Path(d, ID) / 'game.h').read_text().splitlines() if 'TURNIP_ENV' in ln]
+
+    def test_rows(self):
+        self.assertEqual(self.macro(''), ['#define DM_GAME_TURNIP_ENV ""'])
+        self.assertEqual(self.macro('turnip_env\tFD_DEV_FEATURES=enable_tp_ubwc_flag_hint=1\n'), ['#define DM_GAME_TURNIP_ENV "FD_DEV_FEATURES=enable_tp_ubwc_flag_hint=1"'])
+        self.assertEqual(self.macro('turnip_env\tTU_DEBUG=sysmem,nolrz  TU_AUTOTUNE_ALGO=profiled\n'), ['#define DM_GAME_TURNIP_ENV "TU_DEBUG=sysmem,nolrz TU_AUTOTUNE_ALGO=profiled"'])
+
+    def test_rejected(self):
+        for rows in ('turnip_env\tDM_VK_X=1\n', 'turnip_env\tTU_DEBUG\n', 'turnip_env\tTU_DEBUG=\n', 'turnip_env\tTU_DEBUG=a"b\n', 'turnip_env\tTU_DEBUG=a;b\n', 'turnip_env\ttu_debug=sysmem\n'):
+            rc, out = header(rows)
+            self.assertNotEqual(rc, 0, rows)
+            self.assertIn('turnip_env takes', out, rows)
 
 
 if __name__ == '__main__':

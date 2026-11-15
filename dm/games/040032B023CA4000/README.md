@@ -74,6 +74,7 @@ AYN Thor Max (Snapdragon 8 Gen 2, Adreno 740, 16 GB, Android 13), the Deluxe NUP
 - [The controller applet as a join screen](../../../docs/reference/services.md#the-controller-applet-as-a-join-screen): Play Local's controller screen (two players) shows on Android, where the second player joins by L + R.
 - [Float storage images bound to integer textures on the Vulkan replay](../../../docs/reference/shaders.md#float-storage-images-bound-to-integer-textures-on-the-vulkan-replay): on Android the GPU timed out about 20 s into the first area; Niagara's draw-argument compute `742f0130cd7af9e4` read particle counts through a float image over an R32_UINT texel buffer and wrote instance counts of about 924 million.
 - [A draw skipped for a background pipeline left a kept texture empty](../../../docs/reference/rendering.md#a-draw-skipped-for-a-background-pipeline-left-a-kept-texture-empty-android): on Android, the colour grading table's one draw skipped on a first start; the main menu's backgrounds stayed black.
+- [A vertex-heavy depth prepass in GMEM on Turnip (Android)](../../../docs/reference/rendering.md#a-vertex-heavy-depth-prepass-in-gmem-on-turnip-android): 8.7 ms a 600-draw prepass part in GMEM, 5.4 in sysmem; the profile's `turnip_env`.
 
 ## Open
 

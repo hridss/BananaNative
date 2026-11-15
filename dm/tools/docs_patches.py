@@ -135,6 +135,8 @@ DEFAULT_SOON = 'a default for every game after `regress.py check` on the games'
 SWITCH_BINDING = [
     ('render_cond', '', {'what': 'NVN conditional rendering', 'now': 'game', 'goal': 'host', 'purpose': 'rendering',
      'why': f'what the GPU does; off by default only because other games drew everything before: {DEFAULT_SOON}'}),
+    ('turnip_env', '', {'what': "Mesa's own variables for Turnip (TU_DEBUG=sysmem)", 'now': 'game', 'goal': 'game', 'purpose': 'frame rate',
+     'why': "a driver limit measured per game: Turnip picks GMEM or sysmem per pass by memory traffic alone, and Vulkan gives the host no say in it; a driver that weighed the binning pass's vertex work would make it unneeded"}),
     ('gpu_timestamps', '', {'what': 'timestamp reports per segment', 'now': 'game', 'goal': 'host', 'purpose': 'rendering', 'why': f'what hardware records: {DEFAULT_SOON}'}),
     ('draw_barriers', '', {'what': 'draw passes ordered by the game\'s own barriers', 'now': 'game', 'goal': 'host', 'purpose': 'frame rate', 'why': f'what NVN specifies: {DEFAULT_SOON}'}),
     ('android_window', '1920x1080', {'what': "the Android launcher's default Game resolution, the launcher's own default written out", 'now': 'game', 'goal': 'game', 'purpose': 'rendering',

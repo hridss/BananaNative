@@ -28,6 +28,9 @@ zip_store	.bk2:.pak:.ttf:.txt:.ucas:.utoc
 # ---- Graphics ----
 # The game sets near-zero NVN depth (nvnDeviceSetDepthMode); offline pipeline bases use main0_z.
 depth_mode	zero
+# Turnip renders every pass in system memory (README.md "Android", 2026-11-15): its bandwidth autotune puts the depth prepass (1,200 draws, 6.8 M vertices a frame) in GMEM,
+# where binning runs the vertex shader twice: 8.7 ms a 600-draw part against 5.4 in sysmem, every other pass the same. GPU 83 -> 72.5-75 ms a frame, 11.8 -> 13.1-13.7 fps
+turnip_env	TU_DEBUG=sysmem
 
 # ---- Recommended settings (the launcher, Recommend.java; dm/games/README.md recommend) ----
 # Qualcomm's own driver before 512.800 (driverID 8, major 512, minor below 800) -> an installed Turnip (driverID 18). README.md "Android": on the AYN Thor (Adreno 740) the stock
