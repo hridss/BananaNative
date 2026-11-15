@@ -54,7 +54,7 @@ typedef struct {
     unsigned ue_malloc_slot;   // the slot of its name getter, which names the slot layout
     uint64_t fps_target_ptr;   // a target frame rate the game steps by, an int32 at [main + fps_target_ptr] + fps_target_field (patch_nso.py, fps_target.py; hle_fpslock.c); 0 = none
     uint32_t fps_target_field;
-    struct { char name[48]; uint64_t off; } ue_cvar[8];   // Unreal console variables found by their registered names (patch_nso.py, ue_cvar.py; UE_CVAR:<name>): each one's TAutoConsoleVariable
+    struct { char name[48]; uint64_t off; } ue_cvar[16];   // Unreal console variables found by their registered names (patch_nso.py, ue_cvar.py; UE_CVAR:<name>): each one's TAutoConsoleVariable
     int n_ue_cvar;
     uint64_t monolith_interval; // Monolith's native frame interval, an int32 at main + this (monolith_fps.py; hle_fpslock.c); 0 = not found
     int native_fps_blocked;    // a required timing correction did not match (the fixups table's NATIVE_FPS_BLOCKED): this main keeps its own engine frame limits

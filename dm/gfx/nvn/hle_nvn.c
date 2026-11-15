@@ -2270,6 +2270,7 @@ __attribute__((weak)) int dm_fps_lock_engine(void) { return g_engine_stub; }   /
 __attribute__((weak)) void dm_ue_cvar_tick(void) {}   // hle_uecvar.c: Unreal's texture streaming pool (profile ue_texture_pool)
 __attribute__((weak)) void dm_ue_dynres_tick(void) {}   // hle_uecvar.c: the floor of Unreal's dynamic resolution (DM_UE_DYNRES_MIN)
 __attribute__((weak)) void dm_ue_lod_tick(void) {}   // hle_uecvar.c: Unreal's static mesh LOD distance scale (profile ue_lod_scale)
+__attribute__((weak)) void dm_ue_translucent_tick(void) {}   // hle_uecvar.c: Unreal's translucent lighting volume off (DM_UE_TRANSLUCENT_VOLUME_OFF)
 __attribute__((weak)) int dm_movie_playing(void) { return 0; }   // hle_movie.c: a movie's pictures are being handed out; graphics unit tests have no movie decoder
 // Thermal cap (iOS): while the device is thermally serious or worse (NSProcessInfo thermalState >= 2) the frame step holds 30 fps, and it goes back to the cap after the device
 // has been fair or better for THERMAL_CALM_NS, so it does not flap. At "serious" iOS caps the GPU clock to about a third: Breath of the Wild's vistas (about 3,000 G-buffer draws)
@@ -2503,7 +2504,7 @@ NVN(nvnQueuePresentTexture, void, NVNqueue *q, NVNwindow *w, int idx) {
     (void)q; win_t *o = (win_t *)w; o->presents++;
     if (o->presents == 1 || o->presents == 60 || o->presents == 300) pc_log(o->presents);
     shp_report(o->presents);   // (DM_MEM_FILEBACK; the per-pool lines stop at 8, then every 64th)
-    dm_fps_lock_tick(); dm_ue_cvar_tick(); dm_ue_dynres_tick(); dm_ue_lod_tick();
+    dm_fps_lock_tick(); dm_ue_cvar_tick(); dm_ue_dynres_tick(); dm_ue_lod_tick(); dm_ue_translucent_tick();
     if (dm_fps_state) __atomic_store_n((uint32_t *)(dm_fps_state + 4), (uint32_t)dm_movie_playing(), __ATOMIC_RELAXED);   // the stubs' copy of the movie state (hle.h)
     int c = fps_step_cap();
     if (dm_fps_state) { static int was; if (c != was) { LOG("[nvn] frame step cap %d → %d fps at present %llu%s", was, c, (unsigned long long)o->presents, c == 30 && was == 60 ? (dm_movie_playing() ? " (movie playing)" : thermal_capped() ? " (thermal state serious)" : "") : ""); was = c; } }
