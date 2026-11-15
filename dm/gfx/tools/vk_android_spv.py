@@ -1566,15 +1566,67 @@ def row_fetch_buffers(m):
             f[:] = [5 << 16 | OP_IMAGE_FETCH, f[1], f[2], src.get(f[3], f[3]), x]
         m.ins = [y for y in m.ins if not (y[0] & 0xffff in (OP_IMAGE, OP_NAME, OP_DECORATE) and y[1 + (y[0] & 0xffff == OP_IMAGE)] in src)]
         n += 1; uses = m.uses()   # (add_type inserted declarations, the OpImages went: the indices moved)
-    if n:   # the types made above (add_type puts them before the first function) go before the first global variable, which may use them
-        fn = next(k for k, x in enumerate(m.ins) if x[0] & 0xffff == OP_FUNCTION)
-        gv = next((k for k in range(fn) if m.ins[k][0] & 0xffff == OP_VARIABLE), fn)
-        late = [x for x in m.ins[gv:fn] if x[0] & 0xffff in (OP_TYPE_IMAGE, OP_TYPE_POINTER) and x[1] in made]
-        for x in late: m.ins.remove(x)
-        for j, x in enumerate(late): m.ins.insert(gv + j, x)
+    if n: types_before_globals(m, made)
     if n and 46 not in m.caps:   # SampledBuffer
         at = next(k for k, x in enumerate(m.ins) if x[0] & 0xffff == OP_CAPABILITY)
         m.ins.insert(at + 1, [2 << 16 | OP_CAPABILITY, 46]); m.caps.append(46)
+    return n
+
+
+def types_before_globals(m, made):
+    """Type declarations add_type made (ids in made; it puts them before the first function) move before the first global variable, which may use them"""
+    fn = next(k for k, x in enumerate(m.ins) if x[0] & 0xffff == OP_FUNCTION)
+    gv = next((k for k in range(fn) if m.ins[k][0] & 0xffff == OP_VARIABLE), fn)
+    late = [x for x in m.ins[gv:fn] if x[0] & 0xffff in (OP_TYPE_VECTOR, OP_TYPE_IMAGE, OP_TYPE_SAMPLED_IMAGE, OP_TYPE_POINTER) and x[1] in made]
+    for x in late: m.ins.remove(x)
+    for j, x in enumerate(late): m.ins.insert(gv + j, x)
+
+
+OP_IMAGE_QUERY_SIZE_LOD, OP_IMAGE_QUERY_SIZE = 103, 104
+
+
+def query_dim3(m, vids):
+    """A 2D texture slot (vids: the build's candidates, whose handle word the shader also binds as a 3D image or texture) read only by size queries whose x and y alone are
+    used becomes 3D. A size query (TXQ) answers what the bound texture is, so the translator, with no type answer, declares the slot 2D; on Vulkan a 3D texture has no view
+    for a 2D slot and the query reads 0. Orbitals' compute cea444eb38c3c1db sized the 144x128x64 volume it writes through such a slot, and wrote nothing: the level's walls
+    and ground read the empty volume and came out black. A 3D size has x and y where a 2D size has them. → the number of slots retyped"""
+    uses = m.uses(); n = 0; made = set()
+    for vid in vids:
+        if vid not in m.vars: continue
+        ptr, sc = m.vars[vid]; t = m.pointee(ptr)[1]; comb = m.op(t) == OP_TYPE_SAMPLED_IMAGE; img = m.types[t][2] if comb else t
+        if m.op(img) != OP_TYPE_IMAGE: continue
+        st, dim, depth, arr, ms, sampled, fmt = m.types[img][2:9]
+        if dim != 1 or arr or ms: continue
+        loads, images, queries, ok = [], [], [], True
+        for k in uses.get(vid, ()):
+            y = m.ins[k]
+            if vid not in id_operands(y): continue   # (uses() also counts literals and the declaration)
+            if y[0] & 0xffff != OP_LOAD or y[3] != vid: ok = False; break
+            loads.append(y)
+        for src, kids in ((loads, images), (images, None)):   # a load (its OpImage when combined), then the queries on it
+            for s in src if ok else ():
+                for k in uses.get(s[2], ()):
+                    y = m.ins[k]; op = y[0] & 0xffff
+                    if y is s or s[2] not in id_operands(y): continue
+                    if kids is not None and comb and op == OP_IMAGE and y[3] == s[2]: kids.append(y)
+                    elif (kids is None or not comb) and op in (OP_IMAGE_QUERY_SIZE_LOD, OP_IMAGE_QUERY_SIZE) and y[3] == s[2]: queries.append(y)
+                    else: ok = False
+        for q in queries if ok else ():
+            for k in uses.get(q[2], ()):
+                y = m.ins[k]
+                if y is q or q[2] not in id_operands(y): continue
+                if not (y[0] & 0xffff == OP_COMPOSITE_EXTRACT and y[3] == q[2] and len(y) == 5 and y[4] < 2): ok = False
+        if not ok or not queries: continue
+        img3 = m.add_type(OP_TYPE_IMAGE, st, 2, depth, 0, 0, sampled, fmt); t3 = m.add_type(OP_TYPE_SAMPLED_IMAGE, img3) if comb else img3
+        p3 = m.add_type(OP_TYPE_POINTER, SC_UNIFORM_CONSTANT, t3); made |= {img3, t3, p3}
+        for x in m.ins:
+            if x[0] & 0xffff == OP_VARIABLE and x[2] == vid: x[1] = p3
+        m.vars[vid] = (p3, sc)
+        for ld in loads: ld[1] = t3
+        for im in images: im[1] = img3
+        for q in queries: v3 = m.add_type(OP_TYPE_VECTOR, m.types[q[1]][2], 3); made.add(v3); q[1] = v3
+        n += 1; uses = m.uses()
+    if n: types_before_globals(m, made)
     return n
 
 

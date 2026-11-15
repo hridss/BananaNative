@@ -446,6 +446,57 @@ OpFunctionEnd
 '''
 
 
+QUERY_CS = '''OpCapability Shader
+OpCapability ImageQuery
+OpMemoryModel Logical GLSL450
+OpEntryPoint GLCompute %main "main"
+OpExecutionMode %main LocalSize 1 1 1
+OpName %sz "sz"
+OpName %smp "smp"
+OpDecorate %sz DescriptorSet 0
+OpDecorate %sz Binding 1
+OpDecorate %smp DescriptorSet 0
+OpDecorate %smp Binding 2
+OpDecorate %out DescriptorSet 0
+OpDecorate %out Binding 3
+OpDecorate %ob Block
+OpMemberDecorate %ob 0 Offset 0
+%void = OpTypeVoid
+%fn = OpTypeFunction %void
+%int = OpTypeInt 32 1
+%float = OpTypeFloat 32
+%v2int = OpTypeVector %int 2
+%v4float = OpTypeVector %float 4
+%img = OpTypeImage %float 2D 0 0 0 1 Unknown
+%simg = OpTypeSampledImage %img
+%pimg = OpTypePointer UniformConstant %simg
+%ob = OpTypeStruct %int
+%pob = OpTypePointer StorageBuffer %ob
+%pi = OpTypePointer StorageBuffer %int
+%c0 = OpConstant %int 0
+%sz = OpVariable %pimg UniformConstant
+%smp = OpVariable %pimg UniformConstant
+%out = OpVariable %pob StorageBuffer
+%main = OpFunction %void None %fn
+%l = OpLabel
+%s1 = OpLoad %simg %sz
+%i1 = OpImage %img %s1
+%q1 = OpImageQuerySizeLod %v2int %i1 %c0
+%h = OpCompositeExtract %int %q1 1
+%s2 = OpLoad %simg %smp
+%i2 = OpImage %img %s2
+%q2 = OpImageQuerySizeLod %v2int %i2 %c0
+%w = OpCompositeExtract %int %q2 0
+%cv = OpCompositeConstruct %v2int %w %h
+%f = OpImageFetch %v4float %i2 %cv Lod %c0
+%po = OpAccessChain %pi %out %c0
+%sum = OpIAdd %int %h %w
+OpStore %po %sum
+OpReturn
+OpFunctionEnd
+'''
+
+
 @unittest.skipUnless(shutil.which('spirv-as') and shutil.which('spirv-val'), 'SPIRV-Tools not installed')
 class Rewrites(unittest.TestCase):
     def module(self, text):
@@ -481,6 +532,17 @@ class Rewrites(unittest.TestCase):
             self.assertIn('OpImageFetch %v4float %s4 %int_0', text)   # rows' folded constant reads: elements 0 and 1
             self.assertIn('OpImageFetch %v4float %s4 %int_1', text)
             self.assertRegex(text, r'(%\w+) = OpShiftLeftLogical %int %\w+ %int_14\n +(%\w+) = OpBitwiseOr %int %\w+ \1\n +%\w+ = OpImageFetch %v4float %\w+ \2\n')   # twice: hi << 14 | lo
+
+    def test_query_dim3(self):
+        """A 2D slot read only by size queries whose x and y are used becomes 3D when the build names it (its handle bound as 3D elsewhere in the shader, Orbitals'
+        cea444eb38c3c1db); one also fetched stays 2D"""
+        m = self.module(QUERY_CS)
+        ids = {r['name']: r['id'] for r in m.resources()}
+        self.assertEqual(spv.query_dim3(m, [ids['sz'], ids['smp']]), 1)
+        r = {e['name']: e for e in m.resources()}
+        self.assertEqual((r['sz']['dim']['dim'], r['smp']['dim']['dim']), (2, 1))
+        text = self.valid(m)
+        if text: self.assertIn('OpImageQuerySizeLod %v3int', text)
 
     def test_vertex_rewrites(self):
         m = self.module(VS)

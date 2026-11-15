@@ -403,6 +403,17 @@ KIND[KIND_TBUF_UBO] = 'TBUF_UBO'
 KIND_NUM = {k: VK['KIND_' + v] for k, v in KIND.items()}
 SLOT_KINDS = {abi.KIND_CBUF, abi.KIND_SAMP, abi.KIND_SAMP_TEX, abi.KIND_TEX, abi.KIND_IMG, abi.KIND_TBUF, abi.KIND_SBUF, abi.KIND_UBO_PTR, abi.KIND_SBUF_UBO, abi.KIND_TEX_UBO, abi.KIND_SAMP_UBO, abi.KIND_SAMP_ID,
               abi.KIND_IMG_UBO, KIND_TBUF_UBO}
+
+
+def query_3d_slots(m):
+    """The 2D texture variables (ids) whose handle word the shader also binds as a 3D image or texture (decode_ubo_tex, ubo_img): vk_android_spv.py query_dim3's candidates"""
+    def words(nm):
+        ut, ui = NS['decode_ubo_tex'](nm), ubo_img(nm)
+        return set(ut) if ut else {ui} if ui else set()
+    res = m.resources(); w3 = set()
+    for r in res:
+        if r['dim'] and r['dim']['dim'] == 2: w3 |= words(r['name'])
+    return [r['id'] for r in res if r['dim'] and r['dim']['dim'] == 1 and not r['dim']['array'] and words(r['name']) & w3]
 POOL_SUFFIX = '_cb0_40000000'   # a handle traced to no slot indexes the pools by its IDs (Program.cs QueryTextureArrayLengthFromPool; dmsh_build.py pool_arrays)
 
 
@@ -609,6 +620,7 @@ def finish(key, w, job, c1):
     # returns a load of the Function variable its parameter was stored to, not the parameter, and the pass matched none (Pokopia's af8f64d9f5542ef2: 0 calls replaced, 5,224 after)
     spv.scale_identity(m)
     if not hmma: spv.loop_pool_search(m)   # the raw helpers' pool table search one loop of one step (vk_android_spv.py loop_pool_search)
+    spv.query_dim3(m, query_3d_slots(m))   # 2D slots only size-queried, whose handle the shader binds as 3D too: 3D (vk_android_spv.py query_dim3)
     spv.row_fetch_buffers(m)   # 2D slots read only as rows of 16384 texels: uniform texel buffers, a view of the buffer texture's storage (vk_android_spv.py row_fetch_buffers; after promote_locals, whose SSA it reads)
     binds = [classify(stage, r, res, m) for r in m.resources()]
     storage_slots(stage, binds, res)
