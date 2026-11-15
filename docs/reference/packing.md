@@ -153,6 +153,13 @@
 - **Fix:** the three take only the names the shader build writes, `<16 hex key>_b….metal` / `.json` as `dmsh_build.py` (`OUT_KEY`) and `regress.py` already did: `c1_guard.py` `outputs` (which `cb_extent.py` uses too) and `dmsh_mtlcache.py` `OUTPUT`. None of them is part of the chain version. `dm/tools/tests/test_nsp_chain.py` runs both table tools on a folder with `._` files; the old `c1_guard.py` stops on it. On 13 Sentinels' 751 shaders both tables are unchanged.
 - **Found on:** a user's iOS shader build on an external drive ([PR #555](https://github.com/seedds/nxnative/pull/555)). Applies to every NVN game.
 
+### The Android pack stops moving its files on an exFAT drive (Android)
+
+- **Symptom:** on a Mac, with the dump's work folder on an exFAT or FAT drive, `scripts/pack_android.py` stops with `FileNotFoundError` on a `._<name>` path while it moves the split's files into the package folder (`split_shaders`) or a module's rewritten files out of its staging folder (`swap_in`).
+- **Cause:** the same AppleDouble files as above. Both functions list a folder and then move each entry by rename; macOS moves a file's `._<name>` with it, so the listing's `._` entry is gone by its turn.
+- **Fix:** both skip a listed entry that no longer exists (`split_shaders` also takes the listing before the first move).
+- **Found on:** [The Legend of Zelda: Link's Awakening](../../dm/games/01006BB00C6F0000/README.md#found-on-this-game), packed from a `.nup` on an exFAT drive. Applies to every game packed on a Mac.
+
 ## Compressed inputs
 
 ### ZBIC-compressed NSO segments
