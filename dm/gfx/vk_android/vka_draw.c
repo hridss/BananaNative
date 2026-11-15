@@ -2531,8 +2531,21 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
         if (!ind && inst_n <= 1) { int32_t c = dw ? dw->count : di->count; g_claim_words = c > 0 ? (uint32_t)c : 1; }
         else VRED_ONCE("geometry shader %016llx writes memory in an %s draw: drawn without the claim, its writes repeated by the device's runs of each primitive", (unsigned long long)sh[2]->key, ind ? "indirect" : "instanced");
     }
-    if (expand && ind && !(expand == 1 && dw && !dw->mdi_cnt && vka_qdx_args(ind, NULL, NULL)))
-        SKIP("an indirect draw of %s is not on Vulkan yet: skipped", expand == 1 ? (di ? "indexed quads" : dw->mdi_cnt ? "multi-draw quads" : "quads (conversion unavailable)") : "a line loop");
+    // Quads or a line loop drawn indirectly. A single non-indexed quad draw is converted on the GPU (vka_exec.c qdx: its record read where the GPU draws it).
+    // Every other one (indexed quads, a line loop, a multi-draw of quads, or no conversion: DM_VK_QUAD_IND=0) has its indices made on the CPU (below), so its record
+    // is read there too, as the game wrote it before the submission (one the GPU writes in this same submission reads stale: a red line once). Fire Emblem: Three
+    // Houses' KTGL 2D path draws some frames this way; the draws were skipped
+    p_draw dwc; p_draw_idx dic;
+    if (expand && ind && !(expand == 1 && dw && !dw->mdi_cnt && vka_qdx_args(ind, NULL, NULL))) {
+        if (mdi_n) SKIP("an indirect-count multi-draw of quads or a line loop counted by the GPU: skipped");
+        uint32_t r[5] = {0};
+        if (!cpu_read(ind, r, di ? 20 : 16)) SKIP("indirect draw of quads or a line loop: its record at %#llx is not readable: skipped", (unsigned long long)ind);
+        VRED_ONCE("indirect draws of quads or a line loop read their record on the CPU at replay (first: %u vertices, %u instances)", r[0], r[1]);
+        if (dw) { dwc = *dw; dwc.count = (int32_t)r[0]; dwc.instances = (int32_t)r[1]; dwc.first = (int32_t)r[2]; dwc.base_instance = (int32_t)r[3]; dwc.ind = 0; dw = &dwc; }
+        else { dic = *di; dic.count = (int32_t)r[0]; dic.instances = (int32_t)r[1]; dic.ibuf += (uint64_t)r[2] * (di->itype == 0 ? 1 : di->itype == 1 ? 2 : 4); dic.base_vertex = (int32_t)r[3]; dic.base_instance = (int32_t)r[4]; dic.ind = 0; di = &dic; }
+        d->b.base_instance = (uint32_t)(dw ? dw->base_instance : di->base_instance);
+        ind = 0;
+    }
     if (!mesh && sh[1] && skip_fs(sh[1]->key)) { g_skipped++; return; }
     if (bisect_drop(sh) || vka_cap_dry()) { g_skipped++; return; }   // (a dry capture: nothing more goes to the GPU, vka_capture.c)
     if (!mesh && VKA_ENV("DM_VK_SHADER_STATS", 0)) {
