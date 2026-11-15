@@ -51,8 +51,11 @@ FREQ = {0: 'vs', 1: 'hs', 2: 'ds', 3: 'ps', 4: 'gs', 5: 'cs'}   # EShaderFrequen
 
 _cc = None
 def aes_decrypt(key, data):
-    """AES-256 ECB decryption through CommonCrypto (every Mac has it; no Python package needed)"""
+    """AES-256 ECB decryption (data a multiple of 16 bytes) with what the system has, no Python package needed: CommonCrypto on the Mac, CNG (bcrypt.dll) on Windows,
+    elsewhere (the Linux packer) the pure-Python cipher below, fast enough for an index and the key search but not for gigabytes of encrypted entries"""
     global _cc
+    if sys.platform == 'win32': return _cng_decrypt(key, data)
+    if sys.platform != 'darwin': return aes_decrypt_py(key, data)
     if _cc is None:
         _cc = ctypes.CDLL('/usr/lib/libSystem.B.dylib').CCCrypt
         _cc.restype = ctypes.c_int32
@@ -60,6 +63,76 @@ def aes_decrypt(key, data):
     out = ctypes.create_string_buffer(len(data)); moved = ctypes.c_size_t()
     if _cc(1, 0, 2, key, len(key), None, data, len(data), out, len(data), ctypes.byref(moved)): raise ValueError('CCCrypt failed')   # decrypt, AES, ECB
     return out.raw[:moved.value]
+
+_cng = None
+def _cng_decrypt(key, data):
+    """AES-256 ECB through Windows' CNG (bcrypt.dll, in every Windows since Vista)"""
+    global _cng
+    if len(data) % 16: raise ValueError('AES ECB data must be a multiple of 16 bytes')
+    from ctypes import wintypes
+    b = ctypes.WinDLL('bcrypt')
+    if _cng is None:
+        alg = ctypes.c_void_p(); mode = ctypes.create_unicode_buffer('ChainingModeECB')
+        if b.BCryptOpenAlgorithmProvider(ctypes.byref(alg), ctypes.c_wchar_p('AES'), None, 0): raise ValueError('BCryptOpenAlgorithmProvider failed')
+        if b.BCryptSetProperty(alg, ctypes.c_wchar_p('ChainingMode'), mode, ctypes.sizeof(mode), 0): raise ValueError('BCryptSetProperty failed')
+        _cng = alg
+    k = ctypes.c_void_p(); kb = ctypes.create_string_buffer(bytes(key), len(key))
+    if b.BCryptGenerateSymmetricKey(_cng, ctypes.byref(k), None, 0, kb, len(key), 0): raise ValueError('BCryptGenerateSymmetricKey failed')
+    try:
+        src = ctypes.create_string_buffer(bytes(data), len(data)); out = ctypes.create_string_buffer(len(data)); got = wintypes.ULONG()
+        if b.BCryptDecrypt(k, src, len(data), None, None, 0, out, len(data), ctypes.byref(got), 0): raise ValueError('BCryptDecrypt failed')
+        return out.raw[:got.value]
+    finally: b.BCryptDestroyKey(k)
+
+def _aes_tables():
+    """The S-box, its inverse and the four decryption tables (Td0..Td3: the inverse S-box times InvMixColumns' column, rotated), made from GF(2^8) arithmetic"""
+    def mul(a, b):
+        r = 0
+        while b:
+            if b & 1: r ^= a
+            a = (a << 1) ^ (0x11b if a & 0x80 else 0); b >>= 1
+        return r
+    sb = [0] * 256; inv = [0] * 256
+    for x in range(256):
+        y = next((c for c in range(1, 256) if mul(x, c) == 1), 0) if x else 0   # the multiplicative inverse (0 for 0)
+        s = y
+        for i in range(1, 5): s ^= ((y << i) | (y >> (8 - i))) & 0xff
+        sb[x] = s ^ 0x63; inv[sb[x]] = x
+    td0 = [mul(v, 14) << 24 | mul(v, 9) << 16 | mul(v, 13) << 8 | mul(v, 11) for v in inv]
+    ror = lambda t, n: [(w >> n | w << (32 - n)) & 0xffffffff for w in t]
+    return sb, inv, td0, ror(td0, 8), ror(td0, 16), ror(td0, 24)
+_AES = None
+
+def aes_decrypt_py(key, data):
+    """AES-256 ECB decryption in Python (FIPS-197's equivalent inverse cipher with 32-bit tables): under 1 MB a second; checked against FIPS-197's AES-256 example and the
+    system's cipher (dm/tools/tests/test_uepak_aes.py)"""
+    global _AES
+    if len(key) != 32 or len(data) % 16: raise ValueError('AES-256 ECB: a 32-byte key and a multiple of 16 bytes of data')
+    if _AES is None: _AES = _aes_tables()
+    sb, inv, t0, t1, t2, t3 = _AES
+    w = list(struct.unpack('>8I', key)); rcon = 1
+    for i in range(8, 60):   # the key schedule (Nk 8, 14 rounds)
+        t = w[i - 1]
+        if i % 8 == 0:
+            t = ((t << 8) | (t >> 24)) & 0xffffffff
+            t = (sb[t >> 24] << 24 | sb[t >> 16 & 255] << 16 | sb[t >> 8 & 255] << 8 | sb[t & 255]) ^ (rcon << 24); rcon = (rcon << 1) ^ (0x11b if rcon & 0x80 else 0)
+        elif i % 8 == 4: t = sb[t >> 24] << 24 | sb[t >> 16 & 255] << 16 | sb[t >> 8 & 255] << 8 | sb[t & 255]
+        w.append(w[i - 8] ^ t)
+    imc = lambda v: t0[sb[v >> 24]] ^ t1[sb[v >> 16 & 255]] ^ t2[sb[v >> 8 & 255]] ^ t3[sb[v & 255]]   # InvMixColumns of a round key word
+    rk = [w[4 * (14 - r) + j] if r in (0, 14) else imc(w[4 * (14 - r) + j]) for r in range(15) for j in range(4)]
+    words = struct.unpack(f'>{len(data) // 4}I', data); out = []
+    for b in range(0, len(words), 4):
+        s0, s1, s2, s3 = words[b] ^ rk[0], words[b + 1] ^ rk[1], words[b + 2] ^ rk[2], words[b + 3] ^ rk[3]
+        for r in range(4, 56, 4):
+            s0, s1, s2, s3 = (t0[s0 >> 24] ^ t1[s3 >> 16 & 255] ^ t2[s2 >> 8 & 255] ^ t3[s1 & 255] ^ rk[r],
+                              t0[s1 >> 24] ^ t1[s0 >> 16 & 255] ^ t2[s3 >> 8 & 255] ^ t3[s2 & 255] ^ rk[r + 1],
+                              t0[s2 >> 24] ^ t1[s1 >> 16 & 255] ^ t2[s0 >> 8 & 255] ^ t3[s3 & 255] ^ rk[r + 2],
+                              t0[s3 >> 24] ^ t1[s2 >> 16 & 255] ^ t2[s1 >> 8 & 255] ^ t3[s0 & 255] ^ rk[r + 3])
+        out += [(inv[s0 >> 24] << 24 | inv[s3 >> 16 & 255] << 16 | inv[s2 >> 8 & 255] << 8 | inv[s1 & 255]) ^ rk[56],
+                (inv[s1 >> 24] << 24 | inv[s0 >> 16 & 255] << 16 | inv[s3 >> 8 & 255] << 8 | inv[s2 & 255]) ^ rk[57],
+                (inv[s2 >> 24] << 24 | inv[s1 >> 16 & 255] << 16 | inv[s0 >> 8 & 255] << 8 | inv[s3 & 255]) ^ rk[58],
+                (inv[s3 >> 24] << 24 | inv[s2 >> 16 & 255] << 16 | inv[s1 >> 8 & 255] << 8 | inv[s0 & 255]) ^ rk[59]]
+    return struct.pack(f'>{len(out)}I', *out)
 
 _M, _K0, _K1, _K2 = (1 << 64) - 1, 0xc3a5c85c97cb3127, 0xb492b66fbe98f273, 0x9ae16a3b2f90404f
 def _rot(v, s): return ((v >> s) | (v << (64 - s))) & _M if s else v

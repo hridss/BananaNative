@@ -343,6 +343,12 @@
 - **Fix:** `vk_android_win.py` `install()` sets `os.O_BINARY` on `os.open` calls that do not ask for `os.O_TEXT`, and supplies `os.pread` as a locked `os.lseek` + `os.read` loop (as `dm/tools/nup.py` does). `vk_android_build.py` is unchanged, so `DMSH_VK_CHAIN` does not move. Test: `dm/tools/tests/test_vk_android_locate.py` `test_real_package_files_and_windows_wrapper`; checked on Windows with a three-shader Donkey Kong Bananza key-list build (`delta check: 3 of 3 shaders as the manifest has them`).
 - **Found on:** [Donkey Kong Bananza](../../dm/games/040074A01BF12000/README.md#found-on-this-game) update 458752 on Windows. Applies to every game packed on Windows when any shader is translated.
 
+### An Unreal pak's AES decryption works only on the Mac
+
+- **Symptom:** off the Mac, any step that opens an Unreal pak or container with an encrypted index or entries (the shader split's `ue_legacy_jobs`, `uepak.py`'s key search) stops with `OSError` loading `/usr/lib/libSystem.B.dylib`.
+- **Cause:** `uepak.py` `aes_decrypt` called CommonCrypto's `CCCrypt` through ctypes, which only the Mac has; the packer's environment (`android/environment.yml`) has no crypto package.
+- **Fix:** `aes_decrypt` uses the system's cipher where there is one, CommonCrypto on the Mac and CNG (`bcrypt.dll`) on Windows, and elsewhere `aes_decrypt_py`, an AES-256 ECB decryption in Python (under 1 MB a second: enough for an index and the key search, slow for a pak whose every entry is encrypted). `dm/tools/tests/test_uepak_aes.py` checks both on FIPS-197's AES-256 example and against each other.
+- **Found on:** the Windows and Linux packers; applies to every Unreal game with an encrypted pak index, such as [OCTOPATH TRAVELER 0](../../dm/games/01005270232F2000/README.md). Not yet run on a dump off the Mac.
 ### The shader build on Linux stops at the translator: "Exec format error" (Android)
 
 - **Symptom:** on Linux, `scripts/pack_android.py` splits the shaders and then stops in `vk_android_build.py` when it starts the translator, with `OSError: [Errno 8] Exec format error` on `dm/gfx/tools/dmsh_xlate_bin/dmsh_xlate`, or the tool check reports that the translator does not run.
