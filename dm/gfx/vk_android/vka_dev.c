@@ -1413,4 +1413,38 @@ void vka_gpu_floor(void) {
     if (again) sent_f = f;
     floor_set_(s, 0, again);
 }
+// DM_VK_KGSL_PERF=<group>:<countable>[,…] (diagnostic, restart; Android with KGSL): the GPU's performance counters through the kernel's own interface
+// (IOCTL_KGSL_PERFCOUNTER_GET reserves a counter and programs its selector, IOCTL_KGSL_PERFCOUNTER_READ reads it), since KGSL does not let a driver write the
+// selectors from its command stream (Turnip leaves VK_KHR_performance_query off there). Group ids are KGSL's (msm_kgsl.h KGSL_PERFCOUNTER_GROUP_*: 0 CP, 1 RBBM,
+// 2 PC, 3 VFD, 4 HLSQ, 5 VPC, 6 TSE, 7 RAS, 8 UCHE, 9 TP, 10 SP, 11 RB, 25 LRZ), countables the GPU's (Mesa's a7xx_perfcntrs.xml). The counters count the
+// whole GPU, which only this game uses while it runs; each pace line is followed by their increase a frame over its window (vka_perf.c pace_tick)
+struct kg_get { unsigned int groupid, countable, offset, offset_hi, pad; };
+struct kg_rg { unsigned int groupid, countable; unsigned long long value; };
+struct kg_rd { struct kg_rg *reads; unsigned int count, pad[2]; };
+#define KG_PERF_GET _IOWR(0x09, 0x38, struct kg_get)
+#define KG_PERF_READ _IOWR(0x09, 0x3B, struct kg_rd)
+void vka_kgsl_perf(uint64_t frame, double nf) {
+    enum { N = 24 };
+    static int fd = -2, n; static struct kg_rg rg[N]; static unsigned long long last[N];
+    if (fd == -2) {
+        fd = -1; char b[256]; if (!vka_env_str("DM_VK_KGSL_PERF", b, sizeof b)) return;
+        if ((fd = open("/dev/kgsl-3d0", O_RDWR | O_CLOEXEC)) < 0) { VRED("kgsl perf: /dev/kgsl-3d0: %d", errno); return; }
+        for (char *t = strtok(b, ","); t && n < N; t = strtok(NULL, ",")) {
+            unsigned g, c; if (sscanf(t, "%u:%u", &g, &c) != 2) continue;
+            struct kg_get q = {g, c, 0, 0, 0};
+            if (ioctl(fd, KG_PERF_GET, &q) < 0) { VRED("kgsl perf: counter %u:%u not reserved (%d)", g, c, errno); continue; }
+            rg[n].groupid = g; rg[n].countable = c; n++;
+        }
+        VLOG("kgsl perf: %d counters reserved", n);
+    }
+    if (fd < 0 || !n) return;
+    struct kg_rd r = {rg, (unsigned)n, {0, 0}};
+    if (ioctl(fd, KG_PERF_READ, &r) < 0) { VRED_ONCE("kgsl perf: read failed (%d)", errno); return; }
+    char line[1200]; size_t o = 0;
+    for (int i = 0; i < n && o < sizeof line - 40; i++) {
+        if (last[i] && nf > 0) o += (size_t)snprintf(line + o, sizeof line - o, " %u:%u %.0f", rg[i].groupid, rg[i].countable, (double)(rg[i].value - last[i]) / nf);
+        last[i] = rg[i].value;
+    }
+    if (o) VLOG("kgsl perf up to frame %llu, a frame:%s", (unsigned long long)frame, line);
+}
 #endif
