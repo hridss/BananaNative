@@ -600,6 +600,50 @@ void vka_pso_builds_log(void) {
     }
     if (!n) VLOG("  being made now: no pipeline");
 }
+// DM_VK_PSO_STATS=1 (restart, diagnostic): every whole pipeline is made with the driver's statistics captured (VK_KHR_pipeline_executable_properties) and logs one
+// `pso stats` line a stage: the shaders' keys, then each statistic the driver reports (Turnip: instructions, nops, registers, max waves, sync stalls...); with
+// DM_VK_PSO_ISA=<dir> (files the app can write) each stage's internal representations (Turnip: NIR and the ir3 disassembly) go to <dir>/<vertex>_<fragment>_<stage>.txt.
+// Read with the pipeline cache off (DM_VK_PCACHE=0) and the libraries off (DM_VK_GPL=0): a cached or linked pipeline has no statistics
+static void pso_stats(VkPipeline p, vka_shader *const sh[VKA_NSTAGE], int mesh) {
+    static PFN_vkGetPipelineExecutablePropertiesKHR gp; static PFN_vkGetPipelineExecutableStatisticsKHR gs; static PFN_vkGetPipelineExecutableInternalRepresentationsKHR gi;
+    if (!gp) { gp = (PFN_vkGetPipelineExecutablePropertiesKHR)vk.vkGetDeviceProcAddr(V.dev, "vkGetPipelineExecutablePropertiesKHR");
+               gs = (PFN_vkGetPipelineExecutableStatisticsKHR)vk.vkGetDeviceProcAddr(V.dev, "vkGetPipelineExecutableStatisticsKHR");
+               gi = (PFN_vkGetPipelineExecutableInternalRepresentationsKHR)vk.vkGetDeviceProcAddr(V.dev, "vkGetPipelineExecutableInternalRepresentationsKHR"); }
+    if (!gp || !gs) return;
+    const vka_shader *pre = mesh ? sh[7] : sh[0];
+    unsigned long long vk_ = pre ? (unsigned long long)pre->key : 0, fk = sh[1] ? (unsigned long long)sh[1]->key : 0;
+    VkPipelineInfoKHR pi = {VK_STRUCTURE_TYPE_PIPELINE_INFO_KHR, .pipeline = p};
+    VkPipelineExecutablePropertiesKHR ep[8]; uint32_t ne = 8;
+    for (uint32_t i = 0; i < 8; i++) ep[i] = (VkPipelineExecutablePropertiesKHR){VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_PROPERTIES_KHR};
+    if (gp(V.dev, &pi, &ne, ep) < 0) return;
+    char isa_dir[256]; int isa = vka_env_str("DM_VK_PSO_ISA", isa_dir, sizeof isa_dir) && isa_dir[0] && strcmp(isa_dir, "1");
+    for (uint32_t e = 0; e < ne; e++) {
+        VkPipelineExecutableInfoKHR ei = {VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_INFO_KHR, .pipeline = p, .executableIndex = e};
+        VkPipelineExecutableStatisticKHR st[48]; uint32_t ns = 48;
+        for (uint32_t i = 0; i < 48; i++) st[i] = (VkPipelineExecutableStatisticKHR){VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_STATISTIC_KHR};
+        char line[1600]; size_t o = (size_t)snprintf(line, sizeof line, "pso stats %016llx/%016llx %s:", vk_, fk, ep[e].name);
+        if (gs(V.dev, &ei, &ns, st) >= 0)
+            for (uint32_t i = 0; i < ns && o < sizeof line; i++) {
+                const VkPipelineExecutableStatisticKHR *s = &st[i];
+                if (s->format == VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_FLOAT64_KHR) o += (size_t)snprintf(line + o, sizeof line - o, " %s=%g;", s->name, s->value.f64);
+                else if (s->format == VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_BOOL32_KHR) o += (size_t)snprintf(line + o, sizeof line - o, " %s=%u;", s->name, s->value.b32);
+                else o += (size_t)snprintf(line + o, sizeof line - o, " %s=%llu;", s->name, (unsigned long long)s->value.u64);
+            }
+        VLOG("%s", line);
+        if (isa && gi) {   // the representations: sizes first, then the text
+            VkPipelineExecutableInternalRepresentationKHR ir[4]; uint32_t nr = 4;
+            for (uint32_t i = 0; i < 4; i++) ir[i] = (VkPipelineExecutableInternalRepresentationKHR){VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_INTERNAL_REPRESENTATION_KHR};
+            if (gi(V.dev, &ei, &nr, ir) < 0) continue;
+            for (uint32_t i = 0; i < nr; i++) ir[i].pData = ir[i].dataSize ? malloc(ir[i].dataSize) : NULL;
+            if (gi(V.dev, &ei, &nr, ir) >= 0) {
+                char path[400]; snprintf(path, sizeof path, "%s/%016llx_%016llx_%u.txt", isa_dir, vk_, fk, e);
+                FILE *f = fopen(path, "w");
+                if (f) { for (uint32_t i = 0; i < nr; i++) if (ir[i].pData) fprintf(f, "==== %s: %s\n%.*s\n", ir[i].name, ir[i].description, (int)ir[i].dataSize, (const char *)ir[i].pData); fclose(f); }
+            }
+            for (uint32_t i = 0; i < nr; i++) free(ir[i].pData);
+        }
+    }
+}
 // The whole pipeline (optimized), with creation feedback (core in 1.3) for the line of a slow one: whether the pipeline cache had it and each stage's share. how: NULL = on the
 // frame path (counted as the frame's), else where it was made (" in the background", " (prewarm)")
 static VkPipeline full_pipeline(pstate *P, vka_shader *const sh[VKA_NSTAGE], const char *how) {
@@ -611,8 +655,12 @@ static VkPipeline full_pipeline(pstate *P, vka_shader *const sh[VKA_NSTAGE], con
     VkPipeline p = VK_NULL_HANDLE;
     const vka_shader *pre0 = P->mesh ? sh[7] : sh[0];
     int bslot = build_begin("whole graphics pipeline", pre0 ? pre0->key : 0, sh[1] ? sh[1]->key : 0);
+    VkPipelineCreateFlags flags0 = P->ci.flags;
+    if (V.pexec) P->ci.flags |= VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR | VK_PIPELINE_CREATE_CAPTURE_INTERNAL_REPRESENTATIONS_BIT_KHR;
     VkResult r = vk.vkCreateGraphicsPipelines(V.dev, g_pc, 1, &P->ci, NULL, &p);
+    P->ci.flags = flags0;
     build_end(bslot);
+    if (!r && V.pexec) pso_stats(p, sh, P->mesh);
     P->ci.pNext = fbi.pNext;
     uint64_t dns = now_ns() - t0; double ms_ = dns / 1e6;
     pthread_mutex_lock(&g_mu);
