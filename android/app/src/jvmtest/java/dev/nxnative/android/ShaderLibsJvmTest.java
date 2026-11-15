@@ -117,6 +117,14 @@ public final class ShaderLibsJvmTest {
                 System.out.println("absent " + (k == null ? "none" : String.join(",", k)));
                 break;
             }
+            case "same": {
+                try {
+                    System.out.println("same " + ShaderLibs.sameMap(new File(a[1]), new File(a[2])));
+                } catch (java.io.IOException e) {
+                    throw new RuntimeException(e);
+                }
+                break;
+            }
             default:
                 throw new IllegalArgumentException(a[0]);
         }

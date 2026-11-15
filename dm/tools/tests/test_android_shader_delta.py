@@ -598,7 +598,26 @@ class Launcher(unittest.TestCase):
         split.write_text(rows('00000000000000aa', '00000000000000bb', '00000000000000dd'))
         self.assertEqual(self.java('absent', d, split), 'none', 'a key the profile does not have')
         split.write_text(rows('00000000000000aa', '00000000000000bb', '00000000000000cc'))
-        self.assertEqual(self.java('absent', d, split), 'none', 'nothing lacking: the byte comparison decides')
+        self.assertEqual(self.java('absent', d, split), 'none', 'nothing lacking: the row comparison decides')
+
+    def test_same_map(self):
+        """PackService splitMatchesProfile compares the split's shader_map.tsv with the profile's row by row without the comment lines: the split tool's header
+        prose changed ("no PC shader pairing supplied"), and profiles split before carry the older line, so a correct dump must still match them"""
+        d = self.tmp / 'same'; d.mkdir(exist_ok=True)
+        body = 'package\tindex\tstage\tdm_ctl_sha16\tsource\ncs_0.bin\t0\tcompute\t00000000000000aa\tsrc\ncs_0.bin\t1\tcompute\t00000000000000bb\tsrc\n'
+        want, have = d / 'profile_map.tsv', d / 'split_map.tsv'
+        want.write_text('# kind: evidence\n# column 5 records where each key first appears\n' + body)
+        have.write_text('# kind: evidence\n# column 5 records where each key first appears; no PC shader pairing supplied\n' + body)
+        self.assertEqual(self.java('same', want, have), 'true', 'only the header prose differs')
+        have.write_text(body.replace('00000000000000bb', '00000000000000cc'))
+        self.assertEqual(self.java('same', want, have), 'false', 'another key')
+        have.write_text(body + 'cs_0.bin\t2\tcompute\t00000000000000dd\tsrc\n')
+        self.assertEqual(self.java('same', want, have), 'false', 'an extra row')
+        have.write_text(''.join(reversed(body.splitlines(keepends=True))))
+        self.assertEqual(self.java('same', want, have), 'false', 'another order')
+        for p in sorted((REPO / 'dm/games').glob('*/shader_map.tsv')):
+            with self.subTest(profile=p.parent.name):
+                self.assertEqual(self.java('same', p, p), 'true')
 
     def test_selection_of_profiles(self):
         """Every profile with a selected set: the Java selection is what the Mac's selected build passes (shader_seen.tsv keys in shader_map.tsv)"""
