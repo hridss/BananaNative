@@ -13,6 +13,7 @@ Update 1.2.0 (v327680) over the base game, SDK 6.5.0. Koei Tecmo's older KTGL en
 | GLSLC capture (`/glslc_capture/=runtime` in `shader_groups`) | [`game.tsv`](game.tsv), NSP script | 9 built-in shaders exist only as compiles of the game's own GLSLC at boot; see [Files and shaders](#files-and-shaders) |
 | 4 GB layout: `mem_reserve 0x100000000`, `mem_alias 0x10000000`, `mem_stack 0x10000000`, `app_pool 0xCD500000` | `game.tsv` | the NPDM declares no system resource (META +0x14 = 0): the game uses `SetHeapSize`. Link's Awakening's partition, not measured for this game |
 | `pad_layout full` | `game.tsv` | the 3D gamepad layout: the camera is on the right stick in the monastery and in battle |
+| `op_mode handheld` | `game.tsv` | a performance choice: handheld, the game renders at 1280x720 instead of 1920x1080; on an Adreno 740 phone its 1080p frame took about 17.4 ms of GPU time (47 to 54 fps), handheld holds close to 60 |
 
 ## Frame rate
 
