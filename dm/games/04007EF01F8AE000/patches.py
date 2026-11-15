@@ -374,10 +374,39 @@ _UI_V20 = [
     (0x005d257c, '00000000', 'bb50ff17', 'v20: b 0x5a6868'),
 ]
 
+# Movies at 16:9 (letterboxed). The movie player draws each picture from a 2D element callback (omovie::Manager::Main's lambda, main+0x1904aa0) over the
+# whole of the 2D layer's target: viewport and scissor (0, 0, width, height), the target set, then one full-screen draw. The v11 words squeeze only the ui2d
+# projection, so the 82 movies (AV1, 2560x1440 or 1920x1080, square pixels: 16:9) filled the 16:9 frame that the present shows at 4:3, stretched 4/3 tall.
+# After the target is set (main+0x1904b5c) the target is now cleared to black, as the callback's own no-picture path does (main+0x1904d14), and the viewport
+# becomes the middle three quarters of the height, (0, h/8, w, h - h/4): the 16:9 picture with black bars above and below on the 4:3 screen, nothing cut.
+# Caves 0x19027e4, 0x1905764, 0x1906e44 (7, 7 and 5 words)
+_MOVIE43 = [
+    (0x01904b5c, '600640f9', '22f7ff17', 'movie 4:3: b 0x19027e4 (after the target is set)'),
+    (0x019027e4, '00000000', '600240f9', 'movie 4:3: ldr x0, [x19] (the render context)'),
+    (0x019027e8, '00000000', 'ff7f00a9', 'movie 4:3: stp xzr, xzr, [sp] (colour 0, 0, 0, 0)'),
+    (0x019027ec, '00000000', 'e2030091', 'movie 4:3: mov x2, sp'),
+    (0x019027f0, '00000000', 'e1031f2a', 'movie 4:3: mov w1, wzr (colour target 0)'),
+    (0x019027f4, '00000000', '080040f9', 'movie 4:3: ldr x8, [x0]'),
+    (0x019027f8, '00000000', '084940f9', 'movie 4:3: ldr x8, [x8, #0x90] (clear colour)'),
+    (0x019027fc, '00000000', 'da0b0014', 'movie 4:3: b 0x1905764'),
+    (0x01905764, '00000000', '00013fd6', 'movie 4:3: blr x8 (the target cleared to black)'),
+    (0x01905768, '00000000', '600240f9', 'movie 4:3: ldr x0, [x19]'),
+    (0x0190576c, '00000000', '83124229', 'movie 4:3: ldp w3, w4, [x20, #0x10] (target width, height)'),
+    (0x01905770, '00000000', '827c0353', 'movie 4:3: lsr w2, w4, #3 (y = h / 8)'),
+    (0x01905774, '00000000', '8404024b', 'movie 4:3: sub w4, w4, w2, lsl #1 (height = h - h / 4)'),
+    (0x01905778, '00000000', 'e1031f2a', 'movie 4:3: mov w1, wzr (x = 0)'),
+    (0x0190577c, '00000000', 'b2050014', 'movie 4:3: b 0x1906e44'),
+    (0x01906e44, '00000000', '080040f9', 'movie 4:3: ldr x8, [x0]'),
+    (0x01906e48, '00000000', '082540f9', 'movie 4:3: ldr x8, [x8, #0x48] (viewport)'),
+    (0x01906e4c, '00000000', '00013fd6', 'movie 4:3: blr x8 (the viewport letterboxed)'),
+    (0x01906e50, '00000000', '600640f9', 'movie 4:3: ldr x0, [x19, #8] (moved)'),
+    (0x01906e54, '00000000', '43f7ff17', 'movie 4:3: b 0x1904b60'),
+]
+
 _MAIN = 'db93b0125f4850601d61c3edde012f8e'
-VARIANT_CUTS = {'43': {_MAIN: _V11 + _SCISSOR43 + _UI_V12 + _UI_V13 + _UI_V14 + _UI_V15 + _UI_V16 + _UI_V17 + _UI_V18 + _UI_V20}}
+VARIANT_CUTS = {'43': {_MAIN: _V11 + _SCISSOR43 + _UI_V12 + _UI_V13 + _UI_V14 + _UI_V15 + _UI_V16 + _UI_V17 + _UI_V18 + _UI_V20 + _MOVIE43}}
 
 BINDING = [
-    {'what': "Fire Emblem Fortune's Weave native 4:3 variant (VARIANT_CUTS['43']: camera aspect and ui2d pane rules)", 'now': 'build', 'goal': 'unreviewed', 'purpose': 'rendering',
-     'why': 'an opt-in variant (Game settings › Aspect ratio) of about 230 words in code caves of this main; each ui2d rule names panes of this build\'s layouts'},
+    {'what': "Fire Emblem Fortune's Weave native 4:3 variant (VARIANT_CUTS['43']: camera aspect, ui2d pane rules and movie letterbox)", 'now': 'build', 'goal': 'unreviewed', 'purpose': 'rendering',
+     'why': 'an opt-in variant (Game settings › Aspect ratio) of about 280 words in code caves of this main; each ui2d rule names panes of this build\'s layouts'},
 ]

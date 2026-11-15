@@ -94,7 +94,7 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
 | `build` → `game` | scene size: the scenes drawn below the smallest size the graphics scales give (Game settings > Resolution, Phone 540p) | rendering | blocked: one build on hand; the join could be found by function fingerprint (the 4/5 and 2/3 multiplies after GetCurrentGraphicsScale) | judgement | 1 | [Mario Tennis Fever](../../dm/games/0400D4201C6EA000/README.md) | the size function is the game's own code at a fixed address of this build; no Horizon query gives a smaller size |
 | `build` → `game` | Texture Pool x2: optional larger initial graphics allocation | memory | blocked: one full build ID and allocator call verified | judgement | 1 | [The Legend of Zelda: Ocarina of Time](../../dm/games/0400486024DEC000/README.md) | the allocator is in the game and full-scale rendering can exhaust the original pool |
 | `build` → `game` | the allocators' NaN fill of new blocks: off | memory | blocked: one build of program 1; program 0 not yet checked for the same fill | checked: the five fill sites (movn w9, #0x8040, lsl #16 in main) and their no-fill checks, 2026-11-14 | 1 | [Kirby and the Forgotten Land - Nintendo Switch 2 Edition](../../dm/games/04004D300C5AE001/README.md) | HAL's allocator wrappers; a function-matched rule could carry it over the game's updates and to program 0 if its allocators fill as well |
-| `build` → unreviewed | Fire Emblem Fortune's Weave native 4:3 variant (VARIANT_CUTS['43']: camera aspect and ui2d pane rules) | rendering | unreviewed | judgement | 1 | [Fire Emblem Fortune's Weave](../../dm/games/04007EF01F8AE000/README.md) | an opt-in variant (Game settings › Aspect ratio) of about 230 words in code caves of this main; each ui2d rule names panes of this build's layouts |
+| `build` → unreviewed | Fire Emblem Fortune's Weave native 4:3 variant (VARIANT_CUTS['43']: camera aspect, ui2d pane rules and movie letterbox) | rendering | unreviewed | judgement | 1 | [Fire Emblem Fortune's Weave](../../dm/games/04007EF01F8AE000/README.md) | an opt-in variant (Game settings › Aspect ratio) of about 280 words in code caves of this main; each ui2d rule names panes of this build's layouts |
 
 ## Summary
 
@@ -361,7 +361,7 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
 
 [Fire Emblem Fortune's Weave](../../dm/games/04007EF01F8AE000/README.md), `04007EF01F8AE000`, [patches.py](../../dm/games/04007EF01F8AE000/patches.py).
 
-- **`build` → unreviewed**, rendering, unreviewed, judgement: Fire Emblem Fortune's Weave native 4:3 variant (VARIANT_CUTS['43']: camera aspect and ui2d pane rules). An opt-in variant (Game settings › Aspect ratio) of about 230 words in code caves of this main; each ui2d rule names panes of this build's layouts
+- **`build` → unreviewed**, rendering, unreviewed, judgement: Fire Emblem Fortune's Weave native 4:3 variant (VARIANT_CUTS['43']: camera aspect, ui2d pane rules and movie letterbox). An opt-in variant (Game settings › Aspect ratio) of about 280 words in code caves of this main; each ui2d rule names panes of this build's layouts
 
 
 ### Fire Emblem: Three Houses

@@ -166,5 +166,6 @@ The game keeps its 1920x1080 window and scene; its cameras take a 4:3 aspect and
 | `_UI_V16` | Level-up window: the unit's name stays in the panel header (`N_Status` children not moved) |
 | `_UI_V17` | Unit details (X on a unit): the stat windows stay below the header (`L_UnitIn*` children not moved inside the stretched `L_UnitInfo`) |
 | `_UI_V18` | Obelisks: the darkening `Fade` (1920x856) covers the whole 4:3 screen (overlay stretch); the Flame Lord art `UnitPub` is no longer stretched 4/3 tall |
+| `_MOVIE43` | Movies (16:9) keep their shape: the movie player's target is cleared to black and its viewport is the middle three quarters of the height, so a movie shows letterboxed on the 4:3 screen, nothing cut |
 
 Checked screens: map HUD and minimap, command menu, forecast, combat and Blaze Arts, EXP and level-up, unit details, items, quick settings, obelisks, Base Menu, shops, dialogue. Not yet checked: dungeon battles, the end-of-chapter battle report. Cave torches miss some of their light pools at a distance in both aspects (likely the game's own light culling; open).
