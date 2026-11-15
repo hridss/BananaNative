@@ -3,13 +3,15 @@
 // process could still allocate (the smaller of Android's MemAvailable less a reserve and the image heap's budget, VK_EXT_memory_budget, less what else uses that heap), never
 // under a floor, and no more than the images it holds while the system stalls on memory (vktl_pressure_limit). DM_VK_IMG_LIMIT_MB, when set, replaces it. Eviction is least recently used first and never takes an image used in the current or the previous frame: when
 // everything over the limit is in use the cache stays over it (a working set larger than the limit would otherwise be uploaded again every frame: the thrash
-// docs/reference/memory.md "Texture cache thrash" describes)
+// docs/reference/memory.md "Texture cache thrash" describes). While the system reports no stall on memory, "in use" is wider: an image used in the last
+// VKTL_CALM_FRAMES frames stays (vktl_keep_frames)
 #ifndef VKA_TEXLIMIT_H
 #define VKA_TEXLIMIT_H
 #include <stdint.h>
 
 #define VKTL_MIB (1ull << 20)
 enum { VKTL_KEEP_FRAMES = 2,      // an image used in the current or the previous frame stays
+       VKTL_CALM_FRAMES = 600,    // an image used in the last this many frames stays while the system reports no stall on memory (vktl_keep_frames)
        VKTL_GPU_FRAMES = 120 };   // an image whose content is only the GPU's (rendered, not uploaded): kept whatever its age, unless the system is stalling hard on memory; then it goes after this many unused frames and after every image that can be uploaded again
 #define VKTL_FLOOR (512 * VKTL_MIB)
 
@@ -56,15 +58,32 @@ static inline uint64_t vktl_limit(const vktl_in *in) {
 // Prune down to this once over the limit (a margin, so one new image does not start another prune)
 static inline uint64_t vktl_target(uint64_t limit) { return limit - limit / 16; }
 
-// Whether an image may be evicted now: not held from outside the recording thread, not a playing video's, its last submission done, unused for VKTL_KEEP_FRAMES frames.
+// How many frames an image must have gone unused before the cache may evict it. Once free memory is at the reserve the limit is what the cache holds, and it stays
+// there: Android keeps MemAvailable near one level whatever the cache gives back (it fills what is freed from compressed swap), so every new image is over the limit.
+// With only VKTL_KEEP_FRAMES the prune then takes images the scene uses again a moment later and the limit follows the cache down until it is what two frames use:
+// Mario Kart World on a 12 GB device made its race's textures again several times a second while nothing stalled (docs/reference/memory.md "The measured image
+// cache limit follows MemAvailable"). An image the scene used a moment ago is not stale: making it again costs more than its memory while the system is not short
+// of it. So while the system says it does not stall (the pressure known and under VKTL_PSI_HOLD) an image used in the last calm_frames frames stays, over the limit
+// if need be, as a working set larger than the limit does. From VKTL_PSI_HOLD on, and where the pressure cannot be read (nothing then says memory is not short),
+// it is VKTL_KEEP_FRAMES as before: under pressure the cache holds no more than it did. (Kept up to VKTL_PSI_SHRINK instead, the cache held 140-170 MiB more at
+// 5-8 % of pressure and Android ended the game in the third race of a cup that the two-frame rule played through)
+static inline uint64_t vktl_keep_frames(double psi_some10, int calm_frames) {
+    if (psi_some10 < 0 || psi_some10 >= VKTL_PSI_HOLD || calm_frames < VKTL_KEEP_FRAMES) return VKTL_KEEP_FRAMES;
+    return (uint64_t)calm_frames;
+}
+// Whether an image may be evicted now: not held from outside the recording thread, not a playing video's, its last submission done, unused for keep_frames frames
+// (vktl_keep_frames; vktl_evictable: VKTL_KEEP_FRAMES).
 // An image whose content is the GPU's (gpu_owned: rendered, copied or computed into) is never a candidate: its storage holds what the CPU last wrote, not what the GPU made,
 // so a texture made again for it starts empty and stays wrong until the game renders it again (a shadow or a menu background drawn once; docs/reference/rendering.md
 // "A GPU-written image evicted and made again empty"). Only with allow_gpu (the system stalls past VKTL_PSI_SHRINK, where lmkd would end the game) and after
 // VKTL_GPU_FRAMES unused frames. last_frame 0 = never used (kept: it was just made)
-static inline int vktl_evictable(uint64_t cur_frame, uint64_t last_frame, int holds, int gpu_owned, int video_playing, int fence_pending, int allow_gpu) {
+static inline int vktl_evictable_at(uint64_t cur_frame, uint64_t last_frame, int holds, int gpu_owned, int video_playing, int fence_pending, int allow_gpu, uint64_t keep_frames) {
     if (holds || video_playing || fence_pending || !last_frame || cur_frame <= last_frame) return 0;
     if (gpu_owned) return allow_gpu && cur_frame - last_frame >= (uint64_t)VKTL_GPU_FRAMES;
-    return cur_frame - last_frame >= (uint64_t)VKTL_KEEP_FRAMES;
+    return cur_frame - last_frame >= keep_frames;
+}
+static inline int vktl_evictable(uint64_t cur_frame, uint64_t last_frame, int holds, int gpu_owned, int video_playing, int fence_pending, int allow_gpu) {
+    return vktl_evictable_at(cur_frame, last_frame, holds, gpu_owned, video_playing, fence_pending, allow_gpu, VKTL_KEEP_FRAMES);
 }
 // Eviction order: images that can be uploaded again before GPU-only ones, then least recently used first (qsort-style: < 0 = a goes first)
 static inline int vktl_order(int gpu_a, uint64_t last_a, int gpu_b, uint64_t last_b) {
