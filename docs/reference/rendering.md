@@ -1608,9 +1608,16 @@ Digimon Story Cyber Sleuth: Complete Edition (Media.Vision's MVGL engine, SDK 6.
 
 - **Symptom:** (Android) `[RED] vk: colour target 0 (format 0x49) cannot be a Vulkan colour attachment: not drawn into`, once a run; the texture keeps what it held before (zeros), and what samples it reads that.
 - **Cause:** a GPU block encoder draws into a BC texture through a view in an uncompressed format of the block's size, one texel per 4x4 block (agl's BC4 encoder: an RGBA16UI view, NVN format `0x2c`, over BC4 blocks of 8 bytes). On the Switch the view's texels are the texture's blocks. Vulkan cannot attach a compressed image, so `rp_begin` left the target out and the pass drew nothing. The Metal host has the same answer: [Compressed textures as render targets through an uncompressed shadow](#compressed-textures-as-render-targets-through-an-uncompressed-shadow).
-- **Fix:** `bcrt_attach` / `bcrt_flush` in `dm/gfx/vk_android/vka_draw.c`: such a pass draws into an uncompressed shadow of blocks x blocks in the view's format (a texture of the replay's own per format, size and layer count, looked up again at each pass), filled from the texture's level (its layers, or a 3D texture's depth planes) by `vkCmdCopyImage` before the pass and copied back after it; the two formats are size-compatible, so a texel of one is a block of the other. Levels that are not a whole number of blocks are left out, logged. `DM_VK_BC_RT=0` turns it off.
+- **Fix:** `bcrt_attach` / `bcrt_flush` in `dm/gfx/vk_android/vka_draw.c`: such a pass draws into an uncompressed shadow of blocks x blocks in the view's format (a texture of the replay's own per format, size and layer count, looked up again at each pass), filled from the texture's level (its layers, or a 3D texture's depth planes) by `vkCmdCopyImage` before the pass and copied back after it; the two formats are size-compatible, so a texel of one is a block of the other. Levels that are not a whole number of blocks were left out, logged; they now take their blocks rounded up ([below](#block-compressed-render-target-levels-smaller-than-a-block-on-the-vulkan-replay-android)). `DM_VK_BC_RT=0` turns it off.
 - **Found on:** [The Legend of Zelda: Ocarina of Time](../../dm/games/0400486024DEC000/README.md): a 64x64x64 BC4 volume (serial 4254) filled one depth plane a pass at the title (frame ~1,450-1,930); the scene's lit pixel shaders (`9676e0e11d36ace4`, `1ec0a549da7a57ec`, `9f36b8ee91e736c6` and others) and `77da61e1a049c545` sample it. With the fix the log shows each plane drawn through a 16x16 RGBA16UI shadow and no red line (Qualcomm's driver and Turnip v32, 2026-11-08); the picture's over-brightness did not visibly change.
 - **Check:** `DM_VK_TEX_PEEK=all` logs `rt peek: … compressed colour` for the planes drawn.
+
+### Block-compressed render-target levels smaller than a block on the Vulkan replay (Android)
+
+- **Symptom:** `[RED] vk: block-compressed render target 2x2 (level N) is not a whole number of blocks: not drawn into`; the texture's smallest levels keep what they held, and what samples them at a distance reads that (Mario Kart 8 Deluxe's attract races went almost all black for about 20 s while a mip chain was made again; issue #6).
+- **Cause:** [the shadow](#block-compressed-textures-as-render-targets-on-the-vulkan-replay) refused a level whose size is not a whole number of 4x4 blocks. A compressed mip chain's tail (2x2, 1x1) still takes one whole block in the texture's storage, on the Switch as elsewhere, and the encoder writes that block.
+- **Fix:** general: `bcrt_attach` rounds the level's block count up, so the shadow and its copies cover the whole blocks of the tail levels.
+- **Found on:** [Mario Kart 8 Deluxe](../../dm/games/0100152000022000/README.md) (issue #6).
 
 ### Output components a pixel shader does not write on the Vulkan replay
 
@@ -1729,3 +1736,10 @@ Digimon Story Cyber Sleuth: Complete Edition (Media.Vision's MVGL engine, SDK 6.
 - **Fix:** on Linux the replay does not use display timing unless `NX_VK_DISPLAY_TIMING=1` (`vka_dev.c`, inside `#ifdef NX_LINUX`). Android is unchanged.
 - **Open:** the cause, in Turnip or in the layer. Not tried on other Adreno GPUs or other Mesa versions.
 - **Found on:** [Mario Kart World](../../dm/games/0400C3F00006E000/README.md) 1.8.0, aarch64 Linux build of the host on an AYN Odin 2 Pro (12 GB RAM, 2026-11-15).
+
+### A GPU-drawn image gone with its finalized texture object (Android)
+
+- **Symptom:** a whole lit scene black for some frames, with what is drawn after it (water, particles) still there (Mario Kart 8 Deluxe's attract races, issue #6).
+- **Cause:** the game finalizes the texture objects of its frame's render targets and initializes them again over the same storage (its HDR scene, B10G11R11 1920x1080, shares storage with an R8 target of that size). The image went with its last texture object (`mtl_tex_release`), so the next object over that storage got a new, empty image; when that came between the scene's draws and the tone map's read, the tone map read zeros. On the Switch the storage keeps its bytes.
+- **Fix:** general: a GPU-drawn image outlives its last texture object for two frames (at most 32 such images, `linger_keep` in `vka_tex.c`). It stays in the live list, so a texture of the same storage and shape takes it over with its content (`vka_tex_get`'s shared-image scan, `linger_take`); one not taken over by then goes (`linger_prune_locked`). `DM_VK_TEX_LINGER=0` (restart) lets an image go with its last texture object, as before.
+- **Found on:** [Mario Kart 8 Deluxe](../../dm/games/0100152000022000/README.md) (issue #6).
