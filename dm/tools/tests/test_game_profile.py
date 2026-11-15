@@ -293,5 +293,21 @@ class SkipLayers(unittest.TestCase):   # skip_layers (DM_VK_SKIP_FS through the 
         self.assertTrue(all(len(k) == 16 and int(k, 16) >= 0 for k in keys))
 
 
+class UeLodScale(unittest.TestCase):   # ue_lod_scale (hle_uecvar.c dm_ue_lod_tick): a scale in [0, 16], the header's float
+    def test_rows(self):
+        with tempfile.TemporaryDirectory() as d:
+            Path(d, ID).mkdir()
+            (Path(d, ID) / 'game.tsv').write_text(TSV + 'ue_lod_scale\t2\n')
+            r = subprocess.run([sys.executable, str(GAME), 'header', ID, str(Path(d, ID) / 'game.h')], env={**os.environ, 'DM_GAMES_DIR': d}, capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn('#define DM_GAME_UE_LOD_SCALE 2.0f', (Path(d, ID) / 'game.h').read_text())
+
+    def test_rejected(self):
+        for rows in ('ue_lod_scale\t-1\n', 'ue_lod_scale\t17\n', 'ue_lod_scale\ttwo\n'):
+            rc, out = header(rows)
+            self.assertNotEqual(rc, 0, rows)
+            self.assertIn('ue_lod_scale must be', out, rows)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -225,6 +225,14 @@ Frame pacing: the host's frame step, engine frame limiters, present intervals an
 - **Check:** `t_uecvar` (the floor lowered, kept, a lower one the game sets left; run on the phone, built with the NDK), `test_ue_cvar.py` (the names fit the loader's field).
 - **Found on:** [Orbitals](../../dm/games/040032B023CA4000/README.md#found-on-this-game).
 
+### Unreal's static mesh LOD distance scale
+
+- **Symptom:** an Unreal Engine game's frame is bound by its geometry: the GPU's counters (`DM_VK_KGSL_PERF`) show the shader launch block busy almost all the frame and the varyings' RAM full most of it, millions of primitives a frame of which most are culled or cover no pixel, and a lower resolution gains little.
+- **Cause:** the game's scalability for its own hardware: the Switch 2 front end takes more geometry than a phone's. Unreal picks each static mesh's LOD by its screen size, scaled by `r.StaticMeshLODDistanceScale` (1 by default).
+- **Fix:** the profile's `ue_lod_scale <scale>` raises it (`hle_uecvar.c` `dm_ue_lod_tick`, written on every present like the dynamic resolution's floor, both copies; `float_tick` now does both): the coarser LODs come nearer, fewer primitives, the game's own LODs. The engine reads it every frame (written live with `cvarf`, it took effect at once; set back to 1, the frame was as before). `DM_UE_LOD_SCALE` overrides it, `0` keeps the game's.
+- **Check:** `t_uecvar` (raised, raised again when the game sets its own, a coarser one the game sets kept, nothing at 0; built with the NDK and run on the phone).
+- **Found on:** [Orbitals](../../dm/games/040032B023CA4000/README.md#found-on-this-game) on the Thor: at 1.5 / 2 / 3, 7.06 → 6.16 / 5.54 / 5.23 M primitives a frame and GPU 71.8 → 71.3 / 68.7 / 68.2 ms; screenshots at 2 differ from those at 1 no more than two at 1 do. The profile takes 2: 14.4 fps, GPU 69 ms.
+
 ### Frostbite's simulation rate, found by name
 
 - **Symptom:** a Frostbite game holds 30 fps with spare CPU and GPU time. Raising only the frame limit and the present interval gives 60 frames a second with the game at half speed (the match clock at 3.6 game seconds a second instead of 7.5).

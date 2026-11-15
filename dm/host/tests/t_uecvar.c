@@ -51,12 +51,29 @@ static void check_dynres(int set) {
     munmap(base, SIZE);
 }
 
+// The static meshes' LOD distance scale (dm_ue_lod_tick, DM_UE_LOD_SCALE over the profile's ue_lod_scale): raised, raised again when the game writes its own, a coarser one
+// the game sets kept, left alone at 0
+static void check_lod(int set) {
+    uint8_t *base = mmap(NULL, SIZE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0); assert(base != MAP_FAILED);
+    g_nmod = 1; strcpy(g_mod[0].name, "main"); g_mod[0].base = base; g_mod[0].size = SIZE;
+    uint64_t obj = 0x20800; cvar("r.StaticMeshLODDistanceScale", obj);
+    float vals[2] = {1, 1};
+    *(uintptr_t *)(base + obj + 0x10) = (uintptr_t)vals;
+    if (!set) { setenv("DM_UE_LOD_SCALE", "0", 1); dm_ue_lod_tick(); assert(vals[0] == 1 && writes == 0); return; }
+    setenv("DM_UE_LOD_SCALE", "2", 1);
+    dm_ue_lod_tick(); assert(vals[0] == 2 && vals[1] == 2 && writes == 2);
+    dm_ue_lod_tick(); assert(writes == 2);                               // already set
+    vals[1] = 1; dm_ue_lod_tick(); assert(vals[1] == 2 && writes == 3);   // the game set its own again
+    vals[0] = 3; dm_ue_lod_tick(); assert(vals[0] == 3 && writes == 3);   // a coarser scale the game sets stays
+    munmap(base, SIZE);
+}
+
 int main(void) {
     // Each process starts the one-time lookup with fresh state
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < 7; i++) {
         pid_t p = fork(); assert(p >= 0);
-        if (!p) { if (i < 3) check(i); else check_dynres(i == 4); _exit(0); }
+        if (!p) { if (i < 3) check(i); else if (i < 5) check_dynres(i == 4); else check_lod(i == 6); _exit(0); }
         int status; assert(waitpid(p, &status, 0) == p); assert(WIFEXITED(status) && WEXITSTATUS(status) == 0);
     }
-    puts("Unreal console variables: named by the rewriter, the texture pool raised, kept and left as set, a missing variable left alone, the dynamic resolution floor set and kept");
+    puts("Unreal console variables: named by the rewriter, the texture pool raised, kept and left as set, a missing variable left alone, the dynamic resolution floor set and kept, the LOD distance scale raised and kept");
 }
