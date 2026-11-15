@@ -793,6 +793,13 @@ The replay on Metal (`dm/gfx/nvn/nvn_mtl.m`) and the Vulkan and OpenGL layers. E
 - **Found on:** [Hyrule Warriors: Age of Calamity](../../dm/games/01002B00111A2000/README.md) (its GPU-driven effects are indirect quads).
 - **Check:** `DM_NVN_IXCLOG=<n>` logs the first n conversions (record → arguments) once the GPU has run them.
 
+### Indirect draws of quads or a line loop on the Vulkan replay (Android)
+
+- **Symptom:** parts of a 2D picture missing on Android, with `[RED] vk: an indirect draw of quads or a line loop is not on Vulkan yet: skipped` in the log.
+- **Cause:** Vulkan has neither quads nor line loops, and the replay makes their indices on the CPU from the draw's count; for an indirect draw the count is in the record, which the replay did not read, so it skipped the draw.
+- **Fix:** general: the record (`{count, instances, first, base instance}`, or the indexed form with first index and base vertex) is read on the CPU at replay, as the game wrote it before the submission, and the draw is made as the direct one it describes (`vka_draw.c` draw_body; `[RED]` once: `indirect draws of quads or a line loop read their record on the CPU at replay`). Open: a record the GPU writes earlier in the same submission is read stale (the Mac converts records on the GPU, `ixc_run`); an indirect-count multi-draw of quads counted by the GPU is still skipped.
+- **Found on:** [Fire Emblem: Three Houses](../../dm/games/010055D009F78000/README.md): KTGL's 2D path draws some frames this way.
+
 ### Indirect-count multi-draws
 
 - **Symptom:** an empty G-buffer pass (the title screen showed only the UI); later, the submitting thread waiting for the GPU before each such draw (36–54 fps in Kamura Village on an iPhone).
