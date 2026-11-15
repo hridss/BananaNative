@@ -89,7 +89,7 @@ int vka_state_op(vka_dstate *d, uint32_t op, const void *a) {
     case OP_BIND_VATTR: { const p_bind_vattr *b = a; d->s_vfmt = vka_stamp();
         // The bind replaces the attribute state, as the Metal backend does (S.nattr = b->n): shader inputs past its count read the zero buffer (vin_build).
         // Merging kept the attributes past the count from earlier binds, so such an input read another mesh's format and offset from this mesh's stream.
-        if (b->first >= 0 && b->first + b->n <= 16) {
+        if (b->first >= 0 && b->first + b->n <= 32) {   // NVN2's 32 attributes (hle_nvn.c)
             if (g_vattr_clear) { memset(d->attr, 0, sizeof d->attr); d->nattr = 0; }
             memcpy(&d->attr[b->first], b->st, 4 * (size_t)b->n); if (b->first + b->n > d->nattr) d->nattr = b->first + b->n;
         }
@@ -1704,7 +1704,7 @@ static void vin_build(const vka_dstate *d, const vka_shader *vs, vka_gkey *k) {
     for (uint32_t loc = 0; loc < 32; loc++) {
         if (!(vs->e->vin_mask >> loc & 1)) continue;
         int want = (int)(vs->e->vin_types >> (2 * loc) & 3), changed = 0, retype = 0;
-        const va_st *a = loc < 16 && (int)loc < d->nattr ? &d->attr[loc] : NULL;
+        const va_st *a = (int)loc < d->nattr ? &d->attr[loc] : NULL;   // (nattr is at most 32, the attribute table's size)
         VkFormat f = a && a->fmt ? vin_format(a->fmt, want, &changed, &retype) : VK_FORMAT_UNDEFINED;
         if (retype == DMSH_VK_TYPE_UINT) k->vin_u |= 1u << loc; else if (retype == DMSH_VK_TYPE_SINT) k->vin_s |= 1u << loc;
         if (a && a->fmt && !f) { static _Atomic int n; if (atomic_fetch_add(&n, 1) < 4) VRED("vertex attribute format %#x is not mapped: the input reads zeros", a->fmt); }

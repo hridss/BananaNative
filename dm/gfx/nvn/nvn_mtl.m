@@ -7795,7 +7795,9 @@ static int state_op(uint32_t op, const void *a) {
             if (dst && memcmp(dst, b->bytes, n)) { memcpy(dst, b->bytes, n); if (b->kind == 5) g_dss_dirty = 1; else g_pso_dirty = 1; }
             break;
         }
-        case OP_BIND_VATTR: { const p_bind_vattr *b = a; if (S.nattr != b->n || memcmp(S.attr, b->st, 4 * b->n)) { memcpy(S.attr, b->st, 4 * b->n); S.nattr = b->n; g_pso_dirty = 1; } break; }
+        case OP_BIND_VATTR: { const p_bind_vattr *b = a; int n = b->n < 16 ? b->n : 16;   // the Metal replay keeps 16 (its tables and pipeline key); upstream nxnative's 9507c221 has 32 there too
+            if (b->n > 16) { static int said; if (!said++) MLOG("[RED] BindVertexAttribState n=%d: the Metal replay keeps the first 16", b->n); }
+            if (S.nattr != n || memcmp(S.attr, b->st, 4 * (size_t)n)) { memcpy(S.attr, b->st, 4 * (size_t)n); S.nattr = n; g_pso_dirty = 1; } break; }
         case OP_BIND_VSTREAM: { const p_bind_vstream *b = a; if (S.nstream != b->n || memcmp(S.stream, b->st, 8 * b->n)) { memcpy(S.stream, b->st, 8 * b->n); S.nstream = b->n; g_pso_dirty = 1; } break; }
         case OP_BIND_VBUF: case OP_BIND_VBUF1: { p_bind_vbuf tmp; const p_bind_vbuf *b = vbuf_rec(op, a, &tmp); memcpy(&S.vbuf[b->first], b->r, sizeof *b->r * b->n); break; }
         case OP_BIND_UBO: case OP_BIND_UBO_SMALL: { p_bind_buf tmp; const p_bind_buf *b = bind_buf_rec(op, a, &tmp); if (b->stage < 6 && b->index < 16 && memcmp(&S.ubo[b->stage][b->index], b, sizeof *b)) { S.ubo[b->stage][b->index] = *b; g_args_dirty[b->stage] = 1; } break; }
