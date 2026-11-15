@@ -276,6 +276,13 @@ To enroll a cut for any game's own module:
 
 ## Functions, unwind entries and data in text
 
+### A module without `eh_frame_hdr` stops the rewrite with `KeyError: 15`
+
+- **Symptom:** `patch_nso.py` stops at once on a module with `KeyError: 15` in `rd`, reading the function boundaries.
+- **Cause:** the module has no `eh_frame_hdr` table: MOD0's start and end offsets for it are the same. The rewriter read the bytes there as the table's header anyway; they are MOD0 itself, whose bytes are no pointer encoding `rd` knows.
+- **Fix:** with start == end the rewriter reads no function starts; `func_range()` and the rest work without them, as for text before the first unwind entry.
+- **Found on:** a `subsdk1` built outside Nintendo's SDK (a code mod's) for [Pokémon Brilliant Diamond](../../dm/games/0100000011D90000/README.md#found-on-this-game). Applies to any module without the table.
+
 ### Code before the first unwind entry is one function
 
 - **Symptom:** `jump table <addr>` assertion on an ordinary byte table near the start of the text (`adr x18; ldrb w0,[x17,x16]; add x18,x18,x0,lsl #2; br x18`).

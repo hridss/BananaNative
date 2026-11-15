@@ -621,15 +621,19 @@ def rd(o, enc):
     if app == 0x10: v += o
     if app == 0x30: v += ehs
     return v, sz
-_, penc, cenc, tenc = IMG[ehs:ehs + 4]
-o = ehs + 4
-_, s = rd(o, penc); o += s
-nfde, s = rd(o, cenc); o += s
 starts = set()
-for _ in range(nfde):
-    a, s = rd(o, tenc); o += s
-    _, s = rd(o, tenc); o += s
-    starts.add(a)
+# A module without the table (MOD0's eh_frame_hdr start and end are the same offset: a subsdk built outside Nintendo's SDK without one, as a code mod's subsdk1 for
+# Pokémon Brilliant Diamond) has no function starts to read; the bytes at ehs are then MOD0 itself, and reading them as a table stopped the rewrite (KeyError: 15).
+# func_range() works without starts
+if struct.unpack_from('<i', IMG, m0 + 16)[0] != struct.unpack_from('<i', IMG, m0 + 20)[0]:
+    _, penc, cenc, tenc = IMG[ehs:ehs + 4]
+    o = ehs + 4
+    _, s = rd(o, penc); o += s
+    nfde, s = rd(o, cenc); o += s
+    for _ in range(nfde):
+        a, s = rd(o, tenc); o += s
+        _, s = rd(o, tenc); o += s
+        starts.add(a)
 starts = sorted(x for x in starts if x < TEXT_END)
 
 # ---- Linear scan to find all rewrite points (not relying on register read/write reports) ----
