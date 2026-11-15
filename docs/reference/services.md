@@ -289,6 +289,22 @@ Most service calls can be found before they crash, before the first boot or the 
 - **Fix:** the host now signals it once when it is bound for a connected controller, and again when a player's controller connects or goes away.
 - **Found on:** [The Legend of Zelda: Link's Awakening](../../dm/games/01006BB00C6F0000/README.md) (SDK 8.2.0).
 
+### No npad style before `SetSupportedNpadStyleSet`
+
+- **Symptom:** a game's heap layout differs from the console's from start-up on: Pokemon Sword's root heap objects lay 0x50 to 0xF0 bytes off where the console has them.
+- **Cause:** the hid service keeps an application's npads empty until the game has set its supported styles. The host reported a style from the start; Pokemon Sword asks for No1's style between `InitializeNpad` and `SetSupportedNpadStyleSet` (`main+0x65adb4` → `main+0x65af30`), and with a style there it made its four vibration objects about 4,300 allocations early.
+- **Fix:** `hle_hid.c` reports no style until the game sets a non-empty style set (`styles_set`); then the style events bound before fire, as on a connect (`styles_now`). A game that reads a controller's state without ever setting its styles gets them from that read on, with a `[RED]` line, so no game is left without input. `DM_HID_STYLE_EARLY=1` reports a style from the start, as before.
+- **Found on:** [Pokémon Sword](../../dm/games/0100ABF008968000/README.md) (1.3.2).
+- **Check:** `t_hid` (no style before the set, an empty set lifts nothing, the bound events fire once, a state read lifts it).
+
+### The Handheld npad's style event and a change of operation mode
+
+- **Symptom:** after switching between handheld and docked while the game runs, the game no longer reads player 1's controller (Link's Awakening).
+- **Cause:** player 1 is on the Handheld npad in handheld mode and on No1 docked, so a change of mode changes both npads' styles. The host kept the style events of No1 to No8 only and signalled none at a mode change; the Handheld npad's event fired only at its binding, which with no style before the supported styles are set is too early for a game that binds first.
+- **Fix:** the Handheld npad's event is kept too (`style_ev_slot`), and `hle_oe.c` `oe_state_set` signals No1's and Handheld's style events on a change of operation mode (`dm_hid_opmode_changed`).
+- **Found on:** [The Legend of Zelda: Link's Awakening](../../dm/games/01006BB00C6F0000/README.md).
+- **Check:** `t_hid` (a change of operation mode signals No1's and Handheld's events).
+
 ### Six-axis sensors
 
 - **Symptom:** motion moves never happen; shaking does nothing (Super Mario Odyssey: cap throws by shaking).

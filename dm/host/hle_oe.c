@@ -193,6 +193,7 @@ static void *g_defres_ev[DEFRES_EV]; static _Atomic int g_defres_n;
 // m -1 keeps the mode; scale -2 keeps the setting, 3 follows the mode, 0-2 holds that scale in every mode; size -1 keeps the graphics size, else w << 16 | h (0: the game's own).
 // A size change posts 300 like a scale change, once with it: the panel's switch from 540p to 1080p changes both, and two notifications made the game draw 720p in between
 static int gfx_size_store(int64_t v);   // below: 1 when the size changed
+__attribute__((weak)) void dm_hid_opmode_changed(void) {}   // hle_hid.c; the weak default is for builds without it (the unit tests that include this file)
 static pthread_mutex_t g_state_lock = PTHREAD_MUTEX_INITIALIZER;   // two producers (the panel, an overheat downgrade) do not interleave their read and store
 static void oe_state_set(int m, int scale, int64_t size) {
     pthread_mutex_lock(&g_state_lock);
@@ -207,6 +208,7 @@ static void oe_state_set(int m, int scale, int64_t size) {
         if (g_ntf_opmode) mq_push(MSG_OPMODE);
         if (g_ntf_perfmode && !DM_GAME_PERF_BOOST) mq_push(MSG_PERFMODE);   // the performance mode follows the operation mode (profile perf_mode boost: always Boost, it does not change)
         int n = atomic_load(&g_defres_n); for (int i = 0; i < n; i++) hle_signal_system_event(g_defres_ev[i]);
+        dm_hid_opmode_changed();   // player 1's controller moves between No1 and Handheld with the mode: the style events fire, as on the console
     }
     if ((scale_changed || size_changed) && g_ntf_gfxscale) mq_push(MSG_GFXSCALE);
 }
