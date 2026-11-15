@@ -1242,6 +1242,9 @@ static void rt_peek(const char *what, int i, const tex_t *t, const vka_img *im, 
 static int ssbo_desc(uint64_t addr, uint64_t size, VkDescriptorBufferInfo *bi) {
     VkBuffer b; VkDeviceSize o;
     uint64_t run = vka_addr_run(addr, size ? size : V.sb_range, &b, &o);
+    // No NVN command named this address (a storage buffer address read from a uniform buffer word, DMSH_VK_KIND_SBUF_UBO), so nothing placed its pool: placed now, as a
+    // command naming it would have (Orbitals keeps per-primitive data in a shader-code pool that only such words reach; unbound, its walls and floors were not drawn)
+    if (!run && addr) { mtl_pool_need((const void *)(uintptr_t)addr, size ? size : 1, "a storage buffer address read from a uniform buffer"); run = vka_addr_run(addr, size ? size : V.sb_range, &b, &o); }
     if (!run) { VRED_ONCE("storage buffer at %#llx is not in placed guest RAM: it is not bound", (unsigned long long)addr); return 0; }
     if (run > V.sb_range) run = V.sb_range;
     *bi = (VkDescriptorBufferInfo){b, o, run}; return 1;
