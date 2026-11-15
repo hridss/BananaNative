@@ -299,6 +299,14 @@ For a replaced DSP renderer the size query keeps the service's work-buffer contr
 - **Focus:** Star Fox closes its stream when its window loses focus and opens a new one when it regains it; 14 rounds went by with the sound intact.
 - **Found on:** Xenoblade Chronicles 2, Nintendo Switch 2 Edition (`0400E95004038001`) (SDK 21.4.4, one or two 2-channel streams at 48 kHz, 10 ms periods, 40 ms capacity; the second when the active device is `AudioExternalOutput`); [Star Fox](../../dm/games/0400E88025B1A000/README.md) (Wwise 2024.1, SDK 21.4.4).
 
+### Underruns on an output whose burst is longer than the game's queue (Android)
+
+- **Symptom:** (Android) one of a game's outputs crackles at a steady frame rate; the output's statistics show about one underrun per callback (Octopath Traveler 0: 2,500 underruns per 2,000 callbacks on its six-channel output, 11 % of the stream zero-padded), while its other output, with longer blocks, has none.
+- **Cause:** an AAudio stream that is not low latency calls back for a whole burst at once (960 frames, 20 ms on a Snapdragon 8 Gen 2 phone). A game that keeps about three small blocks queued (Octopath Traveler 0: 2.9 blocks of 5 ms) has less than that queued at the callback, although it keeps up with the sound card's pace.
+- **Fix:** for such a stream a feeder thread takes the game's blocks at the pace the sound card plays them (looks every 1.5 ms) into a ring of downmixed frames holding one burst and 5 ms (`hle_audio.c` `aa_feeder`); the callback plays from the ring (`aa_take`) and comes up short only when the game itself has nothing queued. A low-latency stream (a burst under 10 ms) and the audio renderer's own output, which paces itself (Metroid Dread's cutscenes stalled behind the ring), are left as they were. `DM_AUDIO_FEED=0` / `1` turns the ring off / on for any stream.
+- **Found on:** [Octopath Traveler 0](../../dm/games/01005270232F2000/README.md).
+- **Check:** `make -C dm/host/tests GAME=<id> audio-feed` (Linux; `t_audio_feed`: a six-channel output through the stereo callback, 50 underruns in 25 callbacks without the ring and none with it).
+
 ## Codecs
 
 ### Hardware Opus decoders built on the SDK's software decoders

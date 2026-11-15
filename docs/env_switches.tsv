@@ -19,6 +19,7 @@ DM_APP_POOL_MB	diagnostic	`=<MiB>` (read once) the total GetInfo TotalMemorySize
 DM_APP_VERSION	switch	Overrides the IPA's version in `build_ipa.sh`; by default it is the packed game's display version from its control data (the update's when one is packed)
 DM_AUDIO	switch	`1` plays audio through Core Audio, `0` uses the silent sink; real output is the default on iOS, the silent sink on the Mac (the Mac launcher sets `1`)
 DM_AUDIO_DUMP	diagnostic	`=<file>` writes every PCM block the game appends as is (16-bit, 48 kHz, channel count as in the OpenAudioOut log), to judge whether a sound played
+DM_AUDIO_FEED	switch	`0` / `1` turns off / on the Android output's feeder ring, which takes the game's blocks at the pace the sound card plays them and hands the device callback its frames from the ring (`hle_audio.c` aa_feeder; default on when the stream's burst is 10 ms or more, never for the audio renderer's own output, which paces itself; a low-latency stream is left as it was)
 DM_AUDIO_MUTE	switch	`=1` runs the real Core Audio output path (callback pacing, background take-over) with the output silenced, for lifecycle tests on the Mac without noise
 DM_AUDIO_STALL_MS	diagnostic	`=<ms>` how long the audio watchdog lets an audio renderer go without progress before it counts a stall (`hle_audio.c`; default 3000 on Android, 200 on Apple)
 DM_AUDREN_TRACE	diagnostic	When set, the CPU audio renderer logs every update with the number of frames rendered since the previous one

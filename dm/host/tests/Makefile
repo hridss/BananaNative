@@ -135,6 +135,16 @@ $(B)/t_audren_work: t_audren_work.c ../hle_audren.c ../hle.h ../dm.h $(GAME_H) |
 .PHONY: audren-work
 audren-work: $(B)/t_audren_work
 	$(B)/t_audren_work
+# The Android output path of hle_audio.c (the feeder ring, DM_AUDIO_FEED; a six-channel output through the stereo device callback) built for Linux: the NDK and arm64 headers
+# are stand-ins in stub_aaudio/, GAME only picks a profile header. make audio-feed, in `run` on a Linux host
+$(B)/t_audio_feed: t_audio_feed.c ../hle_audio.c ../hle.h ../dm.h stub_aaudio/aaudio/AAudio.h $(GAME_H) | $(B)
+	$(CLANG) -O1 -g -Wall -Wno-unused-function -D__ANDROID__ -D__aarch64__ -Istub_aaudio -I.. $(GINC) -o $@ t_audio_feed.c -lpthread
+.PHONY: audio-feed
+audio-feed: $(B)/t_audio_feed
+	$(B)/t_audio_feed
+ifeq ($(shell uname -s),Linux)
+run: audio-feed
+endif
 run: $(B)/t_audren_layout
 $(B)/t_audren_layout: t_audren_layout.c ../hle_audren.c ../hle.h ../dm.h $(GAME_H) | $(B)
 	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -I.. $(GINC) -o $@ t_audren_layout.c
