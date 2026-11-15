@@ -91,6 +91,7 @@ typedef struct {
     // instance-rate divisors, logic operations, dual-source blending, geometry and tessellation stages, depth clamp, fill mode lines, wide lines
     int imageless;   // imagelessFramebuffer (Vulkan 1.2): classic render passes need it (DM_VK_CLASSIC_RP)
     int minmax;      // samplerFilterMinmax (Vulkan 1.2): NVN's min / max sampler reduction (vka_tex.c sampler_of)
+    int img2d3d, samp2d3d;   // VK_EXT_image_2d_view_of_3d's image2DViewOf3D / sampler2DViewOf3D: storage / sampled 2D views of a 3D image's slice (vka_tex.c view_of)
     int draw_count;                                 // drawIndirectCount (Vulkan 1.2): an indirect-count multi-draw's count read by the GPU (vka_draw.c vka_mdi_gpu)
     int push_desc, vin_dyn, null_desc, idx8, divisor, logic_op, dual_src, geom, tess, depth_clamp, fill_lines, depth_bias_clamp, multi_vp, a2c;
     int vstores, fstores;   // vertexPipelineStoresAndAtomics, fragmentStoresAndAtomics: texture-use feedback of the pool (vka_tex.c "Texture pool reads") writes from those stages
