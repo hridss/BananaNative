@@ -68,6 +68,7 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
 | `build` → `game` | unused 272-byte slot pool: 4,194,304 → 65,536 slots | address space | gap | judgement | 1 | [Mario + Rabbids® Sparks of Hope](../../dm/games/0100317013770000/README.md) | Sparks of Hope's own init (Kingdom Battle has none) |
 | `build` → `sdk` | rows the rules would add the alignment cuts to (2d369d99, 12f16103, 311deab1) | address space | blocked: the games that reach them (Pokémon Brilliant Diamond, Monster Hunter Rise, 13 Sentinels: Aegis Rim; Brain Memory Training Academy; Ace Attorney Investigations Collection) have no Mac build: run one per build with the alignment cuts | checked: the rules resolved on each build's sdk, 2026-10-29 and 2026-10-30 | 12 | [sdk_patches.py](../../dm/tools/sdk_patches.py) | the rules give these builds the same node area cut and the three alignment cuts more; each row keeps the alignment out |
 | `build` → `sdk` | rows of builds not on the game drive (56ec2474, 9c73fb73, e01950c5) | address space | blocked: no copy on the drive to compare | judgement | 3 | [sdk_patches.py](../../dm/tools/sdk_patches.py) | likely what the rules give (each names one of their implementations) |
+| `build` → `game` | Game Freak's frame time of present interval 2 at a fixed address (Pokémon Sword and Shield) | frame rate | blocked: one version of each game on hand | checked: Sword main a3b75bcd3311385a and Shield main a16802625e7826bf (1.3.2): the same offset in both | 2 | [Pokémon Shield](../../dm/games/01008DB008C2C000/README.md); [Pokémon Sword](../../dm/games/0100ABF008968000/README.md) | the game's own table of frame times by present interval (16666667, 33333334, 50000000 ... ns as 64-bit words), which a search for those values could find in any build |
 | `build` → `game` | Unity BucketAllocator ALLOC_BUCKET: 255 blocks of 4 MB → 63 | address space | blocked: no extracted main of either Subnautica on the game drive to fingerprint | checked: the bucket allocator of five Unity 2021 and later mains (not Subnautica's), 2026-10-29 | 2 | [Subnautica](../../dm/games/0100429011144000/README.md); [Subnautica: Below Zero](../../dm/games/010014C011146000/README.md) | Unity 2019's constructor call takes the block count as a constant; Unity 2021 and later read the bucket sizes from boot.config with a default of one block (Cult of the Lamb, Monster Train 2, Blasphemous 2, BALL x PIT, Donkey Kong Country Returns HD; checked 2026-10-29) and need no cut, so no Unity rule. A function-matched rule could carry it over the game's updates |
 | `build` → `host` | resource heap size +16 KB (ExpHeap create size, main+0x130514) | memory | blocked: the native NVN2 sizes of a recorded indexed draw are not established (nxnative #1580) | judgement | 1 | [Super Mario Bros. Wonder - Nintendo Switch 2 Edition](../../dm/games/040015100B514001/README.md) | the shortfall comes from the host's NVN2 command-memory accounting (nxnative #1580); a correct host representation would make the cut unnecessary for every build |
 | `build` → `sdk` | VammManager node area and alignment, SDK 4.4.0 (9de92bad) | address space | blocked: one game ships it | judgement | 1 | [sdk_patches.py](../../dm/tools/sdk_patches.py) | an older implementation no rule covers (its large regions aligned to 32 MB, not the rules' 2 MB); a rule once a second game ships it |
@@ -92,6 +93,8 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
 | `build` → `game` | frame skip: the draw flag of frames behind real time written 0, so the game steps at full speed below 60 fps (Full game speed at low frame rates) | frame rate | blocked: one build on hand; the frame function could be found by fingerprint (cmp w8,#5 and csel ..., lt before the bl to the helper that calls nvnWindowGet/SetPresentInterval, and the flag's ldrb; cbz before it) | judgement | 1 | [Mario Tennis Fever](../../dm/games/0400D4201C6EA000/README.md) | the flag, the job table and the frame function are the game's own, at fixed addresses of this build; the engine counts frames and has no rate or step count the host could write |
 | `build` → `game` | frame step floor 2 → 1 vsync, and its frame step | frame rate | blocked: frame-step stubs have no function-matched form yet | judgement | 1 | [Paper Mario: The Thousand-Year Door](../../dm/games/0100ECD018EBE000/README.md) | the game's own clock floor and step |
 | `build` → `game` | frame step: the frame-rate controller's interval and fps from the host | frame rate | blocked: frame-step stubs have no function-matched form yet | judgement | 1 | [The Legend of Zelda: Ocarina of Time](../../dm/games/0400486024DEC000/README.md) | the game's own 30 fps mode (interval 2), chosen by the host's step so presentation and game time agree |
+| `build` → `game` | Grezzo's frame controller least and most extra vsyncs behind a fixed global (Link's Awakening) | frame rate | blocked: one build on hand | checked: main 909e904af78ac1b8 (1.1.0), where the row was found; another project describes the same bytes for 1.0.1 | 1 | [The Legend of Zelda: Link's Awakening](../../dm/games/01006BB00C6F0000/README.md) | the game's own frame controller: its clamp to the two bytes and the game manager's pointer are plain code a function fingerprint could find |
+| `build` → `game` | Grezzo's frame governor enable and last-frame-slow bytes at a fixed address (Echoes of Wisdom) | frame rate | blocked: one build on hand | checked: main 9f221e1afa65ba54 (1.1.0), where the row was found | 1 | [The Legend of Zelda: Echoes of Wisdom](../../dm/games/01008CF01BAAC000/README.md) | the game's own frame governor, rewritten since Link's Awakening (no least and most bytes): the game manager is a static object the frame task's code names, which a function fingerprint could find |
 | `build` → `game` | layout panes on a picture narrower than 16:9: full-screen picture panes cover the picture, panes near the top and bottom of the 16:9 layer move to its edges | rendering | blocked: one build on hand; the constructor and the two build ends are plain code a function fingerprint could find | checked: v458752 by disassembly, 2026-11-13: the three words read from the main image, x19 / x23 live at each site | 1 | [Donkey Kong Bananza](../../dm/games/040074A01BF12000/README.md) | nn::ui2d's pane constructor and Layout::Build are SDK code linked into main, and the game's own layout class is its own; the three gate sites and the pane and layout offsets are fixed for this build. The names of the groups left as authored are this game's layouts |
 | `build` → `game` | Mario Kart World camera and 2D layer aspect callback in main 1.8.0 | rendering | blocked: one build on hand; the aspect stores and the getter calls could be found by function fingerprint | judgement | 1 | [Mario Kart World](../../dm/games/0400C3F00006E000/README.md) | the callback reads sead's PerspectiveProjection fields and nn::ui2d's DrawInfo matrix, the same in every title of this engine, but its five gates (two camera aspect stores, two projection getter calls and one rows read) are fixed addresses of this build |
 | `build` → `game` | Mario Tennis Fever scene size callback (Phone 540p), frame skip callback and camera and 2D layer aspect callback in nro0 1.1.1 | rendering | blocked: one build on hand; the join of the size function (the 4/5 and 2/3 multiplies after GetCurrentGraphicsScale) and the layout setter (its two aspect stores into the camera array) could be found by function fingerprint | judgement | 1 | [Mario Tennis Fever](../../dm/games/0400D4201C6EA000/README.md) | the size callback writes the scene's size record the game's own size function fills, the frame skip callback the game's draw flag after reading its job table, and the aspect callback the camera aspect its display layout setter stores, the fovy its projection builders load and the layout projection its setup copies; all are layouts of this build at fixed gate addresses (the two nn::ui2d sites are SDK code) |
@@ -99,6 +102,7 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
 | `build` → `game` | model LOD distance: LodStartDistCoef and MaxLevelDistScale scaled (Game settings > Advanced > Model detail distance, DM_OOT_LOD_SCALE) | frame rate | blocked: one build on hand; the gate and the manager offsets are this build's, the LOD function could be found by fingerprint (its ModelLodParam handle +0xd50) | judgement | 1 | [The Legend of Zelda: Ocarina of Time](../../dm/games/0400486024DEC000/README.md) | a per-game rule because no general one can do it: the game picks each model's LOD level from its own distance and parameters, the host sees only draw calls; one gate on the scene manager's per-frame view update writes the two shared inputs |
 | `build` → `game` | movie player: the plain player instead of the NDVE-enhanced one | frame rate | blocked: one build on hand; the faster tensor path is translator work (docs/reference/shaders.md, Ampere HMMA through simdgroup_matrix, Open) | judgement | 1 | [The Legend of Zelda: Ocarina of Time](../../dm/games/0400486024DEC000/README.md) | a workaround: the tensor network costs 47.5 ms of GPU a movie frame; a function fingerprint could carry it over updates, and once the translator keeps LDSM / MOVM / HMMA chains in matrices the cut can go |
 | `build` → `game` | Ocarina of Time camera and 2D layer aspect callback, and foliage distance and fog callbacks, in main v131072 | rendering | blocked: one build on hand; the projection reads are plain sead code a function fingerprint could find | judgement | 1 | [The Legend of Zelda: Ocarina of Time](../../dm/games/0400486024DEC000/README.md) | the aspect callback reads sead's PerspectiveProjection fields, the same in every title of this engine, but its eight gates (five cameras, the HUD canvas, the movie viewport and the save picture) are fixed addresses of this build; the foliage callback's six gates are loads of the foliage update of this build, the fog callback's two gates the scene manager's loads of its sky in this build |
+| `build` → `game` | Persona 5 Royal's present interval at the end of a fixed pointer chain | frame rate | blocked: one build on hand, and the function that builds the chain is not located yet | checked: main d4b150b29a931cd3 (1.0.2): the chain is that of a community cheat for this build, its first pointer lies in bss; the code that makes the chain was not found | 1 | [Persona 5 Royal](../../dm/games/01005CA01580E000/README.md) | the game's own display object behind a global of main, at offsets of this build |
 | `build` → `game` | Pokopia camera aspect hooks in main v2.0.1 | rendering | blocked: future game builds require exact offset and original-word validation | checked: main 76a489f3bd3642fa5e18bd83d32c98ba (Fold 7 observation, 2026-11-11) | 1 | [Pokemon Pokopia](../../dm/games/0400A3A01EE4C000/README.md) | camera layout/offsets are specific to this exact game build |
 | `build` → `game` | scene size: the scenes drawn below the smallest size the graphics scales give (Game settings > Resolution, Phone 540p) | rendering | blocked: one build on hand; the join could be found by function fingerprint (the 4/5 and 2/3 multiplies after GetCurrentGraphicsScale) | judgement | 1 | [Mario Tennis Fever](../../dm/games/0400D4201C6EA000/README.md) | the size function is the game's own code at a fixed address of this build; no Horizon query gives a smaller size |
 | `build` → `game` | shadow range: the dynamic shadow's last cascade split capped (Game settings > Advanced > Shadow range, DM_OOT_SHADOW_RANGE) | frame rate | blocked: one build on hand; the cascade fit is plain agl code and could be found by function fingerprint | judgement | 1 | [The Legend of Zelda: Ocarina of Time](../../dm/games/0400486024DEC000/README.md) | a per-game rule because no general one can do it: the host sees the depth passes' draws, not the slices the game fits its cascades to; the split array is agl's, the gate a fixed address of this build |
@@ -134,15 +138,19 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
 | [NieR:Automata The End of YoRHa Edition (010056B015FE8000)](#nierautomata-the-end-of-yorha-edition-010056b015fe8000) | 8 | 0 | 0 | 0 | 1 | `build` → `game` ×2 |
 | [NieR:Automata The End of YoRHa Edition (0100B8E016F76000)](#nierautomata-the-end-of-yorha-edition-0100b8e016f76000) | 8 | 0 | 0 | 0 | 1 | `build` → `game` ×2 |
 | [Paper Mario: The Thousand-Year Door](#paper-mario-the-thousand-year-door) | 1 | 0 | 1 | 0 | 0 | `build` → `game` |
+| [Persona 5 Royal](#persona-5-royal) | 0 | 0 | 0 | 0 | 1 | `build` → `game` |
 | [Pokemon Pokopia](#pokemon-pokopia) | 0 | 3 | 0 | 0 | 1 | `build` → `game` |
 | [Pokémon Brilliant Diamond](#pokémon-brilliant-diamond) | 0 | 0 | 0 | 0 | 1 | `build` → `engine` |
+| [Pokémon Shield](#pokémon-shield) | 0 | 0 | 0 | 0 | 1 | `build` → `game` |
+| [Pokémon Sword](#pokémon-sword) | 0 | 0 | 0 | 0 | 1 | `build` → `game` |
 | [Subnautica](#subnautica) | 1 | 0 | 0 | 0 | 0 | `build` → `game` |
 | [Subnautica: Below Zero](#subnautica-below-zero) | 1 | 0 | 0 | 0 | 0 | `build` → `game` |
 | [Super Mario Bros. Wonder - Nintendo Switch 2 Edition](#super-mario-bros-wonder---nintendo-switch-2-edition) | 1 | 0 | 0 | 0 | 0 | `build` → `host` |
 | [Super Smash Bros. Ultimate](#super-smash-bros-ultimate) | 11 | 0 | 0 | 1 | 0 | `game` |
 | [Taiko Risshiden V DX](#taiko-risshiden-v-dx) | 1 | 0 | 0 | 2 | 0 | `game` |
 | [The Legend of Zelda: Breath of the Wild](#the-legend-of-zelda-breath-of-the-wild) | 7 | 0 | 5 | 0 | 0 | `build` → `game` ×2 |
-| [The Legend of Zelda: Link's Awakening](#the-legend-of-zelda-links-awakening) | 1 | 0 | 0 | 0 | 0 | `build` → `game` |
+| [The Legend of Zelda: Echoes of Wisdom](#the-legend-of-zelda-echoes-of-wisdom) | 0 | 0 | 0 | 0 | 1 | `build` → `game` |
+| [The Legend of Zelda: Link's Awakening](#the-legend-of-zelda-links-awakening) | 1 | 0 | 0 | 0 | 1 | `build` → `game` ×2 |
 | [The Legend of Zelda: Ocarina of Time](#the-legend-of-zelda-ocarina-of-time) | 1 | 18 | 4 | 0 | 4 | `build` → `game` ×12 |
 | [The Legend of Zelda: Tears of the Kingdom](#the-legend-of-zelda-tears-of-the-kingdom) | 0 | 0 | 9 | 0 | 0 | `build` → `game` |
 | [Xenoblade Chronicles 3](#xenoblade-chronicles-3) | 6 | 0 | 0 | 0 | 0 | `build` → `game` |
@@ -323,7 +331,7 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
   - gate 24608 at `+0x850d3c`: nn::ui2d::Layout::Build main+0x850680, its build done (mov w0,#1); x19 the layout, the root pane at +0x18
   - gate 24608 at `+0x13cb50`: the game's own layout class's build main+0x13c94c, done (ldp x20,x19,[sp,#0x1e0]: x19 is still the layout); the root pane at +0x18
   - host [dkb_wide.c:34](../../dm/host/android/dkb_wide.c#L34): build check
-  - host [hle_fpslock.c:45](../../dm/host/hle_fpslock.c#L45): engine frame limit set to fps_target: sead frame-rate controller minimum interval
+  - host [hle_fpslock.c:48](../../dm/host/hle_fpslock.c#L48): engine frame limit set to fps_target: sead frame-rate controller minimum interval
 
 ### EA SPORTS FC 27
 
@@ -332,7 +340,7 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
 - **`build` → `engine`**, frame rate, blocked: one Frostbite game here, judgement: Frostbite's frame regulator at a fixed pointer. Engine code other Frostbite games ship (the simulation's own rate is already set by name)
 
 - **1.8d.310c `main`** `a48c0de3…`
-  - host [hle_fpslock.c:72](../../dm/host/hle_fpslock.c#L72): engine frame limit set to fps_target: FIFA frame regulator
+  - host [hle_fpslock.c:112](../../dm/host/hle_fpslock.c#L112): engine frame limit set to fps_target: FIFA frame regulator
 
 ### FINAL FANTASY CRYSTAL CHRONICLES Remastered Edition
 
@@ -428,7 +436,7 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
 - **`build` → `engine`**, frame rate, blocked: one game on that engine here, judgement: Next Level Games' frame limiter target at a fixed address. The studio's engine, which its other games ship
 
 - **1.4.0 `main`** `79e5950f…`
-  - host [hle_fpslock.c:57](../../dm/host/hle_fpslock.c#L57): engine frame limit set to fps_target: NLG frame limiter target
+  - host [hle_fpslock.c:97](../../dm/host/hle_fpslock.c#L97): engine frame limit set to fps_target: NLG frame limiter target
 
 ### Mario + Rabbids Kingdom Battle
 
@@ -514,7 +522,7 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
 - **`build` → `engine`**, frame rate, blocked: one RE Engine game here, judgement: RE Engine's frame limit at a fixed pointer. Engine code other RE Engine games ship
 
 - **16.0.2 `main`** `c9a3dd77…`
-  - host [hle_fpslock.c:53](../../dm/host/hle_fpslock.c#L53): engine frame limit set to fps_target: RE Engine frame limit
+  - host [hle_fpslock.c:93](../../dm/host/hle_fpslock.c#L93): engine frame limit set to fps_target: RE Engine frame limit
 
 ### Need For Speed™ Hot Pursuit Remastered
 
@@ -525,11 +533,11 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
 
 - **1.0.3 `main`** `799d1061…` ([patches.py:7](../../dm/games/010029B0118E8000/patches.py#L7))
   - cut `+0x4835a4`: frame limiter spin: b.gt main+0x483588 → nop (the host paces the frames)
-  - host [hle_fpslock.c:62](../../dm/host/hle_fpslock.c#L62): engine frame limit set to fps_target: Criterion 60 fps mode
-  - host [hle_fpslock.c:63](../../dm/host/hle_fpslock.c#L63): engine frame limit set to fps_target: Criterion frame ticks
-  - host [hle_fpslock.c:64](../../dm/host/hle_fpslock.c#L64): engine frame limit set to fps_target: Criterion frame ticks / 10
-  - host [hle_fpslock.c:65](../../dm/host/hle_fpslock.c#L65): engine frame limit set to fps_target: Criterion 2D game step
-  - host [hle_fpslock.c:66](../../dm/host/hle_fpslock.c#L66): engine frame limit set to fps_target: Criterion 3D game step
+  - host [hle_fpslock.c:102](../../dm/host/hle_fpslock.c#L102): engine frame limit set to fps_target: Criterion 60 fps mode
+  - host [hle_fpslock.c:103](../../dm/host/hle_fpslock.c#L103): engine frame limit set to fps_target: Criterion frame ticks
+  - host [hle_fpslock.c:104](../../dm/host/hle_fpslock.c#L104): engine frame limit set to fps_target: Criterion frame ticks / 10
+  - host [hle_fpslock.c:105](../../dm/host/hle_fpslock.c#L105): engine frame limit set to fps_target: Criterion 2D game step
+  - host [hle_fpslock.c:106](../../dm/host/hle_fpslock.c#L106): engine frame limit set to fps_target: Criterion 3D game step
 
 ### NieR:Automata The End of YoRHa Edition (010056B015FE8000)
 
@@ -548,7 +556,7 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
   - cut `+0x9bf4d4`: dynamic resolution: optimal frame cost 32.01 -> 16.005 ms at 60 fps (second load)
   - cut `+0x9bf4f8`: dynamic resolution: good frame cost 30 -> 15 ms at 60 fps
   - launcher capabilities: DYNAMIC_RESOLUTION
-  - host [hle_fpslock.c:102](../../dm/host/hle_fpslock.c#L102): frame interval and dynamic-resolution floor
+  - host [hle_fpslock.c:142](../../dm/host/hle_fpslock.c#L142): frame interval and dynamic-resolution floor
 
 ### NieR:Automata The End of YoRHa Edition (0100B8E016F76000)
 
@@ -567,7 +575,7 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
   - cut `+0x9c08e8`: dynamic resolution lower bound follows the selected preset
   - cut `+0x9c08f4`: dynamic resolution lower bound follows the selected preset
   - launcher capabilities: DYNAMIC_RESOLUTION
-  - host [hle_fpslock.c:103](../../dm/host/hle_fpslock.c#L103): frame interval and dynamic-resolution floor
+  - host [hle_fpslock.c:143](../../dm/host/hle_fpslock.c#L143): frame interval and dynamic-resolution floor
 
 ### Paper Mario: The Thousand-Year Door
 
@@ -578,6 +586,15 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
 - **1.0.1 `main`** `0effe4af…` ([patches.py:5](../../dm/games/0100ECD018EBE000/patches.py#L5))
   - cut `+0x2e77a4`: frame step floor in 60 Hz vsyncs: mov w9,#2 → mov w9,#1 (the game steps by the vsyncs that passed, down to one)
   - frame step `+0x2e77f8`: frame step: the base clock steps by the host's vsyncs (state page target fps; 0 = the game's measured step)
+
+### Persona 5 Royal
+
+[Persona 5 Royal](../../dm/games/01005CA01580E000/README.md), `01005CA01580E000`.
+
+- **`build` → `game`**, frame rate, blocked: one build on hand, and the function that builds the chain is not located yet, checked: main d4b150b29a931cd3 (1.0.2): the chain is that of a community cheat for this build, its first pointer lies in bss; the code that makes the chain was not found: Persona 5 Royal's present interval at the end of a fixed pointer chain. The game's own display object behind a global of main, at offsets of this build
+
+- **1.0.2 `main`** `d4b150b2…`
+  - host [hle_fpslock.c:77](../../dm/host/hle_fpslock.c#L77): engine frame limit set to fps_target: Persona 5 Royal present interval
 
 ### Pokemon Pokopia
 
@@ -598,7 +615,25 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
 - **`build` → `engine`**, frame rate, gap, judgement: Unity's Application.targetFrameRate at a fixed address. An IL2CPP player registers the setter by its icall name, so the field can be found in any Unity game; whether to raise it stays the profile's
 
 - **1.3.0 `main`** `94ceae32…`
-  - host [hle_fpslock.c:48](../../dm/host/hle_fpslock.c#L48): engine frame limit set to fps_target: Unity targetFrameRate
+  - host [hle_fpslock.c:88](../../dm/host/hle_fpslock.c#L88): engine frame limit set to fps_target: Unity targetFrameRate
+
+### Pokémon Shield
+
+[Pokémon Shield](../../dm/games/01008DB008C2C000/README.md), `01008DB008C2C000`.
+
+- **`build` → `game`**, frame rate, blocked: one version of each game on hand, checked: Sword main a3b75bcd3311385a and Shield main a16802625e7826bf (1.3.2): the same offset in both: Game Freak's frame time of present interval 2 at a fixed address (Pokémon Sword and Shield). The game's own table of frame times by present interval (16666667, 33333334, 50000000 ... ns as 64-bit words), which a search for those values could find in any build
+
+- **1.3.2 `main`** `a1680262…`
+  - host [hle_fpslock.c:85](../../dm/host/hle_fpslock.c#L85): engine frame limit set to fps_target: Game Freak frame time of interval 2
+
+### Pokémon Sword
+
+[Pokémon Sword](../../dm/games/0100ABF008968000/README.md), `0100ABF008968000`.
+
+- **`build` → `game`**, frame rate, blocked: one version of each game on hand, checked: Sword main a3b75bcd3311385a and Shield main a16802625e7826bf (1.3.2): the same offset in both: Game Freak's frame time of present interval 2 at a fixed address (Pokémon Sword and Shield). The game's own table of frame times by present interval (16666667, 33333334, 50000000 ... ns as 64-bit words), which a search for those values could find in any build
+
+- **1.3.2 `main`** `a3b75bcd…`
+  - host [hle_fpslock.c:84](../../dm/host/hle_fpslock.c#L84): engine frame limit set to fps_target: Game Freak frame time of interval 2
 
 ### Subnautica
 
@@ -680,14 +715,25 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
   - frame step `+0x151d3d0`: VFR::updateInterval: its own override published for the host (state page target fps; 0 = original)
   - render scale stub (the launcher offers DM_RENDER_SCALE)
 
+### The Legend of Zelda: Echoes of Wisdom
+
+[The Legend of Zelda: Echoes of Wisdom](../../dm/games/01008CF01BAAC000/README.md), `01008CF01BAAC000`.
+
+- **`build` → `game`**, frame rate, blocked: one build on hand, checked: main 9f221e1afa65ba54 (1.1.0), where the row was found: Grezzo's frame governor enable and last-frame-slow bytes at a fixed address (Echoes of Wisdom). The game's own frame governor, rewritten since Link's Awakening (no least and most bytes): the game manager is a static object the frame task's code names, which a function fingerprint could find
+
+- **1.1.0 `main`** `9f221e1a…`
+  - host [hle_fpslock.c:69](../../dm/host/hle_fpslock.c#L69): engine frame limit set to fps_target: Grezzo frame governor enable
+
 ### The Legend of Zelda: Link's Awakening
 
 [The Legend of Zelda: Link's Awakening](../../dm/games/01006BB00C6F0000/README.md), `01006BB00C6F0000`, [patches.py](../../dm/games/01006BB00C6F0000/patches.py).
 
 - **`build` → `game`**, race, gap, judgement: PhysX completion task release. A lifetime race in the game's own completion task (its release slot serves this one vtable)
+- **`build` → `game`**, frame rate, blocked: one build on hand, checked: main 909e904af78ac1b8 (1.1.0), where the row was found; another project describes the same bytes for 1.0.1: Grezzo's frame controller least and most extra vsyncs behind a fixed global (Link's Awakening). The game's own frame controller: its clamp to the two bytes and the game manager's pointer are plain code a function fingerprint could find
 
 - **1.1.0 `main`** `909e904a…` ([patches.py:12](../../dm/games/01006BB00C6F0000/patches.py#L12))
   - cut `+0x10cd070`: physics completion task release (calls its own destructor): ldr x8,[x0] → ret (no longer destroyed; the step function rebuilds it in place every step)
+  - host [hle_fpslock.c:56](../../dm/host/hle_fpslock.c#L56): engine frame limit set to fps_target: Grezzo frame controller extra vsyncs
 
 ### The Legend of Zelda: Ocarina of Time
 
