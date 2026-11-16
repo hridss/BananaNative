@@ -451,6 +451,14 @@ Most service calls can be found before they crash, before the first boot or the 
 - **Resolved** on Android by [The controller applet as a join screen](#the-controller-applet-as-a-join-screen): there the applet itself assigns the players, as on a console.
 - **Found on:** [Orbitals](../../dm/games/040032B023CA4000/README.md) on an AYN Thor (the built-in Odin Controller and an Xbox Wireless Controller over Bluetooth); the controller listed again also on [Super Mario Bros. Wonder - Nintendo Switch 2 Edition](../../dm/games/040015100B514001/README.md) (device 18 on player 2, device 19 on player 3: Wonder reads players 1 to 4, and asked for three players).
 
+### A controller a remapper lists again under its own name
+
+- **Symptom:** a controller connected while the game runs is never played: the log has `input: device 15 (GameSir-G7 Pro) is player 2`, `input: device 15 (player 2) removed`, then `input: device 16 (GameSir-G7 Pro (Wayfinder)) is player 3` and `hid: player 3's controller is not used: the game supports no npad 2`; closing the game and starting it again with the controller connected gives it player 2.
+- **Cause:** a remapper on the phone (the AYN Thor's Wayfinder) takes the controller over a moment after it connects and replaces its device with one of its own, named after it with a suffix. The player the controller left stays kept for that name (`pad_slots.h`, so a controller that reconnects gets its own player back), and the remapper's device, of another name, took the lowest player no controller had held yet.
+- **Fix:** `pad_slot_take` gives a free player to a device whose name is its last holder's followed by ` (` (or the other way round: the controller back from the remapper), after an exact name. A longer name without ` (` is another controller.
+- **Check:** `t_hid` `t_slots_remapper` (built with the NDK and run on the Thor).
+- **Found on:** [Orbitals](../../dm/games/040032B023CA4000/README.md) on an AYN Thor (Odin Controller and a GameSir-G7 Pro through Wayfinder).
+
 ### The game swaps or disconnects controllers
 
 - **Symptom:** after a second controller presses L + R at Super Mario Bros. Wonder's title, that controller does nothing, and only player 1's controller (or, on the next screen, neither) drives the game.

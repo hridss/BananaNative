@@ -65,6 +65,7 @@ On a first start the language, gamma and terms screens come before the title: `A
 - [Float storage images bound to integer textures on the Vulkan replay](../../../docs/reference/shaders.md#float-storage-images-bound-to-integer-textures-on-the-vulkan-replay): on Android the GPU timed out about 20 s into the first area; Niagara's draw-argument compute `742f0130cd7af9e4` read particle counts through a float image over an R32_UINT texel buffer and wrote instance counts of about 924 million.
 - [A draw skipped for a background pipeline left a kept texture empty](../../../docs/reference/rendering.md#a-draw-skipped-for-a-background-pipeline-left-a-kept-texture-empty-android): on Android, the colour grading table's one draw skipped on a first start; the main menu's backgrounds stayed black.
 
+- [A controller a remapper lists again under its own name](../../../docs/reference/services.md#a-controller-a-remapper-lists-again-under-its-own-name): a GameSir-G7 Pro connected during play became Wayfinder's device on player 3, which the game never reads.
 ## Open
 
 - 60 fps, later chapters (and the engine region's room on an iPhone there: [Memory](#memory)), online play (Gameshare, Play Online), the sound (Wwise opens with no red line; not listened to).

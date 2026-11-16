@@ -55,6 +55,17 @@ static uint64_t buttons_of(uint32_t id, uint32_t style) { NpadState s; fill(&s, 
 static int32_t lx_of(uint32_t id) { NpadState s; fill(&s, id, STYLE_FULLKEY); return s.lx; }
 static void ids(const uint32_t *v, uint64_t n) { h_hid_SetIds(v, n); }
 
+// A remapper's device of a controller (the AYN Thor's Wayfinder: "GameSir-G7 Pro" goes, "GameSir-G7 Pro (Wayfinder)" comes) takes the player the controller left, and the
+// controller back from it its own again; a longer name without " (" is another controller
+static void t_slots_remapper(void) {
+    pad_slots s; memset(&s, 0, sizeof s);
+    static char odin, g, w, g2, other;
+    CHECK(pad_slot_take(&s, &odin, "Odin Controller") == 0 && pad_slot_take(&s, &g, "GameSir-G7 Pro") == 1, "two controllers");
+    CHECK(pad_slot_free(&s, &g) == 1 && pad_slot_take(&s, &w, "GameSir-G7 Pro (Wayfinder)") == 1, "the remapper's device takes player 2");
+    CHECK(pad_slot_free(&s, &w) == 1 && pad_slot_take(&s, &g2, "GameSir-G7 Pro") == 1, "the controller back from the remapper takes player 2");
+    CHECK(pad_slot_free(&s, &g2) == 1 && pad_slot_take(&s, &other, "GameSir-G7 Pros") == 2, "a longer name without \" (\" is another controller");
+}
+
 static void t_slots(void) {
     pad_slots s; memset(&s, 0, sizeof s);
     static char a, b, c, d, b2, kbd;   // controllers stand in as distinct addresses
@@ -751,6 +762,7 @@ static void t_joy_styles(void) {
 int main(void) {
     CHECK(setenv("DM_RUMBLE_LOG", "1", 1) == 0, "enable rumble diagnostics");
     t_slots();
+    t_slots_remapper();
     t_npads();
     t_script();
     t_vibration();
