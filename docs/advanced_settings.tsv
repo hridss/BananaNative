@@ -569,6 +569,7 @@ DM_VK_LC_GLOBAL	developer	Graphics			text			both
 DM_VK_LEVEL_SHARE	developer	Graphics			text			both							
 DM_VK_LOG	internal	Diagnostics			text			both						Mac or iOS only	
 DM_VK_LOW_RAM	developer	Memory			text			both							
+DM_VK_LRZ_TOUCH	developer	Graphics			text			both							
 DM_VK_MAPS	developer	Graphics			text			both							
 DM_VK_MAPS_BUDGET	developer	Graphics			text			both							
 DM_VK_MAPS_CACHE	developer	Diagnostics			text			both							
@@ -627,6 +628,7 @@ DM_VK_PLACE_JOIN_MB	developer	Diagnostics			text			both
 DM_VK_PLACE_LAZY	developer	Graphics			text			both							
 DM_VK_PLACE_PART_MB	developer	Diagnostics			text			both							
 DM_VK_PLACE_SHADER_POOLS	developer	Memory			text			both							
+DM_VK_POOL_EAGER	developer	Graphics			text			both							
 DM_VK_POOL_FB	developer	Memory			text			both							
 DM_VK_POOL_FB_EARLY	developer	Diagnostics			text			both							
 DM_VK_POOL_SLOT_BIND	developer	Diagnostics			text			both							
@@ -661,6 +663,8 @@ DM_VK_RANGE_WATCH_LINES	developer	Diagnostics			text			both
 DM_VK_RC_LOG	developer	Diagnostics			text			both							
 DM_VK_RC_LOG_FROM	developer	Diagnostics			text			both							
 DM_VK_RC_QUERY_MEM	developer	Diagnostics			text			both							
+DM_VK_RD_SPLIT	developer	Graphics			text			both							
+DM_VK_RD_TOUCH	developer	Graphics			text			both							
 DM_VK_READTEXELS	developer	Graphics			text			both							
 DM_VK_REMAP_SPV	internal	Diagnostics			text			both						test harness	
 DM_VK_REPLAY_NICE	developer	Graphics			text			both							
