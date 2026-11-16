@@ -1794,7 +1794,7 @@ Finding, keying and translating shaders (`dm/gfx/tools/shader_split.py`, `dmsh_b
 - **Symptom:** the split logs `[RED] … BNSH @0x0 variation 0: NVN2 stage slot 6 holds a None shader, not a task or mesh shader`, then `[RED] 1 file(s) could not be read, their shaders are left out`, and the pack stops with `[RED] the dump's shaders lack 1006 of the 6766 in the profile's shader_map.tsv`.
 - **Cause:** `bnsh_shaders` (`shader_split.py`) stopped with `red()` on any shader in the NVN2 slots past the six NVN stages that was not a task or mesh shader, and a stop inside a RomFS file leaves the whole file out: Welcome Tour's `libexgfx_resident.ounce.bea` holds `gfxshaderrt/multi_bounce_opaque.bnsh`, a ray tracing shader by its folder, in slot 6, and the archive's other 1,006 shaders went with it. Upstream nxnative's split reads only the task and mesh slots and skips the rest.
 - **Fix:** such a shader is left out alone, with one `[RED]` line naming the slot and its control section's stage byte; the host has no ray tracing (`nvnProgramBuilderSetRayTracingModules` is unimplemented).
-- **Found on:** [Nintendo Switch 2 Welcome Tour](../../dm/games/040057C02159A000/README.md).
+- **Found on:** Nintendo Switch 2 Welcome Tour (`040057C02159A000`, no profile in this tree yet).
 
 ### A Vulkan shader library past 4 GiB
 
