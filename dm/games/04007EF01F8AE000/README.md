@@ -79,6 +79,7 @@ Keyboard in a window: J K U I are A B X Y, WASD the left stick, Shift + arrows t
 - The output device notification under its SDK 21 and 22 name: an abort at start without it.
 - [An SDK 21 Switch 2 game with a 4.5 GB alias region](../../../docs/reference/memory.md#an-sdk-21-switch-2-game-with-a-45-gb-alias-region): SDK 22's node area.
 - The title screen's hand-over to the opening demo finalizes a program its queue still has bound: Finalized programs leave every queue's bindings (resolved).
+- [The present's scaling of the window to the screen](../../../docs/reference/frame-rate.md#the-presents-scaling-of-the-window-to-the-screen-one-pass-or-the-displays-own-scaler): FSR 1 at the present on every image, generated frames included; the Screen scaling row (Bicubic, SGSR 1, Device).
 
 ## Android
 
@@ -124,7 +125,7 @@ With `dlss_standin 1` the launcher's Upscaler row (a game's ⋯ Manage › Game 
 | Motion clarity (GSR 2 only) | Steadiest / Steady / Balanced / Clear / Clearest (may flicker in combat): steps c0..c4, more history on the left (steadier, more ghosting), less ghosting on the right | Balanced (c2 = tune m2) | `DM_VK_GSR2_CLARITY` 0..4; `DM_VK_GSR2_TUNE` forces a row (0 = m1) |
 | Temporal sharpness (GSR 2) / FSR sharpness (FSR 1) | Off, 5, 10 … 30 | 15 | `DM_VK_DLSS_SHARP` (the host takes 0..100) |
 
-The stand-in's output then reaches the screen through the present's own scaling, which follows the main screen's (or an earlier per-game) Upscaler choice: SGSR 1 (the default) and FSR 1 give FSR 1 (`DM_VK_FSR=1`), Bilinear and Native bilinear, Nearest neighbor nearest (`DM_VK_PRESENT_NEAREST=1`); no `DM_VK_NDSR` line is sent for the game. Every one is read live (the stand-in's at every evaluation, the screen's at every present), so the panel changes the picture at once. The tune's other fields have diagnostic levers (`DM_VK_GSR2_VREJ`, `_VLO`, `_VK`, `_SFCAP`, `_MVNEAR`, `_BOXMOTW`, `_BSMOV`; `docs/env_switches.tsv`).
+The stand-in's output then reaches the screen through the present's own scaling, which the game's **Screen scaling** row picks (Nearest neighbor, Bilinear, Bicubic, FSR 1, SGSR 1, Device: `DM_VK_PRESENT_SCALE`, [the present's scaling](../../../docs/reference/frame-rate.md#the-presents-scaling-of-the-window-to-the-screen-one-pass-or-the-displays-own-scaler)); unset, it follows the main screen's (or an earlier per-game) Upscaler choice as before: SGSR 1 (the default) and FSR 1 give FSR 1 (`DM_VK_FSR=1`), Bilinear and Native bilinear, Nearest neighbor nearest (`DM_VK_PRESENT_NEAREST=1`); no `DM_VK_NDSR` line is sent for the game. On the OnePlus Pad 3 the present scales 2048x1152 to 3392x1908 on every image, generated frames included; FSR 1 there costs about 21 M operations and 94 MB per image against about 6.5 M and 26 MB for Bicubic or SGSR 1 and a 2048x1152 copy for Device (estimates, not measured). Every one is read live (the stand-in's at every evaluation, the screen's at every present), so the panel changes the picture at once. The tune's other fields have diagnostic levers (`DM_VK_GSR2_VREJ`, `_VLO`, `_VK`, `_SFCAP`, `_MVNEAR`, `_BOXMOTW`, `_BSMOV`; `docs/env_switches.tsv`).
 
 ### AV1 movies on dav1d
 

@@ -21,7 +21,8 @@ A hint at the right edge shows how, once after install. With a controller: D-pad
 ### Performance
 - **Frame rate cap**: the same choices as on the game page ([Settings: Performance](Settings-Performance#frame-rate-cap)), applied now. A game's frame limit list is 60, 45, 40, 30, 20 fps; other games: The game's own, 60, 30, 20, 15 fps.
 - **Full game speed at low frame rates** (games whose speed follows their frame rate) and **Hold 60 fps: never drop to 30, no frame holds** (Mario Kart World).
-- **Upscaler** (and **FSR sharpness**): for a game whose upscaler the app replaces; applies from the next frame. Hidden for a game with Resolution presets unless Settings > Help > Tester settings is on.
+- **Upscaler** (and **FSR sharpness**): for a game whose upscaler the app replaces, or a game on the DLSS stand-in (its own modes and sliders); applies from the next frame. Hidden for a game with Resolution presets unless Settings > Help > Tester settings is on.
+- **Upscaling quality** and **Graphics quality** (Fire Emblem: Fortune's Weave), under the Upscaler.
 - **Dynamic resolution**: a slider from Off to 30 % (Donkey Kong Bananza).
 - **Frame generation**: the on switch, target, multiplier and motion estimation resolution ([Settings: Performance](Settings-Performance#frame-generation)).
 - The game's own **live** switches, if its profile has any. Ocarina of Time has four sliders here, each starting at Auto: **Draw distance**, **Shadow range**, **Foliage distance** and **Model detail distance** ([the game's page](Game-Zelda-Ocarina-of-Time)). They apply at once and are saved for the next start.
@@ -29,7 +30,8 @@ A hint at the right edge shows how, once after install. With a controller: D-pad
 The live lines on this tab (the frame rate now) refresh twice a second while it shows.
 
 ### Display
-- **Resolution**: the same choice as on the game page. For some games the window changes at once and the 3D picture at the next start; a line says which. Fire Emblem: Fortune's Weave shows three groups: Resolution, Upscaling quality, Graphics quality.
+- **Resolution**: the same choice as on the game page. For some games the window changes at once and the 3D picture at the next start; a line says which. Fire Emblem: Fortune's Weave shows Resolution alone here (its Upscaling quality and Graphics quality are on Performance).
+- **Screen scaling** (and **Screen sharpness** under FSR 1): a game on the DLSS stand-in (Fire Emblem: Fortune's Weave, Star Fox); how the picture is scaled to the screen, the same choice as on the game page ([Settings: Performance](Settings-Performance#upscaler)); applies from the next frame.
 - **Picture**: **Fit** or **Stretch**, **Size** 50 to 100 % in 5 % steps (the picture shrinks with its shape kept and black around it), and **Position (this screen)**: Top, Centre, Bottom.
 - **Overlay**: the master switch and one switch per item.
 

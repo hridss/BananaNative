@@ -633,6 +633,7 @@ DM_VK_PRESENT_GATE_WAIT	developer	Performance			text		30 ms with Turnip, 0 (off)
 DM_VK_PRESENT_NEAREST	developer	Performance			text			both							
 DM_VK_PRESENT_OWNFMT	developer	Diagnostics			text			both							
 DM_VK_PRESENT_PREWAIT	developer	Diagnostics			text			both							
+DM_VK_PRESENT_SCALE	developer	Performance			text			both							
 DM_VK_PRETRANSFORM	developer	Graphics			text			both							
 DM_VK_PREWARM	developer	Graphics			text		4 threads; 0 (off) with Qualcomm's driver before 512.800	both							
 DM_VK_PREWARM_FILE	developer	Diagnostics			text			both							
