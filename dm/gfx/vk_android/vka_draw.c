@@ -990,6 +990,9 @@ static int ubo_desc(uint64_t addr, uint64_t size, VkDescriptorBufferInfo *bi) {
     if (!size || size > V.ub_range) size = size ? V.ub_range : 65536 < V.ub_range ? 65536 : V.ub_range;
     VkBuffer b; VkDeviceSize o;
     uint64_t run = vka_addr_run(addr, size, &b, &o);
+    // A pool no command has placed yet (lazy placement): placed now, so the shader reads the memory the GPU writes (a copy of the CPU's bytes is stale once GPU work
+    // writes it), as ssbo_desc does for a storage buffer
+    if (!run && addr) { mtl_pool_need((const void *)(uintptr_t)addr, size, "a uniform buffer"); run = vka_addr_run(addr, size, &b, &o); }
     if (UB.n && ub_overlaps(addr, run ? run : size)) {
         uint64_t sz = run && run < size ? run : size;
         if (UB.m_valid && UB.m_seq == UB.seq && UB.m_addr == addr && UB.m_size == sz) { *bi = (VkDescriptorBufferInfo){UB.m_span.buf, UB.m_span.off, sz}; return 1; }

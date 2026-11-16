@@ -667,6 +667,14 @@ The guest address space, heaps, pools, virtual address memory and the allocators
 - **Fix:** general: `vka_draw.c` `ssbo_desc` places the pool (`mtl_pool_need`) when a storage buffer's address is in no placed segment, then looks it up again, as a command naming the address would have. `mtl_pool_need` costs one cached lookup when the pool is placed already, and its per-thread negative cache answers for an address in no pool.
 - **Found on:** [Orbitals](../../dm/games/040032B023CA4000/README.md#found-on-this-game): the pool at `0x406e0b0000` (2 MiB, file-backed `shader` kind), the address `0x406e0c4000`.
 
+### A uniform buffer in a pool no command placed (Android)
+
+- **Symptom:** surfaces drawn with garbage colours or unlit in phone runs, only under lazy placement: Orbitals' hall had a market stall covered in pink, green and yellow speckles and the lower floor's rug black; `DM_VK_PLACE_LAZY=0` drew both right. The log has one `[RED] vk: uniform buffer at … is not in placed guest RAM: bound as a copy of the CPU's bytes` (once per run, however often it happens).
+- **Cause:** `ubo_desc` (`vka_draw.c`) bound a uniform buffer in a pool no command had placed as a scratch copy of the bytes the CPU sees at record time. A uniform buffer the GPU writes (a copy or a compute pass of the frame) then reads what the CPU last had, not what the GPU wrote.
+- **Fix:** general: `ubo_desc` places the pool (`mtl_pool_need`) when the address is in no placed segment, then looks it up again and binds it in place, as `ssbo_desc` does for a storage buffer ([the entry above](#a-storage-buffer-address-read-from-a-uniform-buffer-into-a-pool-no-command-placed-android)).
+- **Check:** Orbitals on the AYN Thor, screenshots of the hall against `DM_VK_PLACE_LAZY=0`: the stall and the rug the same, no uniform buffer line left.
+- **Found on:** [Orbitals](../../dm/games/040032B023CA4000/README.md#found-on-this-game).
+
 ### Pools the GPU never reads cost zram (Android)
 
 - **Symptom:** on a phone short of RAM, a game's large memory pools that only the CPU reads sit in zram: Anka Native's per-pool footprint measurements show them swapped, never resident, with thousands of major faults a second where they are read. The Legend of Zelda: Ocarina of Time (`0400486024DEC000`) has two texture pools of 1,737 and 232 MiB; since the [pool-only textures fix](rendering.md#textures-read-only-through-the-pool-were-never-made-android) it also holds about 3 GiB of images.
