@@ -13,7 +13,7 @@ namespace Ryujinx.Graphics.Shader.Translation.Optimizations
         private const int NvnSeparateSamplerBase = 0x568;   // nxnative: c[2]'s separate sampler table (dmsh_abi.h DMSH_C2_SAMP), 128 slots of 8 bytes; a word there is a sampler handle, never a texture's
         private const int NvnSeparateSamplerEnd = NvnSeparateSamplerBase + 8 * 128;
 
-        // nxnative: deferSeveral leaves the reads whose handle merges several c[2] handles to a second sweep (see TryTableHandle)
+        // nxnative: deferSeveral leaves the reads whose handle merges several constant buffer handles to a second sweep (see TryTableHandle)
         public static void RunPass(BasicBlock block, ResourceManager resourceManager, IGpuAccessor gpuAccessor, bool deferSeveral = false)
         {
             // We can turn a bindless into regular access by recognizing the pattern
@@ -115,7 +115,7 @@ namespace Ryujinx.Graphics.Shader.Translation.Optimizations
         {
             Operand handle = texOp.GetSource(0);
 
-            if (handle.AsgOp is not PhiNode || IsBindlessHandleAllowed(handle))
+            if (handle.AsgOp is not PhiNode and not Operation { Inst: Instruction.BitwiseOr } || IsBindlessHandleAllowed(handle))
             {
                 return TableHandle.None;   // GenerateBindlessAccess takes it, as before (a choice among c[2] words: the dynamic handle arrays of tex_dyn_slots)
             }
@@ -143,7 +143,7 @@ namespace Ryujinx.Graphics.Shader.Translation.Optimizations
                         {
                             (Operand t, Operand sm) = IsSamplerWord(texture) && !IsSamplerWord(sampler) ? (sampler, texture) : (texture, sampler);   // either order, as TryConvertBindless
 
-                            if (IsTableWord(t) && (IsC2Word(sm) || (sm.Type == OperandType.Constant && (sm.Value & 0xfffff) == 0)))
+                            if (t.Type == OperandType.ConstantBuffer && !IsSamplerWord(t) && (IsSameBankWord(sm, t) || (sm.Type == OperandType.Constant && (sm.Value & 0xfffff) == 0)))
                             {
                                 AddCandidate(found, t, sm);
                             }
@@ -155,6 +155,9 @@ namespace Ryujinx.Graphics.Shader.Translation.Optimizations
                     return TableHandle.None;   // a handle loaded from memory or an input is a real bindless access (GenerateBindlessAccess)
                 }
             }
+
+            // A word alone that an ORed candidate also takes is that handle on its way (R = word; R |= other word), not a handle of its own
+            found = found.FindAll(candidate => candidate.Sampler != null || !found.Exists(other => other.Sampler != null && (other.Texture.Value == candidate.Texture.Value || other.Sampler.Value == candidate.Texture.Value && other.Sampler.Type == OperandType.ConstantBuffer)));
 
             if (found.Count > 1)
             {
@@ -168,7 +171,7 @@ namespace Ryujinx.Graphics.Shader.Translation.Optimizations
                     return TableHandle.Deferred;
                 }
 
-                found = found.FindAll(candidate => resourceManager.GetTextureTypes(NvnTextureBufferIndex, candidate.Texture.GetCbufOffset(), texOp.Inst.IsImage())
+                found = found.FindAll(candidate => resourceManager.GetTextureTypes(candidate.Texture.GetCbufSlot(), candidate.Texture.GetCbufOffset(), texOp.Inst.IsImage())
                     .TrueForAll(type => SameShape(type, texOp.Type)));
             }
 
@@ -233,8 +236,13 @@ namespace Ryujinx.Graphics.Shader.Translation.Optimizations
             }
 
             gpuAccessor.Log(found.Count == 1
-                ? "Bindless handle taken from the one c[2] handle among its phi inputs."
-                : $"Bindless handle chosen at run time among {found.Count} c[2] handles of its phi inputs.");
+                ? "Bindless handle taken from the one constant buffer handle among its phi inputs."
+                : $"Bindless handle chosen at run time among {found.Count} constant buffer handles of its phi inputs.");
+
+            if (Environment.GetEnvironmentVariable("DMSH_BINDLESS_TRACE") != null)   // nxnative: what the handle was made of, for a diagnosis (dmsh_xlate on one job)
+            {
+                Console.Error.WriteLine($"bindless handle from {found.Count} phi candidate(s): {Describe(handle, 0)}");
+            }
 
             if (Environment.GetEnvironmentVariable("DMSH_BINDLESS_TRACE") != null)   // nxnative: what the handle was made of, for a diagnosis (dmsh_xlate on one job)
             {
@@ -277,16 +285,16 @@ namespace Ryujinx.Graphics.Shader.Translation.Optimizations
             return operand.Type == OperandType.ConstantBuffer && operand.GetCbufSlot() == NvnTextureBufferIndex && !IsSamplerWord(operand);
         }
 
-        private static bool IsC2Word(Operand operand)
-        {
-            return operand.Type == OperandType.ConstantBuffer && operand.GetCbufSlot() == NvnTextureBufferIndex;
-        }
-
         private static bool IsSamplerWord(Operand operand)
         {
             if (operand.Type != OperandType.ConstantBuffer || operand.GetCbufSlot() != NvnTextureBufferIndex) return false;
             int offset = operand.GetCbufOffset() * 4;
             return offset >= NvnSeparateSamplerBase && offset < NvnSeparateSamplerEnd;
+        }
+
+        private static bool IsSameBankWord(Operand operand, Operand word)
+        {
+            return operand.Type == OperandType.ConstantBuffer && operand.GetCbufSlot() == word.GetCbufSlot();
         }
 
         private static void AddCandidate(List<(Operand Texture, Operand Sampler)> found, Operand texture, Operand sampler)
@@ -487,6 +495,26 @@ namespace Ryujinx.Graphics.Shader.Translation.Optimizations
             return true;
         }
 
+        // nxnative: a fixed word loaded through compute's c0 uniform-address table is the same handle word as c[3 + slot][offset]. Resolve only its binding provenance here;
+        // ordinary storage reads and dynamically indexed words keep their existing paths, and the original load is not rewritten for any other use.
+        private static Operand UniformHandleWord(Operand source, ResourceManager resourceManager)
+        {
+            if (source.AsgOp is not Operation { Inst: Instruction.Load, StorageKind: StorageKind.StorageBuffer, SourcesCount: 3 } load ||
+                load.GetSource(0).Type != OperandType.Constant || load.GetSource(1).Type != OperandType.Constant || load.GetSource(1).Value != 0 ||
+                !resourceManager.TryGetComputeUniformSlot(load.GetSource(0).Value, out int slot) || slot >= Constants.NxUniformSlots) return source;
+
+            Operand offset = load.GetSource(2);
+            // GlobalToStorage emits a byte offset >> 2 before the next constant-folding sweep.
+            if (offset.AsgOp is Operation { Inst: Instruction.ShiftRightU32 } shift &&
+                shift.GetSource(0).Type == OperandType.Constant && shift.GetSource(1).Type == OperandType.Constant && shift.GetSource(1).Value == 2)
+            {
+                offset = OperandHelper.Const((int)((uint)shift.GetSource(0).Value >> 2));
+            }
+
+            return offset.Type == OperandType.Constant && (uint)offset.Value < Constants.ConstantBufferSize / 4
+                ? OperandHelper.Cbuf(Constants.NxFirstUniformSlot + slot, offset.Value) : source;
+        }
+
         private static bool TryConvertBindless(BasicBlock block, ResourceManager resourceManager, IGpuAccessor gpuAccessor, TextureOperation texOp)
         {
             if (texOp.Inst == Instruction.TextureSample || texOp.Inst.IsTextureQuery())
@@ -500,7 +528,7 @@ namespace Ryujinx.Graphics.Shader.Translation.Optimizations
                     bindlessHandle = shuffleOp.GetSource(0);
                 }
 
-                bindlessHandle = Utils.FindLastOperation(bindlessHandle, block);
+                bindlessHandle = UniformHandleWord(Utils.FindLastOperation(bindlessHandle, block), resourceManager);
 
                 // Some instructions do not encode an accurate sampler type:
                 // - Most instructions uses the same type for 1D and Buffer.
@@ -536,8 +564,8 @@ namespace Ryujinx.Graphics.Shader.Translation.Optimizations
                     return false;
                 }
 
-                Operand src0 = Utils.FindLastOperation(handleCombineOp.GetSource(0), block);
-                Operand src1 = Utils.FindLastOperation(handleCombineOp.GetSource(1), block);
+                Operand src0 = UniformHandleWord(Utils.FindLastOperation(handleCombineOp.GetSource(0), block), resourceManager);
+                Operand src1 = UniformHandleWord(Utils.FindLastOperation(handleCombineOp.GetSource(1), block), resourceManager);
 
                 // For cases where we have a constant, ensure that the constant is always
                 // the second operand.
@@ -576,14 +604,14 @@ namespace Ryujinx.Graphics.Shader.Translation.Optimizations
                         src0AsgOp.Inst == Instruction.BitwiseAnd &&
                         src1AsgOp.Inst == Instruction.BitwiseAnd)
                     {
-                        src0 = GetSourceForMaskedHandle(src0AsgOp, 0xFFFFF);
-                        src1 = GetSourceForMaskedHandle(src1AsgOp, 0xFFF00000);
+                        src0 = GetSourceForMaskedHandle(src0AsgOp, 0xFFFFF, resourceManager);
+                        src1 = GetSourceForMaskedHandle(src1AsgOp, 0xFFF00000, resourceManager);
 
                         // The OR operation is commutative, so we can also try to swap the operands to get a match.
                         if (src0 == null || src1 == null)
                         {
-                            src0 = GetSourceForMaskedHandle(src1AsgOp, 0xFFFFF);
-                            src1 = GetSourceForMaskedHandle(src0AsgOp, 0xFFF00000);
+                            src0 = GetSourceForMaskedHandle(src1AsgOp, 0xFFFFF, resourceManager);
+                            src1 = GetSourceForMaskedHandle(src0AsgOp, 0xFFF00000, resourceManager);
                         }
 
                         if (src0 == null || src1 == null)
@@ -617,6 +645,9 @@ namespace Ryujinx.Graphics.Shader.Translation.Optimizations
                 {
                     handleType = TextureHandleType.SeparateConstantSamplerHandle;
                 }
+
+                src0 = UniformHandleWord(src0, resourceManager);
+                src1 = UniformHandleWord(src1, resourceManager);
 
                 if (src0.Type != OperandType.ConstantBuffer)
                 {
@@ -652,7 +683,7 @@ namespace Ryujinx.Graphics.Shader.Translation.Optimizations
             }
             else if (texOp.Inst.IsImage())
             {
-                Operand src0 = Utils.FindLastOperation(texOp.GetSource(0), block);
+                Operand src0 = UniformHandleWord(Utils.FindLastOperation(texOp.GetSource(0), block), resourceManager);
 
                 if (src0.Type == OperandType.ConstantBuffer)
                 {
@@ -780,12 +811,12 @@ namespace Ryujinx.Graphics.Shader.Translation.Optimizations
             return x.Type == y.Type && x.Value == y.Value && x.Type == OperandType.Constant;
         }
 
-        private static Operand GetSourceForMaskedHandle(Operation asgOp, uint mask)
+        private static Operand GetSourceForMaskedHandle(Operation asgOp, uint mask, ResourceManager resourceManager)
         {
             // Assume it was already checked that the operation is bitwise AND.
 
-            Operand src0 = asgOp.GetSource(0);
-            Operand src1 = asgOp.GetSource(1);
+            Operand src0 = UniformHandleWord(asgOp.GetSource(0), resourceManager);
+            Operand src1 = UniformHandleWord(asgOp.GetSource(1), resourceManager);
 
             if (src0.Type == OperandType.ConstantBuffer && src1.Type == OperandType.ConstantBuffer)
             {

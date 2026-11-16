@@ -28,6 +28,9 @@ namespace Ryujinx.Graphics.Shader.StructuredIr
         // nxnative: a compute program's shared memory past the host's limit (IGpuAccessor.QueryHostComputeSharedMemoryMax) lives in a storage buffer instead, one slice of
         // SharedSpillInfo.Words words per workgroup (TranslatorContext.Translate; CodeGen/Spirv: Declarations, Instructions.GetStoragePointer). null: none
         public SharedSpillInfo SharedSpill { get; set; }
+        // A traversal descriptor, distinct from guest constant/storage buffers.
+        // Only continuation kernels opt in; ordinary shaders keep their ABI.
+        public SetBindingPair? RayQueryBinding { get; set; }
 
         // nxnative: uniform bounds (TranslationFlags.MetalUniformBounds). The binding of each game uniform slot's buffer, whose reads past the bound size give 0, with its
         // index in the size table; the words of each slot the shader reads at fixed offsets (the end of the highest one), which the host makes readable; and the binding of

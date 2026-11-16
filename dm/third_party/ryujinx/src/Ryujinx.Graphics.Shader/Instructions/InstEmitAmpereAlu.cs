@@ -36,6 +36,7 @@ namespace Ryujinx.Graphics.Shader.Instructions
             alu(0x107, InstName.F2f, AFrnd);
             alu(0x104, InstName.F2f, AF2f);
             alu(0x03e, InstName.F2f, AF2fp);
+            alu(0x043, InstName.F2i, AF2ip);
             alu(0x030, InstName.Hadd2, AHadd2);
             alu(0x032, InstName.Hmul2, AHmul2);
             alu(0x031, InstName.Hfma2, AHfma2);
@@ -176,13 +177,21 @@ namespace Ryujinx.Graphics.Shader.Instructions
             ASet(context, x, res);
         }
 
+        // .FTZ (bit 80 of FSET and FSETP, after the comparison's 76..80, Mesa NAK's layout). Without it a sum of weights that NVIDIA flushes to zero passes a "!= 0" guard and its reciprocal
+        // overflows: Mario Kart World's deferred lighting (635061c90d75a8d1) normalises its four depth-weighted half-resolution samples by 1 / sum only where sum != 0, and the NaN came out
+        // of a min(x, 1.0) as a fully lit dot. The arithmetic's own .FTZ stays dropped: Metal has no denormal mode, and a flush on every FADD, FMUL and FFMA would cost far more than it can show
+        private static Operand AFtz(EmitterContext context, AmpereOp x, Operand v)
+        {
+            return x.Bit(80) ? FlushDenormal(context, v) : v;
+        }
+
         // FSET Rd, a, b: 1.0 where (a cmp b) bop P (87..90) holds, else 0.0
         public static void AFset(EmitterContext context)
         {
             AmpereOp x = new(context.CurrOp);
             (ASrc a, ASrc b) = ASecond(context, x);
 
-            Operand res = GetFPComparison(context, (FComp)x.Bits(76, 80), AFloat(context, a), AFloat(context, b));
+            Operand res = GetFPComparison(context, (FComp)x.Bits(76, 80), AFtz(context, x, AFloat(context, a)), AFtz(context, x, AFloat(context, b)));
             res = GetPredLogicalOp(context, (BoolOp)x.Bits(74, 76), res, APred(context, x, 87, 90));
 
             ASet(context, x, context.ConditionalSelect(res, ConstF(1), Const(0)));
@@ -194,7 +203,7 @@ namespace Ryujinx.Graphics.Shader.Instructions
             AmpereOp x = new(context.CurrOp);
             (ASrc a, ASrc b) = ASecond(context, x);
 
-            Operand cmp = GetFPComparison(context, (FComp)x.Bits(76, 80), AFloat(context, a), AFloat(context, b));
+            Operand cmp = GetFPComparison(context, (FComp)x.Bits(76, 80), AFtz(context, x, AFloat(context, a)), AFtz(context, x, AFloat(context, b)));
             Operand p = APred(context, x, 87, 90);
             BoolOp bop = (BoolOp)x.Bits(74, 76);
 
@@ -419,42 +428,6 @@ namespace Ryujinx.Graphics.Shader.Instructions
             ASet(context, x, x.Bit(74) ? context.IConvertS32ToFP32(src) : context.IConvertU32ToFP32(src));
         }
 
-        // F2IP.U8.F32.NTZ Rd, a, b, RZ (sm_86's float to integer convert and pack): a and b each rounded to an integer by F2I's mode (78..79: nearest even, floor, ceiling,
-        // truncation) and saturated to 0..255, NaN to 0, b in byte 0 and a in byte 1, the upper half zero; a = RZ leaves b alone in byte 0. The other fields follow F2I's:
-        // unsigned (72 clear), 8 bits (75..77 clear); 74 is set in every one met, the form NVIDIA prints .NTZ. The Legend of Zelda: Ocarina of Time's colour converters
-        // (99951da6e5cd38f5 +0x530 and nine others) quantize a block of BT.709 Y and CbCr values times 255 to the nearest, then join two results into four bytes with
-        // PRMT 0x5410 and store them: the pixels' bytes come out in x order only with b low. Its foliage mesh shaders (740e2b04db624fb1 +0x370 and seven others) convert one
-        // colour channel times 255 at a time with a = RZ and truncation (.TRUNC, 78..79 = 3), then shift the result by 16 or 24 into an RGBA8 word: b is in byte 0 there too.
-        // Any other encoding (a second form, C not RZ, other bits from 72 on) is refused rather than guessed
-        public static void AF2ip(EmitterContext context)
-        {
-            AmpereOp x = new(context.CurrOp);
-
-            if (x.Form != 1 || x.Bits(40, 64) != 0 || x.Rc != RegisterConsts.RegisterZeroIndex || (x.Field(72, 96) & ~(3ul << 6)) != 1 << 2)
-            {
-                throw AFail(context, "F2IP other than .U8.F32.NTZ of two registers with RZ");
-            }
-
-            int round = x.Bits(78, 80);
-
-            Operand Byte(int reg)
-            {
-                Operand f = AGpr(reg);
-                Operand r = round switch
-                {
-                    0 => context.FPRound(f),
-                    1 => context.FPFloor(f),
-                    2 => context.FPCeiling(f),
-                    _ => context.FPTruncate(f),
-                };
-                Operand v = context.FPMinimum(context.FPMaximum(r, ConstF(0f)), ConstF(255f));
-
-                return context.ConditionalSelect(context.IsNan(f), Const(0), context.FP32ConvertToU32(v));
-            }
-
-            ASet(context, x, x.Ra == RegisterConsts.RegisterZeroIndex ? Byte(x.Rb) : context.BitwiseOr(context.ShiftLeft(Byte(x.Ra), Const(8)), Byte(x.Rb)));
-        }
-
         // FRND: a float rounded to an integer value (78..80: nearest even, floor, ceiling, truncation).
         // FRND.F16 (both sizes 1): the half 60..62 selects, as F2F's, and the result in the low 16 bits. The rounding is done in 32 bits and packed: an integer value of a half's
         // range is a half (every half from 2^10 up is an integer, and an integer below 2^11 has 11 significant bits), so the pack is exact (PRAGMATA: 65 shaders)
@@ -557,6 +530,38 @@ namespace Ryujinx.Graphics.Shader.Instructions
             }
 
             ASet(context, x, context.PackHalf2x16(AFloat(context, b), AFloat(context, a)), AUniform(context));
+        }
+
+        // F2IP.U8 Rd, a, b: a and b to saturated bytes, a in byte 1 and b in byte 0, like F2FP's halves; bits 78..79 the rounding, as F2I's. Ocarina of Time's FoliageShader writes colour with it
+        // (x * 255 for two pairs, then PRMT.5410 into one word), and its foliage mesh shaders take one byte at a time (RZ, x, truncating), then shift it into place. Bits 72..77 other than 4 and a
+        // register in c have not been met
+        public static void AF2ip(EmitterContext context)
+        {
+            AmpereOp x = new(context.CurrOp);
+
+            if (x.Bits(72, 78) != 4 || x.Rc != RegisterConsts.RegisterZeroIndex)
+            {
+                throw AFail(context, "F2IP form");
+            }
+
+            (ASrc a, ASrc b) = ASecond(context, x, abs: false);
+            RoundMode2 mode = (RoundMode2)x.Bits(78, 80);
+
+            Operand Byte(Operand v)
+            {
+                Operand f = mode switch
+                {
+                    RoundMode2.Round => context.FPRound(v, Instruction.FP32),
+                    RoundMode2.Floor => context.FPFloor(v, Instruction.FP32),
+                    RoundMode2.Ceil => context.FPCeiling(v, Instruction.FP32),
+                    _ => context.FPTruncate(v, Instruction.FP32),
+                };
+
+                // Banana Native: NaN converts to 0, as F2I's saturation does; FMax with a NaN operand is undefined in SPIR-V (an Adreno may keep the NaN)
+                return context.ConditionalSelect(context.IsNan(v), Const(0), context.FP32ConvertToU32(context.FPMinimum(context.FPMaximum(f, ConstF(0f)), ConstF(255f))));
+            }
+
+            ASet(context, x, context.BitwiseOr(context.ShiftLeft(Byte(AFloat(context, a)), Const(8)), Byte(AFloat(context, b))), AUniform(context));
         }
 
         // ---- packed halves ----
@@ -677,18 +682,32 @@ namespace Ryujinx.Graphics.Shader.Instructions
 
         // ---- moves ----
 
+        private static Operand ALogicalMoveSource(EmitterContext context)
+        {
+            if (context.TranslatorContext.RayTracingProgram is RayTracingProgram program &&
+                program.LogicalMoves.TryGetValue(context.CurrOp.Address, out RayTracingLogicalMove move))
+            {
+                if (context.CurrOp.RawOpCode != move.OriginalLowWord)
+                    throw AFail(context, "logical-ID MOV template differs from metadata plan");
+                return Const(move.LogicalId);
+            }
+            return null;
+        }
+
         public static void AMov(EmitterContext context)
         {
             AmpereOp x = new(context.CurrOp);
+            Operand src = ALogicalMoveSource(context) ?? AGet(context, AOne(context, x, neg: false, abs: false));
 
-            ASet(context, x, AGet(context, AOne(context, x, neg: false, abs: false)));
+            ASet(context, x, src);
         }
 
         // UMOV URd, imm (form 4) or URb (form 6)
         public static void AUMov(EmitterContext context)
         {
             AmpereOp x = new(context.CurrOp);
-            Operand src = x.Form == 4 ? Const((int)x.Imm32) : Register(x.Bits(32, 38), RegisterType.Uniform);
+            Operand src = ALogicalMoveSource(context) ??
+                (x.Form == 4 ? Const((int)x.Imm32) : Register(x.Bits(32, 38), RegisterType.Uniform));
 
             ASet(context, x, src, uniform: true);
         }
@@ -775,7 +794,8 @@ namespace Ryujinx.Graphics.Shader.Instructions
             }
             else
             {
-                (int bank, int offset) = AMapC0(context, x.Bits(54, 59), (int)x.SignedField(38, 54));
+                // nxnative: a fixed read's address is its immediate as it is; an indexed one adds it signed (InstEmitMemory.Ldc)
+                (int bank, int offset) = AMapC0(context, x.Bits(54, 59), x.Bits(38, 54));
                 ALoadConstant(context, x, bank, Const(0), offset, uniform: true);
             }
         }
@@ -838,7 +858,7 @@ namespace Ryujinx.Graphics.Shader.Instructions
 
             if (x.Ra == RegisterConsts.RegisterZeroIndex)
             {
-                (int bank, int offset) = AMapC0(context, x.Bits(54, 59), (int)x.SignedField(38, 54));
+                (int bank, int offset) = AMapC0(context, x.Bits(54, 59), x.Bits(38, 54));   // fixed: the immediate as it is, as ULDC's
                 ALoadConstant(context, x, bank, Const(0), offset, uniform: false);
             }
             else
