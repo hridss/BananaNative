@@ -21,9 +21,11 @@ DM_APP_POOL_MB	developer	Diagnostics			text			both
 DM_APP_VERSION	developer	Game			text			both							
 DM_AUDIO	internal	Audio			text			both						Mac or iOS only	
 DM_AUDIO_DUMP	developer	Diagnostics			text			both							
+DM_AUDIO_FEED	developer	Audio			text			both							
 DM_AUDIO_MUTE	internal	Audio			text			both						Mac or iOS only	
 DM_AUDIO_STALL_MS	developer	Diagnostics			text			both							
 DM_AUDREN_TRACE	developer	Diagnostics			text			both							
+DM_AUDREN_WAIT	developer	Audio			text			both							
 DM_AV1_DAV1D	developer	Diagnostics			text			both							
 DM_AV1_DAV1D_FP	developer	Game			text			both							
 DM_AV1_MC_FAIL	developer	Diagnostics			text			both							
@@ -107,6 +109,7 @@ DM_GUEST_SPAWN_TEST	developer	Diagnostics			text			both
 DM_HID_LOG	developer	Diagnostics			text			both							
 DM_HID_MAP	internal	Input			text			both						Mac or iOS only	
 DM_HID_PADS	internal	Input			text			both						Mac or iOS only	
+DM_HID_STYLE_EARLY	developer	Input			text			both							
 DM_HITCH_DUMP	developer	Diagnostics			text			both							
 DM_HLECOUNT	developer	Diagnostics			text			both							
 DM_HLECOUNT_AT	developer	Diagnostics			text			both							
@@ -140,6 +143,7 @@ DM_MEM_FILEBACK_KINDS	developer	Memory			text			both
 DM_MEM_FILEBACK_MB	developer	Memory			text			both							
 DM_METAL_CAPTURE	internal	Diagnostics			text			both						Mac or iOS only	
 DM_METAL_HUD	internal	Game			text			both						Mac or iOS only	
+DM_MODULE_ARENA	developer	Memory			text			both							
 DM_MOTION	developer	Input			text			both							
 DM_MOTION_ACC_SIGN	developer	Input			text			both							
 DM_MOTION_AXES	developer	Input			text			both							
