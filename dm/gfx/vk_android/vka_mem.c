@@ -828,6 +828,13 @@ uint64_t vka_addr_run(uint64_t addr, uint64_t len, VkBuffer *buf, VkDeviceSize *
     if (g) { n = g->hi - addr; if (n > len) n = len; *buf = g->buf; *off = addr - g->lo; }
     return n;
 }
+// The same, placing first the pools that [addr, addr + len) lies in and no command has placed yet (lazy placement: mtl_pool_need, why names the use). The game's NVN
+// commands place what they name; the GPU work they record (a copy, a fill, an update) can reach other memory, and a frame replay runs without those commands at all
+uint64_t vka_addr_run_need(uint64_t addr, uint64_t len, VkBuffer *buf, VkDeviceSize *off, const char *why) {
+    uint64_t n = vka_addr_run(addr, len, buf, off);
+    if (!n && addr && len) { mtl_pool_need((const void *)(uintptr_t)addr, len, why); n = vka_addr_run(addr, len, buf, off); }
+    return n;
+}
 
 // Raw global memory's sink (dmsh_abi.h DMSH_GMEM_MAP_*, entry 0's words 6 and 7; vk_android_spv.py gmem_sink): the device address of a buffer of its own that the library's
 // branchless helpers load from and store to when an address lies in no pool, so such an access touches no guest memory (the translator's helpers skipped it in a branch).

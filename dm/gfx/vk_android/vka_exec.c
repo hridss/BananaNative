@@ -976,7 +976,7 @@ static void buf_copy(uint64_t src, uint64_t dst, uint64_t n) {
     vka_tex_gw_copy(src, dst, n);
     while (n) {
         VkBuffer sb, db; VkDeviceSize so, dof;
-        uint64_t a = vka_addr_run(src, n, &sb, &so), b = vka_addr_run(dst, n, &db, &dof), k = a < b ? a : b;
+        uint64_t a = vka_addr_run_need(src, n, &sb, &so, "a buffer copy's source"), b = vka_addr_run_need(dst, n, &db, &dof, "a buffer copy's destination"), k = a < b ? a : b;
         if (!k) { static _Atomic int nr; if (atomic_fetch_add(&nr, 1) < 8) VRED("buffer copy %#llx → %#llx (%llu bytes): %s is not in placed guest RAM", (unsigned long long)src, (unsigned long long)dst, (unsigned long long)n, a ? "the destination" : "the source"); return; }
         VkBufferCopy c = {so, dof, k}; vk.vkCmdCopyBuffer(g_cb, sb, db, 1, &c);
         src += k; dst += k; n -= k;
@@ -986,7 +986,7 @@ static void buf_fill(uint64_t dst, uint64_t n, uint32_t value) {
     vka_tex_gw_fill(dst, n, value);
     if ((dst | n) & 3) { VRED_ONCE("buffer fill at %#llx of %llu bytes is not 4-byte aligned", (unsigned long long)dst, (unsigned long long)n); return; }
     while (n) {
-        VkBuffer b; VkDeviceSize o; uint64_t k = vka_addr_run(dst, n, &b, &o);
+        VkBuffer b; VkDeviceSize o; uint64_t k = vka_addr_run_need(dst, n, &b, &o, "a buffer fill");
         if (!k) { VRED_ONCE("buffer fill at %#llx is not in placed guest RAM", (unsigned long long)dst); return; }
         vk.vkCmdFillBuffer(g_cb, b, o, k & ~3ull, value); dst += k; n -= k;
     }
@@ -996,7 +996,7 @@ static void buf_update(const void *data, uint64_t dst, uint64_t n) {   // inline
     vka_span s; if (!n || !vka_scratch(n, 16, &s)) return;
     memcpy(s.ptr, data, n);
     for (uint64_t done = 0; done < n;) {
-        VkBuffer b; VkDeviceSize o; uint64_t k = vka_addr_run(dst + done, n - done, &b, &o);
+        VkBuffer b; VkDeviceSize o; uint64_t k = vka_addr_run_need(dst + done, n - done, &b, &o, "an inline buffer update");
         if (!k) { VRED_ONCE("inline buffer update at %#llx is not in placed guest RAM", (unsigned long long)(dst + done)); return; }
         VkBufferCopy c = {s.off + done, o, k}; vk.vkCmdCopyBuffer(g_cb, s.buf, b, 1, &c); done += k;
     }
@@ -1230,7 +1230,7 @@ static void copy_bt(const p_copy_b2t *c, int to_tex) {
         if (!vka_scratch(wb * rows * (size_t)nz, al * 16, &s)) return;
         for (int z = 0; z < nz; z++) for (size_t y = 0; y < rows; y++) memcpy(s.ptr + (z * rows + y) * wb, k->data + z * ki + y * kr, wb);
         b = s.buf; o = s.off; row = wb; img = wb * rows;
-    } else if (!vka_addr(c->src, span, &b, &o, NULL)) { static _Atomic int nr; if (atomic_fetch_add(&nr, 1) < 8) VRED("%s at %#llx (%llu bytes) is not in placed guest RAM", to_tex ? "buffer → texture copy source" : "texture → buffer copy destination", (unsigned long long)c->src, (unsigned long long)span); return; }
+    } else if (!vka_addr(c->src, span, &b, &o, NULL) && (mtl_pool_need((const void *)(uintptr_t)c->src, span, to_tex ? "a buffer → texture copy's source" : "a texture → buffer copy's destination"), !vka_addr(c->src, span, &b, &o, NULL))) { static _Atomic int nr; if (atomic_fetch_add(&nr, 1) < 8) VRED("%s at %#llx (%llu bytes) is not in placed guest RAM", to_tex ? "buffer → texture copy source" : "texture → buffer copy destination", (unsigned long long)c->src, (unsigned long long)span); return; }
     int bounce = o % al != 0 || (img % row) != 0;   // Vulkan wants block-aligned offsets and layers a whole number of rows apart
     if (bounce) {
         size_t wb = (size_t)((c->r.width + f->bw - 1) / f->bw) * f->bpb;
