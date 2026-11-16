@@ -27,7 +27,22 @@ import java.util.List;
  *   4 SGSR 1, also the unset default              1           0      (FSR 1: the present has no SGSR path)
  *   >= 5 or < 0 (unknown): as the default (4)     1           0
  * </pre>
- * The stored choice drives the present alone (with DM_VK_FSR_SHARP from the stored ndsr_sharp, as for any game); no DM_VK_NDSR line is sent for these games
+ * The stored choice drives the present alone (with DM_VK_FSR_SHARP from the stored ndsr_sharp, as for any game); no DM_VK_NDSR line is sent for these games.
+ *
+ * Screen scaling (screen_scale, per game; GameUpscaler.screen): the present's scaling picked on its own. Unset, the table above holds exactly (no new line; the row shows
+ * the stored Upscaler choice's counterpart: Nearest neighbor, Bilinear or FSR 1). Set, it adds DM_VK_PRESENT_SCALE, which the host takes over DM_VK_FSR and
+ * DM_VK_PRESENT_NEAREST (vka_present.c), and those two follow it for a host without it:
+ * <pre>
+ *   screen_scale                   DM_VK_PRESENT_SCALE   DM_VK_FSR   DM_VK_PRESENT_NEAREST
+ *   0 Nearest neighbor             nearest               0           1
+ *   1 Bilinear                     bilinear              0           0
+ *   2 Bicubic                      bicubic               0           0
+ *   3 FSR 1 (+ Screen sharpness)   fsr1                  1           0      (DM_VK_FSR_SHARP from ndsr_sharp, as above)
+ *   4 SGSR 1                       sgsr1                 0           0
+ *   5 Device (power saving)        device                0           0      (the display hardware scales: a smaller swapchain)
+ *   unset, < 0 or >= 6             (none: the table above)
+ * </pre>
+ * New choices go at the end: the stored value is an index into SCREEN_NAMES. A live change of the row that clears it sends "DM_VK_PRESENT_SCALE=" (ctlLines), which unsets it
  */
 final class DlssTune {
     private DlssTune() {}
@@ -67,6 +82,44 @@ final class DlssTune {
             case 1: case 3: return PRESENT_BILINEAR;
             default: return PRESENT_FSR;   // 2 FSR 1, 4 SGSR 1
         }
+    }
+
+    /** The Screen scaling row: its choices in the order shown (stored index), each one's DM_VK_PRESENT_SCALE */
+    static final String[] SCREEN_NAMES = {"Nearest neighbor", "Bilinear", "Bicubic", "FSR 1", "SGSR 1", "Device (power saving)"};
+    static final String[] SCREEN_KEYS = {"nearest", "bilinear", "bicubic", "fsr1", "sgsr1", "device"};
+    static final int SCREEN_NEAREST = 0, SCREEN_BILINEAR = 1, SCREEN_BICUBIC = 2, SCREEN_FSR1 = 3, SCREEN_SGSR1 = 4, SCREEN_DEVICE = 5;
+    static boolean screenValid(Integer s) { return s != null && s >= 0 && s < SCREEN_NAMES.length; }
+    /** The row's value for a stored Upscaler choice when screen_scale is unset: what the present does today (presentOf) */
+    static int screenOf(int ndsrChoice) {
+        switch (presentOf(ndsrChoice)) {
+            case PRESENT_NEAREST: return SCREEN_NEAREST;
+            case PRESENT_BILINEAR: return SCREEN_BILINEAR;
+            default: return SCREEN_FSR1;
+        }
+    }
+    /** The row's value: the stored screen_scale when valid, else screenOf the stored Upscaler choice */
+    static int screen(Integer stored, int ndsrChoice) { return screenValid(stored) ? stored : screenOf(ndsrChoice); }
+    /** Screen sharpness (ndsr_sharp: GameUpscaler.SHARPS) shows under FSR 1 */
+    static boolean showsScreenSharp(int screen) { return screen == SCREEN_FSR1; }
+
+    /** As lines below, with Screen scaling: stored screenScale null or out of range = unset, the lines exactly as without it; else the present's lines from it */
+    static List<String> lines(int mode, int clarity, int sharpIndex, int ndsrChoice, float screenSharp, Integer screenScale) {
+        if (!screenValid(screenScale)) return lines(mode, clarity, sharpIndex, ndsrChoice, screenSharp);
+        int m = clamp(mode, MODE_NAMES.length, MODE_DEFAULT), s = screenScale;
+        List<String> l = new java.util.ArrayList<>();
+        l.add("DM_VK_DLSS=" + MODE_DLSS[m]);
+        l.addAll(lines(clarity, sharpIndex));
+        l.add("DM_VK_FSR=" + (s == SCREEN_FSR1 ? 1 : 0));
+        l.add("DM_VK_FSR_SHARP=" + screenSharp);
+        l.add("DM_VK_PRESENT_NEAREST=" + (s == SCREEN_NEAREST ? 1 : 0));
+        l.add("DM_VK_PRESENT_SCALE=" + SCREEN_KEYS[s]);
+        return l;
+    }
+    /** The live control's lines (GameUpscaler.push): lines, and with Screen scaling unset "DM_VK_PRESENT_SCALE=" so that a choice made earlier in this run is undone */
+    static List<String> ctlLines(int mode, int clarity, int sharpIndex, int ndsrChoice, float screenSharp, Integer screenScale) {
+        List<String> l = new java.util.ArrayList<>(lines(mode, clarity, sharpIndex, ndsrChoice, screenSharp, screenScale));
+        if (!screenValid(screenScale)) l.add("DM_VK_PRESENT_SCALE=");
+        return l;
     }
 
     /**
