@@ -13,6 +13,14 @@ static inline int wbf_follows(int gpu_owned, int linear_wb, int wb_pending, uint
     return linear_wb && !wb_pending && wb_fence && done >= wb_fence;
 }
 
+// The image levels (bit i: level i) whose storage the CPU's writes still reach. gpu_lv: the levels the GPU wrote (vka_img_written_lv; 0 = not known, as all). A copy writes
+// one level, and on the Switch the other levels are still plain memory: Unreal streams a texture in by copying the mips it had on the GPU into the new texture's small levels,
+// then reading the larger ones from disk into the storage on the CPU (Orbitals' rocks and floors: those levels stayed zero, sampled as faceted patches)
+static inline uint32_t wbf_cpu_levels(int gpu_owned, uint32_t gpu_lv, uint32_t levels) {
+    uint32_t all = levels >= 32 ? ~0u : (1u << levels) - 1;
+    return gpu_owned ? all & ~(gpu_lv ? gpu_lv : ~0u) : all;
+}
+
 // Whether the prepare's scan visits a live image. A full scan (the dirty-page clock, the sparse page table or the video pools moved) visits every image. A scan that only runs
 // because a GPU-written linear texture waited for its copy-back at the last one (vka_img.wbf_waiting) visits just those: the CPU wrote nothing else, so walking the other
 // ~1,000 images was the whole cost of the wait (Mario Kart World: 20-34 ms a frame of texture prepare with the waits, 0.5-4 ms without)

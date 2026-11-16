@@ -299,6 +299,7 @@ typedef struct vka_img {
     uint32_t w, h, depth, layers, levels, samples; uint64_t bytes;
     VkImageCreateFlags cflags; uint32_t nvf; VkFormat vf[6];   // as created: flags and the view format list (none: nvf 0), for imageless framebuffers (DM_VK_CLASSIC_RP)
     int refs, inited, gpu_owned, cpu_dirty;
+    uint32_t gpu_lv;         // the levels the GPU wrote, bit i image level i (vka_img_written_lv; 0 = not known, as all): the others follow the CPU's writes (vka_wbfollow.h wbf_cpu_levels)
     int is_video;
     uint64_t last_frame;
     uint64_t wr_frame, wr_prev;   // the frame of its last GPU write, and the frame of the write before that frame (vka_img_written): vka_draw.c pass_redrawn
@@ -365,6 +366,8 @@ void vka_tex_drop_pool(const void *pool);            // drop all images belongin
 void vka_img_written_at(vka_img *im, const char *file, int line);
 extern int vka_pso_redrawn;   // the open pass's targets were all drawn in the two frames before (vka_draw.c pass_redrawn): its draws may be skipped for a pipeline made in the background (vka_pso.c)
 #define vka_img_written(im) vka_img_written_at(im, __FILE_NAME__, __LINE__)   // (the site is logged for a large image's first write, DM_VK_BIGIMG_MB)
+void vka_img_written_lv_at(vka_img *im, uint32_t lv, const char *file, int line);
+#define vka_img_written_lv(im, lv) vka_img_written_lv_at(im, lv, __FILE_NAME__, __LINE__)   // the GPU wrote only those image levels (a copy into one)
 // Before a write is recorded into im (an attachment, a clear, a copy destination, a storage image): a zero-shared image gets memory of its own, cleared (vka_tex.c img_own).
 // Call it before taking a view of im for the write. Any thread that records (takes the table lock); no render pass may be open in cb unless upload batches are on
 void vka_tex_own(vka_img *im, VkCommandBuffer cb);

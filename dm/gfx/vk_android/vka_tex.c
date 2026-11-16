@@ -641,10 +641,12 @@ static vka_img *img_create_(const tex_t *t, const vka_fmt *f, uint32_t base, int
 //     a packaged layout (BNTX assets: the game loads the file into the pool and sets the layout; only compressed formats used to be uploaded, so every uncompressed asset
 //     texture, font sheets among them, read zeros: Donkey Kong Bananza's menus had their panels but no text), CPU-written ones (WriteTexels, packaged data), linear textures in a
 //     pool the CPU can write (Metal makes those on the pool buffer itself: SMBW's glyph cache, rasterized into an R8 linear texture by the CPU), and block-compressed textures
-//     whose storage holds data at their first use (the GPU cannot render into them)
+//     (the GPU cannot render into them), their storage still all zero too: Unreal streams one in by making it, copying its small levels into it on the GPU and reading its
+//     large ones from disk into the storage afterwards (Orbitals: made as a zero image, those levels never reached it)
 //   ST_FILL: uploaded once: what a CPU_NO_ACCESS or CPU_UNCACHED pool, or a range the CPU flushed before the first use, holds (the CPU cannot or did not say it would write it again)
 //   ST_ZERO: GPU content (render targets, copy destinations): cleared
-// The GPU writing an image (gpu_owned) ends its tracking, as on Metal: its content is the GPU's from then on. DM_VK_TEX_TRACK=0 uploads ST_TRACK textures once (no write protection)
+// The GPU writing an image (gpu_owned) ends its tracking, as on Metal: its content is the GPU's from then on; except in the levels a copy into it left alone (vka_img.gpu_lv,
+// vka_wbfollow.h wbf_cpu_levels). DM_VK_TEX_TRACK=0 uploads ST_TRACK textures once (no write protection)
 enum { ST_ZERO, ST_FILL, ST_TRACK, ST_SPARSE };
 int nvn_flushed(const void *p, uint64_t n);   // hle_nvn.c
 static int mem_any(const uint8_t *p, uint64_t n) { uint64_t i = 0, v; for (; i + 8 <= n; i += 8) { memcpy(&v, p + i, 8); if (v) return 1; } for (; i < n; i++) if (p[i]) return 1; return 0; }
@@ -710,7 +712,7 @@ static int storage_mode(const tex_t *t, const uint8_t *c, const vka_fmt *f, int 
     if (cpuw || t->has_layout) want = ST_TRACK;
     else if (linear && t->pool) want = ST_TRACK;
     else if (is_vid) want = ST_TRACK;
-    else if (comp && !(d->flags & (NVN_TEXTURE_FLAGS_IMAGE | NVN_TEXTURE_FLAGS_COMPRESSIBLE | NVN_TEXTURE_FLAGS_SPARSE)) && mem_any_mapped(c, t)) want = ST_TRACK;
+    else if (comp && !(d->flags & (NVN_TEXTURE_FLAGS_IMAGE | NVN_TEXTURE_FLAGS_COMPRESSIBLE | NVN_TEXTURE_FLAGS_SPARSE))) want = ST_TRACK;   // (all zero too: see above)
     else if (nvn2_sampled_content(t, f, pf, sampled)) {
         int any = mem_any_mapped(c, t); uint64_t k = g_nvn2_first[!any]++; want = ST_TRACK;
         if (any && k < 4) VLOG("texture serial %llu %ux%ux%u format %#x pool flags %#x: written by the CPU before its first use, a sample (NVN2): uploaded from its storage, re-uploaded when it changes (%llu so far, %llu more with empty storage)",
@@ -1054,11 +1056,12 @@ static int upload_rows_tracked(vka_img *im, const tex_t *t, VkCommandBuffer cb, 
 // A dense block-linear 2D texture whose pages the CPU wrote since im->stamp (old): only the bands (one row of GOB blocks, one range of the storage) with a written page
 // (within lo..hi) are deswizzled and copied, runs of them through scratch memory, as upload_sparse_parts does. Splatoon Raiders keeps an 8192x8192 BC5 texture (85.3 MiB with its levels)
 // in memory beside data the CPU writes every frame: the whole texture was deswizzled and copied 9-10 times a frame (850 MB, 255 ms) for a few 64 KiB blocks. DM_VK_BANDS=0 = whole
-// texture again. 0 = not such a texture, or content the GPU has pending writes over (the caller uploads all of it)
-static int upload_bands_tracked(vka_img *im, const tex_t *t, VkCommandBuffer cb, size_t lo, size_t hi, uint64_t old) {
+// texture again. skip: image levels left out (bit i: level i), whatever their pages (the GPU's levels of a texture it wrote in part: wbf_cpu_levels); then a small texture too.
+// 0 = not such a texture, or content the GPU has pending writes over (the caller uploads all of it, unless levels are skipped)
+static int upload_bands_tracked(vka_img *im, const tex_t *t, VkCommandBuffer cb, size_t lo, size_t hi, uint64_t old, uint32_t skip) {
     const nvn_texdesc *d = &t->d; const vka_fmt *f = &im->f;
-    if (!VKA_ENV("DM_VK_BANDS", 1) || im->vpool || im->m.z || im->is_video || vka_nan_on() || f->kind >= 3 || d->target == NVN_TEXTURE_TARGET_3D || im->depth > 1 ||
-        (d->flags & (NVN_TEXTURE_FLAGS_LINEAR | NVN_TEXTURE_FLAGS_LINEAR_RENDER_TARGET)) || im->L.size < (1u << 20)) return 0;
+    if ((!skip && !VKA_ENV("DM_VK_BANDS", 1)) || im->vpool || im->m.z || im->is_video || vka_nan_on() || f->kind >= 3 || d->target == NVN_TEXTURE_TARGET_3D || im->depth > 1 ||
+        (d->flags & (NVN_TEXTURE_FLAGS_LINEAR | NVN_TEXTURE_FLAGS_LINEAR_RENDER_TARGET)) || (im->L.size < (1u << 20) && !skip)) return 0;
     uint64_t seen; uint8_t *c = gw_content(t->mem, t->L.size, &seen);
     if (c) { free(c); return 0; }
     if ((c = unmapped_content(t))) { free(c); return 0; }
@@ -1068,6 +1071,7 @@ static int upload_bands_tracked(vka_img *im, const tex_t *t, VkCommandBuffer cb,
     uint64_t up = 0;
     uint8_t *bst = NULL; uint32_t bst_cap = 0;
     for (uint32_t lv = 0; lv < im->levels; lv++) {
+        if (lv < 32 && (skip >> lv & 1)) continue;
         uint32_t w = im->w >> lv ? im->w >> lv : 1, h = im->h >> lv ? im->h >> lv : 1;
         uint32_t bx = (w + f->bw - 1) / f->bw, by = (h + f->bh - 1) / f->bh; size_t pitch = (size_t)bx * f->bpb;
         uint32_t tl = lv + im->base;   // (the texture's level: image level lv is texture level lv + base, a soft texture's)
@@ -1938,7 +1942,7 @@ vka_img *vka_tex_get(const tex_t *t, VkCommandBuffer cb) {
                 im->d.flags |= NVN_TEXTURE_FLAGS_LINEAR;
                 if (!im->d.stride) im->d.stride = vs ? vs : 7680;
                 im->track = 1;
-                im->gpu_owned = 0;
+                im->gpu_owned = 0; im->gpu_lv = 0;
                 for (int id = 1; id < g_ntreg; id++) {
                     if (g_treg[id].t.serial == t->serial) {
                         g_treg[id].t.d.flags |= NVN_TEXTURE_FLAGS_LINEAR;
@@ -2251,9 +2255,10 @@ void mtl_tex_release(tex_t *t) {
 static vka_img **g_wb; static int g_nwb, g_wbcap;
 // A linear texture whose GPU writes are copied back into its storage (vka_tex_writeback): one level-free, single-sample colour texture of plain texels
 static int img_wb_kind(const vka_img *im) { return (im->d.flags & (NVN_TEXTURE_FLAGS_LINEAR | NVN_TEXTURE_FLAGS_LINEAR_RENDER_TARGET)) && im->mem && im->samples == 1 && im->f.kind < 3 && im->f.bw == 1; }
-void vka_img_written_at(vka_img *im, const char *file, int line) {
+void vka_img_written_at(vka_img *im, const char *file, int line) { vka_img_written_lv_at(im, ~0u, file, line); }
+void vka_img_written_lv_at(vka_img *im, uint32_t lv, const char *file, int line) {
     if (!im) return;
-    if (im->par) vka_img_written_at(im->par, file, line);   // a level child's write is its parent's
+    if (im->par) vka_img_written_lv_at(im->par, lv == ~0u || im->lvk >= 32 ? ~0u : lv << im->lvk, file, line);   // a level child's write is its parent's (its level j is the parent's j + lvk)
     if (im->is_video) return;
     pthread_mutex_lock(&g_tmu);
     // A zero-shared image must have memory of its own before any write (vka_tex_own at the write's site): this one did not, so every image sharing its memory sees the write
@@ -2262,7 +2267,7 @@ void vka_img_written_at(vka_img *im, const char *file, int line) {
     if (!im->gpu_owned && im->m.size >= big_min()) { static _Atomic int n; if (atomic_fetch_add(&n, 1) < 64)   // large images: the first GPU write (DM_VK_BIGIMG_MB)
         VLOG("large image serial %llu %ux%u layers %u format %#x (%.1f MiB): first GPU write at frame %llu (%s:%d), sampled by %u draws before, %u other textures over its storage", (unsigned long long)im->serial,
              im->w, im->h, im->layers, im->d.format, im->m.size / 1048576.0, (unsigned long long)vka_frame(), file, line, im->nsamp, im->novl); }
-    im->gpu_owned = 1;
+    im->gpu_owned = 1; im->gpu_lv |= lv;
     { uint64_t f = vka_frame(); if (im->wr_frame != f) { im->wr_prev = im->wr_frame; im->wr_frame = f; } }   // (vka_draw.c pass_redrawn)
     im->last_fence = vka_fence_last();
     if (img_wb_kind(im)) { static _Atomic int n; if (atomic_fetch_add(&n, 1) < 32)   // which GPU writes a copied-back linear texture takes (the copy-back covers the whole image)
@@ -3293,7 +3298,7 @@ void vka_tex_prepare(VkCommandBuffer cb) {
     // only after a pool came or went (vka_img.vep). The counts are read before the scan, so a picture written during it moves them for the next submission
     static uint64_t seen, vseen, vw_seen, ve_seen; uint64_t now = nvn_dirty_now(), vnow = nvn_sparse_gen(), vw = dm_codec_video_writes(), ve = dm_codec_video_epoch();
     int vid_new = vw != vw_seen || ve != ve_seen;
-    static int g_wbf_wait; static uint64_t g_wbf_up, g_wbf_waits; int g_wbf_on = VKA_ENV("DM_VK_WB_FOLLOW", 1) != 0; uint64_t done = vka_done();   // g_wbf_wait: a GPU-written linear texture waited for its copy-back in the last scan
+    static int g_wbf_wait; static uint64_t g_wbf_up, g_wbf_waits, g_lvf_up; int g_wbf_on = VKA_ENV("DM_VK_WB_FOLLOW", 1) != 0; uint64_t done = vka_done();   // g_wbf_wait: a GPU-written linear texture waited for its copy-back in the last scan
     int full_scan = now != seen || vnow != vseen || vid_new;   // (else the scan runs only for the images that waited for a copy-back: vka_wbfollow.h wbf_visit)
     if (full_scan || g_wbf_wait) {
         seen = now; vseen = vnow; vw_seen = vw; ve_seen = ve; g_wbf_wait = 0;
@@ -3309,7 +3314,7 @@ void vka_tex_prepare(VkCommandBuffer cb) {
                     im->d.flags |= NVN_TEXTURE_FLAGS_LINEAR;
                     if (!im->d.stride) im->d.stride = vs;
                     im->track = 1;
-                    im->gpu_owned = 0;
+                    im->gpu_owned = 0; im->gpu_lv = 0;
                     for (int id = 1; id < g_ntreg; id++) {
                         if (g_treg[id].t.serial == im->serial) {
                             g_treg[id].t.d.flags |= NVN_TEXTURE_FLAGS_LINEAR;
@@ -3339,12 +3344,14 @@ void vka_tex_prepare(VkCommandBuffer cb) {
             if (!im->track || !im->mem) continue;
             // A GPU-written image's content is the GPU's, except a linear one's once its copy-back has run: then the CPU's later writes to the storage are uploaded (vka_wbfollow.h:
             // Mario Tennis Fever clears its 8192x2048 R8 glyph cache on the GPU and rasterizes glyphs into it on the CPU; skipped, every text box was blank). While the copy-back
-            // is queued or on the GPU the image waits, and the scan runs again at the next prepare even if the CPU writes nothing more (g_wbf_wait)
+            // is queued or on the GPU the image waits, and the scan runs again at the next prepare even if the CPU writes nothing more (g_wbf_wait).
+            // A block-linear one follows it in the levels the GPU did not write (cpu_lv: wbf_cpu_levels), through their written bands only
+            uint32_t cpu_lv = 0;
             if (!wbf_follows(im->gpu_owned, img_wb_kind(im) && g_wbf_on, im->wb_pending, im->wb_fence, done)) {
                 if (g_wbf_on && im->gpu_owned && img_wb_kind(im) && (im->wb_pending || done < im->wb_fence)) { g_wbf_wait = 1; im->wbf_waiting = 1; g_wbf_waits++; }
-                continue;
+                if (!g_wbf_on || img_wb_kind(im) || !(cpu_lv = wbf_cpu_levels(im->gpu_owned, im->gpu_lv, im->levels))) continue;
             }
-            int wbf = im->gpu_owned;   // (counted below once its pages were found written: DM_VK_WB_FOLLOW's line)
+            int wbf = im->gpu_owned && !cpu_lv;   // (counted below once its pages were found written: DM_VK_WB_FOLLOW's line)
             uint64_t size = im->L.size;
             if (!im->span) im->span = nvn_dirty_span(im->mem, size);
             if (!nvn_dirty_since_span(im->span, im->mem, size, im->stamp)) continue;
@@ -3354,9 +3361,15 @@ void vka_tex_prepare(VkCommandBuffer cb) {
             tex_t t = {0}; t.serial = im->serial; t.d = im->d; t.L = im->L; t.mem = (uint8_t *)im->mem;
             if (wbf) { uint64_t k = ++g_wbf_up; if (k <= 4 || !(k & (k - 1))) VLOG("texture serial %llu %ux%u format %#x: the CPU wrote it after its copy-back, its written part uploaded (%llu so far; %llu scans waited for a copy-back; DM_VK_WB_FOLLOW=0 turns this off)",
                                                                          (unsigned long long)im->serial, im->w, im->h, im->d.format, (unsigned long long)k, (unsigned long long)g_wbf_waits); }
+            if (cpu_lv) {   // never the whole texture: its other levels are the GPU's (a pending GPU write over the storage: tried again at the next prepare)
+                if (upload_bands_tracked(im, &t, cb, lo, hi, im->stamp, ~cpu_lv)) { uint64_t k = ++g_lvf_up; if (k <= 4 || !(k & (k - 1)))
+                    VLOG("texture serial %llu %ux%u format %#x: the CPU wrote levels the GPU did not (GPU-written levels %#x of %u): their written bands uploaded (%llu so far; DM_VK_WB_FOLLOW=0 turns this off)",
+                         (unsigned long long)im->serial, im->w, im->h, im->d.format, im->gpu_lv, im->levels, (unsigned long long)k); }
+                continue;
+            }
             int rows = VKA_ENV("DM_VK_ROWS", 1);
             if (rows && upload_rows_tracked(im, &t, cb, lo, hi)) continue;
-            if (upload_bands_tracked(im, &t, cb, lo, hi, im->stamp)) { if (g_reup++ < 8) VLOG("texture serial %llu %ux%u format %#x: the bands of its storage that changed re-uploaded", (unsigned long long)im->serial, im->w, im->h, im->d.format); continue; }
+            if (upload_bands_tracked(im, &t, cb, lo, hi, im->stamp, 0)) { if (g_reup++ < 8) VLOG("texture serial %llu %ux%u format %#x: the bands of its storage that changed re-uploaded", (unsigned long long)im->serial, im->w, im->h, im->d.format); continue; }
             upload_tracked(im, &t, cb);
             if (g_reup++ < 8) VLOG("texture serial %llu %ux%u format %#x flags %#x target %d: its storage changed, re-uploaded", (unsigned long long)im->serial, im->w, im->h, im->d.format, im->d.flags, im->d.target);
         }

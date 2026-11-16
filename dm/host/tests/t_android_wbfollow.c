@@ -1,7 +1,7 @@
 // Which tracked textures follow the CPU's writes to their storage (dm/gfx/vk_android/vka_wbfollow.h): one the GPU never wrote always does; a linear one the GPU wrote does once
 // the copy of its GPU content back into the storage has run on the GPU (then the storage is the image, as on the Switch, where a linear texture is plain memory: a glyph cache
 // the game clears on the GPU and fills on the CPU, Mario Tennis Fever's 8192x2048 R8); not while that copy is queued or its submission is unfinished, nor when no copy-back
-// ever ran; a block-linear one the GPU wrote never does (its content stays the GPU's)
+// ever ran; a block-linear one the GPU wrote does only in the levels the GPU did not write (its other content stays the GPU's)
 #include <stdio.h>
 #include "../../gfx/vk_android/vka_wbfollow.h"
 
@@ -17,6 +17,13 @@ int main(void) {
     CHECK(wbf_follows(1, 1, 1, 10, 12) == 0, "re-uploaded while a newer copy-back is queued: the GPU's latest write would be lost");
     CHECK(wbf_follows(1, 1, 0, 0, 12) == 0, "re-uploaded though no copy-back ever ran (the storage never held the GPU's content)");
     CHECK(wbf_follows(1, 0, 0, 10, 12) == 0, "a block-linear texture the GPU wrote was re-uploaded from its storage");
+    // A block-linear texture follows its storage in the levels the GPU did not write: Unreal copies a streamed texture's small levels on the GPU, then fills its large ones on the CPU
+    CHECK(wbf_cpu_levels(0, 0, 12) == 0xfff, "a texture the GPU never wrote did not follow its storage in every level");
+    CHECK(wbf_cpu_levels(1, 0xfe0, 12) == 0x1f, "the levels a copy did not write ignored the CPU's writes (streamed mips left zero)");
+    CHECK(wbf_cpu_levels(1, 0xfff, 12) == 0, "a level the GPU wrote was taken from its storage again (the GPU's content lost)");
+    CHECK(wbf_cpu_levels(1, 0, 12) == 0, "an image the GPU wrote without known levels followed its storage");
+    CHECK(wbf_cpu_levels(1, ~0u, 1) == 0, "a one-level render target followed its storage");
+    CHECK(wbf_cpu_levels(1, 1, 32) == 0xfffffffeu, "32 levels: the mask overflowed");
     // The scan that a copy-back wait asks for visits only the waiting images; a full scan visits all. Walking every live image each frame for the wait cost Mario Kart World
     // 20-34 ms of texture prepare a frame (0.5-4 ms with the switch off)
     CHECK(wbf_visit(1, 0) == 1, "a full scan skipped an image that was not waiting");

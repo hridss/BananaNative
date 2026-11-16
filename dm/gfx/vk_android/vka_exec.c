@@ -1243,7 +1243,7 @@ static void copy_bt(const p_copy_b2t *c, int to_tex) {
     for (int z = 0; z < (is3d ? 1 : nz) && n < 64; z++)
         rg[n++] = (VkBufferImageCopy){(bounce ? s.off : o) + (is3d ? 0 : z * img), (uint32_t)(row / f->bpb * f->bw), (uint32_t)(img / row * f->bh),
             {asp, lv, is3d ? 0 : l0 + (uint32_t)c->r.zoffset + (uint32_t)z, 1}, {c->r.xoffset, c->r.yoffset, is3d ? c->r.zoffset : 0}, {(uint32_t)c->r.width, (uint32_t)c->r.height, is3d ? (uint32_t)nz : 1}};
-    if (to_tex) { vk.vkCmdCopyBufferToImage(g_cb, bounce ? s.buf : b, im->img, VK_IMAGE_LAYOUT_GENERAL, (uint32_t)n, rg); vka_img_written(im); }
+    if (to_tex) { vk.vkCmdCopyBufferToImage(g_cb, bounce ? s.buf : b, im->img, VK_IMAGE_LAYOUT_GENERAL, (uint32_t)n, rg); vka_img_written_lv(im, lv < 32 ? 1u << lv : ~0u); }
     else {
         vka_tex_gw_opaque(c->src, span);
         vk.vkCmdCopyImageToBuffer(g_cb, im->img, VK_IMAGE_LAYOUT_GENERAL, bounce ? s.buf : b, (uint32_t)n, rg);
@@ -1367,14 +1367,15 @@ static void copy_t2t(const p_copy_t2t *c) {
         if (c->flags & NVN_COPY_FLAGS_MIRROR_Y_BIT) { t = y0; y0 = y1; y1 = t; }
         if (path == T2T_DEPTH_DRAW) {
             if (!t2t_depth_draw(s, d, ss, ds, x0, y0, x1, y1, (VkRect2D){{c->dr.xoffset, c->dr.yoffset}, {(uint32_t)c->dr.width, (uint32_t)c->dr.height}})) return;
-            vka_img_written(d); g_stat_ops++; vka_barrier(g_cb); return;
+            vka_img_written_lv(d, dl < 32 ? 1u << dl : ~0u); g_stat_ops++; vka_barrier(g_cb); return;
         }
         VkImageBlit r = {ss, {{x0, y0, 0}, {x1, y1, 1}}, ds, {{c->dr.xoffset, c->dr.yoffset, 0}, {c->dr.xoffset + c->dr.width, c->dr.yoffset + c->dr.height, 1}}};
         VkFormatProperties fp; vk.vkGetPhysicalDeviceFormatProperties(V.pd, s->f.vk, &fp);
         VkFilter fl = (c->flags & NVN_COPY_FLAGS_LINEAR_FILTER_BIT) && sa == VK_IMAGE_ASPECT_COLOR_BIT && (fp.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
         vk.vkCmdBlitImage(g_cb, s->img, VK_IMAGE_LAYOUT_GENERAL, d->img, VK_IMAGE_LAYOUT_GENERAL, 1, &r, fl);
     }
-    vka_img_written(d); g_stat_ops++;
+    vka_img_written_lv(d, dl < 32 ? 1u << dl : ~0u);   // (one level: the others may still be the storage's, wbf_cpu_levels)
+    g_stat_ops++;
     vka_barrier(g_cb);
 }
 
