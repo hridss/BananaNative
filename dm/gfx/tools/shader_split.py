@@ -3700,7 +3700,7 @@ def dump_addons(dump):
     as pack_android.py passes them (scripts/pack_dump.py split_addons: a program n > 0, a Switch 2 Edition's program 1, keeps its shaders in its application's
     add-ons; none for program 0). [] when unset"""
     if not dump: return []
-    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'scripts'))
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', 'scripts'))
     import pack_dump
     try: app, _, dlc = pack_dump.scan(pack_dump.Path(dump))
     except pack_dump.Error as e: red(f'DM_SPLIT_DUMP: {e}')
