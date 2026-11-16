@@ -576,6 +576,7 @@ static void pass_redrawn(vka_img *const *im, int n) {
 // Opens the pass over the bound targets: 0 = it cannot (no target can be an attachment), logged
 static int rp_begin(const p_set_rt *rt, int has_rt, const p_scissor *sc, int has_sc, const vka_dstate *d) {
     if (R.on) { if (!g_pass_keep || (rt_same(rt, has_rt, &R.rt, R.has_rt) && rp_area_fits(sc, has_sc, d, rt, has_rt))) return 1; vka_rp_end(); }   // a new SET_RT of other targets ends the pass at its first draw (exec does not)   // a new SET_RT of other targets ends the pass at its first draw (exec does not)
+    if (vka_ind_split()) { void vka_part_split(void); vka_part_split(); }   // DM_VK_IND_PEEK=4: the work before this pass in a part of its own (ind_peek)
     if (PC.n && !rt_same(rt, has_rt, &PC.rt, 1)) pc_flush();                             // clears of other targets: done before
     VkRenderingAttachmentInfo ca[8], da = {0}, sa; uint32_t w = UINT32_MAX, h = UINT32_MAX, layers = UINT32_MAX, samples = 0;
     vka_img *fb_im[9]; uint32_t fb_lv[9]; int nfb = 0;   // the attachments' images and levels (vka_tex_feedback)
@@ -1506,7 +1507,8 @@ static void tex_masks(vka_shader *const sh[VKA_NSTAGE], uint64_t tu[5], uint64_t
         vka_res *r = g_wk.r[st]; uint64_t um = 0, sm = 0, fm = 0, lo = (uint64_t)rg * DMSH_VK_STAGE_BINDINGS;
         for (int i = 0; i < g_wk.n[st]; i++) {
             if ((r[i].what != VKA_R_TEX && r[i].what != VKA_R_IMG) || !r[i].tid || (r[i].dim & (DMSH_VK_DIM_SINT | DMSH_VK_DIM_UINT))) continue;
-            if (r[i].desc != VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER && r[i].desc != VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE && r[i].desc != VK_DESCRIPTOR_TYPE_STORAGE_IMAGE) continue;
+            if (r[i].desc != VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER && r[i].desc != VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE && r[i].desc != VK_DESCRIPTOR_TYPE_STORAGE_IMAGE
+                && r[i].desc != VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER && r[i].desc != VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER) continue;   // (a buffer texture: its texel buffer view is of its own format, vka_tbuf.c)
             if (r[i].binding < lo || r[i].binding >= lo + 64) continue;
             int c = vka_tex_id_class_rec(r[i].tid); uint64_t bit = 1ull << (r[i].binding - lo);
             if (r[i].elem) fm |= bit;   // (an array binding keeps its float type)
@@ -2100,9 +2102,86 @@ static int bisect_drop(vka_shader *const *sh) {
 // values for arguments the game's compute writes every frame), with the draw's shaders. The first DM_VK_IND_PEEK_LINES (200) lines, and up to 200 more for arguments that
 // would draw more than 50 M vertices or 1 M instances (a GPU timeout: Orbitals' first gameplay frames, "gpu timeout" in the kernel log, no shader of its own to blame)
 // =2: such a draw is also skipped (returns 1), to tell whether those draws are what the GPU times out on
+// =4: what the GPU reads instead of what the CPU sees while recording: each render pass begins a part of its own (vka_part_split), the indirect draws of a part are queued
+// here, and before the part goes to the GPU the earlier parts are waited for and the arguments read (vka_ind_check, from vka_exec.c): those that would draw more than
+// 50 M vertices or 1 M instances are logged and their instance count set to 0, to show which draws time the GPU out and what they read (slow: a wait for each such part)
+// The dispatches' writable storage buffers and buffer textures are kept in a ring (ind_note_dispatch), so a line can name the last ones whose bindings cover the arguments
+enum { INDQ = 4096, INDW = 8192 };
+static struct { uint64_t a, vs, ps; uint8_t indexed; } g_indq[INDQ]; static int g_nindq;   // (the replay thread)
+// With each entry the dispatch's buffer textures (read or written: their IDs), so the line can show what the writer read (ind_inputs)
+static struct { uint64_t key, lo, hi, frame; int tid[8]; } g_indw[INDW]; static unsigned g_nindw;
+int vka_ind_split(void) { return VKA_ENV("DM_VK_IND_PEEK", 0) == 4; }
+static void ind_note_dispatch(uint64_t key, const vka_res *r, int n) {
+    if (!vka_ind_split()) return;
+    uint64_t vka_frame(void);
+    int tids[8] = {0}, nt = 0;
+    for (int i = 0; i < n && nt < 8; i++) if ((r[i].what == VKA_R_TEX || r[i].what == VKA_R_TBUF || r[i].what == VKA_R_IMG) && r[i].tid && vka_tex_id_is_buffer(r[i].tid)) tids[nt++] = r[i].tid;
+    for (int i = 0; i < n; i++) {
+        uint64_t lo = 0, hi = 0;
+        if (!(r[i].flags & DMSH_VK_BF_RW)) continue;
+        if (r[i].what == VKA_R_BUF) { lo = r[i].addr; hi = lo + (r[i].size ? r[i].size : 0x10000); }
+        else if ((r[i].what == VKA_R_TBUF || r[i].what == VKA_R_IMG) && r[i].tid) { uint32_t el; int fm; if (!vka_tex_id_buffer(r[i].tid, &lo, &el, &fm)) continue; hi = lo + (uint64_t)el * 16; }
+        else continue;
+        unsigned k = g_nindw++ % INDW; g_indw[k].key = key; g_indw[k].lo = lo; g_indw[k].hi = hi; g_indw[k].frame = vka_frame(); memcpy(g_indw[k].tid, tids, sizeof tids);
+    }
+}
+// The buffer textures of the last dispatch that may have written a: each one's address, its words when it has at most 40, else those over 1,000,000 (at most 8, with their
+// index), as the memory holds them now (the GPU work before is done)
+static void ind_inputs(uint64_t a) {
+    unsigned have = g_nindw < INDW ? g_nindw : INDW;
+    for (unsigned j = 1; j <= have; j++) {
+        unsigned k = (g_nindw - j) % INDW;
+        if (a < g_indw[k].lo || a >= g_indw[k].hi) continue;
+        for (int t = 0; t < 8 && g_indw[k].tid[t]; t++) {
+            uint64_t ba; uint32_t el; int fm; if (!vka_tex_id_buffer(g_indw[k].tid[t], &ba, &el, &fm)) continue;
+            const volatile uint32_t *w = (const volatile uint32_t *)(uintptr_t)ba; char o[700]; size_t u = 0; int m = 0;
+            for (uint32_t e = 0; e < el && u < sizeof o - 40; e++) {
+                uint32_t v = w[e];
+                if (el <= 80) u += (size_t)snprintf(o + u, sizeof o - u, "%s%x", e ? " " : "", v);
+                else if (v && m++ < 24) u += (size_t)snprintf(o + u, sizeof o - u, "%s[%u] %x", m > 1 ? ", " : "", e, v);
+            }
+            if (!u) snprintf(o, sizeof o, "all zero");
+            VRED("ind check: its writer %016llx's buffer texture ID %d at %#llx, %u elements, format %#x: %s", (unsigned long long)g_indw[k].key, g_indw[k].tid[t], (unsigned long long)ba, el, fm, o);
+        }
+        return;
+    }
+}
+static void ind_writers(uint64_t a, char *o, size_t n) {
+    size_t u = 0; int m = 0; o[0] = 0;
+    unsigned have = g_nindw < INDW ? g_nindw : INDW;
+    for (unsigned j = 1; j <= have && m < 4; j++) {
+        unsigned k = (g_nindw - j) % INDW;
+        if (a < g_indw[k].lo || a >= g_indw[k].hi) continue;
+        u += (size_t)snprintf(o + u, u < n ? n - u : 0, "%s%016llx (frame %llu, %#llx+%#llx)", m ? ", " : "", (unsigned long long)g_indw[k].key, (unsigned long long)g_indw[k].frame,
+                              (unsigned long long)g_indw[k].lo, (unsigned long long)(g_indw[k].hi - g_indw[k].lo));
+        if (u >= n) break;
+        m++;
+    }
+    if (!m) snprintf(o, n, "none of the last %u writable bindings of dispatches covers it", have);
+}
+void vka_ind_check(void) {
+    if (!g_nindq) return;
+    vka_enc_sync(); vka_queue_idle();   // the parts before this one, done: compute does not run inside a pass, so the arguments are what the GPU will read
+    static _Atomic int lines; uint64_t vka_frame(void);
+    for (int i = 0; i < g_nindq; i++) {
+        volatile uint32_t *w = (volatile uint32_t *)(uintptr_t)g_indq[i].a; uint32_t cnt = w[0], inst = w[1];
+        if (!((uint64_t)cnt * inst > 50000000ull || inst > 1000000u)) continue;
+        if (atomic_fetch_add(&lines, 1) < 200) {
+            char wr[400]; ind_writers(g_indq[i].a, wr, sizeof wr);
+            VRED("ind check: frame %llu %s indirect at %#llx: count %u instances %u first %u %u, as the GPU will read it; vs %016llx ps %016llx: instance count set to 0; "
+                 "words before it %08x %08x %08x %08x %08x; dispatches that may have written it, last first: %s",
+                 (unsigned long long)vka_frame(), g_indq[i].indexed ? "indexed" : "plain", (unsigned long long)g_indq[i].a, cnt, inst, w[2], w[3],
+                 (unsigned long long)g_indq[i].vs, (unsigned long long)g_indq[i].ps, w[-5], w[-4], w[-3], w[-2], w[-1], wr);
+            if (atomic_load(&lines) <= 6) ind_inputs(g_indq[i].a);
+        }
+        w[1] = 0;
+    }
+    g_nindq = 0;
+}
 static int ind_peek(vka_shader *const *sh, uint64_t ind, uint64_t mdi, uint32_t mdi_n, uint32_t mdi_st, int indexed) {
     int mode = (int)VKA_ENV("DM_VK_IND_PEEK", 0);
     if (!mode || !ind) return 0;
+    if (mode == 4) { if (g_nindq < INDQ) g_indq[g_nindq++] = (typeof(g_indq[0])){ind, sh[0] ? sh[0]->key : 0, sh[1] ? sh[1]->key : 0, (uint8_t)indexed}; return 0; }
     static _Atomic int lines, big_lines;
     const volatile uint32_t *w = (const volatile uint32_t *)(uintptr_t)ind;
     uint32_t cnt = w[0], inst = w[1], n = mdi_n && mdi ? *(const volatile uint32_t *)(uintptr_t)mdi : 1;
@@ -2452,7 +2531,7 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
     }
     if (expand && ind) SKIP("an indirect draw of quads or a line loop is not on Vulkan yet: skipped");
     if (!mesh && sh[1] && skip_fs(sh[1]->key)) { g_skipped++; return; }
-    if (bisect_drop(sh)) { g_skipped++; return; }
+    if (bisect_drop(sh) || vka_cap_dry()) { g_skipped++; return; }   // (a dry capture: nothing more goes to the GPU, vka_capture.c)
     if (!mesh && VKA_ENV("DM_VK_SHADER_STATS", 0)) {
         int slot = ss_slot(sh[0]->key, sh[1] ? sh[1]->key : 1, sh[2] ? sh[2]->key : 0); g_ss_last = slot;
         if (slot >= 0) { ss_ent *e = &g_ss[slot]; int32_t c = dw ? dw->count : di->count; int inst = dw ? dw->instances : di->instances; if (inst < 1) inst = 1;
@@ -2843,12 +2922,16 @@ int vka_is_ndve_key(uint64_t k) {
 // the base pipeline was obtained first and the retyped one after it, so a dispatch with retyped images had its base pipeline made too, never dispatched, and on the
 // frame path (DM_VK_CS_ASYNC) its retyped pipeline was queued only once the base one was there: two compiles in a row before a first-use effect showed (Pokemon Pokopia on
 // Turnip v32: 4fb03a033366f0b2 1196 ms, then 1183 ms). DM_VK_IMG_RETYPE=0: never retyped (the class twin views, as before)
+// Buffer textures bound as texel buffers (vka_tbuf.c) too: their views are of the texture's own format, so a float image over an R32_UINT one read the counts it holds converted
+// (Orbitals: Unreal's Niagara draw-argument compute 742f0130cd7af9e4 read a particle count of 75 from its RWBuffer<uint> as 0x37160000, 75 x 2^-23, and wrote that as the
+// instance count of an indexed indirect draw: 924 million quads, a GPU timeout seconds into the first area)
 static VkPipeline cs_pipe(vka_shader *cs, const vka_layout *lay) {
     uint64_t um = 0, sm = 0, fm = 0; vka_res *r = g_wk.r[5];
     if (VKA_ENV("DM_VK_IMG_RETYPE", 1)) {
         for (int i = 0; i < g_wk.n[5]; i++) {
-            int img = r[i].what == VKA_R_IMG && r[i].desc == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-            int tex = r[i].what == VKA_R_TEX && (r[i].desc == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER || r[i].desc == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE);   // (a texture: its fetches and samples)
+            int img = r[i].what == VKA_R_IMG && (r[i].desc == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE || r[i].desc == VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER);
+            int tex = r[i].what == VKA_R_TEX && (r[i].desc == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER || r[i].desc == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE
+                                                 || r[i].desc == VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER);   // (a texture: its fetches and samples)
             if (!(img || tex) || r[i].binding >= 64 || (r[i].dim & (DMSH_VK_DIM_SINT | DMSH_VK_DIM_UINT))) continue;
             int c = r[i].tid ? vka_tex_id_class_rec(r[i].tid) : 0; uint64_t bit = 1ull << r[i].binding;
             if (r[i].elem) c = 0;   // (an array binding keeps its float type)
@@ -3216,6 +3299,7 @@ void vka_dispatch(vka_dstate *d, const p_dispatch *dp) {
     VkPipeline p = cs_pipe(sh[5], &lay);   // (from the walk: the retyped pipeline or the base one, only the one dispatched)
     if (!p) { g_skipped++; if (vks_pipeline_counts(vka_pso_wait)) g_skip_dev[VKS_PIPELINE]++; return; }
     if (g_do_nk || g_do_all) dobj_note(sh[5]->key, g_wk.r[5], g_wk.n[5]);   // DM_VK_DISP_OBJ (g_do_nk -1: not read yet)
+    ind_note_dispatch(sh[5]->key, g_wk.r[5], g_wk.n[5]);   // DM_VK_IND_PEEK=4: who may write indirect arguments
     {   // DM_VK_BIND_LOG=<hex key>[,…]: the binding records of those compute shaders' dispatches (the first 12 in all) (what each binding is bound to), to follow a pass's inputs and outputs
         static _Atomic int nb; int hit = bind_log_hit(sh[5]->key, 0);
         if (hit && atomic_fetch_add(&nb, 1) < 12)
@@ -3293,8 +3377,11 @@ void vka_dispatch(vka_dstate *d, const p_dispatch *dp) {
         }
       } }
   ndsr_net:
-    for (int i = 0; i < g_wk.n[5]; i++) if (g_wk.r[5][i].what == VKA_R_TEX && g_wk.r[5][i].tid && vka_tbuf_pending(g_wk.r[5][i].tid, g_wk.r[5][i].dim))
-        vka_tbuf_refresh(g_wk.r[5][i].tid, g_wk.r[5][i].dim, g_cb);   // buffer textures read as images: their copies (vka_tbuf.c; no pass is open)
+    { int rc = vka_tbuf_recopy();   // DM_VK_TBUF_RECOPY (vka_tbuf.c)
+      for (int i = 0; i < g_wk.n[5]; i++) if (g_wk.r[5][i].what == VKA_R_TEX && g_wk.r[5][i].tid && (rc ? vka_tex_id_is_buffer(g_wk.r[5][i].tid) : vka_tbuf_pending(g_wk.r[5][i].tid, g_wk.r[5][i].dim))) {
+          if (rc) vka_tbuf_refresh_force(g_wk.r[5][i].tid, g_wk.r[5][i].dim, g_cb);
+          else vka_tbuf_refresh(g_wk.r[5][i].tid, g_wk.r[5][i].dim, g_cb);   // buffer textures read as images: their copies (vka_tbuf.c; no pass is open)
+      } }
     if (!bind_sets(d, sh, &lay, VK_PIPELINE_BIND_POINT_COMPUTE, &c0)) { g_skipped++; return; }
     if (dp->ind && c0.buf) {   // the group counts the GPU wrote, into c0's dispatch words before the dispatch reads them (nvn_mtl.m g_c0_dim_buf); NVN2 reads them at c0 + 4 too
         vka_disp_settle(g_cb);   // (a copy: after the dispatches before it, as before; "Dispatch order")
@@ -3308,7 +3395,7 @@ void vka_dispatch(vka_dstate *d, const p_dispatch *dp) {
     unsigned long long di = nd++; const char *sk = getenv("DM_VK_DISPATCH_SKIP"); int skip = 0;
     if (sk && *sk) { char *e; unsigned long long a = strtoull(sk, &e, 10), b = *e == ',' ? strtoull(e + 1, NULL, 10) : ~0ull; skip = di >= a && di <= b; }
     if (!skip && VKA_ENV("DM_VK_SKIP_NDVE", 1) && vka_is_ndve_key(sh[5]->key)) skip = 1;
-    if (!skip && bisect_drop(sh)) skip = 1;
+    if (!skip && (bisect_drop(sh) || vka_cap_dry())) skip = 1;
     // DM_VK_DISPATCH_SKIP_KEY=<hex key>[,…]: the dispatches of those compute shaders are recorded without their vkCmdDispatch (by shader instead of by index)
     const char *sks = getenv("DM_VK_DISPATCH_SKIP_KEY");
     for (const char *p = sks; !skip && p && *p;) { char *e; unsigned long long k = strtoull(p, &e, 16); if (e == p) break; skip = k == sh[5]->key; p = *e == ',' ? e + 1 : e; }

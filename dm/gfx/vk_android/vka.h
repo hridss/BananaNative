@@ -194,7 +194,9 @@ void vka_present_fill(uint64_t tk, const tex_t *t, double period_s, const int cr
 uint64_t vka_present_inline(const tex_t *t, double period_s, const int crop[4]);
 uint64_t vka_hang_ns(void);                         // how long a fence may make no progress before it is a hang (DM_VK_HANG_S, default 6 s)
 int vka_hung(void);
-int vka_queue_idle(void);                           // vkQueueWaitIdle bounded by the hang time (0 = not idle: hung or timed out)                                 // 1 = a GPU hang was declared (vka_dev.c): nothing more is submitted, waits return at once
+void vka_ind_check(void); int vka_ind_split(void);   // DM_VK_IND_PEEK=4 (vka_draw.c): a part's indirect arguments checked as the GPU will read them; passes in parts of their own
+int vka_cap_dry(void);   // a dry capture is under way (vka_capture.c DM_NVN_CAPTURE_DRY): nothing more of the game's goes to the GPU
+int vka_queue_idle(void);                          // vkQueueWaitIdle bounded by the hang time (0 = not idle: hung or timed out)                                 // 1 = a GPU hang was declared (vka_dev.c): nothing more is submitted, waits return at once
 void vka_fence_post(uint64_t fence, void *ops, int n, void (*run)(void *ops, int n));   // effects run by the completion thread when fence completes
 uint64_t vka_done(void);
 void vka_fence_cpu(uint64_t fence, void *ops, int n, void (*run)(void *ops, int n));   // no GPU behind it (no device, a failed submit): the effects run now and fence is done
@@ -442,6 +444,7 @@ void vka_tbuf_refresh(int id, uint8_t dim, VkCommandBuffer cb);   // copies buff
 VkImageView vka_tbuf_image_view(int id, uint8_t dim);   // that image's view (after vka_tbuf_refresh); VK_NULL_HANDLE = none
 void vka_tbuf_wrote(uint64_t addr, uint64_t n);     // GPU work that writes guest memory [addr, addr+n) was recorded (vka_tex.c gw_add): images of buffer textures over it are copied again at their next use
 int vka_tex_id_pending(int id);                     // texture ID id is registered and its image is not made yet (its first use records commands)
+int vka_tbuf_recopy(void); void vka_tbuf_refresh_force(int id, uint8_t dim, VkCommandBuffer cb);   // DM_VK_TBUF_RECOPY: each dispatch copies again (diagnostic)
 VkImageView vka_tex_id_view_rec(int id, VkCommandBuffer cb, uint8_t dim, int storage, VkImageLayout *layout);   // the same on the recording thread, through a memo (DM_VK_TEX_MEMO)
 VkFormat vka_tex_id_vkfmt(int id);   // the format texture ID id is viewed in, not its (possibly shared) image's (vka_tex.c)
 VkImageView vka_tex_id_view_bits(int id, VkCommandBuffer cb, VkImageLayout *layout);   // a storage view of its image as R32_UINT (4-byte texels), not written into the bindless table (vka_tex.c)

@@ -145,6 +145,10 @@ static timg *img_make(const tb_t *t, int is2d) {   // (g_mu held)
     g_i[slot] = x;
     return &g_i[slot];
 }
+// DM_VK_TBUF_RECOPY=1 (diagnostic, live): each dispatch copies the memory again (vka_tbuf_recopy, from vka_draw.c), to tell a copy that missed a write from a wrong read
+int vka_tbuf_recopy(void) { return VKA_ENV("DM_VK_TBUF_RECOPY", 0) != 0; }
+static int g_force;   // (the replay thread: a refresh from a dispatch under DM_VK_TBUF_RECOPY)
+void vka_tbuf_refresh_force(int id, uint8_t dim, VkCommandBuffer cb) { g_force = 1; vka_tbuf_refresh(id, dim, cb); g_force = 0; }
 int vka_tbuf_pending(int id, uint8_t dim) {
     tb_t t; int is2d;
     if (!vka_tex_id_is_buffer(id) || !tbuf_mode() || !shape(dim, &is2d) || !tb_of(id, &t)) return 0;
@@ -161,7 +165,7 @@ void vka_tbuf_refresh(int id, uint8_t dim, VkCommandBuffer cb) {
     pthread_mutex_lock(&g_mu);
     timg *x = img_find(&t, is2d); if (!x) x = img_make(&t, is2d);
     uint64_t fr = vka_frame();
-    if (!x || (x->copied_frame == fr && !x->dirty)) { pthread_mutex_unlock(&g_mu); return; }
+    if (!x || (x->copied_frame == fr && !x->dirty && !g_force)) { pthread_mutex_unlock(&g_mu); return; }
     uint64_t n = is2d ? t.elems : x->w, bytes = n * t.f.bpb;
     VkBuffer buf = VK_NULL_HANDLE; VkDeviceSize off = 0;
     if (vka_addr_run(t.addr, bytes, &buf, &off) < bytes) { pthread_mutex_unlock(&g_mu); not_placed(&t, "sampled image"); return; }
