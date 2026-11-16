@@ -1436,3 +1436,70 @@ fail:
     free(loc); free(ptr_sc); free(ptr_to); free(var_ty); free(kind); free(o.w);
     return NULL;
 }
+
+// vka_spv_quad_shuffle: a pixel shader's subgroup shuffles within its own quad, read through quad operations. Maxwell takes a pixel shader's derivatives by exchanging values
+// within the 2x2 quad (SHFL.BFLY by 1 and 2), which the translator emits as OpGroupNonUniformShuffle at index lane ^ 1 / lane ^ 2. Vulkan has helper invocations (the
+// quad's pixels outside the primitive) take part in quad operations, not in the other subgroup operations: Turnip leaves them out of a shuffle, so a pixel whose partner is
+// a helper read an undefined value, one pixel in each quad along every triangle edge (Orbitals: white dots on its pipes' base colour, "the polygons showing"). Each scalar
+// shuffle whose index lies in the reader's quad ((index ^ lane) < 4) takes the value of OpGroupNonUniformQuadBroadcast at quad index index & 3 (a quad's index is its
+// lane & 3: Vulkan's quad layout); any other index keeps the shuffle. Needs the module's SubgroupLocalInvocationId input (the translator's shuffle helper loads it); without
+// it, or without a scalar 32-bit shuffle, NULL with *changed 0 and err empty
+enum { QS_Capability = 17, QS_BitwiseXor = 198, QS_BitwiseAnd = 199, QS_QuadBroadcast = 365, QS_CapQuad = 68 };
+uint32_t *vka_spv_quad_shuffle(const uint32_t *w, size_t nw, size_t *out_nw, int *changed, char *err, size_t errn) {
+#define FAIL(...) do { snprintf(err, errn, __VA_ARGS__); goto fail; } while (0)
+    uint8_t *scalar = NULL; vec_t o = {0}; *changed = 0; err[0] = 0;
+    if (nw < 5 || w[0] != 0x07230203) { snprintf(err, errn, "not SPIR-V"); return NULL; }
+    uint32_t bound = w[3], nb = bound;
+    if (!(scalar = calloc(bound, 1))) { snprintf(err, errn, "out of memory"); return NULL; }
+    uint32_t lane_bi = 0, lane_var = 0, lane_ptr = 0, lane_t = 0, t_u32 = 0, t_bool = 0; size_t first_fn = nw, after_caps = 5; int quad_cap = 0, any = 0;
+    for (size_t i = 5; i < nw;) {
+        uint32_t op = w[i] & 0xffff, len = w[i] >> 16;
+        if (!len || i + len > nw) FAIL("bad instruction at word %zu", i);
+        if (op == QS_Capability) { after_caps = i + len; quad_cap |= len >= 2 && w[i + 1] == QS_CapQuad; }
+        else if (op == OpDecorate && len >= 4 && w[i + 2] == DecBuiltIn && w[i + 3] == BISubgroupLocalInvocationId) lane_bi = w[i + 1];
+        else if ((op == OpTypeInt || op == OpTypeFloat) && len >= 3 && w[i + 1] < bound && w[i + 2] == 32) { scalar[w[i + 1]] = 1; if (op == OpTypeInt && len >= 4 && !w[i + 3]) t_u32 = w[i + 1]; }
+        else if (op == OpTypeBool && len >= 2) t_bool = w[i + 1];
+        else if (op == OpVariable && len >= 4 && lane_bi && w[i + 2] == lane_bi) { lane_var = w[i + 2]; lane_ptr = w[i + 1]; }
+        else if (op == OpFunction && first_fn == nw) first_fn = i;
+        else if (op == OpGNUShuffle && len >= 6 && w[i + 1] < bound && scalar[w[i + 1]]) any = 1;
+        i += len;
+    }
+    for (size_t i = 5; i < first_fn && lane_ptr; i += w[i] >> 16) if ((w[i] & 0xffff) == OpTypePointer && (w[i] >> 16) >= 4 && w[i + 1] == lane_ptr) lane_t = w[i + 3];
+    if (!any || !lane_var || !lane_t || lane_t >= bound || !scalar[lane_t]) { free(scalar); return NULL; }   // nothing to do
+    uint32_t mk_bool = t_bool ? 0 : nb++, mk_u32 = t_u32 ? 0 : nb++; if (!t_bool) t_bool = mk_bool; if (!t_u32) t_u32 = mk_u32;
+    uint32_t c[4] = {nb, nb + 1, nb + 2, nb + 3}, cmask = nb + 4; nb += 5;   // uint 0..3, ~3
+    if (!put_n(&o, w, 5)) FAIL("out of memory");
+    for (size_t i = 5; i < nw;) {
+        uint32_t op = w[i] & 0xffff, len = w[i] >> 16;
+        if (i == after_caps && !quad_cap) { uint32_t x[2] = {2u << 16 | QS_Capability, QS_CapQuad}; if (!put_n(&o, x, 2)) FAIL("out of memory"); }
+        if (i == first_fn) {
+            if (mk_bool) { uint32_t x[2] = {2u << 16 | OpTypeBool, mk_bool}; if (!put_n(&o, x, 2)) FAIL("out of memory"); }
+            if (mk_u32) { uint32_t x[4] = {4u << 16 | OpTypeInt, mk_u32, 32, 0}; if (!put_n(&o, x, 4)) FAIL("out of memory"); }
+            for (int k = 0; k < 4; k++) { uint32_t x[4] = {4u << 16 | OpConstant, t_u32, c[k], (uint32_t)k}; if (!put_n(&o, x, 4)) FAIL("out of memory"); }
+            uint32_t x[4] = {4u << 16 | OpConstant, t_u32, cmask, ~3u}; if (!put_n(&o, x, 4)) FAIL("out of memory");
+        }
+        if (i > first_fn && op == OpGNUShuffle && len >= 6 && w[i + 1] < bound && scalar[w[i + 1]]) {
+            uint32_t rt = w[i + 1], r = w[i + 2], sc = w[i + 3], v = w[i + 4], ix = w[i + 5];
+            uint32_t l = nb++, x = nb++, hi = nb++, inq = nb++, q = nb++, b[4], e[4], s[4], sh = nb++;
+            for (int k = 0; k < 4; k++) { b[k] = nb++; e[k] = nb++; s[k] = nb++; }
+            uint32_t a[] = {4u << 16 | OpLoad, lane_t, l, lane_var, 5u << 16 | QS_BitwiseXor, t_u32, x, ix, l, 5u << 16 | QS_BitwiseAnd, t_u32, hi, x, cmask,
+                            5u << 16 | OpIEqual, t_bool, inq, hi, c[0], 5u << 16 | QS_BitwiseAnd, t_u32, q, ix, c[3]};
+            if (!put_n(&o, a, sizeof a / 4)) FAIL("out of memory");
+            for (int k = 0; k < 4; k++) { uint32_t y[6] = {6u << 16 | QS_QuadBroadcast, rt, b[k], sc, v, c[k]}; if (!put_n(&o, y, 6)) FAIL("out of memory"); }
+            s[0] = b[0];
+            for (int k = 1; k < 4; k++) { uint32_t y[11] = {5u << 16 | OpIEqual, t_bool, e[k], q, c[k], 6u << 16 | OpSelect, rt, s[k], e[k], b[k], s[k - 1]}; if (!put_n(&o, y, 11)) FAIL("out of memory"); }
+            uint32_t z[12] = {6u << 16 | OpGNUShuffle, rt, sh, sc, v, ix, 6u << 16 | OpSelect, rt, r, inq, s[3], sh};
+            if (!put_n(&o, z, 12)) FAIL("out of memory");
+            i += len; *changed = 1; continue;
+        }
+        if (!put_n(&o, w + i, len)) FAIL("out of memory");
+        i += len;
+    }
+    o.w[3] = nb;
+    free(scalar);
+    *out_nw = o.n; return o.w;
+fail:
+    free(scalar); free(o.w);
+    return NULL;
+#undef FAIL
+}

@@ -410,9 +410,21 @@ static void gs_fill(uint64_t key, int stage, uint32_t **w, size_t *nb) {
     static _Atomic int n; if (atomic_fetch_add(&n, 1) < 8) VLOG("geometry shader %016llx: emits a degenerate primitive where it would emit none (DM_VK_GS_FILL)", (unsigned long long)key);
     free(*w); *w = o; *nb = on * 4;
 }
-// The library's words for a module, made ready for this device: subgroups of one lane where the stage has none (single_lane), a geometry shader's empty runs filled (gs_fill)
+// A pixel shader's shuffles within the quad (Maxwell's derivatives) read through quad operations, in which helper invocations take part (vka_spv_quad_shuffle). After
+// single_lane, which leaves no shuffle where the stage runs as one lane. DM_VK_QUAD_SHUFFLE=0 (restart): as built. Logged for the first few shaders
+static void quad_shuffle(uint64_t key, int stage, uint32_t **w, size_t *nb) {
+    if (stage != DMSH_VK_STAGE_FS || !(V.subgroup_ops & VK_SUBGROUP_FEATURE_QUAD_BIT) || !(V.subgroup_stages & VK_SHADER_STAGE_FRAGMENT_BIT)) return;
+    static int on = -1; if (on < 0) on = VKA_ENV("DM_VK_QUAD_SHUFFLE", 1) != 0;
+    if (!on) return;
+    size_t on_ = 0; int ch = 0; char e[256] = ""; uint32_t *o = vka_spv_quad_shuffle(*w, *nb / 4, &on_, &ch, e, sizeof e);
+    if (!o) { if (e[0]) { static _Atomic int n; if (atomic_fetch_add(&n, 1) < 8) VRED("pixel shader %016llx: shuffles within the quad not read through quad operations: %s", (unsigned long long)key, e); } return; }
+    static _Atomic int n; if (atomic_fetch_add(&n, 1) < 8) VLOG("pixel shader %016llx: shuffles within the quad read through quad operations (helper invocations take part; DM_VK_QUAD_SHUFFLE=0: as built)", (unsigned long long)key);
+    free(*w); *w = o; *nb = on_ * 4;
+}
+// The library's words for a module, made ready for this device: subgroups of one lane where the stage has none (single_lane), quad shuffles of a pixel shader (quad_shuffle),
+// a geometry shader's empty runs filled (gs_fill)
 static void prep_words(const dmsh_vk_entry *e, uint64_t key, uint32_t **w, size_t *nb) {
-    if (e->flags & DMSH_VK_F_SUBGROUP) single_lane(key, e->stage, w, nb);
+    if (e->flags & DMSH_VK_F_SUBGROUP) { single_lane(key, e->stage, w, nb); quad_shuffle(key, e->stage, w, nb); }
     gs_fill(key, e->stage, w, nb);
 }
 // A library module's words. With the mesh draws drawn through compute (V.memu, vka_memu.c), a pixel shader of per-primitive inputs is only ever drawn behind the generated

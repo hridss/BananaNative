@@ -190,6 +190,20 @@ static int storage_of(const uint32_t *w, size_t n, uint32_t var) {
     for (size_t i = 5; i < n && (w[i] >> 16); i += w[i] >> 16) if ((w[i] & 0xffff) == 59 && w[i + 2] == var) return (int)w[i + 3];
     return -1;
 }
+// A pixel shader that shuffles a value within its quad (lane ^ 1) and out of it (lane + 4), as the translator's derivatives do (vka_spv_quad_shuffle), spirv-as of:
+//   %l = OpLoad %uint %lane (BuiltIn SubgroupLocalInvocationId); %s1 = OpGroupNonUniformShuffle %float %scope %v (%l ^ 1); %s2 = ... (%l + 4); out = %s1 - %s2
+static const uint32_t SPV_QUAD_FRAG[] = {
+    0x07230203, 0x00010300, 0x00070000, 0x00000017, 0x00000000, 0x00020011, 0x00000001, 0x00020011, 0x0000003d, 0x00020011, 0x00000041, 0x0003000e, 0x00000000,
+    0x00000001, 0x0008000f, 0x00000004, 0x00000001, 0x6e69616d, 0x00000000, 0x00000002, 0x00000003, 0x00000004, 0x00030010, 0x00000001, 0x00000007, 0x00040047,
+    0x00000002, 0x0000000b, 0x00000029, 0x00030047, 0x00000002, 0x0000000e, 0x00040047, 0x00000003, 0x0000001e, 0x00000000, 0x00040047, 0x00000004, 0x0000001e,
+    0x00000000, 0x00020013, 0x00000005, 0x00030021, 0x00000006, 0x00000005, 0x00030016, 0x00000007, 0x00000020, 0x00040015, 0x00000008, 0x00000020, 0x00000000,
+    0x00040020, 0x00000009, 0x00000001, 0x00000008, 0x00040020, 0x0000000a, 0x00000001, 0x00000007, 0x00040020, 0x0000000b, 0x00000003, 0x00000007, 0x0004002b,
+    0x00000008, 0x0000000c, 0x00000003, 0x0004002b, 0x00000008, 0x0000000d, 0x00000001, 0x0004002b, 0x00000008, 0x0000000e, 0x00000004, 0x0004003b, 0x00000009,
+    0x00000002, 0x00000001, 0x0004003b, 0x0000000a, 0x00000003, 0x00000001, 0x0004003b, 0x0000000b, 0x00000004, 0x00000003, 0x00050036, 0x00000005, 0x00000001,
+    0x00000000, 0x00000006, 0x000200f8, 0x0000000f, 0x0004003d, 0x00000008, 0x00000010, 0x00000002, 0x0004003d, 0x00000007, 0x00000011, 0x00000003, 0x000500c6,
+    0x00000008, 0x00000012, 0x00000010, 0x0000000d, 0x00060159, 0x00000007, 0x00000013, 0x0000000c, 0x00000011, 0x00000012, 0x00050080, 0x00000008, 0x00000014,
+    0x00000010, 0x0000000e, 0x00060159, 0x00000007, 0x00000015, 0x0000000c, 0x00000011, 0x00000014, 0x00050083, 0x00000007, 0x00000016, 0x00000013, 0x00000015,
+    0x0003003e, 0x00000004, 0x00000016, 0x000100fd, 0x00010038};
 int main(void) {
     int val = have_val();
     size_t n = sizeof SPV_TRI_VERT / 4, on = 0; char err[200] = "";
@@ -281,6 +295,21 @@ int main(void) {
         }
         if (d) closedir(d);
         printf("t_android_spvpatch: %d modules rewritten, %d refused in %s\n", done, refused, dir);
+    }
+    {   // quad shuffles: each shuffle reads through the four quad broadcasts, the shuffle kept for an index out of the quad; a module without the lane input untouched
+        size_t qn = 0; int ch = 0; uint32_t *q = vka_spv_quad_shuffle(SPV_QUAD_FRAG, sizeof SPV_QUAD_FRAG / 4, &qn, &ch, err, sizeof err);
+        CHECK(q && ch, "quad shuffle rewrite made (%s)", err);
+        if (q) {
+            CHECK(count_op(q, qn, 365) == 8, "four quad broadcasts for each of the two shuffles (%d)", count_op(q, qn, 365));
+            CHECK(count_op(q, qn, 345) == 2, "the shuffles kept for an index out of the quad");
+            int cap = 0; for (size_t i = 5; i < qn && (q[i] & 0xffff) == 17; i += q[i] >> 16) cap |= q[i + 1] == 68;
+            CHECK(cap, "GroupNonUniformQuad capability declared");
+            if (val) CHECK(validate(q, qn, "quad shuffle"), "quad shuffle module valid");
+            free(q);
+        }
+        uint32_t *n = vka_spv_quad_shuffle(SPV_REMAP_FRAG, sizeof SPV_REMAP_FRAG / 4, &qn, &ch, err, sizeof err);
+        CHECK(!n && !ch && !err[0], "a pixel shader without shuffles left alone");
+        free(n);
     }
     const char *gs = getenv("DM_VK_GS_SPV");
     if (gs) {
