@@ -26,11 +26,12 @@ def xlate_command(path):
     """The command that starts the translator program at path (the apphost dmsh_xlate in dmsh_xlate_bin): [path] where the apphost runs. The apphost in the repository is the
     Mac's; the dlls beside it are portable, so on Windows it is <path>.exe when there is one (an apphost made for Windows), else `dotnet <path>.dll` (the .NET 10 runtime's
     dotnet on PATH, or DOTNET_ROOT's)"""
-    if os.name != 'nt' or os.path.splitext(path)[1].lower() in ('.exe', '.cmd', '.bat'): return [path]
+    if (os.name != 'nt' and not sys.platform.startswith('linux')) or os.path.splitext(path)[1].lower() in ('.exe', '.cmd', '.bat'): return [path]   # (Linux: the Mac's apphost does not run there either)
     if os.path.isfile(path + '.exe'): return [path + '.exe']
     dll = path if path.lower().endswith('.dll') else path + '.dll'
     root = os.environ.get('DOTNET_ROOT')
-    dotnet = os.path.join(root, 'dotnet.exe') if root and os.path.isfile(os.path.join(root, 'dotnet.exe')) else shutil.which('dotnet') or 'dotnet'
+    exe = 'dotnet.exe' if os.name == 'nt' else 'dotnet'
+    dotnet = os.path.join(root, exe) if root and os.path.isfile(os.path.join(root, exe)) else shutil.which('dotnet') or 'dotnet'
     return [dotnet, dll]
 
 NO_RUN = 'does not run'
