@@ -84,7 +84,7 @@ final class GameUpscaler {
     }
 
     // A game on the DLSS stand-in: Screen scaling, the present's scaling of the window to the screen (DlssTune.SCREEN_NAMES, DM_VK_PRESENT_SCALE), stored per game only;
-    // unset, it follows the stored Upscaler choice as before (DlssTune.screenOf), and no line of its own is sent
+    // unset, it follows the stored Upscaler choice (DlssTune.screenOf: SGSR 1 for the default SGSR 1, else as before, with no line of its own)
     static boolean ownScreen(Context c, String titleId) { return Prefs.of(c).contains(Prefs.gameKey("screen_scale", titleId)); }
     static Integer storedScreen(Context c, String titleId) { return ownScreen(c, titleId) ? Prefs.of(c).getInt(Prefs.gameKey("screen_scale", titleId), -1) : null; }
     static int screen(Context c, String titleId) { return DlssTune.screen(storedScreen(c, titleId), mode(c, titleId)); }

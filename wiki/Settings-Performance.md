@@ -32,7 +32,7 @@ Not every game shows every row. A row appears only when the game's profile has t
 - **A game on the DLSS stand-in** (Fire Emblem: Fortune's Weave, Star Fox) has its own Upscaler list instead: **GSR 2 (smooth images)**, **FSR 1 (sharp, fast)**, **Bilinear (fastest, softest)**, **FSR 3.1 (sharp, steady)**, with **Motion clarity** and a sharpness row where the mode has them. Fire Emblem: Fortune's Weave recommends FSR 3.1 on any phone.
 - **Screen scaling** (a game on the DLSS stand-in, under its Upscaler): how the finished picture is scaled to the screen.
   - **Nearest neighbor**, **Bilinear**, **Bicubic** (sharper than Bilinear, one cheap pass), **FSR 1** (with **Screen sharpness**: Off, Softer, Soft, Default, Max), **SGSR 1** (Qualcomm's, one pass), **Device (power saving)** (the phone's display hardware scales the picture: the least GPU work).
-  - **Default:** what the game did before, from the Upscaler choice in Settings: usually FSR 1.
+  - **Default:** follows the Upscaler choice in Settings, so **SGSR 1** unless you changed it (FSR 1 stays FSR 1, Bilinear and Native give Bilinear, Nearest neighbor gives Nearest neighbor). SGSR 1 and Device each use a few watts less than FSR 1 on a tablet.
   - **What to expect:** changes apply from the next frame in the in-game panel (Display tab). Bicubic, SGSR 1 and FSR 1 only act when the picture is enlarged; on a screen smaller than the game's picture they look like Bilinear. With Device, the overlay's text is drawn by the app instead of the game's picture; switching to or from Device rebuilds the picture's buffer (a short pause).
 
 ### Display

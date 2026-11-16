@@ -1082,7 +1082,7 @@ final class GameSettings {
     }
 
     private static void screenScale(MainActivity a, Game g, Runnable done) {   // a game on the DLSS stand-in: the present's scaling (GameUpscaler.screen, DM_VK_PRESENT_SCALE); the in-game panel changes it live
-        choose(a, "Screen scaling · " + g.name, DlssTune.SCREEN_NAMES, firstLabel(null, DlssTune.SCREEN_NAMES[GameUpscaler.screenDefault(a, g.titleId)]), GameUpscaler.ownScreen(a, g.titleId),
+        choose(a, "Screen scaling · " + g.name, DlssTune.SCREEN_NAMES, "Default (" + DlssTune.SCREEN_NAMES[GameUpscaler.screenDefault(a, g.titleId)] + ")", GameUpscaler.ownScreen(a, g.titleId),
                GameUpscaler.screen(a, g.titleId), v -> GameUpscaler.screen(a, g.titleId, v), done);
     }
 
