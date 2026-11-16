@@ -14,6 +14,7 @@
 #include "../nvn/nvn_mtl.h"
 #include "vka_present_rot.h"
 #include "vka_present_fsr.h"
+#include "vka_present_scale.h"
 #if __has_include("game_profile.h")
 #include "game_profile.h"
 #endif
@@ -24,6 +25,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <time.h>
 
 __attribute__((weak)) void dm_guest_frame_tick(void) {}
@@ -66,7 +68,14 @@ static int g_recreate;
 static struct { uint64_t n; double t; } g_pres[PRING];
 static VkSurfaceTransformFlagBitsKHR g_pre = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;   // the swapchain's preTransform
 static VkImageView g_sview[MAXIMG];   // the swapchain images as colour attachments (pre-rotation, FSR, the overlay)
-static int g_sview_fsr;   // this swapchain made its views for FSR: a missing view then failed, and a new swapchain would not have it either
+// Device scaling (DM_VK_PRESENT_SCALE=device): a picture scaled up gets a swapchain whose extent is the window's size divided by the picture's scale, so the picture fills
+// it 1:1 (a copy) and the compositor scales the whole buffer to the window: Android's swapchain sets the window's buffer size to imageExtent and its scaling mode to
+// SCALE_TO_WINDOW (libvulkan swapchain.cpp), the same as SurfaceHolder.setFixedSize, so the launcher's views, its layout and the touch mapping (PictureFit.rect, made for the
+// whole window) stay as they are. g_dev_want: the display-oriented extent present_one asks for (0: none); g_dev_on: this swapchain is so made; g_win_ew / g_win_eh: the
+// window's own size as the user sees it (the place and the scale of the picture are worked out for it, then carried into the buffer). The present's overlay is not drawn
+// then (the launcher's views draw it at the screen's resolution: nxhost_overlay_state -1)
+static uint32_t g_dev_want_w, g_dev_want_h; static _Atomic int g_dev_on; static int g_win_ew, g_win_eh, g_dev_refused;   // g_dev_refused: the surface took no such extent (not asked again)
+static int g_sview_fsr;   // this swapchain made its views for FSR or a one-pass scaler: a missing view then failed, and a new swapchain would not have it either
 static int g_fps_set; static unsigned g_refresh_n;
 static _Atomic int g_place_x = 5000, g_place_y = 5000;   // nxhost_picture_place, in 1/10000 of the free space
 void nxhost_picture_place(float x, float y) {
@@ -176,6 +185,31 @@ int vka_swap_rb(void) {
     return 0;
 #endif
 }
+static const VkComponentMapping g_swz_rb = {.r = VK_COMPONENT_SWIZZLE_B, .g = VK_COMPONENT_SWIZZLE_G, .b = VK_COMPONENT_SWIZZLE_R, .a = VK_COMPONENT_SWIZZLE_A};   // vka_swap_rb
+// The present's scaling of the window to the screen. DM_VK_PRESENT_SCALE=nearest|bilinear|bicubic|fsr1|sgsr1|device (live; the launcher's Screen scaling for a game on the DLSS
+// stand-in) picks one; unset or empty, the earlier switches decide as before: DM_VK_FSR (FSR 1 for a picture scaled up) and DM_VK_PRESENT_NEAREST (nearest filtering), each
+// on its own. Bicubic (Catmull-Rom) and SGSR 1 are one pass each into the swapchain image (scale_copy), FSR 1 its EASU and RCAS passes (fsr_copy); all three only for a
+// picture scaled up on either axis, as FSR has always been: a picture the same size or smaller is blitted or drawn bilinear (the rotated copy), nearest only for nearest.
+// device: the display hardware scales instead (see "Device scaling" at swap_create). Present thread only
+enum { PS_NEAREST, PS_BILINEAR, PS_BICUBIC, PS_FSR1, PS_SGSR1, PS_DEVICE, PS_N };
+static const char *const g_ps_names[PS_N] = {"nearest", "bilinear", "bicubic", "fsr1", "sgsr1", "device"};
+static int present_scale(void) {   // a PS_ value, or -1: unset (or not one of the names)
+    static uint32_t gen; static int v = -1, told = -1;
+    uint32_t g = atomic_load_explicit(&vka_env_gen, memory_order_relaxed);
+    if (g == gen) return v;
+    gen = g; v = -1;
+    char b[32];
+    if (vka_env_str("DM_VK_PRESENT_SCALE", b, sizeof b) && b[0]) {
+        for (int i = 0; i < PS_N; i++) if (!strcasecmp(b, g_ps_names[i])) v = i;
+        if (v < 0) VRED_ONCE("DM_VK_PRESENT_SCALE=%s is not nearest, bilinear, bicubic, fsr1, sgsr1 or device: DM_VK_FSR and DM_VK_PRESENT_NEAREST decide", b);
+    }
+    if (v != told) { told = v; if (v >= 0) VLOG("present scaling: %s (DM_VK_PRESENT_SCALE)", g_ps_names[v]); else VLOG("present scaling: DM_VK_FSR and DM_VK_PRESENT_NEAREST (DM_VK_PRESENT_SCALE unset)"); }
+    return v;
+}
+static int fsr_wanted(void) { int ps = present_scale(); return ps < 0 ? VKA_ENV("DM_VK_FSR", 0) != 0 : ps == PS_FSR1; }
+static int nearest_wanted(void) { int ps = present_scale(); return ps < 0 ? VKA_ENV("DM_VK_PRESENT_NEAREST", 0) != 0 : ps == PS_NEAREST; }
+static int one_pass_wanted(void) { int ps = present_scale(); return ps == PS_BICUBIC || ps == PS_SGSR1 ? ps : -1; }   // scale_copy's scaler, or -1
+
 // The letterboxed picture [dx, dx + dw) x [dy, dy + dh) of the display (what the user sees, g_ext turned back by g_pre) from the texture's crop, drawn into swapchain image idx
 // turned by g_pre: the preTransform is the turn applied to the content before presentation, so ROTATE_90 draws the picture a quarter turn clockwise, and the display's
 // (u, v) lands on the image's (s, t) = (1 - v, u); ROTATE_180 on (1 - u, 1 - v), ROTATE_270 on (v, 1 - u). The vertex shader maps the viewport's own (0..1) position to
@@ -187,15 +221,9 @@ static void rot_copy(VkCommandBuffer cb, unsigned k, uint32_t idx, vka_img *im, 
         .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR, .storeOp = VK_ATTACHMENT_STORE_OP_STORE, .clearValue = {.color = {{0, 0, 0, 1}}}};
     VkRenderingInfo ri = {VK_STRUCTURE_TYPE_RENDERING_INFO, .renderArea = {{0, 0}, g_ext}, .layerCount = 1, .colorAttachmentCount = 1, .pColorAttachments = &ca};
     vk.vkCmdBeginRendering(cb, &ri);
-    static const VkComponentMapping swz_rb = {
-        .r = VK_COMPONENT_SWIZZLE_B,
-        .g = VK_COMPONENT_SWIZZLE_G,
-        .b = VK_COMPONENT_SWIZZLE_R,
-        .a = VK_COMPONENT_SWIZZLE_A
-    };
-    VkImageView view = ok ? vka_view(im, g_pfmt ? g_pfmt : raw_unorm_twin(im->f.vk), VK_IMAGE_VIEW_TYPE_2D, VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1, vka_swap_rb() ? &swz_rb : NULL) : VK_NULL_HANDLE;
+    VkImageView view = ok ? vka_view(im, g_pfmt ? g_pfmt : raw_unorm_twin(im->f.vk), VK_IMAGE_VIEW_TYPE_2D, VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1, vka_swap_rb() ? &g_swz_rb : NULL) : VK_NULL_HANDLE;
     if (view) {
-        VkDescriptorImageInfo ii = {g_rot.samp[linear && !VKA_ENV("DM_VK_PRESENT_NEAREST", 0)], view, VK_IMAGE_LAYOUT_GENERAL};   // DM_VK_PRESENT_NEAREST: the launcher's Upscaler, nearest neighbor
+        VkDescriptorImageInfo ii = {g_rot.samp[linear && !nearest_wanted()], view, VK_IMAGE_LAYOUT_GENERAL};   // nearest_wanted: the launcher's Upscaler or Screen scaling, nearest neighbor
         VkWriteDescriptorSet w = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = g_rot.set[k], .descriptorCount = 1, .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .pImageInfo = &ii};
         vk.vkUpdateDescriptorSets(V.dev, 1, &w, 0, NULL);
         float W = (float)g_ext.width, H = (float)g_ext.height;   // the image; the display is H x W for a quarter turn
@@ -227,9 +255,8 @@ static void rot_copy(VkCommandBuffer cb, unsigned k, uint32_t idx, vka_img *im, 
 // ---------- FSR 1 upscale: EASU into an intermediate image, then RCAS into the swapchain image (vka_present_fsr.h) ----------
 // DM_VK_FSR=1 replaces the bilinear blit, or the rotated copy, when the picture is scaled up; DM_VK_FSR_SHARP is RCAS's sharpness in stops (0 = the most,
 // each stop halves it; AMD's default 0.25). Both are live. The intermediate image has the picture's size on the window, one per frame in flight
-static struct { int state; VkFormat fmt; VkPipeline easu, rcas, easu_sc; VkPipelineLayout lay; VkDescriptorSetLayout dsl; VkDescriptorPool pool; VkDescriptorSet set[NFRAME][2]; VkSampler samp;
+static struct { int state, base; VkFormat fmt; VkPipeline easu, rcas, easu_sc; VkPipelineLayout lay; VkDescriptorSetLayout dsl; VkDescriptorPool pool; VkDescriptorSet set[NFRAME][2]; VkSampler samp;
                 VkImage mid[NFRAME]; VkDeviceMemory mem[NFRAME]; VkImageView view[NFRAME]; uint32_t mw[NFRAME], mh[NFRAME]; } g_fsr;
-static int fsr_wanted(void) { return VKA_ENV("DM_VK_FSR", 0) != 0; }
 static VkPipeline fsr_pipe(const uint32_t *frag, size_t fsize, VkFormat fmt) {
     VkShaderModule sm[2] = {0}; VkPipeline p = VK_NULL_HANDLE;
     VkShaderModuleCreateInfo mv = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, .codeSize = sizeof vka_fsr_vert, .pCode = vka_fsr_vert}, mf = mv;
@@ -255,28 +282,36 @@ static VkPipeline fsr_pipe(const uint32_t *frag, size_t fsize, VkFormat fmt) {
     if (r) VRED("FSR: pipeline for format %d: %d", fmt, r);
     return r ? VK_NULL_HANDLE : p;
 }
-// The layout, sets, sampler and the EASU pipeline once, the RCAS pipeline per swapchain format: 1 = ready. A failure is logged once and leaves the bilinear blit
+// The layout, sets and sampler, made once for the FSR passes and the one-pass scalers (scale_copy): 1 = ready. A failure is logged once and leaves the bilinear blit
+static int fsr_base(void) {
+    if (g_fsr.base) return g_fsr.base > 0;
+    g_fsr.base = -1;
+    if (!rk_load()) return 0;
+    VkDescriptorSetLayoutBinding b = {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL};
+    VkDescriptorSetLayoutCreateInfo dl = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, .bindingCount = 1, .pBindings = &b};
+    VkPushConstantRange pc = {VK_SHADER_STAGE_FRAGMENT_BIT, 0, 16 * sizeof(uint32_t)};   // the shaders' P: EASU's four uvec4 constants; RCAS's con0 and its turn; present_uv.h's
+    VkDescriptorPoolSize ps = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 * NFRAME};
+    VkDescriptorPoolCreateInfo pi = {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, .maxSets = 2 * NFRAME, .poolSizeCount = 1, .pPoolSizes = &ps};
+    VkSamplerCreateInfo si = {VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO, .magFilter = VK_FILTER_LINEAR, .minFilter = VK_FILTER_LINEAR, .addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+                              .addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, .addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, .maxLod = 0.25f};
+    VkResult r = vk.vkCreateDescriptorSetLayout(V.dev, &dl, NULL, &g_fsr.dsl);
+    VkPipelineLayoutCreateInfo li = {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, .setLayoutCount = 1, .pSetLayouts = &g_fsr.dsl, .pushConstantRangeCount = 1, .pPushConstantRanges = &pc};
+    if (!r) r = rk.vkCreatePipelineLayout(V.dev, &li, NULL, &g_fsr.lay);
+    if (!r) r = vk.vkCreateDescriptorPool(V.dev, &pi, NULL, &g_fsr.pool);
+    VkDescriptorSetLayout dsls[2 * NFRAME]; for (int i = 0; i < 2 * NFRAME; i++) dsls[i] = g_fsr.dsl;
+    VkDescriptorSetAllocateInfo ai = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO, .descriptorPool = g_fsr.pool, .descriptorSetCount = 2 * NFRAME, .pSetLayouts = dsls};
+    if (!r) r = vk.vkAllocateDescriptorSets(V.dev, &ai, &g_fsr.set[0][0]);
+    if (!r) r = vk.vkCreateSampler(V.dev, &si, NULL, &g_fsr.samp);
+    if (r) { VRED("FSR: descriptor set, layout or sampler: %d; the picture is blitted", r); return 0; }
+    g_fsr.base = 1;
+    return 1;
+}
+// The EASU pipeline once, the RCAS pipeline per swapchain format: 1 = ready. A failure is logged once and leaves the bilinear blit
 static int fsr_ready(VkFormat fmt) {
     if (g_fsr.state > 0 && g_fsr.fmt == fmt) return 1;
     if (g_fsr.state < 0) return 0;
     if (!g_fsr.state) {
-        if (!rk_load()) { g_fsr.state = -1; return 0; }
-        VkDescriptorSetLayoutBinding b = {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL};
-        VkDescriptorSetLayoutCreateInfo dl = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, .bindingCount = 1, .pBindings = &b};
-        VkPushConstantRange pc = {VK_SHADER_STAGE_FRAGMENT_BIT, 0, 16 * sizeof(uint32_t)};   // the shaders' P: EASU's four uvec4 constants; RCAS's con0 and its turn
-        VkDescriptorPoolSize ps = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 * NFRAME};
-        VkDescriptorPoolCreateInfo pi = {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, .maxSets = 2 * NFRAME, .poolSizeCount = 1, .pPoolSizes = &ps};
-        VkSamplerCreateInfo si = {VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO, .magFilter = VK_FILTER_LINEAR, .minFilter = VK_FILTER_LINEAR, .addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-                                  .addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, .addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, .maxLod = 0.25f};
-        VkResult r = vk.vkCreateDescriptorSetLayout(V.dev, &dl, NULL, &g_fsr.dsl);
-        VkPipelineLayoutCreateInfo li = {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, .setLayoutCount = 1, .pSetLayouts = &g_fsr.dsl, .pushConstantRangeCount = 1, .pPushConstantRanges = &pc};
-        if (!r) r = rk.vkCreatePipelineLayout(V.dev, &li, NULL, &g_fsr.lay);
-        if (!r) r = vk.vkCreateDescriptorPool(V.dev, &pi, NULL, &g_fsr.pool);
-        VkDescriptorSetLayout dsls[2 * NFRAME]; for (int i = 0; i < 2 * NFRAME; i++) dsls[i] = g_fsr.dsl;
-        VkDescriptorSetAllocateInfo ai = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO, .descriptorPool = g_fsr.pool, .descriptorSetCount = 2 * NFRAME, .pSetLayouts = dsls};
-        if (!r) r = vk.vkAllocateDescriptorSets(V.dev, &ai, &g_fsr.set[0][0]);
-        if (!r) r = vk.vkCreateSampler(V.dev, &si, NULL, &g_fsr.samp);
-        if (r) { VRED("FSR: descriptor set, layout or sampler: %d; the picture is blitted", r); g_fsr.state = -1; return 0; }
+        if (!fsr_base()) { g_fsr.state = -1; return 0; }
         if (!(g_fsr.easu = fsr_pipe(vka_fsr_easu_frag, sizeof vka_fsr_easu_frag, VK_FORMAT_R8G8B8A8_UNORM))) { g_fsr.state = -1; return 0; }
     }
     if (g_fsr.rcas) { vka_queue_idle(); rk.vkDestroyPipeline(V.dev, g_fsr.rcas, NULL); g_fsr.rcas = VK_NULL_HANDLE; }   // a new swapchain format: no pass in flight
@@ -394,6 +429,65 @@ static int fsr_copy(VkCommandBuffer cb, unsigned k, uint32_t idx, vka_img *im, i
     return 1;
 }
 
+// ---------- One-pass scalers: bicubic and SGSR 1 straight into the swapchain image (vka_present_scale.h) ----------
+// DM_VK_PRESENT_SCALE=bicubic (Catmull-Rom, 9 bilinear fetches) or sgsr1 (Qualcomm's SGSR 1, the neural upscaler's filter as a fragment pass): one draw over the letterbox of
+// the swapchain image, the bars cleared by the same pass, turned for pre-rotation as RCAS is; no intermediate image. The FSR passes' layout, sets and sampler (fsr_base);
+// a pipeline per scaler and swapchain format. A pipeline that cannot be made is logged once and leaves the bilinear path for that scaler
+static struct { VkPipeline pipe[2]; VkFormat fmt[2]; int bad[2], told; } g_one = {.told = -1};   // [0] bicubic, [1] SGSR 1
+static VkPipeline one_ready(int which, VkFormat fmt) {
+    int w = which == PS_SGSR1;
+    if (g_one.bad[w] || !fsr_base()) return VK_NULL_HANDLE;
+    if (g_one.pipe[w] && g_one.fmt[w] == fmt) return g_one.pipe[w];
+    if (g_one.pipe[w]) { vka_queue_idle(); rk.vkDestroyPipeline(V.dev, g_one.pipe[w], NULL); g_one.pipe[w] = VK_NULL_HANDLE; }   // a new swapchain format: no pass in flight
+    g_one.pipe[w] = w ? fsr_pipe(vka_present_sgsr_frag, sizeof vka_present_sgsr_frag, fmt) : fsr_pipe(vka_present_bicubic_frag, sizeof vka_present_bicubic_frag, fmt);
+    if (!g_one.pipe[w]) { g_one.bad[w] = 1; VRED("present scaling %s: no pipeline; the picture is drawn bilinear", g_ps_names[which]); return VK_NULL_HANDLE; }
+    g_one.fmt[w] = fmt;
+    return g_one.pipe[w];
+}
+// The texture's crop [cx, cx + cw) x [cy, cy + ch) scaled to [dx, dx + dw) x [dy, dy + dh) of swapchain image idx with scaler which (PS_BICUBIC, PS_SGSR1), the rest black.
+// The push constants are present_uv.h's: RCAS's turn back from the swapchain pixel to the picture's (fsr_copy), then the picture pixel's centre into the texture.
+// 0 = nothing recorded (no pipeline, or the texture has no view to sample): the caller takes the bilinear path
+static int scale_copy(VkCommandBuffer cb, unsigned k, uint32_t idx, vka_img *im, int which, int cx, int cy, int cw, int ch, int dx, int dy, int dw, int dh) {
+    VkPipeline pipe = one_ready(which, g_swap_fmt);
+    if (!pipe) return 0;
+    VkImageView src = vka_view(im, g_pfmt ? g_pfmt : raw_unorm_twin(im->f.vk), VK_IMAGE_VIEW_TYPE_2D, VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1, vka_swap_rb() ? &g_swz_rb : NULL);
+    if (!src) { VRED_ONCE("present scaling: window texture serial %llu (format %#x) has no view to sample: drawn bilinear", (unsigned long long)im->serial, im->d.format); return 0; }
+    if (g_one.told != which) { g_one.told = which; VLOG("present scaling %s on: one pass into the swapchain image", which == PS_SGSR1 ? "SGSR 1" : "bicubic (Catmull-Rom)"); }
+    vka_barrier(cb);   // the replay's writes to the window texture (earlier submissions, in submission order)
+    VkDescriptorImageInfo ii = {g_fsr.samp, src, VK_IMAGE_LAYOUT_GENERAL};
+    VkWriteDescriptorSet wr = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = g_fsr.set[k][0], .descriptorCount = 1, .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .pImageInfo = &ii};
+    vk.vkUpdateDescriptorSets(V.dev, 1, &wr, 0, NULL);
+    int W = (int)g_ext.width, H = (int)g_ext.height;
+    struct { int32_t m[6]; float pad[2], uv[4], tex[4]; } pc; memset(&pc, 0, sizeof pc);
+    VkViewport v;
+    switch (g_pre) {   // as fsr_copy's RCAS pass
+    case VK_SURFACE_TRANSFORM_ROTATE_90_BIT_KHR:  v = (VkViewport){(float)(W - dy - dh), (float)dx, (float)dh, (float)dw, 0, 1}; memcpy(pc.m, (int[6]){0, -1, 1, 0, -dx, W - 1 - dy}, sizeof pc.m); break;
+    case VK_SURFACE_TRANSFORM_ROTATE_270_BIT_KHR: v = (VkViewport){(float)dy, (float)(H - dx - dw), (float)dh, (float)dw, 0, 1}; memcpy(pc.m, (int[6]){0, 1, -1, 0, H - 1 - dx, -dy}, sizeof pc.m); break;
+    case VK_SURFACE_TRANSFORM_ROTATE_180_BIT_KHR: v = (VkViewport){(float)(W - dx - dw), (float)(H - dy - dh), (float)dw, (float)dh, 0, 1}; memcpy(pc.m, (int[6]){-1, 0, 0, -1, W - 1 - dx, H - 1 - dy}, sizeof pc.m); break;
+    default:                                      v = (VkViewport){(float)dx, (float)dy, (float)dw, (float)dh, 0, 1}; memcpy(pc.m, (int[6]){1, 0, 0, 1, -dx, -dy}, sizeof pc.m); break;
+    }
+    float tw = (float)im->w, th = (float)im->h;
+    pc.uv[0] = (float)cw / dw / tw; pc.uv[1] = (float)ch / dh / th; pc.uv[2] = cx / tw; pc.uv[3] = cy / th;
+    if (vka_origin_ll()) { pc.uv[1] = -pc.uv[1]; pc.uv[3] = (cy + ch) / th; }   // stored bottom-up: the picture's rows read from the crop's bottom
+    pc.tex[0] = 1.0f / tw; pc.tex[1] = 1.0f / th; pc.tex[2] = tw; pc.tex[3] = th;
+    _Static_assert(sizeof pc == 16 * sizeof(uint32_t), "present_uv.h's P");
+    VkRect2D sc = {{0, 0}, g_ext};
+    vka_img_barrier(cb, g_simg[idx], VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    VkRenderingAttachmentInfo ca = {VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO, .imageView = g_sview[idx], .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR, .storeOp = VK_ATTACHMENT_STORE_OP_STORE, .clearValue = {.color = {{0, 0, 0, 1}}}};   // the bars
+    VkRenderingInfo ri = {VK_STRUCTURE_TYPE_RENDERING_INFO, .renderArea = sc, .layerCount = 1, .colorAttachmentCount = 1, .pColorAttachments = &ca};
+    vk.vkCmdBeginRendering(cb, &ri);
+    rk.vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
+    rk.vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, g_fsr.lay, 0, 1, &g_fsr.set[k][0], 0, NULL);
+    rk.vkCmdPushConstants(cb, g_fsr.lay, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof pc, &pc);
+    rk.vkCmdSetViewport(cb, 0, 1, &v);
+    rk.vkCmdSetScissor(cb, 0, 1, &sc);
+    rk.vkCmdDraw(cb, 3, 1, 0, 0);
+    vk.vkCmdEndRendering(cb);
+    vka_img_barrier(cb, g_simg[idx], VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+    return 1;
+}
+
 // ---------- The launcher's overlay, drawn into the swapchain image ----------
 // The launcher draws the overlay's text blocks (build tag, frame rate and the other items: Overlay.java) into bitmaps and hands them over (nxhost_overlay_set); each present
 // draws them over the picture, in their corners, with the rotated copy's shaders and a premultiplied blend (ovl_draw). As Android views over the SurfaceView they made the
@@ -427,7 +521,7 @@ int nxhost_overlay_set(int slot, const void *px, int w, int h, int stride) {
     pthread_mutex_unlock(&g_omu);
     return ok && nxhost_overlay_state() >= 0;
 }
-int nxhost_overlay_state(void) { return !ovl_wanted() ? -1 : atomic_load(&g_ostate); }
+int nxhost_overlay_state(void) { return !ovl_wanted() || atomic_load(&g_dev_on) ? -1 : atomic_load(&g_ostate); }   // device scaling: the launcher's views (full resolution)
 
 static void ovl_fail(const char *what, VkResult r) { VRED("overlay: %s: %d; the launcher draws it", what, r); atomic_store(&g_ostate, -1); }
 static void ovl_free_image(void) {
@@ -488,7 +582,7 @@ static int ovl_image(uint32_t w, uint32_t h) {
 // Frame k: the blocks set since the last upload into the overlay image (frame k's upload buffer is free: its fence was waited for), then each block drawn over swapchain
 // image idx (in PRESENT_SRC, the picture in it) in its corner of the display. Nothing at all while no block is set
 static void ovl_draw(VkCommandBuffer cb, unsigned k, uint32_t idx) {
-    if (!ovl_wanted() || atomic_load(&g_ostate) < 0) return;
+    if (!ovl_wanted() || atomic_load(&g_dev_on) || atomic_load(&g_ostate) < 0) return;
     pthread_mutex_lock(&g_omu);
     uint64_t gen = g_ogen; int need_w = 0, need_h = 0, any = 0;
     for (int s = 0; s < OVL_SLOTS; s++) { if (g_oin[s].w > need_w) need_w = g_oin[s].w; need_h += g_oin[s].h; any |= g_oin[s].w > 0; }
@@ -591,9 +685,18 @@ static int swap_create(void) {
     // The extent: the window's own size (the picture as the user sees it), turned for a quarter-turn preTransform. currentExtent is in the panel's orientation on phones but
     // already in the window's on the emulator (gfxstream), so the window's size decides, and currentExtent is only the fallback
     int ww = ANativeWindow_getWidth(g_win), wh = ANativeWindow_getHeight(g_win);
+    if (atomic_load(&g_dev_on) && g_win_ew > 0) { ww = g_win_ew; wh = g_win_eh; }   // the last swapchain was device-scaled: the window's own size as read before it
     if (ww > 0 && wh > 0) ext = rot_quarter(pre) ? (VkExtent2D){(uint32_t)wh, (uint32_t)ww} : (VkExtent2D){(uint32_t)ww, (uint32_t)wh};
     else if (rot && !rot_quarter(pre)) ext = (VkExtent2D){ext.height, ext.width};
     if (!ext.width || !ext.height) return 0;
+    g_win_ew = (int)(rot_quarter(pre) ? ext.height : ext.width); g_win_eh = (int)(rot_quarter(pre) ? ext.width : ext.height);
+    int dev = 0;
+    if (g_dev_want_w && g_dev_want_h && present_scale() == PS_DEVICE) {   // device scaling: the smaller buffer, within the surface's limits
+        uint32_t bw = g_dev_want_w, bh = g_dev_want_h; if (rot_quarter(pre)) { uint32_t t = bw; bw = bh; bh = t; }
+        if (bw >= caps.minImageExtent.width && bh >= caps.minImageExtent.height && bw <= caps.maxImageExtent.width && bh <= caps.maxImageExtent.height) { ext = (VkExtent2D){bw, bh}; dev = 1; }
+        else { g_dev_refused = 1; VRED_ONCE("device scaling: buffer %ux%u outside the surface's %ux%u..%ux%u: the present scales (bilinear)", bw, bh, caps.minImageExtent.width, caps.minImageExtent.height,
+                       caps.maxImageExtent.width, caps.maxImageExtent.height); }
+    }
     uint32_t n = caps.minImageCount < 3 ? 3 : caps.minImageCount; if (caps.maxImageCount && n > caps.maxImageCount) n = caps.maxImageCount; if (n > MAXIMG) n = MAXIMG;
     VkCompositeAlphaFlagBitsKHR ca = caps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR ? VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR :
                                      caps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR ? VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR : (VkCompositeAlphaFlagBitsKHR)(caps.supportedCompositeAlpha & -caps.supportedCompositeAlpha);
@@ -608,7 +711,9 @@ static int swap_create(void) {
         g_nimg = 0; vk.vkDestroySwapchainKHR(V.dev, old, NULL); g_swap = VK_NULL_HANDLE;
     }
     if (r) { VRED("vkCreateSwapchainKHR %ux%u format %d: %d", ext.width, ext.height, pick.format, r); return 0; }
-    g_swap = sw; g_swap_fmt = pick.format; g_ext = ext; g_pre = pre; g_sview_fsr = fsr_wanted();
+    g_swap = sw; g_swap_fmt = pick.format; g_ext = ext; g_pre = pre; g_sview_fsr = fsr_wanted() || one_pass_wanted() >= 0;
+    if (dev || atomic_load(&g_dev_on)) VLOG("device scaling %s: swapchain %ux%u for the window's %dx%d", dev ? "on" : "off", ext.width, ext.height, g_win_ew, g_win_eh);
+    atomic_store(&g_dev_on, dev);
     g_nimg = MAXIMG; vk.vkGetSwapchainImagesKHR(V.dev, sw, &g_nimg, g_simg);
     VkSemaphoreCreateInfo sci = {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
     if (rot_rotates(pre) || vka_swap_rb()) rot_ready(pick.format);
@@ -633,7 +738,7 @@ static void window_take(void) {   // g_pmu held
     pthread_mutex_unlock(&g_pmu);
     swap_destroy(1);
     if (g_win) ANativeWindow_release(g_win);
-    g_win = w; g_fps_set = 0;
+    g_win = w; g_fps_set = 0; g_dev_want_w = g_dev_want_h = 0; g_win_ew = g_win_eh = 0; atomic_store(&g_dev_on, 0);
     if (w && V.has_android_surface) {
         VkAndroidSurfaceCreateInfoKHR si = {VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR, .window = w};
 #ifdef NX_LINUX
@@ -669,6 +774,7 @@ static void suboptimal(void) {
     if (!g_win || g_recreate) return;
     uint32_t ww = (uint32_t)ANativeWindow_getWidth(g_win), wh = (uint32_t)ANativeWindow_getHeight(g_win);
     uint32_t ew = rot_quarter(g_pre) ? g_ext.height : g_ext.width, eh = rot_quarter(g_pre) ? g_ext.width : g_ext.height;
+    if (atomic_load(&g_dev_on)) { ew = (uint32_t)g_win_ew; eh = (uint32_t)g_win_eh; }   // device scaling: the buffer is smaller on purpose
     if ((ww != ew || wh != eh) && (ww != eh || wh != ew)) { g_recreate = 1; return; }
     if (g_rot.state < 0 || !rot_wanted()) return;
     VkSurfaceCapabilitiesKHR caps;
@@ -762,7 +868,30 @@ static int present_one(const pq_item *it) {
     // DM_VK_PICTURE_ASPECT=<w>:<h> (live; the launcher's Aspect ratio 4:3 sets 4:3): the picture's shape on screen when it is fitted, in place of the crop's own (a native 4:3
     // mod lays its 4:3 picture out in the game's 16:9 frame: shown at 4:3 it fills a 4:3 screen and gets side bars on a 16:9 one). Stretch still fills the screen
     int fw = cw; { const char *pa = getenv("DM_VK_PICTURE_ASPECT"); int aw = 0, ah = 0; if (pa && sscanf(pa, "%d:%d", &aw, &ah) == 2 && aw > 0 && ah > 0) fw = (int)((long)ch * aw / ah); }
-    int fr[4]; vka_fit_rect(ew, eh, fw, ch, stretch_wanted(), picture_size(), g_place_x, g_place_y, fr);
+    int dev = atomic_load(&g_dev_on), fr[4];
+    if (dev) vka_fit_rect(g_win_ew, g_win_eh, fw, ch, stretch_wanted(), picture_size(), g_place_x, g_place_y, fr);   // device scaling: placed on the whole window, then carried into the buffer
+    else vka_fit_rect(ew, eh, fw, ch, stretch_wanted(), picture_size(), g_place_x, g_place_y, fr);
+    {   // Device scaling: the buffer the picture would fill 1:1, asked for when it differs by more than 2 pixels (a new swapchain at the next present); off: back to the window's size
+        int want = present_scale() == PS_DEVICE && im && !g_dev_refused, wwin = dev ? g_win_ew : ew, hwin = dev ? g_win_eh : eh;
+        uint32_t bw = 0, bh = 0;
+        if (want && (fr[2] > cw || fr[3] > ch)) {   // scaled up: a smaller buffer; the same size or smaller: the window's own, the present scales as bilinear does
+            double sx = fr[2] > cw ? (double)cw / fr[2] : 1, sy = fr[3] > ch ? (double)ch / fr[3] : 1;
+            bw = (uint32_t)(wwin * sx + 0.5); bh = (uint32_t)(hwin * sy + 0.5);
+        }
+        uint32_t cur_w = dev ? (uint32_t)ew : 0, cur_h = dev ? (uint32_t)eh : 0;
+        if ((bw ? (bw + 2 < cur_w || bw > cur_w + 2 || bh + 2 < cur_h || bh > cur_h + 2) : dev) && !g_recreate) { g_dev_want_w = bw; g_dev_want_h = bh; g_recreate = 1; }
+    }
+    if (dev) {   // the whole window's rectangle in buffer pixels; within 2 pixels of the crop's size it is the crop's size (a copy, no scaling)
+        double fx = (double)ew / g_win_ew, fy = (double)eh / g_win_eh;
+        int bx = (int)(fr[0] * fx + 0.5), by = (int)(fr[1] * fy + 0.5), bw = (int)(fr[2] * fx + 0.5), bh = (int)(fr[3] * fy + 0.5);
+        if (abs(bw - cw) <= 2) bw = cw;
+        if (abs(bh - ch) <= 2) bh = ch;
+        if (bw > ew) bw = ew;
+        if (bh > eh) bh = eh;
+        if (bx + bw > ew) bx = ew - bw;
+        if (by + bh > eh) by = eh - bh;
+        fr[0] = bx; fr[1] = by; fr[2] = bw; fr[3] = bh;
+    }
     int dx = fr[0], dy = fr[1], dw = fr[2], dh = fr[3];
     static VkFormat s_last_fmt; static VkFormatProperties s_last_fp;
     VkFormatProperties fp = {0};
@@ -771,18 +900,22 @@ static int present_one(const pq_item *it) {
         fp = s_last_fp;
     }
     int blit = im && im->inited && im->aspect == VK_IMAGE_ASPECT_COLOR_BIT && im->f.kind == 0 && im->samples == 1 && (fp.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_SRC_BIT);
-    // FSR in place of the blit or the rotated copy for a picture scaled up; switched on live, the swapchain has no attachment views yet: blitted once, and the next swapchain has them.
-    // A view that failed on a swapchain made for FSR is not asked for again: each present would make a new swapchain (a queue idle) and fail the same way
-    int fsr = blit > 0 && fsr_wanted() && (dw > cw || dh > ch) && (im->usage & VK_IMAGE_USAGE_SAMPLED_BIT)
+    // FSR (or a one-pass scaler: DM_VK_PRESENT_SCALE bicubic, sgsr1) in place of the blit or the rotated copy for a picture scaled up; switched on live, the swapchain has no
+    // attachment views yet: blitted once, and the next swapchain has them. A view that failed on a swapchain made for FSR is not asked for again: each present would make a
+    // new swapchain (a queue idle) and fail the same way
+    int one = one_pass_wanted(), scaler = fsr_wanted() || one >= 0;
+    int fsr = blit > 0 && scaler && (dw > cw || dh > ch) && (im->usage & VK_IMAGE_USAGE_SAMPLED_BIT)
               && (fp.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT);
-    if (!fsr && fsr_wanted() && im) { static int told; if (!told++) VLOG("FSR wanted but not used: blit %d, picture %dx%d -> %dx%d, usage %#x, linear filter %d", blit, cw, ch, dw, dh,
-                                                                   (unsigned)im->usage, (fp.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) != 0); }
+    if (!fsr && scaler && im) { static int told; if (!told++) VLOG("%s wanted but not used: blit %d, picture %dx%d -> %dx%d, usage %#x, linear filter %d", one >= 0 ? g_ps_names[one] : "FSR", blit, cw, ch, dw, dh,
+                                                           (unsigned)im->usage, (fp.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) != 0); }
     if (fsr && !g_sview[idx]) {
         if (!g_sview_fsr) g_recreate = 1;
         else VRED_ONCE("FSR: swapchain image %u has no attachment view: blitted", idx);
         fsr = 0;
     }
-    if (fsr && fsr_ready(g_swap_fmt) && fsr_mid(k, (uint32_t)dw, (uint32_t)dh) && fsr_copy(cb, k, idx, im, cx, cy, cw, ch, dx, dy, dw, dh)) {
+    if (fsr && one >= 0 && scale_copy(cb, k, idx, im, one, cx, cy, cw, ch, dx, dy, dw, dh)) {
+        blit = -1;
+    } else if (fsr && one < 0 && fsr_ready(g_swap_fmt) && fsr_mid(k, (uint32_t)dw, (uint32_t)dh) && fsr_copy(cb, k, idx, im, cx, cy, cw, ch, dx, dy, dw, dh)) {
         blit = -1;
     } else if (rot_rotates(g_pre) || vka_swap_rb() || (ownfmt && g_sview[idx])) {
         int ok = im && im->inited && im->aspect == VK_IMAGE_ASPECT_COLOR_BIT && im->f.kind == 0 && im->samples == 1 && (im->usage & VK_IMAGE_USAGE_SAMPLED_BIT) && g_sview[idx];
@@ -802,7 +935,7 @@ static int present_one(const pq_item *it) {
         int y0 = cy, y1 = cy + ch; if (vka_origin_ll()) { y0 = cy + ch; y1 = cy; }   // lower-left origin: the window texture is stored bottom-up
         VkImageBlit b = {{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {{cx, y0, 0}, {cx + cw, y1, 1}}, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {{dx, dy, 0}, {dx + dw, dy + dh, 1}}};
         vk.vkCmdBlitImage(cb, im->img, VK_IMAGE_LAYOUT_GENERAL, g_simg[idx], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &b,
-                          (fp.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) && !VKA_ENV("DM_VK_PRESENT_NEAREST", 0) ? VK_FILTER_LINEAR : VK_FILTER_NEAREST);
+                          (fp.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) && !nearest_wanted() ? VK_FILTER_LINEAR : VK_FILTER_NEAREST);
     } else if (im && !blit) VRED_ONCE("window texture serial %llu (format %#x) cannot be blitted to the swapchain: presented black", (unsigned long long)im->serial, im->d.format);
     if (blit >= 0) vka_img_barrier(cb, g_simg[idx], VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
     ovl_draw(cb, k, idx);   // the launcher's overlay over the picture (generated frames too)
