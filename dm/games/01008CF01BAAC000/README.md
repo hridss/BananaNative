@@ -6,6 +6,8 @@ Update 1.1.0 (v196608) over the base game, SDK 20.5.1, NintendoWare G3d / Ui2d /
 
 Playable on the Mac: title movie and logo, file selection, the opening autosave and its reload, and Link's opening Suthorn Ruins corridor through the raised door, rubble jump and upper hall. Movement, jumping, sword input and the right-stick camera work. Both Mac and iOS shader builds produce all 9,858 libraries with no unresolved bindings. An unsigned IPA was built (about 7.8 GB); iOS gameplay remains untested.
 
+Android (AYN Thor, Adreno 740, build `c60a38ad`, 2026-11-16): a fresh save reaches the opening prologue and Suthorn Ruins corridor in about 30 s on both drivers, once the stand-in font has U+25A1 ([Found on this game](#found-on-this-game)). Turnip (Mesa 27.0.0-devel): 60 fps, no red line. Qualcomm's own driver: about 35 fps in the dark opening room (GPU 17 ms) and one red line, `texture copy 0x35 → 0x35 needs a draw (… VkFormat 129)`, not traced.
+
 ## What it needs
 
 | Setting | Where | Why |

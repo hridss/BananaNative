@@ -81,3 +81,4 @@ General host changes first needed here; each applies to every game:
 ## Open
 
 - Mii heads draw nothing: the host ships no MiiModel firmware data (the player README notes "no Mii heads").
+- **Android, Qualcomm's own driver only:** the characters' faces lack their texture around the eyes (character select and kart screen; AYN Thor, Adreno 740, 2026-11-16, build `c60a38ad`). The same route on Turnip (PurpleVK) draws them. Both drivers log the same red lines (shader `1bd2849fe5e9f00c` binding 257 reading texture IDs the game registered NULL into, e.g. 1112), so those are not the difference. Not traced: which draw and which texture the eyes take.
