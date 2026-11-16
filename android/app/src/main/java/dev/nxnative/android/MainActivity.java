@@ -1074,7 +1074,7 @@ public final class MainActivity extends Activity {
         }
         gameBox.removeAllViews();
         selectedTile = null;
-        if (addFab != null) addFab.setVisibility(games.isEmpty() && !Ondevice.showing() ? View.GONE : View.VISIBLE);   // the welcome card has its own Add game
+        if (addFab != null) addFab.setVisibility(View.VISIBLE);   // always: the welcome card (emptyCard) has no Add game button of its own
         if (games.isEmpty() && !Ondevice.showing()) { gameBox.addView(emptyCard(), new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)); noFocusTint(gameBox); return; }
         // One tile per game: while a game is being prepared its tile carries the ring (workTile) and a tap opens the job's sheet (Ondevice.sheet); a game not listed yet gets its tile first
         workTiles.clear();
