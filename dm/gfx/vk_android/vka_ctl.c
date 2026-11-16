@@ -5,6 +5,7 @@
 //                     switches read at use), then bumps vka_env_gen: every VKA_ENV call site reads its switch again on its next call. "env KEY=" clears an override
 //                     (the switch reads as unset). Switches that need a restart are named in the log line (g_restart)
 //   "capture <n>"     the next n frames, one log line each: draws, skipped draws, render passes, full barriers, clears / copies, submissions, recording ms, GPU ms
+//   "framecapture <path>"   the next frame written to a capture file for nxreplay, as DM_NVN_CAPTURE (vka_capture.c; once a run)
 //   "screenshot [p]"  the next presented game frame (the window texture, before the present's scaling) as a PNG, by default ctl-shot-<frame>.png beside the control file
 //   "stats"           log lines now: the last 60 frames' averages, the frame rate, placed memory, pipelines, the switches set live, and the images by content and by why they stay
 // Every answer is a log line starting "[vk] ctl:" (android/tools/nxctl.sh waits for them)
@@ -307,6 +308,10 @@ int dm_gfx_ctl(const char *line) {   // the control thread (hle_hid.c ctl_main):
         long n = line[7] ? atol(line + 8) : 60; if (n <= 0) n = 60; if (n > NREC - 16) n = NREC - 16;
         if (g_cap_from) { VLOG("ctl: capture: one is running (frames %llu-%llu)", (unsigned long long)g_cap_from, (unsigned long long)(g_cap_to - 1)); return 1; }
         atomic_store(&g_capture, n); VLOG("ctl: capture of the next %ld frames queued", n); return 1;
+    }
+    if (!strncmp(line, "framecapture ", 13)) {   // the next frame captured into the path (vka_capture.c vka_capture_arm; replayed by nxreplay)
+        int vka_capture_arm(const char *path); const char *p = line + 13; while (*p == ' ') p++;
+        if (!vka_capture_arm(p)) VLOG("ctl: framecapture: one was asked already this run, or no path"); return 1;
     }
     if (!strncmp(line, "screenshot", 10) && (!line[10] || line[10] == ' ')) {
         const char *p = line[10] ? line + 11 : ""; while (*p == ' ') p++;
