@@ -1017,6 +1017,13 @@ Most service calls can be found before they crash, before the first boot or the 
 - **Fix:** the Jcms and Nmouse calls are hooked (`hle_hid.c`): no handles, a merged handle with no states, and the pointer's settings (`SetNmousePointerRanges`, `EnableNmousePointer`, `SetNmousePointerPosition`) with nothing to set. From upstream nxnative (0a759de7, 03d92a9f), with the pointer settings added here.
 - **Found on:** [Mario Kart World](../../dm/games/0400C3F00006E000/README.md) 1.8.0, on the phone, right after its graphics system came up; upstream: Fire Emblem Fortune's Weave, Pokémon Pokopia.
 
+### A Nintendo application's scene id
+
+- **Symptom:** a null read in the hid client under `nn::hid::SetSceneIdForPrivateApp` as a scene starts.
+- **Cause:** Nintendo's own applications call `SetSceneIdForPrivateApp` at each scene's start, and the SDK's own connects to the hid service, which the host does not have.
+- **Fix:** it is logged, as nothing reads it (`hle_hid.c`; upstream nxnative's pull request #1425, b0f14c1a).
+- **Found on:** [Nintendo Switch 2 Welcome Tour](../../dm/games/040057C02159A000/README.md): its scene modules.
+
 ### GameShare guest displays
 
 - **Symptom:** a crash at boot in `nn::vi` under `nn::streamplay::CreateIndividualDisplays`.
@@ -1065,6 +1072,20 @@ Most service calls can be found before they crash, before the first boot or the 
 - **Cause:** `SetGraphicsTargetFrameRate` maps up to 59 fps to mode 1, up to 119 to mode 2 and above to mode 3 (`SetGraphicsTargetFrameRateAuto` to mode 0) and calls `SetGraphicsFrameLengthMode`, which locks the gs graphics server's context and sends it the mode. The host has no graphics server, so the context is null.
 - **Fix:** `SetGraphicsFrameLengthMode` is hooked and logs the mode once per change; both `oe` paths reach it. The host paces by the window's present interval (`hle_oe.c`).
 - **Found on:** Hyrule Warriors: Age of Imprisonment (upstream nxnative, d70ee900; its profile is not on this branch): 60 / its present interval at boot.
+
+### The application's GPU time span
+
+- **Symptom:** a null read in `nn::os::SdkMutexType` under `nn::gs::sdk::QueryApplicationGpuTimeSpan`, after the first frame.
+- **Cause:** a Switch 2 game can ask each frame for the GPU time it used between two ticks (`nn::oe::QueryApplicationGpuTimeSpan`). The SDK's own locks the gs graphics server's context, as `SetGraphicsFrameLengthMode` does, and the host has no graphics server.
+- **Fix:** hooked: success and a fixed span of 8 ms, logged once (`hle_oe.c`). The host has no GPU time per application; 8 ms is under a 60 fps frame, so a game that sizes its picture by the span stays at full size, and a span that is not 0 takes no divide or "not measured" path. The game reads the span only on success. From upstream nxnative's pull request #1425 (b0f14c1a), where Welcome Tour ran the same with 0 and with 8 ms on the Mac.
+- **Found on:** [Nintendo Switch 2 Welcome Tour](../../dm/games/040057C02159A000/README.md) (`main+0x30a83c`).
+
+### `vi::InitializeWithVrrLfcEnabled`
+
+- **Symptom:** SIGSEGV reading address 0 in `SdkMutexType::Lock` right after graphics initialize, under `nn::vi2::InitializeWithVrrLfcEnabled`.
+- **Cause:** the Switch 2 SDKs' display initialize with low frame rate compensation for a variable refresh rate display. It does `nn::vi::Initialize`'s work through `vi2`, whose VRR hooks lock the mutex at the start of `nn::gsv::GetUserSession()`'s session, which the host never opens.
+- **Fix:** the host takes it over like `nn::vi::Initialize` (`hle_vi.c`): it has no vi service and no VRR display (`QueryDisplayVrrSupported` says so). From upstream nxnative (11825d2a).
+- **Found on:** [Resident Evil 4](../../dm/games/0400569027BF4000/README.md) (v131072, SDK 21.4.3: `main+0xb180288` → `sdk+0x5d8cf0`, upstream); [Nintendo Switch 2 Welcome Tour](../../dm/games/040057C02159A000/README.md) (v262144, SDK 20.5.29), at boot.
 
 ### Eventfds served offline
 

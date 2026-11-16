@@ -794,6 +794,9 @@ HLE_FORCE("_ZN2nn3hid16InitializeNmouseEPvmii", "Joy-Con mouse pointer: no hid s
 HLE_FORCE("_ZN2nn3hid16GetNmouseHandlesEPNS0_12NmouseHandleEij", "Joy-Con mouse pointer handles: none (no sensor on the host)", int, h_hid_NmouseHandles, void *out, int n, uint32_t id) { (void)out; (void)n; (void)id; return 0; }
 HLE_FORCE("_ZN2nn3hid32SetNmouseButtonConfigJoyLeftJcmsERKNS0_29NmouseButtonConfigJoyLeftJcmsE", "Joy-Con mouse pointer: no sensor on the host", void, h_hid_NmouseCfgL, const void *c) { (void)c; }
 HLE_FORCE("_ZN2nn3hid33SetNmouseButtonConfigJoyRightJcmsERKNS0_30NmouseButtonConfigJoyRightJcmsE", "Joy-Con mouse pointer: no sensor on the host", void, h_hid_NmouseCfgR, const void *c) { (void)c; }
+// Nintendo's own applications tell the hid service which scene they show (Nintendo Switch 2 Welcome Tour's scene modules, at each module's start); the host has no hid service and
+// nothing reads it, so it is only logged (the SDK's own connects to hid itself and reads null)
+HLE_FORCE("_ZN2nn3hid23SetSceneIdForPrivateAppEi", "scene id for a Nintendo application: logged, nothing reads it", void, h_hid_SceneId, int id) { LOG("hid: SetSceneIdForPrivateApp %d", id); }
 // The pointer's own settings (Mario Kart World 1.8.0 imports them beside InitializeNmouse): they go to the hid service the host does not serve, and with no handles there is no pointer to set
 HLE_FORCE("_ZN2nn3hid22SetNmousePointerRangesEii", "Joy-Con mouse pointer range: no sensor on the host", void, h_hid_NmouseRanges, int w, int h) { (void)w; (void)h; }
 HLE_FORCE("_ZN2nn3hid19EnableNmousePointerENS0_12NmouseHandleEb", "Joy-Con mouse pointer: no sensor on the host (false: no device)", bool, h_hid_NmouseEnable, uint64_t hd, int on) { (void)hd; (void)on; return 0; }

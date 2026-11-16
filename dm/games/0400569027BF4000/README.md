@@ -32,7 +32,7 @@ Measured on the M6 (16 GB), in a 1280x720 window: 60 fps at the title (frame tim
 
 - The rewriter could not place patch areas for `main`, 185 MB of text with 90 MB of data after it (Hops for sites neither patch area reaches).
 - The shader split found no shaders: its SDF stage records have 0x60-byte headers ([SDF definitions in RE Engine PAKs](../../../docs/reference/shaders.md#sdf-definitions-in-re-engine-paks)).
-- A crash after graphics initialize, in `nn::vi::InitializeWithVrrLfcEnabled` (`vi::InitializeWithVrrLfcEnabled`).
+- A crash after graphics initialize, in `nn::vi::InitializeWithVrrLfcEnabled` ([`vi::InitializeWithVrrLfcEnabled`](../../../docs/reference/services.md#viinitializewithvrrlfcenabled)).
 - LDTRAM (an attribute at each vertex of the triangle); its shaders read the third perspective barycentric coordinate, which the translator had computed as 1 - x - y (the barycentric coordinates).
 - YIELD in 21 compute shaders.
 - `nvnCommandBufferSetRepresentativeFragmentTest` was unimplemented (Representative fragment test).
