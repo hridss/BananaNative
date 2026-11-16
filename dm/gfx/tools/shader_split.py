@@ -87,7 +87,7 @@ KEY_SKIP = tuple(int(x, 0) for x in GAME.get('shader_key_skip', '0+0').split('+'
 CTL_MAGIC, GFX_MAGIC, CS_MAGIC = bytes.fromhex('34127698'), bytes.fromhex('78563412'), bytes.fromhex('79563412')
 STAGES = ['vs', 'hs', 'ds', 'gs', 'ps', 'cs']
 # An NVN2 BNSH program has stage slots past those six: 7 holds the task shader and 8 the mesh shader (The Legend of Zelda: Ocarina of Time's Model and Foliage .bfsha,
-# 1,699 task and 1,739 mesh shaders; read from the six slots alone, every mesh-shaded draw was missing from the map and dropped). Slot 6 has not been seen used
+# 1,699 task and 1,739 mesh shaders; read from the six slots alone, every mesh-shaded draw was missing from the map and dropped). Slot 6 holds Nintendo Switch 2 Welcome Tour's ray tracing shader, which is left out (bnsh_shaders)
 NVN2_SLOTS = [None, None, None]
 SPH_STAGE = {1: 'vs', 2: 'hs', 3: 'ds', 4: 'gs', 5: 'ps'}
 def sph_stage(code):
@@ -251,7 +251,13 @@ def bnsh_shaders(d, base, label):
                 pctl, pcode, ncode, nctl = struct.unpack_from('<QQII', d, base + sc + 8)
                 if not (0x48 <= nctl < 0x10000 and base + pctl + nctl <= len(d) and base + pcode + ncode <= len(d)) or not nvn2_ctl(d[base + pctl:base + pctl + nctl]): continue
                 st = nvn2_stage(d[base + pctl:base + pctl + nctl], d[base + pcode:base + pcode + ncode])
-                if st not in ('ts', 'ms'): red(f'{where} variation {v}: NVN2 stage slot {si} holds a {st} shader, not a task or mesh shader')
+                # Another kind of NVN2 shader in these slots (Nintendo Switch 2 Welcome Tour: slot 6 of libexgfx_resident.ounce.bea's gfxshaderrt/multi_bounce_opaque.bnsh,
+                # a ray tracing shader by its folder; the host has no ray tracing, nvnProgramBuilderSetRayTracingModules is unimplemented) is left out with this shader alone.
+                # red() here stopped the whole file: the archive's other 1,006 shaders were left out of the split with it, as upstream's split, which reads only the task and mesh slots, never did
+                if st not in ('ts', 'ms'):
+                    ctl6 = d[base + pctl:base + pctl + nctl]
+                    print(f'[RED] {where} variation {v}: NVN2 stage slot {si} holds a shader of stage byte {ctl6[0x56] if len(ctl6) > 0x56 else None} ({st}), not a task or mesh shader; left out', flush=True)
+                    continue
             ctl, code = span(d, base + pctl, nctl, f'{where} variation {v} {st} control section'), span(d, base + pcode, ncode, f'{where} variation {v} {st} code area')
             why = check(label, st, ctl, code)
             if why: red(f'{label} BNSH @{base:#x} variation {v} {st}: {why}')

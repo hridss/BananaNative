@@ -1789,6 +1789,13 @@ Finding, keying and translating shaders (`dm/gfx/tools/shader_split.py`, `dmsh_b
 - **Fix:** expand `shader_split.py` to inspect stage slots 7 and 8 for task and mesh programs, adding them to `shader_map.tsv` with appropriate stage tags.
 - **Found on:** [The Legend of Zelda: Ocarina of Time](../../dm/games/0400486024DEC000/README.md).
 
+### A ray tracing shader in NVN2 BNSH program slot 6 drops its whole archive
+
+- **Symptom:** the split logs `[RED] … BNSH @0x0 variation 0: NVN2 stage slot 6 holds a None shader, not a task or mesh shader`, then `[RED] 1 file(s) could not be read, their shaders are left out`, and the pack stops with `[RED] the dump's shaders lack 1006 of the 6766 in the profile's shader_map.tsv`.
+- **Cause:** `bnsh_shaders` (`shader_split.py`) stopped with `red()` on any shader in the NVN2 slots past the six NVN stages that was not a task or mesh shader, and a stop inside a RomFS file leaves the whole file out: Welcome Tour's `libexgfx_resident.ounce.bea` holds `gfxshaderrt/multi_bounce_opaque.bnsh`, a ray tracing shader by its folder, in slot 6, and the archive's other 1,006 shaders went with it. Upstream nxnative's split reads only the task and mesh slots and skips the rest.
+- **Fix:** such a shader is left out alone, with one `[RED]` line naming the slot and its control section's stage byte; the host has no ray tracing (`nvnProgramBuilderSetRayTracingModules` is unimplemented).
+- **Found on:** [Nintendo Switch 2 Welcome Tour](../../dm/games/040057C02159A000/README.md).
+
 ### A Vulkan shader library past 4 GiB
 
 - **Symptom:** the Android library build translates every shader, then stops in `write_library` with `struct.error: 'I' format requires 0 <= number <= 4294967295` and writes no `dmsh_vk.lib`; before that the build's memory grows with the blob (about 10 GB held at once for the game below, which a 16 GB machine may not have).
