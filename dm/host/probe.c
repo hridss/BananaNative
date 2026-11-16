@@ -1,5 +1,6 @@
 // Probes DM_PROBE: when the debugger needs a system authorization prompt on the Mac, use this to print registers and a backtrace at a guest address.
 #include "dm.h"
+#include "drs_steps.h"
 #include <math.h>
 #include <signal.h>
 #include <dlfcn.h>
@@ -585,19 +586,10 @@ static void devtools_start(void) {
 // 50 % of the target on each side), holding the GPU near MaintainGpuPercentage. Its controller reads both from their parameter objects on every decision (update
 // at main+0x38e0f0: [params+0x5d0]+0x64 the max rate, main+0x38dd00: [params+0x5c8]+0x64 the min rate, params = [controller+0x10]), so a store there applies at once.
 // The parameter object is found by a probe at main+0x38e100 (ldr x8, [x10, #0x5d0]: x10 is it), removed after its first hit. DM_DRS=<min %>,<max %> of the target at
-// start (100,100: always the full target, the upscaler a 1:1 copy), live nxhost_drs_set; unset or 0: the game's own range. The addresses below are Bananza's main e25c90c1; each build's come from its drs_ctl row
+// start (100,100: always the full target, the upscaler a 1:1 copy), live nxhost_drs_set; unset or 0: the game's own range. Each end is moved to the nearest size the game
+// has (drs_fit, below), and only the game thread writes the parameter object (drs_sync). The addresses below are Bananza's main e25c90c1; each build's come from its drs_ctl row
 static uint64_t g_drs_pick, g_drs_budget, g_drs_preset;   // the drs_ctl row's places for the controller's pick, its GPU budget load and the preset's automatic flag
-static _Atomic uint64_t g_drs_params; static _Atomic uint32_t g_drs_want; static float g_drs_orig[2]; static int g_drs_have_orig;
-static void drs_apply(void) {
-    uint64_t p = atomic_load(&g_drs_params), pmin, pmax; if (!p) return;
-    if (plat_mem_read(p + 0x5c8, &pmin, 8) || plat_mem_read(p + 0x5d0, &pmax, 8) || !pmin || !pmax) return;
-    float *fmin = (float *)(uintptr_t)(pmin + 0x64), *fmax = (float *)(uintptr_t)(pmax + 0x64);
-    if (!g_drs_have_orig) { g_drs_orig[0] = *fmin; g_drs_orig[1] = *fmax; g_drs_have_orig = 1; }
-    uint32_t w = atomic_load(&g_drs_want), lo = w >> 16, hi = w & 0xffff;
-    if (!w) { *fmin = g_drs_orig[0]; *fmax = g_drs_orig[1]; LOG("dynamic resolution: the game's own range (rates %.3f-%.3f)", g_drs_orig[0], g_drs_orig[1]); return; }
-    *fmin = 100.0f / (float)hi; *fmax = 100.0f / (float)lo;   // (the smaller rate is the larger size)
-    LOG("dynamic resolution: %u-%u %% of the upscaler's target (rates %.3f-%.3f)", lo, hi, *fmin, *fmax);
-}
+static _Atomic uint64_t g_drs_params; static _Atomic uint32_t g_drs_want;   // the parameter object (drs_hit) and the choice (nxhost_drs_set, DM_DRS: any thread)
 // The controller's own paths do not all honor the range: when the frame rate falls below 30 (and when a caller hands it a rate, [x1+0x2c]) it picks a rate of its own,
 // the level's 2.0 at 1080p, so with the range at 100 % the picture still dropped to half size for a stretch about every 0.6 s (blurred, with a hitch at each switch;
 // 2026-11-05). Every path meets at main+0x38de2c (ldr x9, [x19, #0xf0]) with its pick in s8, before it is snapped to the rate steps and stored: a second probe there
@@ -621,15 +613,84 @@ static int drs_cap(void) {   // the frame rate the dynamic resolution aims at: t
     if (c <= 0) { const char *e = getenv("DM_FPS_LIMIT"); if (!e || atoi(e) <= 0) e = getenv("DM_FPS_TARGET"); c = e ? atoi(e) : 0; }
     return c > 0 && c <= 60 ? c : 60;
 }
+// The controller does not store a rate as it is: after this probe it rounds it down to one of its rate steps (main+0x38dea0 to 0x38df0c: S = [[ctrl+0xf0]+0x270], up to 9
+// rising rates at [S+0x18], their count at +0x24; the rate in use [S+0xc] becomes the first step whose next one is above min([S+8], the rate)), and its step down never
+// picks a step above the max rate (main+0x38e0f0: at a step above it, it takes the last step not above it). So a range end between two steps acted as the step below it: in
+// Ingot Isle Cave-In the steps are 1.0 1.375 1.5 1.667 1.714 1.833 2.0 2.2 3.0 under a cap of 3.0, and 80 % (rate 1.25) never left the full size with the GPU at twice its
+// budget (#269). drs_fit moves both ends of the range chosen to the step whose size is nearest theirs, as the game rounds it under its cap (80 %: 72.7 %; drs_steps.h),
+// and drs_sync gives the parameter object that range, so the step down can pick it.
+// Game thread only from here (drs_hit and drs_clamp are probes on the controller's thread): the game's own range, the fit, and the only writes to the parameter object; a
+// choice made elsewhere (nxhost_drs_set) is taken at the next decision
+static float g_drs_orig[2]; static int g_drs_have_orig;   // the game's own range (rates), read the first time the parameter object is
+static float g_drs_fit[2]; static uint32_t g_drs_fit_w;   // the range fitted to the game's steps and cap (rates), for the choice g_drs_fit_w
+static int drs_rates(uint64_t *amin, uint64_t *amax) {   // the addresses of the parameter object's min and max rate (0: not found or not readable, or the game's own not read yet)
+    uint64_t p = atomic_load(&g_drs_params), pmin = 0, pmax = 0; if (!p) return 0;
+    if (plat_mem_read(p + 0x5c8, &pmin, 8) || plat_mem_read(p + 0x5d0, &pmax, 8) || !pmin || !pmax) return 0;
+    *amin = pmin + 0x64; *amax = pmax + 0x64;
+    if (!g_drs_have_orig) {   // the game's own range: both ends read before anything is written (a half read is not kept, nothing is written until it is whole)
+        float o[2]; if (plat_mem_read(*amin, &o[0], 4) || plat_mem_read(*amax, &o[1], 4)) return 0;
+        g_drs_orig[0] = o[0]; g_drs_orig[1] = o[1]; g_drs_have_orig = 1;
+    }
+    return 1;
+}
+static int drs_range(uint32_t w, float *lo, float *hi) {   // choice w as rates (lo the full-size end): its fit once drs_fit has one, else as chosen; 0: the game's own (once read)
+    if (!w) { if (!g_drs_have_orig) return 0; *lo = g_drs_orig[0]; *hi = g_drs_orig[1]; return 1; }
+    if (g_drs_fit_w == w) { *lo = g_drs_fit[0]; *hi = g_drs_fit[1]; return 1; }
+    *lo = 100.0f / (float)(w & 0xffff); *hi = 100.0f / (float)(w >> 16); return 1;
+}
+// The parameter object is given choice w's range when it holds other values: on every change of the range, and for a range chosen every 64th decision too, so a value
+// written by anyone else (the game itself included) is set back; the game's own range (w 0) only when it is chosen. Until the object holds the range (a failed read or
+// write, the object not found yet), it is tried again at every decision; a line when the range given changes
+static void drs_sync(uint32_t w) {
+    static uint32_t said_w = ~0u; static float said[2]; static unsigned tick; static int pending;
+    float lo = 0, hi = 0; int have = drs_range(w, &lo, &hi);
+    if (!pending && have && w == said_w && lo == said[0] && hi == said[1] && (!w || ++tick % 64)) return;
+    pending = 1;
+    uint64_t amin, amax; if (!drs_rates(&amin, &amax)) return;
+    if (!have && !drs_range(w, &lo, &hi)) return;   // (the game's own range: known once the object has been read)
+    float cur[2]; if (plat_mem_read(amin, &cur[0], 4) || plat_mem_read(amax, &cur[1], 4)) return;
+    if ((cur[0] != lo && plat_mem_write(amin, &lo, 4)) || (cur[1] != hi && plat_mem_write(amax, &hi, 4))) return;
+    pending = 0;
+    if (w == said_w && lo == said[0] && hi == said[1]) return;
+    said_w = w; said[0] = lo; said[1] = hi;
+    if (w) LOG("dynamic resolution: %u-%u %% of the upscaler's target (rates %.3f-%.3f)", w >> 16, w & 0xffff, lo, hi);
+    else LOG("dynamic resolution: the game's own range (rates %.3f-%.3f)", lo, hi);
+}
+// The steps and the cap, read every 64th decision and at once when the choice changes. Steps that cannot be read, or are not 1 to 9 rising rates, leave the last fit for
+// that choice, else the range as chosen, with one red line; at most 16 lines for new fits
+static void drs_fit(uint64_t ctrl, uint32_t w) {
+    static unsigned tick; static int said_bad, nlog;
+    int due = !(tick++ % 64);
+    if (w == g_drs_fit_w && !due) return;
+    uint64_t a = 0, s = 0, t = 0; float e[9], cap = 0; uint32_t n = 0;
+    if (plat_mem_read(ctrl + 0xf0, &a, 8) || !a || plat_mem_read(a + 0x270, &s, 8) || !s || plat_mem_read(s + 0x18, &t, 8) || !t || plat_mem_read(s + 8, &cap, 4)
+        || plat_mem_read(t, e, sizeof e) || plat_mem_read(t + 0x24, &n, 4) || !drs_steps_ok(e, n)) {
+        if (!said_bad) { said_bad = 1; LOG("[RED] dynamic resolution: the game's rate steps could not be read, or are not 1 to 9 rising rates (count %u): %s", n,
+            g_drs_fit_w == w ? "the last fit stays" : "the range is used as chosen, and an end between two steps acts as the step below it"); }
+        return;
+    }
+    float flo = drs_steps_fit(e, n, cap, 100.0f / (float)(w & 0xffff)), fhi = drs_steps_fit(e, n, cap, 100.0f / (float)(w >> 16));
+    if (w == g_drs_fit_w && flo == g_drs_fit[0] && fhi == g_drs_fit[1]) return;
+    g_drs_fit_w = w; g_drs_fit[0] = flo; g_drs_fit[1] = fhi;
+    if (nlog++ >= 16) return;
+    char b[80]; size_t k = 0; b[0] = 0;
+    for (uint32_t i = 0; i < n && k + 1 < sizeof b; i++) {   // snprintf returns what it would have written: never step past the buffer
+        int r = snprintf(b + k, sizeof b - k, " %.1f", 100.0f / e[i]);
+        if (r < 0) { b[k] = 0; break; }
+        k = (size_t)r < sizeof b - k ? k + (size_t)r : sizeof b - 1;
+    }
+    LOG("dynamic resolution: the game's sizes here are%s %% under its cap rate %.3f: %u-%u %% is used as %.1f-%.1f %% (rates %.3f-%.3f), the nearest it holds", b, cap,
+        w >> 16, w & 0xffff, 100.0f / fhi, 100.0f / flo, flo, fhi);
+}
 static void drs_clamp(ucontext_t *uc) {
     if (&vka_env_gen) { static uint32_t gen; uint32_t g = atomic_load_explicit(&vka_env_gen, memory_order_relaxed);
         if (g != gen) { gen = g; const char *e = getenv("DM_DRS"); int a = 0, b = 0; if (e) sscanf(e, "%d,%d", &a, &b);
             if (a < 10 || b < a) a = b = 0; if (b > 100) b = 100; uint32_t w = a > 0 ? (uint32_t)a << 16 | (uint32_t)b : 0;
             if (e && w != atomic_load(&g_drs_want)) atomic_store(&g_drs_want, w); } }   // the range chosen, else the game's own (its picks went to rate 1.0 for 0.6 s every few seconds: full size the GPU could not hold)
     uint32_t w = atomic_load(&g_drs_want); float lo, hi;
-    if (w) { lo = 100.0f / (float)(w & 0xffff); hi = 100.0f / (float)(w >> 16); }   // rates: lo the full size end
-    else if (g_drs_have_orig) { lo = g_drs_orig[0]; hi = g_drs_orig[1]; }
-    else return;
+    if (w) drs_fit(PLAT_UC_X(uc, 19), w);   // both ends at the game's nearest steps (x19: the controller)
+    drs_sync(w);   // the parameter object holds the same range the clamp below uses
+    if (!drs_range(w, &lo, &hi)) return;   // rates: lo the full size end
     float *s8 = uc_sreg(uc, 8), *s9 = uc_sreg(uc, 9); if (!s8 || !s9) return;
     float pick = *s8, cur = *s9, out = pick;   // s9: the rate in use (the controller loads it first, [[ctrl+0xf0]+0x270]+0xc)
     if (out < lo) out = lo; else if (out > hi) out = hi;
@@ -656,11 +717,11 @@ static void drs_clamp(ucontext_t *uc) {
         if (now - calm_since > 10 && wait_s > base) { wait_s = wait_s / 2 < base ? base : wait_s / 2; calm_since = now; }
     }
     *s8 = out;
-    static float last_out; static _Atomic int nlog;
-    if (out != last_out && atomic_fetch_add(&nlog, 1) < 300)
+    static float last_out, last_cur; static _Atomic int nlog;   // a line when the rate passed on changes, or the rate in use (what the game stored after the decision before)
+    if ((out != last_out || cur != last_cur) && atomic_fetch_add(&nlog, 1) < 300)
         { float v[1] = {0}; if (&nxhost_fps) nxhost_fps(v, 1);
           LOG("dynamic resolution: rate %.3f at %.2f s (controller picked %.3f, in use %.3f, range %.3f-%.3f, step-up wait %.0f s, %.1f fps)", out, now, pick, cur, lo, hi, wait_s, v[0]); }
-    last_out = out;
+    last_out = out; last_cur = cur;
 }
 // The controller holds the GPU time under a budget, [x1+8] minus a margin [ctrl+0xe8] (main+0x38dcb8: ldr s1, [x20, #8]), the game's 60 fps frame whatever the frame
 // limiter allows; with a cap of 30 it still shrank the picture to fit 16.7 ms. A third probe, on the next instruction (main+0x38dcbc, ldr s2, [x19, #0xe8]: s1 is loaded,
@@ -680,10 +741,10 @@ static void drs_auto(ucontext_t *uc) {
     if (!*f) { *f = 1; static _Atomic int n; if (atomic_fetch_add(&n, 1) < 20) LOG("dynamic resolution: preset %#llx made automatic (its fixed rate %.3f)", (unsigned long long)PLAT_UC_X(uc, 20), *(float *)(void *)(f + 3)); }
 }
 static _Atomic int g_drs_clamp_on;
-static void drs_hit(ucontext_t *uc) { if (!atomic_load(&g_drs_params)) { atomic_store(&g_drs_params, PLAT_UC_X(uc, 10)); drs_apply(); } }
+static void drs_hit(ucontext_t *uc) { if (!atomic_load(&g_drs_params)) { atomic_store(&g_drs_params, PLAT_UC_X(uc, 10)); drs_sync(atomic_load(&g_drs_want)); } }   // (game thread)
 __attribute__((visibility("default"))) void nxhost_drs_set(int min_pct, int max_pct) {
     if (min_pct < 10) min_pct = 0; if (max_pct > 100) max_pct = 100; if (min_pct > max_pct) min_pct = max_pct;
-    atomic_store(&g_drs_want, min_pct > 0 ? (uint32_t)min_pct << 16 | (uint32_t)max_pct : 0); drs_apply();
+    atomic_store(&g_drs_want, min_pct > 0 ? (uint32_t)min_pct << 16 | (uint32_t)max_pct : 0);   // the game thread gives it to the parameter object at its next decision (drs_sync)
     if (g_drs_mod && !atomic_exchange(&g_drs_clamp_on, 1)) {
         // each place is checked for the instruction it must hold (the profile row could be for another build): a mismatch leaves that part out, with a red line
         if (*(uint32_t *)(g_drs_mod->base + g_drs_pick) == 0xf9407a69u) { probe_add(g_drs_mod, g_drs_pick, -1, drs_clamp); LOG("dynamic resolution: the controller's own picks clamped into the range too"); }
