@@ -686,10 +686,10 @@ The guest address space, heaps, pools, virtual address memory and the allocators
 
 ### Buffer textures in pools nothing placed (Android)
 
-- **Symptom:** `[RED] vk: buffer texture ID … at …: its … bytes are not in placed guest memory, it is not bound as a texel buffer` (eight lines at most); the shaders that read those textures get zeros. Orbitals: eight small RGBA32F buffer textures (3 to 96 elements) at the hall's load, 149 s into one run.
+- **Symptom:** `[RED] vk: buffer texture ID … at …: its … bytes are not in placed guest memory, it is not bound as a texel buffer` (eight lines at most); the shaders that read those textures get zeros. Orbitals: eight small RGBA32F buffer textures (3 to 96 elements) at the hall's load, 149 s into one run; in its frame replays, player 2's legs and much of the hall missing.
 - **Cause:** `vka_tbuf.c` only looked a buffer texture's storage up among the placed segments; under lazy placement a pool no command has given the GPU an address in is not placed yet, so the texture was bound as null (or, read through a 2D slot, its image not copied).
 - **Fix:** general: `tb_run` places the pool (`mtl_pool_need`) and looks the storage up again, for the texel buffer view and for the image a 2D slot reads, as `ubo_desc`, `ssbo_desc` and `addr_need` do ([the entries above](#a-uniform-buffer-in-a-pool-no-command-placed-android)).
-- **Check:** open: the lines came in one run of four; the three since (one of 10,800 frames on the fixed build) had none, with the fix or without.
+- **Check:** the replay of Orbitals' capture `hall0326.nvncap` (a frame replay runs without the commands that place pools, so it meets them every time): without the fix 8 such lines, player 2's legs and much of the hall missing; with it no line, the legs drawn as in the live frame (88 % of their region dark, as live, against 65 %). In the game the lines came in one run of four.
 - **Found on:** [Orbitals](../../dm/games/040032B023CA4000/README.md#found-on-this-game).
 
 ### Pools the GPU never reads cost zram (Android)
