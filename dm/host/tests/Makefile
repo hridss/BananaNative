@@ -121,10 +121,17 @@ run: $(B)/t_language $(B)/t_motion $(B)/t_heap_size $(B)/t_touch $(B)/t_gesture 
 	$(B)/t_android_gbar
 	$(B)/t_android_memu
 	TMPDIR="$(abspath $(B))" $(B)/t_android_layerreq
+	$(B)/t_server_environment
 run: $(B)/t_nro
 run: $(B)/t_pack_modules
 run: $(B)/t_game_args
 run: $(B)/t_symbols
+run: $(B)/t_server_environment
+$(B)/t_server_environment: t_server_environment.c ../hle_offline.c ../hle_net.h ../hle.h ../dm.h $(GAME_H) | $(B)
+	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -I.. $(GINC) -o $@ t_server_environment.c
+.PHONY: server-environment
+server-environment: $(B)/t_server_environment
+	$(B)/t_server_environment
 $(B)/t_symbols: t_symbols.c ../hle.c ../loader.c ../hle.h ../dm.h $(GAME_H) | $(B)
 	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -Wno-deprecated-declarations -I.. $(GINC) -o $@ t_symbols.c
 .PHONY: symbols
