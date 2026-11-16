@@ -1480,7 +1480,7 @@ def id_operands(x):
 def row_fetch_buffers(m):
     """A 2D slot read only by 1D integer fetches the translator addressed as rows of 16384 texels, ((x & 0x3FFF, x >> 14), each through Ryujinx's render-scale helper,
     which leaves an unscaled texture's coordinate as it is: dmsh_build.py fetch1d) becomes a uniform texel buffer read at x: the binding a buffer texture there gets is a
-    view of its storage (vka_tex.c vka_tex_id_bufview), as the Mac's rows are views of its pool (nvn_mtl.m tbuf_as_2d), with no copy. A slot with any other use (a size
+    view of its storage (vka_tbuf.c vka_tbuf_view), as the Mac's rows are views of its pool (nvn_mtl.m tbuf_as_2d), with no copy. A slot with any other use (a size
     query, a sample, a fetch of another shape) is left as it is. Unreal Engine's typed Buffer<> SRVs on the Switch 2 are such slots. → the number of slots rewritten"""
     defs = {}
     for x in m.ins:
