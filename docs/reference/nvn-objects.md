@@ -42,6 +42,13 @@ The game may also write into an NVN object directly, without an NVN call, throug
 - **Fix:** the host never reports a ZCull storage size of 0 (`hle_nvn.c` `zcull_size`).
 - **Found on:** [Cuphead](../../dm/games/0100A5C00D162000/README.md). Found by tracking the allocator from observation gates (`OBS` in its `patches.py`) on its free-list push and after its map insert, checking at every event that each block allocated so far was still in the game's map.
 
+### Acceleration structure sizes left unwritten (NVN2 ray tracing)
+
+- **Symptom:** `[RED] NVN unimplemented function called: nvnDeviceCalculateAccelerationStructureMemoryRequirements`, then a memory pool of several GiB made at boot (`MapPhysicalMemory <addr>+0x100001000`, `[mem] alias region mapped` up by 4 GB at once). Later `MapPhysicalMemory … refused: … the application pool is full` and `game called nn::diag abort: Result 0` at an allocator's null check, as the game loads its first textures. On the Android replay the game's one buffer over all of that pool placed it whole as driver memory first ([Large pools placed whole for one buffer in them](memory.md#large-pools-placed-whole-for-one-buffer-in-them-android)), and on a 12 GB phone that stopped the whole phone before the abort could come.
+- **Cause:** the call writes three 64-bit sizes (the structure's memory, its build scratch and its update scratch) to pointers the caller passes. As an unimplemented stub it wrote nothing, and Nintendo Switch 2 Welcome Tour's `nn::gfx` wrapper (`main+0x6130cc` in v262144) does not clear its result struct first: the game sized its ray tracing heap from what the stack held, on the phone 4 GiB + 4 KiB (`0x100001000`, a size of `0xffffffff` rounded up to a page, plus one). With the rest of its memory it no longer fitted in the 9 GB application pool. On the Mac the stack held other values, and upstream's `mem_map_limit` is off there.
+- **Fix:** the call is implemented (`hle_nvn.c`, `NVN_NOPROTO`: `nvn.h` has no prototype for it) and writes 256 bytes for each size: small, aligned, and not 0 ([above](#sizes-the-hardware-never-reports-as-0-zcull-save-area)). The replay has no ray tracing (the programs are not translated, nothing builds or traces a structure), so nothing uses that memory. Welcome Tour's placed pools at its first frames went from 4,382 to 700 MiB, and its mapped memory from past 9 GB to 6 GB.
+- **Found on:** [Nintendo Switch 2 Welcome Tour](../../dm/games/040057C02159A000/README.md) v262144 on the AYN Thor: two whole-phone freezes, then the abort once the pool was no longer placed whole.
+
 ## Memory pools
 
 ### Heaps cut from a pool at alignment relative to its GPU address

@@ -634,13 +634,24 @@ NVN(nvnTexturePoolInitialize, NVNboolean, NVNtexturePool *tp, const NVNmemoryPoo
     return 1;
 }
 NVN(nvnTexturePoolFinalize, void, NVNtexturePool *tp) { dpool_release(&g_tpt, tp); }   // its range is free for a later pool (nvn_dpool.h)
+// A texture object that is not a live texture (never initialized, or finalized: no 'TEX' magic) registered into a pool: on the console that writes a descriptor of whatever the
+// object holds, which the game must not sample. Logged only (diagnostic): whether such registrations are where the replay's invalid NVN formats come from (Nintendo Switch 2
+// Welcome Tour: `NVN format 0xba27ba00 has no Vulkan format`, open in its note); the registration goes on as before
+static const tex_t *treg_live(int id, const NVNtexture *t, const char *what) {
+    const tex_t *o = (const tex_t *)t;
+    if (!o || o->magic == MAGIC('T', 'E', 'X', 0)) return o;
+    static _Atomic int n; int k = atomic_fetch_add(&n, 1);
+    if (k < 4 || !(k & 1023)) LOG("[RED] [nvn] %s: texture ID %d registered with a texture object that is not a live texture (magic %#x, format %#x, %ux%u; %d so far)",
+                                  what, id, o->magic, o->d.format, o->d.width, o->d.height, k + 1);
+    return o;
+}
 NVN(nvnTexturePoolRegisterTexture, void, const NVNtexturePool *tp, int id, const NVNtexture *t, const NVNtextureView *v) {
-    mtl_reg_tex(dpool_base(&g_tpt, tp) + id, (const tex_t *)t, (const view_t *)v);
+    mtl_reg_tex(dpool_base(&g_tpt, tp) + id, treg_live(id, t, "RegisterTexture"), (const view_t *)v);
 }
 // Image descriptors live in the same pool index space as texture descriptors, and image handles are pool indices (nvnDeviceGetImageHandle; BindImages below), so an image
 // registers into the same table. Hyrule Warriors: Age of Calamity registers the images its compute shaders write in the first battle (earlier games registered only textures)
 NVN(nvnTexturePoolRegisterImage, void, const NVNtexturePool *tp, int id, const NVNtexture *t, const NVNtextureView *v) {
-    mtl_reg_image(dpool_base(&g_tpt, tp) + id, (const tex_t *)t, (const view_t *)v);
+    mtl_reg_image(dpool_base(&g_tpt, tp) + id, treg_live(id, t, "RegisterImage"), (const view_t *)v);
 }
 NVN(nvnSamplerPoolInitialize, NVNboolean, NVNsamplerPool *sp, const NVNmemoryPool *p, ptrdiff_t off, int n) {
     *(dpool_t *)sp = (dpool_t){(const pool_t *)p, off, n}; OLOG("SamplerPool n=%d", n); dpool_add(&g_spt, sp, n, "sampler"); return 1;
@@ -843,6 +854,14 @@ NVN(nvnTextureInitialize, NVNboolean, NVNtexture *t, const NVNtextureBuilder *b)
     o->has_layout = s->has_layout; memcpy(o->layout, s->layout, 8); o->set_swz = s->set_swz; o->stencil = s->stencil; o->swz = s->swz;
     nvn_tex_layout(&o->d, &o->L);
     o->mem = s->pool && s->pool->mem ? s->pool->mem + s->off : NULL;
+    {   // A texture whose format is no NVN format (Nintendo Switch 2 Welcome Tour, a cold first run: 0xba27ba00 and 0x50001, open): what it is and the game's call stack, to find who set it
+        int fbw, fbh; static _Atomic int nbad;
+        if (!nvn_fmt_bpb((int)o->d.format, &fbw, &fbh) && atomic_fetch_add(&nbad, 1) < 6) {
+            LOG("[RED] [nvn] TextureInitialize: format %#x is no NVN format (target %d, %ux%ux%u, levels %d, flags %#x, pool %p+%#llx, builder %p)", (unsigned)o->d.format, (int)o->d.target,
+                o->d.width, o->d.height, o->d.depth, (int)o->d.levels, (unsigned)o->d.flags, (const void *)o->pool, (unsigned long long)o->off, (const void *)b);
+            void dm_backtrace(uint64_t fp); dm_backtrace((uint64_t)__builtin_frame_address(0));
+        }
+    }
     uint32_t vstride = 0;
     if (o->mem && !(o->d.flags & (NVN_TEXTURE_FLAGS_LINEAR | NVN_TEXTURE_FLAGS_LINEAR_RENDER_TARGET)) &&
         dm_codec_is_video_mem(o->mem, o->L.size, &vstride)) {
@@ -2886,6 +2905,18 @@ NVN(nvnDeviceGetTexelFetchHandle, NVNtextureHandle, const NVNdevice *d, int tex)
 NVN(nvnDeviceGetTimestampInNanoseconds, uint64_t, const NVNdevice *d, const NVNcounterData *c) { (void)d; return nvn_timestamp_to_ns(c->timestamp); }
 // Current GPU time (ns): the same clock as the counter timestamps -- the guest clock (guest_ns, nvn_mtl.m gpu_ticks)
 NVN(nvnDeviceGetCurrentTimestampInNanoseconds, uint64_t, const NVNdevice *d) { (void)d; return guest_ns(); }
+// Ray tracing (NVN2): the memory an acceleration structure needs, and the scratch memory to build and to update it, written to three 64-bit outputs (Nintendo Switch 2 Welcome Tour's
+// nn::gfx wrapper, main+0x6130cc in v262144, passes its result struct at +0, +8 and +0x10 and does not clear it first). Unhooked, the call was a red stub that wrote nothing, and the game
+// sized its ray tracing heap from what was on the stack: a 4 GiB + 4 KiB pool at boot (0x100001000, round_up(0xffffffff) + a page), which took the application pool past 9 GB
+// with its first textures (MapPhysicalMemory refused, abort at CoreSystem::Allocate's null check). The replay has no ray tracing (its programs are not translated and nothing builds
+// or traces a structure), so each size is a small aligned 256 bytes, never 0, for an allocator that checks it
+NVN_NOPROTO(nvnDeviceCalculateAccelerationStructureMemoryRequirements, void, const NVNdevice *d, const void *info, uint64_t *size, uint64_t *build_scratch, uint64_t *update_scratch) {
+    (void)d; (void)info;
+    if (size) *size = 256;
+    if (build_scratch) *build_scratch = 256;
+    if (update_scratch) *update_scratch = 256;
+    ONCE_LOG("nvnDeviceCalculateAccelerationStructureMemoryRequirements: 256 bytes each (no ray tracing on the host)");
+}
 NVN(nvnDeviceRegisterFastClearColor, NVNboolean, NVNdevice *d, const float *c, NVNformat f) { (void)d; (void)c; (void)f; return 1; }
 // Same as the color one: a fast clear value is only a hint to the Tegra hardware (Tears of the Kingdom registers its depth clear at startup)
 NVN(nvnDeviceRegisterFastClearDepth, NVNboolean, NVNdevice *d, float v) { (void)d; (void)v; return 1; }

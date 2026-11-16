@@ -1019,6 +1019,8 @@ void mtl_pool_need(const void *addr, uint64_t len, const char *why) {
         int whole = !(pe.part && vkp_part(pe.mem, pe.size, a, e, part_gran(), &plo, &phi));
         seglist l = pe.segs; int lg = 0, span = 0, joinq = 0; uint64_t tot = 0, t0 = mono_ns(), mine = 0;   // (l: the parts it holds already)
         uintptr_t sa = a > pe.mem ? a : pe.mem, se = e < pe.mem + pe.size ? e : pe.mem + pe.size;   // the ask in the pool
+        if (whole && pe.part) VLOG("memory pool %#lx+%#llx (placed by parts): placing the rest of it whole (%.0f MiB) for %#lx+%#lx (%s)", (unsigned long)pe.mem, (unsigned long long)pe.size,
+                                   (pe.size - pe.pbytes) / 1048576.0, (unsigned long)a, (unsigned long)(e - a), why);   // (before: it takes seconds for a pool of GiB)
         pthread_mutex_lock(&g_pl);
         int placed = place_pool(plo, phi - plo, &l, &lg, &tot, &mine);
         if (placed && !whole) span = !vka_addr(sa, se - sa, NULL, NULL, NULL);
@@ -1039,7 +1041,7 @@ void mtl_pool_need(const void *addr, uint64_t len, const char *why) {
         }
         if ((!whole || pe.part) && ndone < NDONE) done[ndone++] = pe.id;
         pthread_cond_broadcast(&g_lzcv);
-        static int nlog; int first = nlog++ < 8 || (whole && pe.pbytes);
+        static int nlog; int first = nlog++ < 8 || (whole && (pe.pbytes || pe.part));   // (a pool placed by parts placed whole: always said, with the ask that did it)
         pthread_mutex_unlock(&g_pmu);
         if (!placed) { static _Atomic int nred; if (atomic_fetch_add(&nred, 1) < 8) VRED("memory pool %#lx+%#llx is not in placed memory: the GPU does not see it", (unsigned long)pe.mem, (unsigned long long)pe.size); }
         else if (whole && pe.pbytes) VLOG("memory pool %#lx+%#llx placed whole after %u parts (%.0f MiB) when the GPU was given %#lx+%#lx (%s; %.1f ms): ranges across the parts' ends lie in two segments",
