@@ -769,6 +769,187 @@ HLE_FORCE("_ZN2nn3hid23GetSixAxisSensorHandlesEPNS0_19SixAxisSensorHandleEiRKjNS
     return k > 0 ? k : 0;
 }
 HLE_FORCE("_ZN2nn3hid18StartSixAxisSensorERKNS0_19SixAxisSensorHandleE", "six-axis sensor; always sampling on the host", void, h_hid_SixStart, const uint32_t *h) { (void)h; }
+
+// ---- Switch 2 SDK hid calls whose SDK code opens the hid service itself (ported from upstream nxnative; the host serves no hid service, so each aborted with Result 0xe15 or read
+// a null session). Upstream feeds some of them from a live Joy-Con 2 transport the Android host does not have; here they answer from the host's own six-axis state (above)
+// The npad ids the SDK's own checks accept (No1..No8, Other, Handheld), as an index 0..9; -1 otherwise
+static int npad_id_slot(uint32_t id) { return id < 8 ? (int)id : id == 0x10 ? 8 : id == 0x20 ? 9 : -1; }
+// Joy-Con icon decoration colour (a 12-byte NpadJoyIconDecorationColor). Unhooked, the SDK read the npad's internal state from hid shared memory the host does not fill, found none
+// and answered 0x58cca, which its wrapper aborts on (Nintendo Switch Sports Resort, sdk+0x6cab6c, once it draws). For an npad whose controller is no decorated Joy-Con the SDK answers
+// 0x4b6ca without writing the colour (sdk+0x6be204), and its wrapper hands that to the game; no controller of the host is one. An id that is no npad aborts in the SDK (0x58aca)
+#define RES_NO_ICON_DECORATION 0x4b6cau
+#define RES_INVALID_NPAD_ID 0x58acau
+static Result icon_decoration(const uint32_t *id) {
+    if (npad_id_slot(*id) >= 0) return RES_NO_ICON_DECORATION;
+    LOG("[RED] hid GetNpadJoyIconDecorationColor: %#x is no npad id", *id);
+    return RES_INVALID_NPAD_ID;
+}
+HLE_FORCE("_ZN2nn3hid29GetNpadJoyIconDecorationColorEPNS0_26NpadJoyIconDecorationColorERKj", "Joy-Con icon decoration: none, no host controller is a decorated Joy-Con",
+          Result, h_hid_IconColor, void *out, const uint32_t *id) { (void)out; return icon_decoration(id); }
+HLE_FORCE("_ZN2nn3hid29GetNpadJoyIconDecorationColorEPNS0_26NpadJoyIconDecorationColorES2_RKj", "Joy-Con icon decoration of both halves: none, no host controller is a decorated Joy-Con",
+          Result, h_hid_IconColors, void *left, void *right, const uint32_t *id) { (void)left; (void)right; return icon_decoration(id); }
+// A guard against a Home press made by accident on a controller (Drag x Drive turns it on for player 1's Joy-Con 2 as they connect, main+0x2c80c4). The SDK's own calls through the
+// null hid session (sdk+0x63ce10). The host handles Home itself, so the setting is recorded for the question below and logged, and changes nothing else
+static _Atomic uint32_t g_home_protect;   // the setting per npad, in id_bit's bits, as the game left it; off until it turns it on
+HLE_FORCE("_ZN2nn3hid41EnableUnintendedHomeButtonInputProtectionERKjb", "Home button protection: recorded and logged, the host handles Home itself", void, h_hid_HomeProtect,
+          const uint32_t *id, bool on) {
+    uint32_t b = id ? id_bit(*id) : 0;
+    if (on) atomic_fetch_or(&g_home_protect, b); else atomic_fetch_and(&g_home_protect, ~b);
+    LOG("hid: EnableUnintendedHomeButtonInputProtection npad %#x %s", id ? *id : 0xffffffffu, on ? "on" : "off");
+}
+// The question (Nintendo Switch Sports Resort asks it at boot; the SDK's own aborted with 0x58cca at sdk+0x6ca40c): what the game set, off by default
+HLE_FORCE("_ZN2nn3hid44IsUnintendedHomeButtonInputProtectionEnabledERKj", "Home button protection: what the game set (off by default)", bool, h_hid_HomeProtectOn,
+          const uint32_t *id) { return id && (atomic_load(&g_home_protect) & id_bit(*id)); }
+// Npad IMU: the six-axis samples the SDK's own sensor fusion reads (Enable/UpdateSensorFusion → GetNpadImuSamples → nn::imu::FullSensorState). EnableNpadImu gives the hid service the
+// game's buffer as transfer memory: Nintendo Switch Sports Resort aborted in InitializeSensorFusion (Result 0xe15, sdk+0x6d6948). These four calls are the only users of the SDK's IMU
+// state, so the host keeps that state here: on with the game's buffer, which no service writes; GetNpadImuSamples writes the samples straight into the caller's array
+#define RES_NPAD_IMU_ENABLED 0x2908cau   // what the SDK's EnableNpadImu answers while it is already on (sdk+0x6ca600)
+static pthread_mutex_t g_imu_lock = PTHREAD_MUTEX_INITIALIZER;
+static void *g_imu_buf;
+static int g_imu_on;
+HLE_FORCE("_ZN2nn3hid13EnableNpadImuEPvm", "npad IMU on with the game's buffer; no hid service writes it", Result, h_hid_ImuEnable, void *buf, uint64_t size) {
+    (void)size; pthread_mutex_lock(&g_imu_lock);
+    Result r = g_imu_on ? RES_NPAD_IMU_ENABLED : 0;
+    if (!r) { g_imu_buf = buf; g_imu_on = 1; }
+    pthread_mutex_unlock(&g_imu_lock);
+    return r;
+}
+HLE_FORCE("_ZN2nn3hid14DisableNpadImuEv", "npad IMU off", Result, h_hid_ImuDisable, void) {
+    pthread_mutex_lock(&g_imu_lock); g_imu_buf = NULL; g_imu_on = 0; pthread_mutex_unlock(&g_imu_lock);
+    return 0;
+}
+HLE_FORCE("_ZN2nn3hid16IsNpadImuEnabledEv", "npad IMU state as the host keeps it", int, h_hid_ImuIs, void) {
+    pthread_mutex_lock(&g_imu_lock); int on = g_imu_on; pthread_mutex_unlock(&g_imu_lock);
+    return on;
+}
+// A six-axis handle as the SDK checks it: byte 1 the npad id (No1..No8, Other, Handheld, else 0x58aca), byte 2 the device index 0..2 (else 0xd6ca: VerifyValidSixAxisSensorHandle,
+// sdk+0x6d8440). A refused handle gets a red line naming the call (who), except from GetNpadImuSamples, which the fusion calls only after that check of its own
+#define RES_INVALID_SIX_DEVICE 0xd6cau
+enum { SIX_DEVICES = 3, SIX_NPADS = 10 };
+static Result six_handle_slot(const char *who, uint32_t h, int *slot, int *dev) {
+    *slot = npad_id_slot(h >> 8 & 0xff); *dev = (int)(h >> 16 & 0xff);
+    Result r = *slot < 0 ? RES_INVALID_NPAD_ID : *dev >= SIX_DEVICES ? RES_INVALID_SIX_DEVICE : RES_OK;
+    if (r != RES_OK && who) LOG("[RED] hid %s: six-axis handle %#x refused (%#x)", who, h, r);
+    return r;
+}
+// NpadImuSample (0x28): sampling number, ns since the previous sample, acceleration in m/s^2 at +0x10, angular velocity in rad/s at +0x1c. The SDK's fusion negates the acceleration
+// it reads (sdk+0x6d7334), so a sample carries the specific force (+9.8 m/s^2 up for a controller lying face up) and the angular velocity as is; the host's six-axis state (G, (0, 0, -1)
+// at rest; revolutions / s) becomes acc = G x 9.80665 and gyro = rev/s x 2 pi. DM_IMU_ACC_SIGN / DM_IMU_GYRO_SIGN = -1 negate either, for a test.
+// Samples are the sensor's 5 ms ticks on the guest clock: a call returns the newest min(n, 16) ticks up to now (16: the SDK's ring), oldest first, numbered by tick + 1. Off, or for
+// a handle whose controller is not connected in that style, there are none.
+// Noise: with samples that never change, the fusion reset itself several times a second and never calibrated its gyro bias (Nintendo Switch Sports Resort's "place the Joy-Con on
+// a flat surface" failed). The gyro carries 0.1 deg/s and the acceleration 0.05 mG, Gaussian per axis, a function of the tick, device and axis (a tick delivered again reads the same);
+// the stillness detector calls a controller moving above about 1e-6 (m/s^2)^2 of lag-1 autocovariance, so the acceleration's must stay that small. Live motion (a controller's or the
+// phone's) carries its own noise, but the host holds its newest sample for every tick, so it gets a tenth of it as a dither. DM_IMU_NOISE: "<deg/s>,<mG>" or a scale (0 none)
+typedef struct { int64_t sampling, delta_ns; float acc[3], gyro[3]; } NpadImuSample;
+_Static_assert(sizeof(NpadImuSample) == 0x28, "NpadImuSample");
+enum { IMU_RING = 16 };
+#define STANDARD_GRAVITY 9.80665
+#define IMU_NOISE_DPS 0.1
+#define IMU_NOISE_G 0.00005
+#define IMU_DITHER_SCALE 0.1
+static float g_imu_acc_sign = 1, g_imu_gyro_sign = 1;
+static double g_imu_noise_g, g_imu_noise_dps;
+static pthread_once_t g_imu_once = PTHREAD_ONCE_INIT;
+static void imu_env_read(void) {
+    const char *e;
+    g_imu_acc_sign = (e = getenv("DM_IMU_ACC_SIGN")) && atof(e) < 0 ? -1 : 1;
+    g_imu_gyro_sign = (e = getenv("DM_IMU_GYRO_SIGN")) && atof(e) < 0 ? -1 : 1;
+    double nd = IMU_NOISE_DPS, ng = IMU_NOISE_G * 1000, f, a, b; char tail;
+    if ((e = getenv("DM_IMU_NOISE")) && *e) {
+        if (sscanf(e, "%lf,%lf%c", &a, &b, &tail) == 2 && a >= 0 && a < 100 && b >= 0 && b < 100) { nd = a; ng = b; }
+        else if (!strchr(e, ',') && sscanf(e, "%lf%c", &f, &tail) == 1 && f >= 0 && f < 1000) { nd *= f; ng *= f; }
+        else LOG("[RED] DM_IMU_NOISE=%s is neither <deg/s>,<mG> nor a scale (0 to 1000): the default noise (%g deg/s, %g mG)", e, nd, ng);
+    }
+    g_imu_noise_dps = nd; g_imu_noise_g = ng / 1000;
+}
+static uint64_t imu_mix(uint64_t x) {   // splitmix64's finalizer
+    x += 0x9e3779b97f4a7c15ull; x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ull; x = (x ^ (x >> 27)) * 0x94d049bb133111ebull; return x ^ (x >> 31);
+}
+static double imu_gauss(int64_t tick, uint32_t device, int channel) {   // a standard normal value, fixed for (tick, device, channel)
+    uint64_t h = imu_mix((uint64_t)tick * 6 + (uint64_t)channel ^ imu_mix(device));
+    double u1 = ((h >> 11) + 1) * (1.0 / 9007199254740993.0), u2 = (imu_mix(h) >> 11) * (1.0 / 9007199254740992.0);
+    return sqrt(-2 * log(u1)) * cos(2 * M_PI * u2);
+}
+HLE_FORCE("_ZN2nn3hid17GetNpadImuSamplesEPNS0_13NpadImuSampleEiNS0_13NpadImuHandleE", "npad IMU samples: the device's six-axis state at the newest 5 ms ticks, oldest first",
+          int, h_hid_ImuSamples, void *out, int n, uint32_t imu_handle) {
+    pthread_once(&g_imu_once, imu_env_read);
+    int slot, dev;
+    if (!out || n <= 0 || six_handle_slot(NULL, imu_handle, &slot, &dev) != RES_OK || !six_connected(imu_handle) || !h_hid_ImuIs()) return 0;
+    int64_t now = (int64_t)(guest_ns() / SIX_PERIOD_NS), k = n < IMU_RING ? n : IMU_RING;
+    if (k > now + 1) k = now + 1;
+    if (k <= 0) return 0;
+    int pl = player_of(imu_handle >> 8 & 0xff), shakes = pl == 0;
+    motion_state ms; int live = motion_live(pl, &ms);
+    double fg = live ? IMU_DITHER_SCALE : 1;
+    uint32_t device = imu_handle >> 8 & 0xffff;
+    NpadImuSample *o = out;
+    for (int64_t i = 0; i < k; i++) {
+        int64_t tick = now - k + 1 + i; SixAxisState s;
+        if (live) six_sample_live(&s, tick, &ms, shakes); else six_sample(&s, tick, shakes);
+        o[i].sampling = tick + 1; o[i].delta_ns = SIX_PERIOD_NS;
+        for (int c = 0; c < 3; c++) {
+            double na = g_imu_noise_g > 0 ? fg * g_imu_noise_g * imu_gauss(tick, device, c) : 0, ng = g_imu_noise_dps > 0 ? fg * g_imu_noise_dps / 360 * imu_gauss(tick, device, 3 + c) : 0;
+            o[i].acc[c] = (float)(g_imu_acc_sign * (s.acc[c] + na) * STANDARD_GRAVITY);
+            o[i].gyro[c] = (float)(g_imu_gyro_sign * (s.gyro[c] + ng) * 2 * M_PI);
+        }
+    }
+    return (int)k;
+}
+// The fusion's initialization (sdk+0x6d7db0) asks GetSixAxisSensorIcInformation through the hid service; on a failure it latches its error flag and never reads a sample. The layout
+// matches yuzu's SixAxisSensorIcInformation (0xc8 bytes), whose values the host answers: 2000 deg/s and 8 G (the full scale of the Switch's six-axis IC), offsets within ±10 deg/s and
+// ±0.0612 G, sensitivity 0.95..1.05 with ±0.003 cross-axis (yuzu's guesses, not read from a Switch 2 controller)
+typedef struct { float range, offset_min[3], offset_max[3], scale_min[9], scale_max[9]; } SixIcHalf;
+typedef struct { SixIcHalf gyro, acc; } SixIcInformation;
+_Static_assert(sizeof(SixIcInformation) == 0xc8, "SixAxisSensorIcInformation");
+#define SIX_IC_SCALE_MIN {0.95f, -0.003f, -0.003f, -0.003f, 0.95f, -0.003f, -0.003f, -0.003f, 0.95f}
+#define SIX_IC_SCALE_MAX {1.05f, 0.003f, 0.003f, 0.003f, 1.05f, 0.003f, 0.003f, 0.003f, 1.05f}
+static const SixIcInformation SIX_IC_INFO = {
+    .gyro = {2000.0f, {-10.0f, -10.0f, -10.0f}, {10.0f, 10.0f, 10.0f}, SIX_IC_SCALE_MIN, SIX_IC_SCALE_MAX},
+    .acc = {8.0f, {-0.0612f, -0.0612f, -0.0612f}, {0.0612f, 0.0612f, 0.0612f}, SIX_IC_SCALE_MIN, SIX_IC_SCALE_MAX},
+};
+HLE_FORCE("_ZN2nn3hid29GetSixAxisSensorIcInformationEPNS0_26SixAxisSensorIcInformationERKNS0_19SixAxisSensorHandleE", "six-axis sensor IC: 2000 deg/s, 8 G (bounds as yuzu's)",
+          Result, h_hid_SixIcInfo, void *out, const uint32_t *h) {
+    int slot, dev; Result r = six_handle_slot("GetSixAxisSensorIcInformation", *h, &slot, &dev);
+    if (r == RES_OK) memcpy(out, &SIX_IC_INFO, sizeof SIX_IC_INFO);
+    return r;
+}
+// UpdateSensorFusion asks each update whether a new controller took the device, which resets the fusion (the SDK reads hid shared memory the host does not map, and clears it
+// through the hid service). The host's controllers keep their npads: no, and nothing to clear
+HLE_FORCE("_ZN2nn3hid34IsSixAxisSensorDeviceNewlyAssignedERKNS0_19SixAxisSensorHandleE", "six-axis device newly assigned: no", unsigned, h_hid_SixNewly, const uint32_t *h) { (void)h; return 0; }
+HLE_FORCE("_ZN2nn3hid39ResetIsSixAxisSensorDeviceNewlyAssignedERKNS0_19SixAxisSensorHandleE", "six-axis device newly assigned: nothing to clear", void, h_hid_SixNewlyReset, const uint32_t *h) { (void)h; }
+// The fusion's gyro bias calibration (0x744 bytes), kept by the hid service per device. The fusion stores it once it has calibrated the bias at rest and loads it at initialization:
+// on success it takes the first three floats as its initial gyro bias and marks the bias calibrated. The host's own sensor is ideal (zero bias), so with nothing stored this run it
+// answers zeros; a live controller's bias is not known here, so it answers nothing stored (hid 202-108) and the fusion learns it, as the console with no stored calibration
+#define RES_SIX_CAL_NONE (202u | 108u << 9)
+enum { SIX_CAL_SIZE = 0x744 };
+static pthread_mutex_t g_six_cal_mu = PTHREAD_MUTEX_INITIALIZER;
+static uint8_t g_six_cal[SIX_NPADS][SIX_DEVICES][SIX_CAL_SIZE], g_six_cal_have[SIX_NPADS][SIX_DEVICES];
+// One sensor, one stored parameter: the SDK names a full-key or handheld controller's sensor device 2 where the host's handles name it device 0
+static int six_cal_dev(int dev) { return dev == 2 ? 0 : dev; }
+HLE_FORCE("_ZN2nn3hid37LoadSixAxisSensorCalibrationParameterEPNS0_33SixAxisSensorCalibrationParameterERKNS0_19SixAxisSensorHandleE",
+          "six-axis calibration: what the game stored this run, else zero bias for the host's own sensor (else none)", Result, h_hid_SixCalLoad, void *out, const uint32_t *h) {
+    int slot, dev; Result r = six_handle_slot("LoadSixAxisSensorCalibrationParameter", *h, &slot, &dev);
+    if (r != RES_OK) return r;
+    motion_state ms; int known = !motion_live(player_of(*h >> 8 & 0xff), &ms);
+    memset(out, 0, SIX_CAL_SIZE);
+    pthread_mutex_lock(&g_six_cal_mu);
+    dev = six_cal_dev(dev);
+    if (g_six_cal_have[slot][dev]) memcpy(out, g_six_cal[slot][dev], SIX_CAL_SIZE);
+    else if (!known) r = RES_SIX_CAL_NONE;
+    pthread_mutex_unlock(&g_six_cal_mu);
+    return r;
+}
+HLE_FORCE("_ZN2nn3hid38StoreSixAxisSensorCalibrationParameterERKNS0_19SixAxisSensorHandleERKNS0_33SixAxisSensorCalibrationParameterE",
+          "six-axis calibration: kept for the run", Result, h_hid_SixCalStore, const uint32_t *h, const void *in) {
+    int slot, dev; Result r = six_handle_slot("StoreSixAxisSensorCalibrationParameter", *h, &slot, &dev);
+    if (r != RES_OK) return r;
+    pthread_mutex_lock(&g_six_cal_mu);
+    dev = six_cal_dev(dev);
+    memcpy(g_six_cal[slot][dev], in, SIX_CAL_SIZE); g_six_cal_have[slot][dev] = 1;
+    pthread_mutex_unlock(&g_six_cal_mu);
+    return RES_OK;
+}
 // Merged mouse pointer (Nmouse, Switch 2 SDKs; Pokemon Pokopia, main+0x11251dc). The SDK opens the hid service itself in InitializeNmouse, which the host does not serve (abort 0xe15). No device
 // reports here: GetNmouseHandles finds none and the merged handle, which exists without a device on the console, has no states. The game skips its mouse code on those answers (main+0x112638c, +0x11262b4)
 HLE_FORCE("_ZN2nn3hid14FinalizeNmouseEv", "merged mouse: nothing to release", void, h_hid_NmouseFini, void) {}
@@ -802,10 +983,27 @@ HLE_FORCE("_ZN2nn3hid33SetNmouseButtonConfigJoyRightJcmsERKNS0_30NmouseButtonCon
 // Nintendo's own applications tell the hid service which scene they show (Nintendo Switch 2 Welcome Tour's scene modules, at each module's start); the host has no hid service and
 // nothing reads it, so it is only logged (the SDK's own connects to hid itself and reads null)
 HLE_FORCE("_ZN2nn3hid23SetSceneIdForPrivateAppEi", "scene id for a Nintendo application: logged, nothing reads it", void, h_hid_SceneId, int id) { LOG("hid: SetSceneIdForPrivateApp %d", id); }
-// The pointer's own settings (Mario Kart World 1.8.0 imports them beside InitializeNmouse): they go to the hid service the host does not serve, and with no handles there is no pointer to set
-HLE_FORCE("_ZN2nn3hid22SetNmousePointerRangesEii", "Joy-Con mouse pointer range: no sensor on the host", void, h_hid_NmouseRanges, int w, int h) { (void)w; (void)h; }
-HLE_FORCE("_ZN2nn3hid19EnableNmousePointerENS0_12NmouseHandleEb", "Joy-Con mouse pointer: no sensor on the host (false: no device)", bool, h_hid_NmouseEnable, uint64_t hd, int on) { (void)hd; (void)on; return 0; }
-HLE_FORCE("_ZN2nn3hid24SetNmousePointerPositionENS0_12NmouseHandleEii", "Joy-Con mouse pointer position: no sensor on the host (false: no device)", bool, h_hid_NmousePos, uint64_t hd, int x, int y) { (void)hd; (void)x; (void)y; return 0; }
+// The pointer's own settings (Mario Kart World 1.8.0 imports them beside InitializeNmouse; SDK 21's forms, by upstream pull request #1116: InitializeNmouse with a pointer type
+// aborted on the hid service). They go to the hid service the host does not serve, so they are kept or dropped, with no device to apply them to. The calls on a handle return the
+// SDK's bool (its Result is success: SDK 22.2.0 sdk+0x6d5510 and +0x6d5530): the merged handle 0 is known, and with no device its pointer takes the settings and reports nothing
+// (no state, no controller); the standard mouse has no handle, as no USB mouse is connected. From upstream nxnative
+static int g_nmouse_range[2];
+HLE_FORCE("_ZN2nn3hid16InitializeNmouseEPvmiiNS0_17NmousePointerTypeE", "Joy-Con mouse pointer (with a pointer type): no hid service; no sensor on the host", void, h_hid_NmouseInitT,
+          void *work, uint64_t size, int w, int h, int type) { (void)work; (void)size; (void)type; g_nmouse_range[0] = w; g_nmouse_range[1] = h; }
+HLE_FORCE("_ZN2nn3hid22SetNmousePointerRangesEii", "Joy-Con mouse pointer range: kept", void, h_hid_NmouseRanges, int w, int h) { g_nmouse_range[0] = w; g_nmouse_range[1] = h; }
+HLE_FORCE("_ZN2nn3hid22GetNmousePointerRangesEPiS1_", "Joy-Con mouse pointer range: the one set", void, h_hid_NmouseGetRange, int *w, int *h) { *w = g_nmouse_range[0]; *h = g_nmouse_range[1]; }
+HLE_FORCE("_ZN2nn3hid28SetNmousePointerMovementAreaEiiii", "Joy-Con mouse pointer area: no device to apply it to", void, h_hid_NmouseArea, int x, int y, int w, int h) { (void)x; (void)y; (void)w; (void)h; }
+HLE_FORCE("_ZN2nn3hid21RestrictNmousePointerEffff", "Joy-Con mouse pointer restriction: no device to apply it to", void, h_hid_NmouseRestrict, float a, float b, float c, float d) { (void)a; (void)b; (void)c; (void)d; }
+HLE_FORCE("_ZN2nn3hid34SetNmouseButtonConfigStandardMouseERKNS0_31NmouseButtonConfigStandardMouseE", "USB mouse buttons: no mouse on the host", void, h_hid_NmouseCfgM, const void *c) { (void)c; }
+HLE_FORCE("_ZN2nn3hid28GetStandardMouseNmouseHandleEPNS0_12NmouseHandleE", "USB mouse handle: none (no mouse on the host)", bool, h_hid_NmouseStd, uint64_t *out) { (void)out; return false; }
+HLE_FORCE("_ZN2nn3hid19EnableNmousePointerENS0_12NmouseHandleEb", "mouse pointer on / off: the merged handle takes it (no device)", bool, h_hid_NmouseEnable, uint64_t hd, int on) { (void)on; return hd == 0; }
+HLE_FORCE("_ZN2nn3hid24SetNmousePointerPositionENS0_12NmouseHandleEii", "mouse pointer position: the merged handle takes it (no device)", bool, h_hid_NmousePos, uint64_t hd, int x, int y) { (void)x; (void)y; return hd == 0; }
+// The state of one pointer (Nintendo Switch 2 Welcome Tour reads it, main+0x253b2c; the SDK's own opens the hid service): with no device, none, also for the merged handle
+HLE_FORCE("_ZN2nn3hid14GetNmouseStateEPNS0_11NmouseStateENS0_12NmouseHandleE", "mouse state: none (no device)", bool, h_hid_NmouseState, void *out, uint64_t hd) { (void)out; (void)hd; return false; }
+HLE_FORCE("_ZN2nn3hid13GetNpadIdTypeEPjNS0_12NmouseHandleE", "mouse's controller: none (no device)", bool, h_hid_NmouseNpad, uint32_t *out, uint64_t hd) { (void)out; (void)hd; return false; }
+// The system setting for the mouse pointer's speed (System Settings, Mouse): the default, 1. The SDK's own connects to the hid service, which the host does not serve: Nintendo
+// Switch 2 Welcome Tour aborted on it (Result 0xe15, sdk+0x65cfdc in v262144) right after its graphics came up
+HLE_FORCE("_ZN2nn3hid25GetMousePointerSpeedScaleEv", "mouse pointer speed setting: the default, 1.0", float, h_hid_MouseSpeed, void) { return 1.0f; }
 HLE_FORCE("_ZN2nn3hid22GetSixAxisSensorStatesEPNS0_18SixAxisSensorStateEiRKNS0_19SixAxisSensorHandleE", "six-axis sensor states: every requested entry, newest first",
           int, h_hid_SixStates, SixAxisState *out, int n, const uint32_t *h) { return six_states(out, n, *h); }
 // Vibration handles: byte 0 = SDK style index (FullKey 3, Handheld 4), byte 1 = npad id, byte 2 = motor.
@@ -924,6 +1122,7 @@ HLE_FORCE("_ZN2nn3hid22GetNpadControllerColorEPNS0_19NpadControllerColorERKj", "
 HLE_FORCE("_ZN2nn3hid22GetNpadControllerColorEPNS0_19NpadControllerColorES2_RKj", "left and right Joy-Con colors", Result, h_hid_Color2, uint32_t *l, uint32_t *r, const uint32_t *id) { (void)id; ctrl_color(l); ctrl_color(r); return RES_OK; }
 HLE_FORCE("_ZN2nn3hid21ShowControllerSupportERKNS0_20ControllerSupportArgE", "controller applet (no result wanted); the host answers as the overload above", Result, h_hid_ShowCtrl0, const int8_t *arg) { DM_APPLET("controller support"); return ctrl_support(NULL, arg); }
 HLE_FORCE("_ZN2nn3hid24ShowControllerStrapGuideEv", "strap guide applet; not shown by the host", Result, h_hid_Strap, void) { DM_APPLET("controller strap guide"); return RES_OK; }
+HLE_FORCE("_ZN2nn3hid24ShowControllerStrapGuideERKNS0_13StrapGuideArgE", "strap guide applet with its argument (SDK 22); not shown by the host", Result, h_hid_StrapArg, const void *arg) { DM_APPLET("controller strap guide"); (void)arg; return RES_OK; }
 HLE_FORCE("_ZN2nn3hid28ShowControllerFirmwareUpdateERKNS0_27ControllerFirmwareUpdateArgE", "controller firmware update applet; not shown by the host", Result, h_hid_FwUpd, const void *arg) { DM_APPLET("controller firmware update"); (void)arg; return RES_OK; }
 
 // Touch screen: TouchScreenState<N> = { int64 sampling number; int32 count; int32 reserved; TouchState[N] }, filled from the front end's touch points (hle_touch.c touch_fill_n:
@@ -945,6 +1144,8 @@ TOUCH(1) TOUCH(2) TOUCH(3) TOUCH(4) TOUCH(5) TOUCH(6) TOUCH(7) TOUCH(8) TOUCH(9)
 // Gestures: recognized from the same touch points (hle_touch.c gesture_fill), so only in handheld mode too
 int gesture_fill(void *out, int n, uint64_t now_ns);
 HLE_FORCE("_ZN2nn3hid17InitializeGestureEv", "connect to the hid gesture recognizer; the host recognizes gestures from the touch points", void, h_hid_InitGesture, void) {}
+// Two-argument overload (PRAGMATA, SDK 20.5.15): the SDK's own one opens the hid service and aborts in sm::Initialize (Result 0xe15), as the touch screen's did
+HLE_FORCE("_ZN2nn3hid17InitializeGestureEii", "connect to the hid gesture recognizer (two-argument version); the host recognizes gestures from the touch points", void, h_hid_InitGesture2, int a, int b) { (void)a; (void)b; }
 HLE_FORCE("_ZN2nn3hid16GetGestureStatesEPNS0_12GestureStateEi", "gesture states, newest first (handheld mode: recognized from the touch points; console mode: none)", int, h_hid_Gestures, void *out, int n) {
     keys_sync();
     return dm_opmode() == 0 ? gesture_fill(out, n, now_ns()) : 0;

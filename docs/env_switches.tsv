@@ -113,6 +113,9 @@ DM_HLECOUNT	diagnostic	`=<file>` (`%d` = process ID) writes at exit a TSV of how
 DM_HLECOUNT_AT	diagnostic	`=<s>[,<s>…]` with `DM_HLECOUNT`: also writes the counts at those seconds from process start, as `<file>.<s>`; the difference of two shows what the guest calls in between (Android, where the game process is killed, never reaches the exit)
 DM_ICON	path	`=<image>` gives `build_ipa.sh` another app icon (default the `icon.jpg` beside the RomFS)
 DM_IMPORTS	diagnostic	When set, logs each import the loader binds to a host function and each forced takeover
+DM_IMU_ACC_SIGN	switch	`=-1` negates the acceleration of the npad IMU samples the SDK's sensor fusion reads (`GetNpadImuSamples`), for a test
+DM_IMU_GYRO_SIGN	switch	`=-1` negates the angular velocity of the npad IMU samples (`GetNpadImuSamples`), for a test
+DM_IMU_NOISE	switch	`=<deg/s>,<mG>` sets the per-tick noise of the npad IMU samples, a single number scales the default (0.1 deg/s, 0.05 mG; `0` none): the SDK's fusion never calibrates on samples that never change
 DM_KBD	switch	`=<text>`: the system keyboard returns that text as OK without showing an input box; unset with no window, it returns cancel
 DM_KBD_PLAYER	switch	`own` makes the Mac keyboard player 1 on its own, with controllers from player 2 on (by default the first controller shares player 1 with the keyboard)
 DM_KEYS	switch	Scripted input: `<seconds or f<frame>>:<key>[+key][~hold or ~f<frames>][*count/interval],…` presses buttons, sticks, touches and `Shake` at those times; `=@<file>` reads the steps from the file

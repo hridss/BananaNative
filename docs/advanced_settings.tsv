@@ -115,6 +115,9 @@ DM_HLECOUNT	developer	Diagnostics			text			both
 DM_HLECOUNT_AT	developer	Diagnostics			text			both							
 DM_ICON	developer	Diagnostics			text			both							
 DM_IMPORTS	developer	Diagnostics			text			both							
+DM_IMU_ACC_SIGN	developer	Input			text			both							
+DM_IMU_GYRO_SIGN	developer	Input			text			both							
+DM_IMU_NOISE	developer	Input			text			both							
 DM_KBD	developer	Game			text			both							
 DM_KBD_PLAYER	internal	Game			text			both						Mac or iOS only	
 DM_KEYS	developer	Input			text			both							
