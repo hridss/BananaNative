@@ -25,3 +25,4 @@ STUTTER-TEST*.md
 # aarch64 Linux host (linux/README.md): build output and the SDL3 headers and library copied from the device
 linux/build/
 linux/sysroot/
+dm/gfx/tools/dmsh_xlate_bin/dmsh_xlate-linux
