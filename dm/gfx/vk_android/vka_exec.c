@@ -131,7 +131,7 @@ void mtl_set_frame(uint64_t f) {
         if (f0) VLOG("replay up to frame %llu: per frame %.0f draws, %.0f render passes, %.0f clears / copies (%.0f in a pass), %.0f full barriers, %.0f inline uniform updates, %.1f submissions (%.1f parts); recording %.2f ms a frame (%.2f us a draw)",
                      (unsigned long long)f, (g_stat_draws - d0) / n, (vka_n_rp - rp0) / n, (g_stat_ops - o0) / n, (g_n_pclear - pc0) / n, (vka_n_bar - b0) / n, (g_n_ub - ub0) / n, (g_n_sub - s0) / n, (g_n_sub - s0 + g_n_chunks - ch0) / n, (g_rec_ns - r0) / n / 1e6,
                      g_stat_draws > d0 ? (g_rec_ns - r0) / 1e3 / (double)(g_stat_draws - d0) : 0.0);
-        { char pb[600]; void vka_draw_prof(char *b, size_t n, double draws); vka_draw_prof(pb, sizeof pb, (double)(g_stat_draws - d0)); if (pb[0]) VLOG("draw path per draw (us): %s", pb);
+        { char pb[1024]; void vka_draw_prof(char *b, size_t n, double draws); vka_draw_prof(pb, sizeof pb, (double)(g_stat_draws - d0)); if (pb[0]) VLOG("draw path per draw (us): %s", pb);
           vka_enc_stats(pb, sizeof pb, n); if (pb[0]) VLOG("%s", pb);
           vka_floor_stats(pb, sizeof pb); if (pb[0]) VLOG("%s", pb);
           vka_rp_bar_stats(pb, sizeof pb, n); if (pb[0]) VLOG("%s", pb);
@@ -208,6 +208,11 @@ static uint64_t g_oq_head, g_oq_seg0;           // the next query's sequence num
 static _Atomic uint64_t g_oq_ready;             // queries below it are reset and may begin (the completion thread moves it on)
 static uint64_t g_oq_acc; static pthread_mutex_t g_oq_mu = PTHREAD_MUTEX_INITIALIZER;   // the running count (post_run; vka_fence_cpu may run a submission's effects on another thread)
 static uint64_t g_oqs_reset, g_oqs_rep, g_oqs_const, g_oqs_q, g_oqs_full, g_oqs_skip, g_oqs_fly; static _Atomic uint64_t g_oqs_unav, g_oqs_zero;   // statistics (oq_stats)
+// Counting stops at a report until the next reset (DM_VK_OQ_STOP, live, default 1): a game that resets before each queried group of draws and reports after it (Orbitals,
+// Ocarina of Time) never reads what the draws between a report and the next reset add, yet every pass among them began a query (Orbitals: ~240 a frame, the rest of the frame
+// after its occlusion pass). While held, the draws are only counted; a report that comes before a reset (a game that reads a running count) counts them 1 sample each, as
+// visible, and from then on counting goes on after a report, as before 2026-11-16. After nxnative 0de2ac2e (Metal), which looks ahead in the submission for a later report
+static int g_oq_held, g_oq_nostop; static uint32_t g_oq_held_draws; static uint64_t g_oqs_held, g_oqs_heldlost;
 static int oq_on(void) {
     if (g_oq >= 0) return g_oq;
     g_oq = 0;
@@ -235,6 +240,7 @@ static void oq_close(void) { if (g_oq_open) { g_oq_open = 0; oq_rec((uint32_t)((
 void vka_oq_pass_end(void) { oq_close(); }   // vka_draw.c: the pass ends, or a clear is recorded inside it
 void vka_oq_draw(void) {   // vka_draw.c: a draw about to be recorded in the open pass; while counting, the pass's first draw (or the first after a report or a clear) begins a query
     if (!g_oq_count || g_oq_open || !g_cb) return;
+    if (g_oq_held) { g_oq_held_draws++; g_oqs_held++; return; }   // counting stopped at a report: no query until the next reset (or a report before it)
     uint64_t ready = atomic_load_explicit(&g_oq_ready, memory_order_acquire);
     if (g_oq_head >= ready) { g_oq_lost++; g_oqs_full++; return; }   // the ring is full: this draw counts 1
     if (g_oq_head + 1 - (ready - OQ_N) > g_oqs_fly) g_oqs_fly = g_oq_head + 1 - (ready - OQ_N);
@@ -245,13 +251,19 @@ static void oq_reset(void) {   // OP_RESET_COUNTER(SAMPLES_PASSED)
     if (!oq_on()) return;
     oq_close(); vka_draw_run_break();
     if (g_oq_head > g_oq_seg0 && g_cb) post((pop){6, 0, 0, 0, 0, g_oq_seg0, g_oq_head});   // the queries since the last report: no report reads them (after a hang they are not given back)
-    g_oq_seg0 = g_oq_head; g_oq_count = 1; g_oq_fresh = 1; g_oq_lost = 0;
+    g_oq_seg0 = g_oq_head; g_oq_count = 1; g_oq_fresh = 1; g_oq_lost = 0; g_oq_held = 0; g_oq_held_draws = 0;
 }
 static int oq_report(uint64_t ad, uint32_t t) {   // OP_REPORT_COUNTER(SAMPLES_PASSED): 1 = counted (its segment goes to the completion thread), 0 = the constant 1
     g_oqs_rep++;
     if (!oq_on() || !g_oq_count) { g_oqs_const++; return 0; }
     // No command buffer (a GPU hang: its effects run at once on the CPU, vka_fence_cpu): the constant 1, not an empty segment's 0; the segment stays open for the next counted report
     if (!g_cb) { g_oqs_const++; return 0; }
+    if (g_oq_held) {   // a report with no reset since the last one: the draws between were not counted (counting had stopped): 1 sample each, and it no longer stops
+        g_oq_lost += g_oq_held_draws; g_oqs_heldlost += g_oq_held_draws;
+        if (!g_oq_nostop) { g_oq_nostop = 1; VLOG("occlusion queries: a samples-passed report came after another with no reset between: the %u draws since counted 1 sample each; "
+                                                  "from now on counting goes on after a report (as with DM_VK_OQ_STOP=0)", g_oq_held_draws); }
+        g_oq_held = 0; g_oq_held_draws = 0;
+    }
     // On Qualcomm 891.14, closing the depth pass after a counted query keeps Ocarina of Time's cave geometry stable.
     // Store and reload the attachments through vka_rp_end. The reported count and its completion fence still use the regular query path.
     int split = g_oq_open && vka_rp_depth(NULL, NULL) &&
@@ -259,6 +271,7 @@ static int oq_report(uint64_t ad, uint32_t t) {   // OP_REPORT_COUNTER(SAMPLES_P
     oq_close(); vka_draw_run_break();   // (draws after it begin a new query; an instanced run is not extended across the report, even with no query open)
     post((pop){5, (uint32_t)g_oq_fresh, g_oq_lost, t, ad, g_oq_seg0, g_oq_head});
     g_oq_seg0 = g_oq_head; g_oq_fresh = 0; g_oq_lost = 0;
+    if (!g_oq_nostop && VKA_ENV("DM_VK_OQ_STOP", 1)) g_oq_held = 1;   // until the next reset (or a report before it)
     if (split) vka_rp_end();
     return 1;
 }
@@ -290,7 +303,7 @@ static void oq_done(const pop *o, uint64_t ticks) {   // post_run, after the fen
     pthread_mutex_unlock(&g_oq_mu);
 }
 static void oq_stats(char *b, size_t n, double frames) {   // every 300 frames with the replay statistics (no line while the game resets and reports none)
-    static uint64_t r0, p0, c0, q0, f0, s0, u0, z0;
+    static uint64_t r0, p0, c0, q0, f0, s0, u0, z0, h0, l0;
     uint64_t un = atomic_load(&g_oqs_unav), ze = atomic_load(&g_oqs_zero);
     b[0] = 0;
     if (frames > 0 && (g_oqs_reset != r0 || g_oqs_rep != p0)) {
@@ -298,11 +311,12 @@ static void oq_stats(char *b, size_t n, double frames) {   // every 300 frames w
                                 (g_oqs_reset - r0) / frames, (g_oqs_rep - p0) / frames);
         else snprintf(b, n, "occlusion queries per frame (counted, %s): %.1f samples-passed resets, %.1f reports (%.1f written 1: before any reset or without the GPU; %.1f counted read 0 samples), "
                       "%.1f queries begun, %.1f draws counted 1 without a query (%.1f with the ring full, %.1f skipped by the replay), %.1f results not available after their fence (counted 1); "
-                      "queries in flight up to %llu of %d",
+                      "queries in flight up to %llu of %d; %.1f draws not counted after a report until the next reset (DM_VK_OQ_STOP%s), %.1f of them counted 1 by a report before it",
                       OQ.precise ? "precise" : "not precise", (g_oqs_reset - r0) / frames, (g_oqs_rep - p0) / frames, (g_oqs_const - c0) / frames, (ze - z0) / frames, (g_oqs_q - q0) / frames,
-                      (g_oqs_full - f0 + g_oqs_skip - s0) / frames, (g_oqs_full - f0) / frames, (g_oqs_skip - s0) / frames, (un - u0) / frames, (unsigned long long)g_oqs_fly, OQ_N);
+                      (g_oqs_full - f0 + g_oqs_skip - s0) / frames, (g_oqs_full - f0) / frames, (g_oqs_skip - s0) / frames, (un - u0) / frames, (unsigned long long)g_oqs_fly, OQ_N,
+                      (g_oqs_held - h0) / frames, g_oq_nostop ? "; off since a report came before a reset" : "", (g_oqs_heldlost - l0) / frames);
     }
-    r0 = g_oqs_reset; p0 = g_oqs_rep; c0 = g_oqs_const; q0 = g_oqs_q; f0 = g_oqs_full; s0 = g_oqs_skip; u0 = un; z0 = ze; g_oqs_fly = 0;
+    r0 = g_oqs_reset; p0 = g_oqs_rep; c0 = g_oqs_const; q0 = g_oqs_q; f0 = g_oqs_full; s0 = g_oqs_skip; u0 = un; z0 = ze; h0 = g_oqs_held; l0 = g_oqs_heldlost; g_oqs_fly = 0;
 }
 uint64_t guest_ns(void);
 static _Atomic uint64_t g_cal_post[8];   // when a slot's submission had its completion processed (post_run): the tick's measure and DM_VK_TSCAL (below)
