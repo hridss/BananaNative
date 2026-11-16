@@ -4,7 +4,12 @@
 // Unreal Engine needs no row: the rewriter finds its console variables by their registered names in any build (dm/tools/ue_cvar.py, main's fixups UE_CVAR:<name>), and the host writes
 // the frame limit, the profile's ue_fps_cvar (t.MaxFPS, or a game's own variable its settings apply to t.MaxFPS: SHIN MEGAMI TENSEI V: Vengeance's Project.FrameRateLimit), and the
 // present interval, rhi.SyncInterval (nvn.SyncInterval in UE 4.18's Switch RHI: DRAGON QUEST XI S). Each is a TAutoConsoleVariable whose +0x10 points to its value, the game thread's
-// copy then the render thread's. The games' configs set the limit to 30 and the interval to 2 (their notes name the .ini files)
+// copy then the render thread's. The games' configs set the limit to 30 and the interval to 2 (their notes name the .ini files). An engine with a fixed frame rate (bUseFixedFrameRate) steps
+// by and holds to UEngine::FixedFrameRate instead, which the rewriter finds through its reflection entry and GEngine where the engine is made (dm/tools/ue_fixed_rate.py, main's fixups
+// UE_FIXED_RATE_PTR / _FIELD / _FLAG: Pikmin 4). It is written only while the object's bUseFixedFrameRate is set (_FLAG), so an engine stepping by the time that passed is left as it is.
+// Nor do Unity's Application.targetFrameRate and QualitySettings.vSyncCount need a row: the rewriter finds them through the engine's internal-call table (dm/tools/unity_fps.py, main's
+// fixups UNITY_*). Monolith's native interval controls both the wait and the simulation's elapsed-time step; monolith_fps.py recognizes reviewed engine implementations and derives its
+// global (MONOLITH_INTERVAL: Xenoblade Chronicles 2 and 3, X DE). These came from upstream nxnative (f5f6d4b5, bd979ced, 62f6a52c, 50aefc12, aa9e0ff7)
 #include "hle.h"
 #include <stdatomic.h>
 #include <stdlib.h>
@@ -28,12 +33,14 @@
 // put its floor back, until the game restarted. So a floor row never writes above that maximum, and a rate needing more vsyncs than that is not offered (row_holds)
 // The vsync kinds hold only rates that divide 60 (60, 30, 20, 15); the rate kinds any target (rate_ok)
 // And a step count: a framework that runs a whole number of fixed steps each frame and presents at that many vsyncs, picked by a mode field before it (a profile's fps_steps rows; steps_tick)
-enum { FPS_F32, VSYNCS_I32, MS_F32, FPS_I32, TICKS_U32, SECS_F32, MODE_U32, FPS_F64, MIN_VSYNCS_I32, STEPS_I32 };
+// And Monolith's interval: vsyncs per frame as an int32 whose 0 means the engine's native default of 2 (VSYNCS_DEFAULT2_I32)
+enum { FPS_F32, VSYNCS_I32, MS_F32, FPS_I32, TICKS_U32, SECS_F32, MODE_U32, FPS_F64, MIN_VSYNCS_I32, STEPS_I32, VSYNCS_DEFAULT2_I32 };
 #define MS_MARGIN 0.5f
 static float ms_want(int fps) { return 1000.0f / (float)fps - (fps == 60 ? MS_MARGIN : 0); }
 // deref: after [main + ptr_off], nderef more pointers, each at the object reached so far + deref[i] (an object behind a global, then members)
-typedef struct { const char *build, *what; uint64_t ptr_off; uint32_t field; uint8_t kind, copies; uint32_t scale; uint8_t nderef; uint16_t deref[3]; } lock_t;
-static int vsync_kind(int kind) { return kind == VSYNCS_I32 || kind == MIN_VSYNCS_I32 || kind == STEPS_I32; }
+// flag: byte offset << 8 | bit mask the object must have set for the write (0: none; Unreal's bUseFixedFrameRate)
+typedef struct { const char *build, *what; uint64_t ptr_off; uint32_t field; uint8_t kind, copies; uint32_t scale; uint8_t nderef; uint16_t deref[3]; uint32_t flag; } lock_t;
+static int vsync_kind(int kind) { return kind == VSYNCS_I32 || kind == MIN_VSYNCS_I32 || kind == STEPS_I32 || kind == VSYNCS_DEFAULT2_I32; }
 static int follows_game(int kind) { return kind == MIN_VSYNCS_I32 || kind == STEPS_I32; }   // the game still sets its present interval itself (dm_fps_lock_engine leaves these out)
 static int rate_ok(int kind, int target) { return !vsync_kind(kind) || 60 % target == 0; }
 static const lock_t k_locks[] = {
@@ -224,11 +231,13 @@ static int target_row(const module_t *m, lock_t *out) {
     return 1;
 }
 
-// The Unreal rows of this main: the profile's frame-limit variable and the present intervals, at the objects the rewriter found (0 rows: not an Unreal main). *missing: an Unreal main
-// (the rewriter found some of its variables) without the profile's frame-limit variable
+// The Unreal rows of this main: the profile's frame-limit variable and the present intervals, at the objects the rewriter found, and the engine's fixed frame rate on GEngine (0 rows:
+// not an Unreal main). *missing: an Unreal main (the rewriter found some of its variables) without the profile's frame-limit variable
 static int ue_rows(const module_t *m, lock_t *out, int *missing) {
-    static char what[3][48]; int n = 0, have = 0;
-    for (int k = 0; k < m->n_ue_cvar && n < 3; k++) {
+    static char what[4][48]; int n = 0, have = 0;
+    if (m->ue_fixed_ptr && m->ue_fixed_flag)
+        out[n++] = (lock_t){ "", "Unreal fixed frame rate (GEngine->FixedFrameRate)", m->ue_fixed_ptr, m->ue_fixed_field, FPS_F32, 1, 0, 0, {0}, m->ue_fixed_flag };
+    for (int k = 0; k < m->n_ue_cvar && n < 4; k++) {
         const char *name = m->ue_cvar[k].name; int fps = !strcmp(name, DM_GAME_UE_FPS_CVAR);
         if (!fps && strcmp(name, "rhi.SyncInterval") && strcmp(name, "nvn.SyncInterval")) continue;
         have |= fps; snprintf(what[n], sizeof what[n], "Unreal %s", name);
@@ -238,17 +247,58 @@ static int ue_rows(const module_t *m, lock_t *out, int *missing) {
     return n;
 }
 
+// Unity's frame rate, at the places the rewriter found through the engine's internal-call table (dm/tools/unity_fps.py; main's fixups UNITY_*), in any Unity build it reads:
+// Application.targetFrameRate, an int32 in main's bss (-1 until a game sets it: left so; a row below), and the current quality level's vSyncCount. On the Switch, Unity presents at
+// vSyncCount vsyncs a frame: QualitySettings.vSyncCount's setter hands the count to the graphics device, which calls nvnWindowSetPresentInterval when it changes, and Unity steps
+// the game by the time that really passed. The device takes the count only through the setter, so writing the level's count does not change the interval the game asks for: the
+// host's present cap does (hle_nvn.c), as for every engine limit here; the write keeps what the game reads back (QualitySettings.vSyncCount) the same as what it shows. Fire Emblem
+// Engage steps its frame-counted logic by that count (GameTime.VsyncFixedCount), so 60 / cap is also its speed. A count is a whole number of vsyncs: 60, 30, 20 and 15 only.
+// When the cap goes back to the game's own while the game runs, the count the game had is put back (the last level written; the game sets a level's count again at its next scene)
+static struct { uint8_t *base; uint64_t ptr; uint32_t idx, arr, size, vsync; uint64_t at; uint32_t orig; int nlog; } uq;
+static uint64_t unity_vsync_at(void) {   // the current level's vSyncCount, or 0 while the game has not made its settings
+    uint64_t obj = 0, arr = 0; int32_t lvl;
+    if (!rd((uint64_t)(uintptr_t)(uq.base + uq.ptr), &obj, sizeof obj) || !obj) return 0;
+    if (!rd(obj + uq.idx, &lvl, sizeof lvl) || lvl < 0 || lvl > 64 || !rd(obj + uq.arr, &arr, sizeof arr) || !arr) return 0;
+    return arr + (uint64_t)lvl * uq.size + uq.vsync;
+}
+static void unity_vsync_tick(int target, const char *src) {
+    uint64_t a = unity_vsync_at(); uint32_t cur, want = 60 / (uint32_t)target;
+    if (!a || !rd(a, &cur, sizeof cur) || cur == want || cur < 1 || cur > 4) return;   // already set, or 0: the game paces by targetFrameRate instead
+    if (a != uq.at) { uq.at = a; uq.orig = cur; }
+    uint32_t *p = (uint32_t *)(uintptr_t)a; dm_guest_write_prepare(p, sizeof *p); __atomic_store_n(p, want, __ATOMIC_RELAXED);
+    if (uq.nlog < 8) { uq.nlog++; LOG("main: Unity QualitySettings.vSyncCount %u → %u vsyncs (%d fps; %s)", cur, want, target, src); }
+}
+static void unity_vsync_restore(const char *src) {
+    uint32_t cur; if (!uq.at || !rd(uq.at, &cur, sizeof cur)) return;
+    if (cur != uq.orig) { uint32_t *p = (uint32_t *)(uintptr_t)uq.at; dm_guest_write_prepare(p, sizeof *p); __atomic_store_n(p, uq.orig, __ATOMIC_RELAXED); LOG("main: Unity QualitySettings.vSyncCount back to the game's %u (%s)", uq.orig, src); }
+    uq.at = 0; uq.nlog = 0;
+}
 // The running main's engine limiters, found once: by the first present (dm_fps_lock_tick) or by the graphics layer's present cap, which may ask first (dm_fps_lock_engine, from the acquire)
-#define NROWS (NLOCKS + 4 + NSTEPS)
-static lock_t ue[3], target_lock, steps[NSTEPS > 0 ? NSTEPS : 1]; static const lock_t *rows[NROWS]; static int nrow, nier, ue_missing; static uint8_t *base; static uint32_t display;
+#define NROWS (NLOCKS + 7 + NSTEPS)   // target, Monolith, four Unreal rows, Unity targetFrameRate, the steps rows
+static lock_t ue[4], target_lock, monolith_lock, unity_tfr, steps[NSTEPS > 0 ? NSTEPS : 1]; static const lock_t *rows[NROWS]; static int nrow, nier, ue_missing; static uint8_t *base; static uint32_t display;
 static pthread_once_t g_found = PTHREAD_ONCE_INIT;
 static void lock_find(void) {
     for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) {
+        // the rewriter left a timing correction this main's engine rule needs uninstalled (patch_nso.py NATIVE_FPS_BLOCKED): writing a frame rate would run the game at the wrong speed
+        if (g_mod[i].native_fps_blocked) { LOG("[RED] main: native frame target disabled: a required timing correction did not match"); continue; }
         for (int k = 0; k < (int)(sizeof k_nier_dr / sizeof *k_nier_dr); k++) if (!strcmp(g_mod[i].build_id, k_nier_dr[k].build)) { base = g_mod[i].base; nier = 1; display = k_nier_dr[k].display; }
         for (int k = 0; k < NLOCKS; k++) if (!strcmp(g_mod[i].build_id, k_locks[k].build)) { rows[nrow++] = &k_locks[k]; base = g_mod[i].base; }
         if (target_row(&g_mod[i], &target_lock)) { rows[nrow++] = &target_lock; base = g_mod[i].base; }
         int nue = ue_rows(&g_mod[i], ue, &ue_missing);
         for (int k = 0; k < nue; k++) { rows[nrow++] = &ue[k]; base = g_mod[i].base; }
+        if (g_mod[i].monolith_interval) {
+            monolith_lock = (lock_t){ "", "Monolith frame interval", 0, (uint32_t)g_mod[i].monolith_interval, VSYNCS_DEFAULT2_I32, 1, 0 };
+            rows[nrow++] = &monolith_lock; base = g_mod[i].base;
+        }
+        if (g_mod[i].unity_target_fps) {   // unless a build row writes the same field
+            int dup = 0; for (int r = 0; r < nrow; r++) dup |= !rows[r]->ptr_off && rows[r]->field == (uint32_t)g_mod[i].unity_target_fps;
+            unity_tfr = (lock_t){ "", "Unity Application.targetFrameRate", 0, (uint32_t)g_mod[i].unity_target_fps, FPS_I32, 1, 0 };
+            if (!dup) { rows[nrow++] = &unity_tfr; base = g_mod[i].base; }
+        }
+        if (g_mod[i].unity_qs_ptr && g_mod[i].unity_qs_size) {
+            uq.base = g_mod[i].base; uq.ptr = g_mod[i].unity_qs_ptr; uq.idx = g_mod[i].unity_qs_idx; uq.arr = g_mod[i].unity_qs_arr; uq.size = g_mod[i].unity_qs_size; uq.vsync = g_mod[i].unity_qs_vsync;
+            LOG("main: Unity QualitySettings at [main+%#llx], vSyncCount at [+%#x] + [+%#x] * %#x + %#x", (unsigned long long)uq.ptr, uq.arr, uq.idx, uq.size, uq.vsync);
+        }
         for (int k = 0; k < NSTEPS; k++) if (k_steps[k].build[0] && !strcmp(g_mod[i].build_id, k_steps[k].build)) {   // a step count: field = the count, scale = the mode field
             const steps_row_t *S = &k_steps[k]; lock_t *L = &steps[k];
             *L = (lock_t){ S->build, "framework step count", S->ptr_off, S->count, STEPS_I32, 1, S->mode, S->nderef, {S->deref[0], S->deref[1], S->deref[2]} };
@@ -257,12 +307,13 @@ static void lock_find(void) {
     }
     fb_find();
 }
-// Whether the host writes fps_target into an engine limiter of this main (a row for its build, NieR's frame interval, Unreal's variables or Frostbite's simulation rate, found by name).
+// Whether the host writes fps_target into an engine limiter of this main (a row for its build, NieR's frame interval, a target frame rate found by its readers, Unreal's variables or
+// fixed frame rate, Unity's frame rate, Monolith's interval, or Frostbite's simulation rate, found by name).
 // Without one, and without a frame step state page, nothing makes the game follow the cap, so the graphics layer keeps the game's own present interval (hle_nvn.c fps_present_cap):
 // presenting at a cap the game does not step by runs a fixed-step game fast or slow (Tears of the Kingdom 1.4.2 at 2x with DM_FPS_TARGET=60)
 // A floor or a step count does not fix the rate on its own terms: the game still sets its present interval (at or above the floor; the step count, which at a cap below 60 is the cap's)
-static int floor_only(void) { for (int r = 0; r < nrow; r++) if (!follows_game(rows[r]->kind)) return 0; return nrow > 0 && !nier && !fb.n; }
-int dm_fps_lock_engine(void) { pthread_once(&g_found, lock_find); return (nrow || nier || fb.n) && !floor_only(); }
+static int floor_only(void) { for (int r = 0; r < nrow; r++) if (!follows_game(rows[r]->kind)) return 0; return nrow > 0 && !nier && !fb.n && !uq.base; }
+int dm_fps_lock_engine(void) { pthread_once(&g_found, lock_find); return (nrow || nier || fb.n || uq.base) && !floor_only(); }
 int dm_fps_lock_floor(void) { pthread_once(&g_found, lock_find); for (int r = 0; r < nrow; r++) if (follows_game(rows[r]->kind)) return 1; return 0; }   // the game picks its interval at or above a floor the host writes, or by the step count it writes
 static int steps_row(void) { pthread_once(&g_found, lock_find); for (int r = 0; r < nrow; r++) if (rows[r]->kind == STEPS_I32) return 1; return 0; }
 // The cap: DM_FPS_TARGET or the profile's fps_target at start, then whatever the front end sets while the game runs (dm_fps_target_set: the Android launcher's in-game panel,
@@ -312,7 +363,7 @@ static int row_holds(const lock_t *L, int t) {
     return !mx || 60 / t <= mx;
 }
 static int holds(int t) {
-    int ok = (nier && 60 % t == 0) || fb.n;
+    int ok = ((nier || uq.base) && 60 % t == 0 && 60 / t <= 4) || fb.n;
     for (int r = 0; r < nrow && !ok; r++) ok = row_holds(rows[r], t);
     return ok;
 }
@@ -612,10 +663,10 @@ void dm_fps_lock_tick(void) {
     if (state == -1) return;
     if (state == -2) {
         pthread_once(&g_found, lock_find);
-        if (!nrow && !nier && !fb.n && !ue_missing) { state = -1; return; }
+        if (!nrow && !nier && !fb.n && !uq.base && !ue_missing) { state = -1; return; }
         int t = dm_fps_target();
         if (t && ue_missing) LOG("[RED] main: Unreal %s not found by the rewriter (ue_cvar.py NAMES; game profile ue_fps_cvar): the game's own frame limit stays", DM_GAME_UE_FPS_CVAR);
-        if (!nrow && !nier && !fb.n) { state = -1; return; }
+        if (!nrow && !nier && !fb.n && !uq.base) { state = -1; return; }
         state = 0;
     }
     int g = dm_fps_target_gen();
@@ -623,8 +674,9 @@ void dm_fps_lock_tick(void) {
         int first = gen < 0, t = dm_fps_target(); gen = g; src = g_target_src;
         if (!t) {
             if (first) { for (int r = 0; r < nrow; r++) LOG("main: %s left as the game sets it (%s)", rows[r]->what, src); if (nier) LOG("main: NieR frame interval left as the game sets it (%s)", src);
-                         if (fb.n) LOG("main: Frostbite simulation rate left as the game sets it (%s)", src); }
-            else for (int r = 0; r < nrow; r++) {   // back to the game's own: the values the game had before the host wrote them (NieR and Frostbite keep the last cap until the game sets them again)
+                         if (fb.n) LOG("main: Frostbite simulation rate left as the game sets it (%s)", src); if (uq.base) LOG("main: Unity vSyncCount left as the game sets it (%s)", src); }
+            else if (uq.base) unity_vsync_restore(src);
+            if (!first) for (int r = 0; r < nrow; r++) {   // back to the game's own: the values the game had before the host wrote them (NieR and Frostbite keep the last cap until the game sets them again)
                 uint64_t obj = row_obj(rows[r]); if (!obj) continue;
                 for (int c = 0; c < rows[r]->copies && c < 2; c++) if (have_orig[r][c] && rows[r]->kind != FPS_F64) {
                     uint32_t *p = (uint32_t *)(uintptr_t)(obj + rows[r]->field + 4 * (uint64_t)c); dm_guest_write_prepare(p, sizeof *p); __atomic_store_n(p, orig[r][c], __ATOMIC_RELAXED);
@@ -681,9 +733,11 @@ void dm_fps_lock_tick(void) {
         }
     }
     if (fb.n) fb_tick(target, src);
+    if (uq.base && 60 % target == 0 && 60 / target <= 4) unity_vsync_tick(target, src);   // a count of whole vsyncs: 40 and 45 leave it (targetFrameRate, where found, takes them)
     for (int r = 0; r < nrow; r++) {
         const lock_t *L = rows[r]; if (!rate_ok(L->kind, target) || L->kind == STEPS_I32) continue;   // step counts: steps_tick
         uint64_t obj = row_obj(L); if (!obj) continue;   // not created yet
+        if (L->flag) { uint8_t b; if (!rd(obj + (L->flag >> 8), &b, 1) || !(b & (L->flag & 0xff))) continue; }   // the object's flag is off (Unreal: no fixed frame rate in use)
         if (L->kind == MIN_VSYNCS_I32) { sead_pin(obj + L->field, 0); sead_ctl_tune(obj + L->field, target, src); }
         if (L->kind == FPS_F64) {
             for (int c = 0; c < L->copies; c++) {
@@ -718,7 +772,8 @@ void dm_fps_lock_tick(void) {
             } else {
                 int fps = L->kind == FPS_I32;
                 want = fps ? (uint32_t)target : 60 / (uint32_t)target;
-                if (cur == want || cur < (fps ? 10u : 1u) || cur > (fps ? 120u : 4u)) continue;
+                uint32_t value = !cur && L->kind == VSYNCS_DEFAULT2_I32 ? 2 : cur;   // Monolith's zero means its native two-vsync default
+                if (value == want || value < (fps ? 10u : 1u) || value > (fps ? 120u : 4u)) continue;
                 if (L->kind == MIN_VSYNCS_I32) {   // never above the controller's own maximum (row_holds)
                     int mx = floor_max(L); if (!mx) continue;   // not set yet
                     if (want > (uint32_t)mx) { if (!over[r]) { over[r] = 1; LOG("main: %s left at %u: %d fps needs %u vsyncs, above the controller's maximum %d (%s)", L->what, cur, target, want, mx, src); } continue; }

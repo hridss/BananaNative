@@ -79,6 +79,7 @@ General host changes first needed here; each applies to every game:
 - **Pool finalize evicting shared textures** (`mtl_alias_drop_pool`), deferred release of pool buffers, the memory line's `serial objects` / `freed but alive` / `shared textures`: [Finalized pools kept alive by residency and the sharing table](../../../docs/reference/nvn-objects.md#finalized-pools-kept-alive-by-residency-and-the-sharing-table).
 - **Unity `Shader` objects** (`unityfs.py`): [Unity 2020.3 Shader objects in UnityFS bundles](../../../docs/reference/shaders.md#unity-20203-shader-objects-in-unityfs-bundles); **separate textures** (`NVN_SEPTEX_SLOT0`): [04, section 3](../../../docs/agents/04-graphics.md#3-find-the-binding-layout-by-census).
 - **Prewarm lists**: [development.md](../../../docs/development.md#prewarm-lists).
+- [Unity's vSyncCount and targetFrameRate, found through the internal-call table](../../../docs/reference/frame-rate.md#unitys-vsynccount-and-targetframerate-found-through-the-internal-call-table) (upstream replaced the `set_vSyncCount` cut with the host's write; on Android the cut stays until a run with the write).
 
 ## Open
 
