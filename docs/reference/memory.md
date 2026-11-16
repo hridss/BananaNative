@@ -675,6 +675,14 @@ The guest address space, heaps, pools, virtual address memory and the allocators
 - **Check:** Orbitals on the AYN Thor, screenshots of the hall against `DM_VK_PLACE_LAZY=0`: the stall and the rug the same, no uniform buffer line left.
 - **Found on:** [Orbitals](../../dm/games/040032B023CA4000/README.md#found-on-this-game).
 
+### Index buffers the frame replay met in pools nothing placed (Android)
+
+- **Symptom:** a frame replay (`nxreplay`) of a capture draws a fraction of the frame and its picture is far off (Orbitals' hall: 1,447 of 5,436 draws, the picture almost white); the replay log has `[RED] vk: index buffer at … is not in placed guest RAM: skipped` (four lines, however many draws).
+- **Cause:** under lazy placement the game's own NVN commands place an index buffer's or a vertex stream's pool when they name it (`hle_nvn.c`); the replay records the captured draws without those commands, so their pools stayed unplaced, and `vka_draw.c` skipped every draw whose index buffer was in one (or read a vertex stream as zeros, or skipped an indirect draw or dispatch).
+- **Fix:** general: `addr_need` places the pool (`mtl_pool_need`) and looks the address up again for index buffers, indirect draw and dispatch arguments, and vertex streams, as `ubo_desc` and `ssbo_desc` do; in the game nothing changes where its commands placed them already.
+- **Check:** the Orbitals capture `hall0326.nvncap` (frame 5093): 5,436 draws, none skipped, the picture the live frame's scene; the game on the Thor as before (55.9 ms a frame, no unplaced line).
+- **Found on:** [Orbitals](../../dm/games/040032B023CA4000/README.md#found-on-this-game).
+
 ### Pools the GPU never reads cost zram (Android)
 
 - **Symptom:** on a phone short of RAM, a game's large memory pools that only the CPU reads sit in zram: Anka Native's per-pool footprint measurements show them swapped, never resident, with thousands of major faults a second where they are read. The Legend of Zelda: Ocarina of Time (`0400486024DEC000`) has two texture pools of 1,737 and 232 MiB; since the [pool-only textures fix](rendering.md#textures-read-only-through-the-pool-were-never-made-android) it also holds about 3 GiB of images.
