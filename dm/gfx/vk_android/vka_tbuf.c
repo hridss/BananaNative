@@ -10,6 +10,7 @@
 // Unreal Engine 5 reads its per-object data in vertex shaders this way (Orbitals: the title screen's one plane read zeros and was never drawn, the background stayed black).
 // Not done: a buffer texture bound as a storage image (its writes would have to go back to the memory); it reads and writes nothing (logged)
 #include "vka.h"
+#include "../nvn/nvn_mtl.h"
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdlib.h>
@@ -28,6 +29,13 @@ static int tb_of(int id, tb_t *t) {
     if (t->f.bw != 1 || t->f.bh != 1 || t->f.kind >= 3 || !t->f.bpb) { VRED_ONCE("buffer texture of NVN format %#x: not a plain colour format, not bound", t->format); return 0; }
     t->id = id; t->bytes = (uint64_t)t->elems * t->f.bpb;
     return 1;
+}
+// The buffer texture's storage as placed memory: [addr, addr + n) asked for first when it is not yet (a pool no command gave the GPU an address in is placed lazily, vka_mem.c
+// mtl_pool_need: eight of Orbitals' small RGBA32F buffer textures, 3 to 96 elements, were left unbound after 2.5 minutes of play); the bytes placed from addr (vka_addr_run)
+static VkDeviceSize tb_run(const tb_t *t, uint64_t n, VkBuffer *buf, VkDeviceSize *off) {
+    VkDeviceSize r = vka_addr_run(t->addr, n, buf, off);
+    if (r < n) { mtl_pool_need((const void *)(uintptr_t)t->addr, n, "a buffer texture"); r = vka_addr_run(t->addr, n, buf, off); }
+    return r;
 }
 static int not_placed(const tb_t *t, const char *as) {
     static _Atomic int n; if (atomic_fetch_add(&n, 1) < 8) { char seg[400]; vka_mem_describe(t->addr, seg, sizeof seg);
@@ -49,7 +57,7 @@ VkBufferView vka_tbuf_view(int id, int writes) {
     uint64_t max = V.props.limits.maxTexelBufferElements, n = t.elems < max ? t.elems : max;
     if (n < t.elems) { static _Atomic int k; if (atomic_fetch_add(&k, 1) < 4) VRED("buffer texture ID %d: %u elements, the device's texel buffers hold %llu: the rest reads as zero", id, t.elems, (unsigned long long)max); }
     VkDeviceSize range = (VkDeviceSize)n * t.f.bpb, off = 0; VkBuffer buf = VK_NULL_HANDLE;
-    if (vka_addr_run(t.addr, range, &buf, &off) < range) { not_placed(&t, "texel buffer"); return VK_NULL_HANDLE; }
+    if (tb_run(&t, range, &buf, &off) < range) { not_placed(&t, "texel buffer"); return VK_NULL_HANDLE; }
     VkDeviceSize al = V.props.limits.minTexelBufferOffsetAlignment;
     if (al > 1 && off % al) {
         static _Atomic int k; if (atomic_fetch_add(&k, 1) < 8)
@@ -162,6 +170,7 @@ void vka_tbuf_refresh(int id, uint8_t dim, VkCommandBuffer cb) {
     tb_t t; int is2d;
     if (!cb || !tb_of(id, &t)) return;
     if (!shape(dim, &is2d)) { VRED_ONCE("buffer texture ID %d read as an image of shape %#x (not 1D or 2D): not bound", id, dim); return; }
+    { VkBuffer b; VkDeviceSize o; tb_run(&t, t.elems * t.f.bpb, &b, &o); }   // (placed before g_mu: the image copies at most its elements)
     pthread_mutex_lock(&g_mu);
     timg *x = img_find(&t, is2d); if (!x) x = img_make(&t, is2d);
     uint64_t fr = vka_frame();
