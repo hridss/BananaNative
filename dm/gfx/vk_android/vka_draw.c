@@ -1474,7 +1474,7 @@ static int stage_writes(const vka_dstate *d, int st, const vka_shader *sh, const
             break; }
         case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER: case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER: {   // a buffer texture over guest memory (vka_tbuf.c)
             int storage = r[i].desc == VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER;
-            VkBufferView bv = (r[i].what == VKA_R_TBUF || r[i].what == VKA_R_TEX || r[i].what == VKA_R_IMG) && r[i].tid ? vka_tbuf_view(r[i].tid, storage) : VK_NULL_HANDLE;
+            VkBufferView bv = (r[i].what == VKA_R_TBUF || r[i].what == VKA_R_TEX || r[i].what == VKA_R_IMG) && r[i].tid ? vka_tbuf_view(r[i].tid, storage, r[i].dim & DMSH_VK_DIM_UINT ? 1 : r[i].dim & DMSH_VK_DIM_SINT ? 2 : 0) : VK_NULL_HANDLE;
             if (!bv && !V.null_desc) { VRED_ONCE("an unbound texel buffer and no null descriptors: the draw is skipped"); g_skip_dev[VKS_FEATURE]++; return 0; }
             g_w.bv[k] = bv; w->pTexelBufferView = &g_w.bv[k];
             break; }

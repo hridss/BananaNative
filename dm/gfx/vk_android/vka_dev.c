@@ -329,6 +329,10 @@ static int init_once(void) {
          p11.subgroupSupportedStages & VK_SHADER_STAGE_GEOMETRY_BIT ? "yes" : "NO", p11.subgroupSupportedStages & VK_SHADER_STAGE_FRAGMENT_BIT ? "yes" : "NO", p11.subgroupSupportedStages & VK_SHADER_STAGE_VERTEX_BIT ? "yes" : "NO",
          p11.subgroupSupportedOperations, p11.subgroupQuadOperationsInAllStages ? "yes" : "no", p13.requiredSubgroupSizeStages);
     V.subgroup_stages = p11.subgroupSupportedStages;
+    V.tb_align_u = (uint32_t)p13.uniformTexelBufferOffsetAlignmentBytes; V.tb_single_u = p13.uniformTexelBufferOffsetSingleTexelAlignment != 0;
+    V.tb_align_s = (uint32_t)p13.storageTexelBufferOffsetAlignmentBytes; V.tb_single_s = p13.storageTexelBufferOffsetSingleTexelAlignment != 0;
+    VLOG("texel buffer offsets: uniform %u bytes%s, storage %u bytes%s (minTexelBufferOffsetAlignment %llu)", V.tb_align_u, V.tb_single_u ? " or one texel" : "",
+         V.tb_align_s, V.tb_single_s ? " or one texel" : "", (unsigned long long)V.props.limits.minTexelBufferOffsetAlignment);
     V.cache_ctl = f13.pipelineCreationCacheControl;
     V.subgroup_req_stages = f13.subgroupSizeControl ? p13.requiredSubgroupSizeStages : 0;
     V.subgroup_size = p11.subgroupSize; V.subgroup_min = p13.minSubgroupSize ? p13.minSubgroupSize : p11.subgroupSize; V.subgroup_max = p13.maxSubgroupSize ? p13.maxSubgroupSize : p11.subgroupSize;

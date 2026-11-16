@@ -102,6 +102,7 @@ typedef struct {
     VkInstance inst; VkPhysicalDevice pd; VkDevice dev; VkQueue q; uint32_t qf;
     VkPhysicalDeviceProperties props; VkPhysicalDeviceMemoryProperties memp;
     int placed, placed_range, unmap_reserve, fd_alias, bda, uab, display_timing, has_android_surface;
+    uint32_t tb_align_u, tb_align_s; uint8_t tb_single_u, tb_single_s;   // Vulkan 1.3 texel buffer offset alignment, uniform / storage (vka_tbuf.c vka_tbuf_view)
     int mem_budget;                                 // VK_EXT_memory_budget: the texture cache's limit reads the image heap's budget and usage (vka_tex.c, vka_texlimit.h)
     int cal_ts;                                     // VK_KHR / EXT_calibrated_timestamps: GPU timestamps can be put on the host clock (vka_exec.c DM_VK_TSCAL)
     void *perf_hint;                                // vkQueueSetPerfHintQCOM (VK_QCOM_queue_perf_hint), NULL without it: vka_gpu_floor
@@ -439,7 +440,8 @@ int vka_tex_id_can_cube(int id);                    // 1 when texture ID id's im
 int vka_tex_id_buffer(int id, uint64_t *addr, uint32_t *elems, int *format);   // a buffer texture: its storage's guest address, elements and NVN format; 0 = not one
 int vka_tex_id_is_buffer(int id);                   // texture ID id was registered as a buffer texture (no lock)
 // ---------- Buffer textures (vka_tbuf.c) ----------
-VkBufferView vka_tbuf_view(int id, int storage);     // a texel buffer view over buffer texture id's guest memory; VK_NULL_HANDLE = none (logged)
+VkBufferView vka_tbuf_view(int id, int storage, int want);   // a texel buffer view over buffer texture id's guest memory, in the shader's class (want: 0 float, 1 uint,
+                                                              // 2 sint); VK_NULL_HANDLE = none (logged)
 int vka_tbuf_pending(int id, uint8_t dim);           // buffer texture id read as an image of shape dim needs its copy refreshed (outside a render pass: vka_tbuf_refresh)
 void vka_tbuf_refresh(int id, uint8_t dim, VkCommandBuffer cb);   // copies buffer texture id's guest memory into its image (outside a render pass)
 VkImageView vka_tbuf_image_view(int id, uint8_t dim);   // that image's view (after vka_tbuf_refresh); VK_NULL_HANDLE = none
