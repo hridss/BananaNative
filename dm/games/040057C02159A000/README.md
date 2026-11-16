@@ -31,13 +31,14 @@ The exhibits use the Joy-Con 2's features: the mouse sensor, the Joy-Con 2 npad 
 
 ## Open
 
-- No phone run yet: boot, the 9 GB layout on a phone's address space, and the picture are unchecked.
+- First phone run (2026-11-16, system driver): the 9 GB layout mapped and the graphics system came up; it crashed in `hid::GetJcmsState` as it set its controller styles (resolved, below). What follows that is unchecked.
 - Ray tracing (upstream, on the Mac): `nvnQueueBuilderSetRayTracingMemorySize`, `nvnProgramBuilderSetRayTracingModules`, `nvnProgramBuilderSetProgramRayTracingFlags`, `nvnProgramBuilderSetMaxTraceRecursionDepth`, `nvnProgramBuilderSetMaxCallableRecursionDepth`, `nvnProgramGetShaderGroupHandle` and `nvnDeviceCalculateAccelerationStructureMemoryRequirements` are unimplemented (`[RED]`, once each at boot), as is `nvnDeviceRegisterFastClearStencil`. What the game draws with them is not known.
 - Upstream also logged `[RED] nn::codec H.264: a packet refused with 12 pictures waiting for a released buffer` a few times in the videos, and `[RED] stage 0 cb7 has no uniform buffer bound` once.
 
 ## Found on this game
 
 - [`vi::InitializeWithVrrLfcEnabled`](../../../docs/reference/services.md#viinitializewithvrrlfcenabled): the first crash at boot.
+- [The Joy-Con mouse sensor's newest state](../../../docs/reference/services.md#the-joy-con-mouse-sensors-newest-state): the first crash on the phone, as the game set its controller styles.
 - [A Nintendo application's scene id](../../../docs/reference/services.md#a-nintendo-applications-scene-id): a null read as each scene module starts.
 - [The application's GPU time span](../../../docs/reference/services.md#the-applications-gpu-time-span): a null read after the first frame.
 - [Bezel Engine's two memory setups](../../../docs/reference/memory.md#bezel-engines-two-memory-setups): the virtual-memory path, with the Switch 2 layout.

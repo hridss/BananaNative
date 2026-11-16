@@ -1017,6 +1017,13 @@ Most service calls can be found before they crash, before the first boot or the 
 - **Fix:** the Jcms and Nmouse calls are hooked (`hle_hid.c`): no handles, a merged handle with no states, and the pointer's settings (`SetNmousePointerRanges`, `EnableNmousePointer`, `SetNmousePointerPosition`) with nothing to set. From upstream nxnative (0a759de7, 03d92a9f), with the pointer settings added here.
 - **Found on:** [Mario Kart World](../../dm/games/0400C3F00006E000/README.md) 1.8.0, on the phone, right after its graphics system came up; upstream: Fire Emblem Fortune's Weave, Pokémon Pokopia.
 
+### The Joy-Con mouse sensor's newest state
+
+- **Symptom:** `CRASH sig=11 addr=0x18` in `sdk`, in `nn::hid::detail::GetJcmsStates` (`sdk+0x659990` in the SDK 20.5.29 `sdk` module), right after `hid: controllers reported from now on (the game set its supported styles)`.
+- **Cause:** `hid::GetJcmsState` (one state, not the `GetJcmsStates` ring) was not hooked. The SDK's own reads the hid service's shared ring through a table pointer that `InitializeJcms` would have set; the host hooks `InitializeJcms` and maps no such memory, so the pointer is null.
+- **Fix:** `hid::GetJcmsState` is hooked (`hle_hid.c`): a cleared 32-byte state (sampling number 0, no movement, attributes 0: not connected), as there is no sensor on the host. From upstream nxnative's pull request #1425.
+- **Found on:** [Nintendo Switch 2 Welcome Tour](../../dm/games/040057C02159A000/README.md) v262144, on the phone, its first frame after boot.
+
 ### A Nintendo application's scene id
 
 - **Symptom:** a null read in the hid client under `nn::hid::SetSceneIdForPrivateApp` as a scene starts.
