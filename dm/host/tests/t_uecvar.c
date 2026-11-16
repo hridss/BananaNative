@@ -68,17 +68,25 @@ static void check_lod(int set) {
     munmap(base, SIZE);
 }
 
-// The translucent lighting volume (dm_ue_translucent_tick, DM_UE_TRANSLUCENT_VOLUME_OFF): a global registered by reference, held at 0; left alone without the switch
-static void check_translucent(int set) {
+// ue_set rows (ue_set_apply): a global registered by reference held at an int while its switch is 1 and left alone without it; both copies of an object's float held;
+// a variable the rewriter did not find left alone
+static void check_ue_set(int set) {
     uint8_t *base = mmap(NULL, SIZE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0); assert(base != MAP_FAILED);
     g_nmod = 1; strcpy(g_mod[0].name, "main"); g_mod[0].base = base; g_mod[0].size = SIZE;
-    uint64_t glob = 0x20c00; cvar("r.TranslucentLightingVolume", glob);
+    uint64_t glob = 0x20c00, obj = 0x20d00; cvar("r.TranslucentLightingVolume", glob); cvar("r.StaticMeshLODDistanceScale", obj);
     int32_t *v = (int32_t *)(base + glob); *v = 1;
-    if (!set) { unsetenv("DM_UE_TRANSLUCENT_VOLUME_OFF"); dm_ue_translucent_tick(); assert(*v == 1 && writes == 0); return; }
+    float vals[2] = {1, 1}; *(uintptr_t *)(base + obj + 0x10) = (uintptr_t)vals;
+    const ue_set_row off = {"r.TranslucentLightingVolume", "0", "DM_UE_TRANSLUCENT_VOLUME_OFF", 1}, lod = {"r.StaticMeshLODDistanceScale", "3.0", "", 0},
+                     gone = {"r.LightMaxDrawDistanceScale", "0.5", "", 1};
+    ue_set_st so = {0}, sl = {0}, sg = {0};
+    if (!set) { unsetenv("DM_UE_TRANSLUCENT_VOLUME_OFF"); ue_set_apply(&off, &so); assert(*v == 1 && writes == 0 && so.state < 0); return; }
     setenv("DM_UE_TRANSLUCENT_VOLUME_OFF", "1", 1);
-    dm_ue_translucent_tick(); assert(*v == 0 && writes == 1);
-    dm_ue_translucent_tick(); assert(writes == 1);                    // already off
-    *v = 1; dm_ue_translucent_tick(); assert(*v == 0 && writes == 2);  // the game set it again
+    ue_set_apply(&off, &so); assert(*v == 0 && writes == 1);
+    ue_set_apply(&off, &so); assert(writes == 1);                         // already held
+    *v = 1; ue_set_apply(&off, &so); assert(*v == 0 && writes == 2);       // the game set it again
+    ue_set_apply(&lod, &sl); assert(vals[0] == 3 && vals[1] == 3 && writes == 4);
+    vals[1] = 1; ue_set_apply(&lod, &sl); assert(vals[1] == 3 && writes == 5);
+    ue_set_apply(&gone, &sg); assert(sg.state < 0 && writes == 5);         // not named in main's fixups
     munmap(base, SIZE);
 }
 
@@ -86,8 +94,8 @@ int main(void) {
     // Each process starts the one-time lookup with fresh state
     for (int i = 0; i < 9; i++) {
         pid_t p = fork(); assert(p >= 0);
-        if (!p) { if (i < 3) check(i); else if (i < 5) check_dynres(i == 4); else if (i < 7) check_lod(i == 6); else check_translucent(i == 8); _exit(0); }
+        if (!p) { if (i < 3) check(i); else if (i < 5) check_dynres(i == 4); else if (i < 7) check_lod(i == 6); else check_ue_set(i == 8); _exit(0); }
         int status; assert(waitpid(p, &status, 0) == p); assert(WIFEXITED(status) && WEXITSTATUS(status) == 0);
     }
-    puts("Unreal console variables: named by the rewriter, the texture pool raised, kept and left as set, a missing variable left alone, the dynamic resolution floor set and kept, the LOD distance scale raised and kept, the translucent lighting volume held off");
+    puts("Unreal console variables: named by the rewriter, the texture pool raised, kept and left as set, a missing variable left alone, the dynamic resolution floor set and kept, the LOD distance scale raised and kept, ue_set rows held (a global by reference, both copies of an object, by their switch)");
 }

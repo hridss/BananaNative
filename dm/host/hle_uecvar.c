@@ -1,5 +1,5 @@
-// Unreal console variables found by their registered names: the texture streaming pool the profile's ue_texture_pool raises, the dynamic resolution's floor DM_UE_DYNRES_MIN sets
-// and the static meshes' LOD distance scale the profile's ue_lod_scale raises.
+// Unreal console variables found by their registered names: the texture streaming pool the profile's ue_texture_pool raises, the dynamic resolution's floor DM_UE_DYNRES_MIN sets,
+// the static meshes' LOD distance scale the profile's ue_lod_scale raises, and the profile's ue_set rows.
 // The rewriter finds each TAutoConsoleVariable the host may write in main (dm/tools/ue_cvar.py: its static constructor's registration, in any Unreal 4 / 5 build) and names it in main's
 // fixups (UE_CVAR:<name>); the object holds at +0x10 the pointer to the variable's value, the game thread's copy, then the render thread's. Called on every present (hle_nvn.c)
 #include "hle.h"
@@ -95,23 +95,40 @@ void dm_ue_lod_tick(void) {
     float_tick(&v);
 }
 
-// DM_UE_TRANSLUCENT_VOLUME_OFF=1 (Game options' "Particle light volume off"): r.TranslucentLightingVolume, a global the engine reads every frame (registered by reference:
-// ue_cvar.py REFS, the fixup gives the global), held at 0. Unreal then lights translucent surfaces (smoke, particles, light shafts) without its 64x64x64 lighting volume,
-// built every frame from the lights: Orbitals' split-screen gameplay on the AYN Thor, GPU about 3.8 ms a frame less, its light shafts slightly duller
-void dm_ue_translucent_tick(void) {
-    static int state = -1, nlog; static uint64_t off;
-    if (!state) return;
-    if (state < 0) {
-        state = 0;
-        const char *e = getenv("DM_UE_TRANSLUCENT_VOLUME_OFF"); if (!e || strcmp(e, "1")) return;
-        if (!(off = dm_ue_cvar("r.TranslucentLightingVolume"))) { LOG("[RED] main: Unreal r.TranslucentLightingVolume not found in main by the rewriter (ue_cvar.py; DM_UE_TRANSLUCENT_VOLUME_OFF not applied)"); return; }
-        LOG("main: Unreal r.TranslucentLightingVolume at main+%#llx, held at 0 (DM_UE_TRANSLUCENT_VOLUME_OFF)", (unsigned long long)off);
-        state = 1;
+// ue_set rows (game.tsv, game.py DM_GAME_UE_SET): a variable held at a value whenever the game sets another, both copies of a TAutoConsoleVariable or the global of one
+// registered by reference (ue_cvar.py REFS: the row's ref). A row with an environment variable applies only while it is 1: the launcher's Game options toggles (Orbitals:
+// "Particle light volume off" holds r.TranslucentLightingVolume at 0, GPU about 3.8 ms a frame less in its split-screen gameplay on the AYN Thor). A value with a decimal
+// point is written as a float, else as an int. Read once; the engine reads these variables every frame
+typedef struct { const char *name, *value, *env; int ref; } ue_set_row;
+typedef struct { int state, nlog; uint32_t bits; uint64_t off; } ue_set_st;   // state: 0 not read yet, 1 held, -1 nothing to do
+static void ue_set_apply(const ue_set_row *r, ue_set_st *s) {
+    if (s->state < 0) return;
+    if (!s->state) {
+        s->state = -1;
+        const char *e = *r->env ? getenv(r->env) : NULL;
+        if (*r->env && (!e || strcmp(e, "1"))) return;
+        if (strchr(r->value, '.')) { float f = strtof(r->value, NULL); memcpy(&s->bits, &f, 4); } else { int32_t v = (int32_t)strtol(r->value, NULL, 10); memcpy(&s->bits, &v, 4); }
+        const char *src = *r->env ? r->env : "game profile ue_set";
+        if (!(s->off = dm_ue_cvar(r->name))) { LOG("[RED] main: Unreal %s not found in main by the rewriter (ue_cvar.py NAMES / REFS; %s %s not applied)", r->name, src, r->value); return; }
+        LOG("main: Unreal %s at main+%#llx (%s), held at %s (%s)", r->name, (unsigned long long)s->off, r->ref ? "a global registered by reference" : "both copies", r->value, src);
+        s->state = 1;
     }
     uint8_t *base = NULL;
     for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) base = g_mod[i].base;
-    int32_t cur, *p = base ? (int32_t *)(void *)(base + off) : NULL;
-    if (!p || !rd((uint64_t)(uintptr_t)p, &cur, sizeof cur) || !cur) return;
-    dm_guest_write_prepare(p, sizeof *p); *p = 0;
-    if (nlog < 4) { nlog++; LOG("main: Unreal r.TranslucentLightingVolume %d → 0 (DM_UE_TRANSLUCENT_VOLUME_OFF)", cur); }
+    if (!base) return;
+    uint64_t val = (uint64_t)(uintptr_t)(base + s->off);
+    if (!r->ref && (!rd((uint64_t)(uintptr_t)(base + s->off + 0x10), &val, sizeof val) || !val)) return;   // not created yet
+    for (int c = 0; c < (r->ref ? 1 : 2); c++) {
+        uint32_t cur, *p = (uint32_t *)(uintptr_t)(val + 4 * (uint64_t)c);
+        if (!rd((uint64_t)(uintptr_t)p, &cur, sizeof cur) || cur == s->bits) continue;
+        dm_guest_write_prepare(p, sizeof *p); __atomic_store_n(p, s->bits, __ATOMIC_RELAXED);
+        if (s->nlog < 4) { s->nlog++; LOG("main: Unreal %s%s → %s (%s)", r->name, r->ref ? "" : c ? " (render thread)" : " (game thread)", r->value, *r->env ? r->env : "game profile ue_set"); }
+    }
+}
+void dm_ue_set_tick(void) {
+#ifdef DM_GAME_UE_SET
+    static const ue_set_row rows[] = DM_GAME_UE_SET;
+    static ue_set_st st[sizeof rows / sizeof rows[0]];
+    for (size_t i = 0; i < sizeof rows / sizeof rows[0]; i++) ue_set_apply(&rows[i], &st[i]);
+#endif
 }

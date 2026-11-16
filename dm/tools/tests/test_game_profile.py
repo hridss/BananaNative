@@ -291,6 +291,29 @@ class SkipLayers(unittest.TestCase):   # skip_layers (DM_VK_SKIP_FS through the 
         # "Hidden layers that are not hidden everywhere")
         self.assertNotIn('5684f5e658eda176', keys)
         self.assertTrue(all(len(k) == 16 and int(k, 16) >= 0 for k in keys))
+class UeSet(unittest.TestCase):   # ue_set (hle_uecvar.c dm_ue_set_tick): rows of a name ue_cvar.py finds, a number, an optional switch; REFS marked
+    def test_rows(self):
+        with tempfile.TemporaryDirectory() as d:
+            Path(d, ID).mkdir()
+            (Path(d, ID) / 'game.tsv').write_text(TSV + 'ue_set\tr.TranslucencyLightingVolumeDim\t16\tDM_UE_LIGHT_VOLUME_16\nue_set\tr.StaticMeshLODDistanceScale\t3.0\n')
+            r = subprocess.run([sys.executable, str(GAME), 'header', ID, str(Path(d, ID) / 'game.h')], env={**os.environ, 'DM_GAMES_DIR': d}, capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn('#define DM_GAME_UE_SET {{"r.TranslucencyLightingVolumeDim", "16", "DM_UE_LIGHT_VOLUME_16", 1}, {"r.StaticMeshLODDistanceScale", "3.0", "", 0}}',
+                          (Path(d, ID) / 'game.h').read_text())
+
+    def test_without_rows(self):   # no table at all: the host's tick does nothing
+        with tempfile.TemporaryDirectory() as d:
+            Path(d, ID).mkdir()
+            (Path(d, ID) / 'game.tsv').write_text(TSV)
+            r = subprocess.run([sys.executable, str(GAME), 'header', ID, str(Path(d, ID) / 'game.h')], env={**os.environ, 'DM_GAMES_DIR': d}, capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertNotIn('DM_GAME_UE_SET', (Path(d, ID) / 'game.h').read_text())
+
+    def test_rejected(self):
+        for rows in ('ue_set\tr.Unknown\t1\n', 'ue_set\tr.StaticMeshLODDistanceScale\tthree\n', 'ue_set\tr.StaticMeshLODDistanceScale\t3.0\tlower_case\n'):
+            rc, out = header(rows)
+            self.assertNotEqual(rc, 0, rows)
+            self.assertIn('ue_set takes', out, rows)
 
 
 class UeLodScale(unittest.TestCase):   # ue_lod_scale (hle_uecvar.c dm_ue_lod_tick): a scale in [0, 16], the header's float

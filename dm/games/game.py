@@ -150,6 +150,15 @@ def header(g):
     try: uls_f = float(uls)
     except ValueError: uls_f = -1
     if not 0 <= uls_f <= 16: sys.exit(f"{g.id}: ue_lod_scale must be a scale in [0, 16] (0 = the game's own): {uls}")
+    # ue_set rows: <Unreal console variable> <value> [<environment variable>]: the host holds the variable at the value (hle_uecvar.c dm_ue_set_tick), a row with an environment
+    # variable only while it is 1 (the launcher's Game options toggle of an option row). The rewriter must find the name (dm/tools/ue_cvar.py NAMES, or REFS: registered by reference,
+    # its fixup the global itself); a value with a decimal point is a float, else an int
+    sys.path.insert(0, str(HERE.parent / 'tools')); import ue_cvar
+    ues = []
+    for r in g.values('ue_set'):
+        if not (len(r) in (2, 3) and r[0] in ue_cvar.NAMES + ue_cvar.REFS and re.fullmatch(r'-?\d+(\.\d+)?', r[1]) and (len(r) == 2 or re.fullmatch(r'[A-Z_][A-Z0-9_]*', r[2]))):
+            sys.exit(f'{g.id}: ue_set takes <a variable of dm/tools/ue_cvar.py NAMES or REFS> <an int, or a float with a decimal point> [<environment variable>]: {r}')
+        ues.append((r[0], r[1], r[2] if len(r) == 3 else '', int(r[0] in ue_cvar.REFS)))
     utp = g.get('ue_texture_pool', '0')   # Unreal's r.Streaming.PoolSize in MB, raised to this on the Mac (hle_uecvar.c; DM_UE_TEXTURE_POOL overrides, and turns it on for iOS): 0 = the game's own pool
     if not utp.isdigit(): sys.exit(f"{g.id}: ue_texture_pool must be megabytes (0 = the game's own pool): {utp}")
     ufc = g.get('ue_fps_cvar', 't.MaxFPS')   # the Unreal console variable the host writes fps_target into (hle_fpslock.c; found by name by the rewriter, ue_cvar.py NAMES): a game's own frame limit its settings apply to t.MaxFPS
@@ -441,6 +450,7 @@ def header(g):
          f'#define DM_GAME_UE_TEXTURE_POOL {int(utp)}',
          f'#define DM_GAME_UE_LOD_SCALE {uls_f!r}f',
          f'#define DM_GAME_UE_FPS_CVAR {q(ufc)}',
+         *([f'#define DM_GAME_UE_SET {{' + ', '.join(f'{{{q(n)}, {q(v)}, {q(e)}, {ref}}}' for n, v, e, ref in ues) + '}'] if ues else []),
          f'#define DM_GAME_PRESENT_SNAP {int(ps == "on")}',
          f'#define DM_GAME_PSO_MTL4 {int(p4 == "on")}',
          f'#define DM_GAME_ENC_THREAD {int(et == "on")}',
