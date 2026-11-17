@@ -5,6 +5,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <pthread.h>
+#include <stdatomic.h>
 
 module_t *g_mod;
 int g_nmod;
@@ -24,8 +26,68 @@ static void *page_map(void) {
     return p;
 }
 
-int main(void) {
-    crash_install();
+// Lookup cache (find_span): adjacent pools can share a host page after rounding, and only the protected one gets a generation on the write fault. Warming the other
+// range must not change which range a later lookup selects. GUEST: a quarter host page (the guest's 4 KB on the Mac's 16 KB pages; 1 KB on 4 KB pages)
+enum { PROBE = 16 };
+enum { ENDS_SOONER, STARTS_LATER };
+static void *shared_page_cache(void *arg) {
+    int layout = (int)(intptr_t)arg;
+    size_t pg = (size_t)getpagesize(), guest = pg / 4;
+    uint8_t *m = mmap(NULL, 4 * pg, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+    if (m == MAP_FAILED) { perror("mmap"); exit(2); }
+    uint8_t *first, *second; const void *second_only; size_t nfirst, nsecond;
+    if (layout == STARTS_LATER) { first = m + 2 * pg - guest; nfirst = guest; second = m; nsecond = 2 * pg - guest; second_only = m; }
+    else { first = m; nfirst = pg - guest; second = m + pg - guest; nsecond = 2 * pg; second_only = m + pg; }
+    nvn_dirty_add_range(first, nfirst);
+    const void *first_range = nvn_dirty_span(first, PROBE);   // looked up before its neighbour exists
+    nvn_dirty_add_range(second, nsecond);
+    uint64_t stamp = nvn_dirty_now();
+    nvn_dirty_protect(first, PROBE);
+    const void *other = nvn_dirty_span(second_only, pg);
+    first[0] = 7;
+    printf("lookup cache, shared page (%s):\n", layout == STARTS_LATER ? "earlier range starts later" : "earlier range ends sooner");
+    EXPECT("warmed a different containing range", 1, first_range != other);
+    EXPECT("cached lookup still sees the write", 1, nvn_dirty_since(first, PROBE, stamp));
+    EXPECT("cached lookup keeps the first containing range", 1, nvn_dirty_span(first, PROBE) == first_range);
+    nvn_dirty_remove_range(first); nvn_dirty_remove_range(second);
+    munmap(m, 4 * pg);
+    return NULL;
+}
+// Another thread's cached selection of a later range is dropped when an earlier slot is reused by a pool that holds the span
+typedef struct { const void *probe, *want; _Atomic int phase; int matched; } reuse_t;
+static void *reuse_reader(void *arg) {
+    reuse_t *t = arg;
+    nvn_dirty_span(t->probe, PROBE);   // warm while only the later slot holds the span
+    atomic_store(&t->phase, 1);
+    while (atomic_load(&t->phase) != 2) usleep(100);
+    t->matched = nvn_dirty_span(t->probe, PROBE) == t->want;
+    return NULL;
+}
+static void cache_slot_reuse(void) {
+    size_t pg = (size_t)getpagesize(), guest = pg / 4;
+    uint8_t *m = mmap(NULL, 4 * pg, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+    if (m == MAP_FAILED) { perror("mmap"); exit(2); }
+    uint8_t *later = m + 2 * pg;
+    nvn_dirty_add_range(m, pg);
+    nvn_dirty_add_range(later, 2 * pg);
+    const void *first_slot = nvn_dirty_span(m, PROBE), *later_slot = nvn_dirty_span(later, 2 * pg);
+    nvn_dirty_remove_range(m);
+    uint8_t *repl = later + guest;
+    reuse_t t = { .probe = repl, .want = first_slot };
+    pthread_t th; if (pthread_create(&th, NULL, reuse_reader, &t)) exit(2);
+    while (atomic_load(&t.phase) != 1) usleep(100);
+    nvn_dirty_add_range(repl, pg - guest);   // takes the earlier slot, overlapping the reader's cached range
+    atomic_store(&t.phase, 2);
+    pthread_join(th, NULL);
+    EXPECT("slot reuse drops another thread's cached selection", 1, t.matched);
+    EXPECT("the reused earlier slot is the first match", 1, nvn_dirty_span(repl, PROBE) == first_slot);
+    nvn_dirty_remove_range(repl);
+    EXPECT("retiring a cached match falls back to the remaining range", 1, nvn_dirty_span(repl, PROBE) == later_slot);
+    nvn_dirty_remove_range(later);
+    munmap(m, 4 * pg);
+}
+
+int main(void) {    crash_install();
 
     for (int i = 0; i < 65; i++) {
         void *p = page_map();
@@ -99,5 +161,10 @@ int main(void) {
     EXPECT("B no longer tracked after destroying B", 0, nvn_dirty_tracked(pb, tex));
     nvn_dirty_remove_range(pa);
     munmap(blk, 4 * pg);
+    for (int layout = ENDS_SOONER; layout <= STARTS_LATER; layout++) {   // each on a new thread, with an empty lookup cache
+        pthread_t th; if (pthread_create(&th, NULL, shared_page_cache, (void *)(intptr_t)layout)) exit(2);
+        pthread_join(th, NULL);
+    }
+    cache_slot_reuse();
     return g_fail != 0;
 }

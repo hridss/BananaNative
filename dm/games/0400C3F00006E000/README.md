@@ -251,6 +251,7 @@ In the order they block. Line numbers are those of `dm/gfx/vk_android/vka_tex.c`
 
 ## Found on this game
 
+- [Cached dirty-range lookups with overlapping pools](../../../docs/reference/nvn-objects.md#cached-dirty-range-lookups-with-overlapping-pools): sparse-texture lookup locality motivated the cache; the overlapping-pool missed writes are reproduced by CPU fixtures, not attributed to a gameplay image.
 - [RAM saver also trims the texture cache and the finest texture level](../../../docs/reference/memory.md#ram-saver-also-trims-the-texture-cache-and-the-finest-texture-level-android): issue #406 (lmkd kill, images 2.0-2.4 GiB with `tex_soft on` already): the saver now also keeps an eighth of RAM free in the texture cache and caps it at a quarter of RAM. Not run on a phone.
 - [Texture files read as zeros, or a `.zs` that "cannot decompress", from a `.nup`](../../../docs/reference/packing.md#texture-files-read-as-zeros-or-a-zs-that-cannot-decompress-from-a-nup-forgejo-291-342): #291, three `BakeEmpty_*` textures of update 917504: a zeroed extent in the player's package copy, not the reader.
 - [Graphics scale changes while the game runs (message 300)](../../../docs/reference/services.md#graphics-scale-changes-while-the-game-runs-message-300): its notification thread re-reads the scale on message 300 ([Render resolution](#render-resolution-android-180)); Game resolution is live from the in-game panel (2026-11-10, phone check open).

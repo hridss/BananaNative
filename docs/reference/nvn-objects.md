@@ -573,6 +573,14 @@ Games read this count as a position in their own command memory and size their h
 - **Found on:** the source names no game.
 - **Check:** `t_dirty_slots` covers it.
 
+### Cached dirty-range lookups with overlapping pools
+
+- **Symptom:** sparse-texture checks spend substantial submission CPU time searching thousands of memory pools; a cache that returns any containing live range instead can miss writes to a shared host page and leave texture content stale.
+- **Cause:** each sparse physical run calls `nvn_dirty_since`, and `find_span` scanned every registered range from slot zero (Mario Kart World has about 5,000 pools). After host-page rounding several ranges can hold one span ([Dirty-page ranges of pools that share a host page](#dirty-page-ranges-of-pools-that-share-a-host-page)), but only the one that was protected has its writes stamped: a never-protected neighbour can still have generation zero. A cache that changes which range wins therefore changes correctness (upstream's "last range found" shortcut did), and reusing an earlier slot can change the first match even while a cached later range stays live.
+- **Fix** (`nvn_dirty.c`): each thread keeps its last eight selections, each with the bounds that made every earlier live range fail that lookup; a hit must keep failing them as well as fit the selected range, so it is the scan's own answer. Registration and retirement bracket their changes with an odd epoch, and every thread drops entries from another epoch, slot reuse included. Only descriptors and copied bounds are cached, never page generations or clean / dirty answers; the fault path is unchanged. Upstream measured a lookup alternating among four or eight late pools of 5,000 at about 6 to 7 ns instead of about 4,500 ns (synthetic, Apple M6), and about 1.2 ns more for a single repeated pool.
+- **Found on:** [Mario Kart World](../../dm/games/0400C3F00006E000/README.md): its slow-run sample reaches the scan through sparse-texture checks (upstream PR #1227). The missed write is reproduced by the CPU fixture, not by a gameplay image.
+- **Check:** `t_dirty_slots`: both orders of adjacent pools sharing a host page, a cached later range superseded by an earlier reused slot on another thread, and retirement of a cached match. The pool offsets are a quarter host page, so the cases hold on 4 KB pages as well as 16 KB ones.
+
 ### Writes beside a packaged texture in a shared host page
 
 - **Symptom:** packaged textures re-uploaded at every use with unchanged content; upload staging and frame times rising.
