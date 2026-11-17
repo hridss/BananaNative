@@ -20,7 +20,9 @@ static pthread_mutex_t g_sf_mu = PTHREAD_MUTEX_INITIALIZER;
 // notif:a, the reminder alarms (nn::notification, linked by most SDKs; Fit Boxing 3 lists them when its Settings open, PR 1974): the SDK's client sends only 1000 Initialize (with the process
 // ID), 500 Register, 510 Update, 520 List, 530 LoadApplicationParameter and 540 Delete (SDK 21's sdk+0x58ac80..0x58ad10), and aborts on any failure; its notification event comes from am.
 // The host schedules no alarms, so zeroed output is its answer: no alarms listed, a registration that never fires (ID 0), a parameter of 0 bytes
-static const char *const sf_served[] = {"olsc:u", "caps:su", "caps:u", "caps:a", "caps:c", "caps:sc", "caps:ss", "notif:a"};
+// mnpp:app (13.0.0+): Initialize takes a PID and a reserved u64, SubmitEvent a Uid and an input buffer; neither has output. SNES Classics 6.0.0 links its own client and aborts
+// when sm refuses it (0xe15, main+0x37080). An offline stand-in: events are acknowledged and discarded, with no queue kept for an upload (services.md, "Mission events through mnpp:app")
+static const char *const sf_served[] = {"olsc:u", "caps:su", "caps:u", "caps:a", "caps:c", "caps:sc", "caps:ss", "notif:a", "mnpp:app"};
 
 static int sf_slot(uint32_t h) {
     unsigned i = h - SF_H0;
