@@ -3529,7 +3529,7 @@ def uniq_keys(found):
     if isinstance(found, Shaders): return found.uniq
     s = Shaders(); s.extend(found); return s.uniq
 
-def last_entries(found):   # {key: entry} of the last copy of each key, unchecked (main's and the host's saved shaders, as before)
+def last_entries(found):   # {key: entry} of the last copy of each key, unchecked: the host's saved shaders (nvn_shdump), whose copies keep only the control bytes the host has
     return {k: entry(w, s, c, code, k) for w, s, c, code in found for k in [skey(c, code)]}
 
 def nso_image(path):   # an NSO's image (dm/tools/nso.py); nso.Error (a ValueError) on a damaged file
@@ -3796,7 +3796,7 @@ def main():
         names = sorted(f for f in os.listdir(ued) if f.endswith('.ushaderbytecode') and not f.startswith('._')) if os.path.isdir(ued) else []   # AppleDouble metadata, not decoded shader archives
         if not names and uepak.unreal_paks(romfs, inline=False, mains=[mainnso]): red(f'the RomFS has Unreal paks, but there are no decoded shader code archives in {ued} (the NSP script writes them)')
         for nm in names: found += ue_shaders(open(os.path.join(ued, nm), 'rb').read(), f'/ue_shaders/{nm}')
-        results.append(('main', last_entries(found), var_pairs(found), {}))
+        results.append(('main', uniq_keys(found), var_pairs(found), {}))   # the first copy of each key, checked as a file's are (upstream nxnative since 8d62601f; the registered maps follow it)
     for romfs in dlc_v:
         name = os.path.basename(os.path.normpath(romfs))
         tag = 'aoc/' + (name.removesuffix('.img') if is_image(romfs) else name)

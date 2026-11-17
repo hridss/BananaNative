@@ -331,6 +331,13 @@
 - **Fix:** each profile gets its `shader_files.tsv`, from a full split with `DM_SPLIT_FILES` (no code change; the table is not one of the library's inputs, so no shader library changes). Super Mario Bros. Wonder's program 1: 419 files; Kirby and the Forgotten Land's: 7,849.
 - **Found on:** [Super Mario Bros. Wonder - Nintendo Switch 2 Edition](../../dm/games/040015100B514001/README.md#found-on-this-game) and [Kirby and the Forgotten Land - Nintendo Switch 2 Edition](../../dm/games/04004D300C5AE001/README.md#found-on-this-game), program 1 of their NUP v2 sets: with the tables the targeted split reads 419 of 45,486 and 7,849 of 20,712 files, and its tables are the profile's byte for byte (`targeted split: its tables are the profile's`).
 
+### Main's copies of a shader taken last, unchecked
+
+- **Symptom:** none on the phone yet: a shader the executable holds more than once is filed under the source and package index of its last copy, where upstream nxnative's split (since its `8d62601f`) files it under its first, so profile maps refreshed upstream name other sources than this tree's split gives, and the [targeted split](#prepare-reads-every-romfs-file-to-find-the-shaders) falls back to a full scan.
+- **Cause:** `shader_split.py` kept `main`'s shaders with `last_entries` (the last copy of each key, unchecked), while every RomFS file's go through `Shaders` / `uniq_keys` (the first copy, and a key whose copies differ stops the split).
+- **Fix:** `main` takes `uniq_keys` as the files do (upstream seedds/nxnative 8d62601f, that line only). The host's saved shaders (`nvn_shdump`) keep `last_entries`: a saved copy holds only the control bytes the host keeps, so its copies need not agree beyond them. The registered maps whose `main` rows this moves are refreshed from upstream in the next change.
+- **Found on:** upstream's issues [#2916](https://github.com/seedds/nxnative/issues/2916) and [#2921](https://github.com/seedds/nxnative/issues/2921) (Splatoon Raiders, Pokémon Scarlet, Tears of the Kingdom, Donkey Kong Bananza).
+
 ### The shader split prints nothing for minutes, then scans every file
 
 - **Symptom:** the PC packer's window stays at "Splitting the shaders out of the dump (a few minutes)" with no new line after `shaders: splitting the shaders out of …` for a long time (a Windows PC with Mario Kart World 1.8.0 as update 917504). Then the log says `targeted split: not taken, the targeted scan made a shader_map.tsv that differs from the profile's: every file is scanned`, and the full scan reads all 206,326 RomFS files.
