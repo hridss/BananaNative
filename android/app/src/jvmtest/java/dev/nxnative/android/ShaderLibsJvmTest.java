@@ -22,6 +22,7 @@ import java.util.List;
  * restamp &lt;pack&gt; &lt;title ID&gt; &lt;current&gt; &lt;abi&gt; &lt;stamps&gt;  → "restamp &lt;the older version taken over&gt;" or "restamp none"
  * selection &lt;profile dir&gt;                               → "selection &lt;keys, comma-separated&gt;" or "selection none" (no shader_seen.tsv)
  * absent &lt;profile dir&gt; &lt;split's shader_map.tsv&gt;         → "absent &lt;keys, comma-separated&gt;" or "absent none" (ShaderLibs.absentOptional)
+ * versions &lt;profile dir&gt; &lt;split's shader_map.tsv&gt; &lt;dump version&gt; → "versions &lt;absent keys or none&gt; | &lt;other listed versions&gt; | &lt;their keys&gt; | &lt;the log line or none&gt;"
  * </pre>
  */
 public final class ShaderLibsJvmTest {
@@ -120,6 +121,21 @@ public final class ShaderLibsJvmTest {
             case "same": {
                 try {
                     System.out.println("same " + ShaderLibs.sameMap(new File(a[1]), new File(a[2])));
+                } catch (java.io.IOException e) {
+                    throw new RuntimeException(e);
+                }
+                break;
+            }
+            case "versions": {   // a dump of one of the versions the profile's tables are the union of (ShaderLibs.absentOptional with a version)
+                try {
+                    File prof = new File(a[1]);
+                    long v = Long.parseLong(a[3]);
+                    List<String> absent = ShaderLibs.absentOptional(prof, new File(a[2]), v), others = ShaderLibs.otherVersions(prof, v);
+                    java.util.Set<String> theirs = new java.util.TreeSet<>(ShaderLibs.otherVersionKeys(prof, v));
+                    java.util.Set<String> hit = new java.util.TreeSet<>(theirs);
+                    if (absent != null) hit.retainAll(absent); else hit.clear();
+                    System.out.println("versions " + (absent == null ? "none" : String.join(",", absent)) + " | " + String.join(",", others) + " | " + String.join(",", theirs) + " | "
+                            + (hit.isEmpty() ? "none" : ShaderLibs.otherVersionsLine(hit.size(), ShaderLibs.mapKeys(new File(prof, "shader_map.tsv")).size(), others, v)));
                 } catch (java.io.IOException e) {
                     throw new RuntimeException(e);
                 }

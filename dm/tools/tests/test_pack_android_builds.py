@@ -101,6 +101,79 @@ class SplitAbsent(unittest.TestCase):
         self.assertEqual(pa.absent_optional(g, pkg), set())
 
 
+class SplitOtherVersions(unittest.TestCase):
+    """Tables that are the union of two versions (game.tsv shader_versions), a dump of one of them (may_lack): the rows tagged with the other listed version may be lacking"""
+
+    def union(self, versions='v100 v200'):
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        prof = root / 'profile'; prof.mkdir()
+        srcs = {'k1': '/Common/a.ptcl#BNSH@0x1', 'k2': 'main#BNSH@0x2', 'k3': '/v200/Common/a.ptcl#BNSH@0x3', 'k4': 'main@v200#BNSH@0x4'}
+        row = lambda k: f'cs_x.bin\t0\tcompute\t{k}\t{srcs[k]}\n'
+        (prof / 'shader_map.tsv').write_text('# map\npackage\tindex\tstage\tdm_ctl_sha16\tsource\n' + ''.join(row(k) for k in srcs))
+        g = Profile('main', {}); g.dir = prof; g.id = '0000000000000000'; g.words = lambda key: versions.split() if key == 'shader_versions' else ['main']
+        def split(dump_keys, ver):
+            def fake_run(cmd, env=None):
+                Path(cmd[4]).mkdir(parents=True)
+                Path(cmd[5]).write_text('# map\npackage\tindex\tstage\tdm_ctl_sha16\tsource\n' + ''.join(row(k) for k in dump_keys))
+                for f in cmd[6:]: Path(f).write_text('')
+                return type('R', (), {'returncode': 0})()
+            args = type('A', (), {'shader_python': None, 'pack_ver': ver})()
+            pkg = root / f'pkg{len(list(root.iterdir()))}'
+            old = pa.subprocess.run, pa.shader_python, pa.child_env
+            pa.subprocess.run, pa.shader_python, pa.child_env = fake_run, lambda *a, **k: 'python', lambda **k: {}
+            import contextlib, io
+            said = io.StringIO()
+            try:
+                with contextlib.redirect_stdout(said): pa.split_shaders(args, g, root / 'v', pkg, (root / 'romfs', root / 'exefs'))
+            finally: pa.subprocess.run, pa.shader_python, pa.child_env = old
+            return pkg, said.getvalue()
+        return g, split
+
+    def test_a_dump_of_one_listed_version_builds(self):
+        g, split = self.union()
+        self.assertEqual(pa.other_versions(g, 100), ['v200'])
+        self.assertEqual(pa.other_version_keys(g, 100), {'k3', 'k4'})
+        pkg, said = split(['k1', 'k2'], 100)
+        self.assertEqual((pkg / '_absent.tsv').read_text(), 'k3\nk4\n')
+        self.assertIn('shaders: 2 of 4 shaders in this app\'s table belong to other versions of the game (v200): not needed for v100\n', said)
+        self.assertEqual(pa.absent_optional(g, pkg, 100), {'k3', 'k4'}, 'the library is built without them, as for shader_optional.tsv')
+        self.assertEqual(pa.absent_optional(g, pkg), set(), 'not without the dump\'s version')
+
+    def test_an_unlisted_version_is_refused_as_before(self):
+        g, split = self.union()
+        self.assertEqual(pa.other_version_keys(g, 300), set())
+        with self.assertRaises(pa.Error) as e: split(['k1', 'k2'], 300)
+        self.assertIn('lack 2 of the 4', str(e.exception)); self.assertIn('the dump is of another version or incomplete', str(e.exception))
+
+    def test_all_versions_keys_are_required_otherwise(self):
+        g, split = self.union()
+        pkg, said = split(['k1', 'k2', 'k3', 'k4'], 100)   # nothing lacking
+        self.assertFalse((pkg / '_absent.tsv').exists()); self.assertNotIn('other versions', said)
+        with self.assertRaises(pa.Error) as e: split(['k1', 'k3', 'k4'], 100)   # an untagged shader missing: the versions do not explain it
+        self.assertIn('lack 1 of the 4', str(e.exception))
+        with self.assertRaises(pa.Error): split(['k1', 'k3', 'k4'], 200)   # the tags do not say what a later version dropped
+        g1, split1 = self.union('v100')   # one version: every key
+        self.assertEqual(pa.other_version_keys(g1, 100), set())
+        with self.assertRaises(pa.Error): split1(['k1', 'k2'], 100)
+        g2, _ = self.union('v100 v2000')   # v200 is not v2000
+        self.assertEqual(pa.other_version_keys(g2, 100), set())
+
+    def test_mario_kart_8_deluxe_is_two_versions(self):   # the profile as it is: 135 of 29,785 rows are 4.0.1's own
+        g = pa.game.load('0100152000022000')
+        self.assertEqual(pa.shader_versions(g), ['v1441792', 'v1507328'])
+        self.assertEqual(len(pa.other_version_keys(g, 1441792)), 135)
+        self.assertEqual(len(pa.map_keys(g.dir / 'shader_map.tsv')), 29785)
+        self.assertEqual(pa.other_version_keys(g, 1507328), set(), 'what 4.0.1 dropped of 4.0.0 is not in the tags: its shader_optional.tsv names those')
+        named = {l.split('\t')[0] for l in (g.dir / 'shader_optional.tsv').read_text().splitlines() if '4.0.1 only' in l}
+        self.assertEqual(pa.other_version_keys(g, 1441792), named, 'the tags agree with the profile\'s own list of 4.0.1\'s shaders')
+
+    def test_super_mario_bros_wonder_names_both_sides(self):   # its shader_optional.tsv already names each version's own keys: the tags agree with it
+        g = pa.game.load('010015100B514000')
+        tagged = pa.other_version_keys(g, 0)
+        named = {l.split('\t')[0] for l in (g.dir / 'shader_optional.tsv').read_text().splitlines() if '(v327680) only' in l}
+        self.assertEqual(tagged, named); self.assertEqual(len(tagged), 3457)
+
+
 class MarioKartWorldOptional(unittest.TestCase):
     """Mario Kart World 1.8.0 as update 917504 (Forgejo #50): its split lacks only the profile's optional key, which the profile's map has"""
 

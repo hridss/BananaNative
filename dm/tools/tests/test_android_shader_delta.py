@@ -619,6 +619,37 @@ class Launcher(unittest.TestCase):
             with self.subTest(profile=p.parent.name):
                 self.assertEqual(self.java('same', p, p), 'true')
 
+    def test_other_versions_shaders(self):   # tables that are the union of two versions (shader_versions), a dump of one: the other version's tagged rows may be lacking
+        d = self.tmp / 'union'; d.mkdir(exist_ok=True)
+        head = '# kind: evidence\npackage\tindex\tstage\tdm_ctl_sha16\tsource\n'
+        A, B, C, D = ('00000000000000' + k for k in ('aa', 'bb', 'cc', 'dd'))
+        srcs = {A: '/Common/a.ptcl#BNSH@0x1000#var0', B: 'main#BNSH@0x12#var0', C: '/v200/Common/a.ptcl#BNSH@0x7e3000#var113', D: 'main@v200#BNSH@0x12#var0'}
+        rows = lambda *ks: head + ''.join(f'cs_0.bin\t{i}\tcompute\t{k}\t{srcs.get(k, "src")}\n' for i, k in enumerate(ks))
+        (d / 'shader_map.tsv').write_text(rows(A, B, C, D))
+        (d / 'game.tsv').write_text('# a profile\ntitle_id\t0100000000000000\nshader_versions\tv100 v200\n')
+        split = self.tmp / 'union_split.tsv'
+        split.write_text(rows(A, B))
+        line = '2 of 4 shaders in this app\'s table belong to other versions of the game (v200): not needed for v100'
+        self.assertEqual(self.java('versions', d, split, 100), f'{C},{D} | v200 | {C},{D} | {line}', 'a dump of the first version lacks the second\'s own: no failure')
+        self.assertEqual(self.java('absent', d, split), 'none', 'without the dump\'s version nothing is optional')
+        self.assertEqual(self.java('versions', d, split, 300), 'none |  |  | none', 'a version the tables were not made from: as before')
+        split.write_text(rows(A, C))
+        self.assertEqual(self.java('versions', d, split, 100), f'none | v200 | {C},{D} | none', 'an untagged shader missing too: not explained by the versions, as before')
+        self.assertEqual(self.java('versions', d, split, 200), 'none | v100 |  | none', 'the tags do not say what a later version dropped: as before')
+        split.write_text(rows(A, B, C, D))
+        self.assertEqual(self.java('versions', d, split, 100), f'none | v200 | {C},{D} | none', 'nothing lacking: the byte comparison decides, all keys required')
+        split.write_text(rows(A, B, C))
+        self.assertEqual(self.java('versions', d, split, 100), f'{D} | v200 | {C},{D} | 1 of 4 shaders in this app\'s table belong to other versions of the game (v200): not needed for v100')
+        (d / 'shader_optional.tsv').write_text(B + '\tv100 only\n')   # what the tags cannot say, said by the profile (Super Mario Bros. Wonder, Mario Kart 8 Deluxe)
+        split.write_text(rows(A, C, D))
+        self.assertEqual(self.java('versions', d, split, 200), f'{B} | v100 |  | none')
+        (d / 'shader_optional.tsv').unlink()
+        (d / 'game.tsv').write_text('shader_versions\tv100\n')   # one version: every shader of the map is needed
+        split.write_text(rows(A, B))
+        self.assertEqual(self.java('versions', d, split, 100), 'none |  |  | none')
+        (d / 'game.tsv').write_text('shader_versions\tv100 v2000\n')   # v200 is not v2000
+        self.assertEqual(self.java('versions', d, split, 100), 'none | v2000 |  | none')
+
     def test_selection_of_profiles(self):
         """Every profile with a selected set: the Java selection is what the Mac's selected build passes (shader_seen.tsv keys in shader_map.tsv)"""
         for seen in sorted((REPO / 'dm/games').glob('*/shader_seen.tsv')):
