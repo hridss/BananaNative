@@ -1078,6 +1078,14 @@ Finding, keying and translating shaders (`dm/gfx/tools/shader_split.py`, `dmsh_b
 - **Found on:** Hyrule Warriors: Age of Imprisonment (upstream seedds/nxnative): pixel shaders `02e49c189b769074` and `49241cf469c76830`, 16 pairs each (chain 95ba69b5403e).
 - **Check:** `DMSH_TEST_XLATE=<translator> python3 dm/gfx/tests/test_dmsh_ampere_mem.py` (`BarrierMoves`: the game's encodings leave the translated shader unchanged; it fails on the translator before).
 
+### SHFL takes its lane from the low 5 bits
+
+- **Symptom:** a warp shuffle whose lane comes from a register with bits above bit 4 set returns the thread's own value instead of the requested lane's (or a wrong validity predicate). Upstream's Jetson Orin probes found 207 wrong IDX results, 196 BFLY results and 179 segmented IDX results, each out of 1,024 rows.
+- **Cause:** SHFL uses only b[4:0] as its lane or offset in every mode ([PTX ISA](https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#data-movement-and-conversion-instructions-shfl-sync)). The translator's `HelperFunctionManager.cs` `GenerateShuffle*` helpers consumed the whole register, so the high bits changed the source lane and the validity predicate. Maxwell's `InstEmitWarp.Shfl` and Ampere's `AShfl` both lower to these helpers; the c operand's clamp and segment mask were already decoded correctly.
+- **Fix:** the lane argument is masked to `& 31` in the four shared helpers (IDX, UP, DOWN, BFLY), with no game or build gate; at most one integer AND per shuffle (upstream seedds/nxnative fb18e83a, PR #2044). UP's separate nonzero-clamp question is unchanged.
+- **Found on:** no game; a Jetson Orin's sm_87 results (upstream PR #2044, checked there with synthetic Maxwell and Ampere shaders on Metal).
+- **Check:** `DMSH_TEST_XLATE=<translator> DMSH_TEST_GPU=1 python3 dm/gfx/tests/test_dmsh_shfl.py` upstream (a Metal test, not in this tree).
+
 ### LDC with the bank in its address register (`.IS`)
 
 - **Symptom:** `Ampere b82 at 0x…: LDC with a bindless bank or an address mode (…00008a00…7b82)` in the shader build; those shaders are left out.
