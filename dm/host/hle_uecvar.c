@@ -98,37 +98,55 @@ void dm_ue_lod_tick(void) {
 // ue_set rows (game.tsv, game.py DM_GAME_UE_SET): a variable held at a value whenever the game sets another, both copies of a TAutoConsoleVariable or the global of one
 // registered by reference (ue_cvar.py REFS: the row's ref). A row with an environment variable applies only while it is 1: the launcher's Game options toggles (Orbitals:
 // "Particle light volume off" holds r.TranslucentLightingVolume at 0, GPU about 3.8 ms a frame less in its split-screen gameplay on the AYN Thor). A value with a decimal
-// point is written as a float, else as an int. Read once; the engine reads these variables every frame
+// point is written as a float, else as an int. The toggles are read on every present, so a live option (the in-game panel's "env <switch>=0|1" lines, vka_ctl.c) applies
+// from the next frame: of the rows on one variable the last one on is held, and with none on any more the variable gets back the game's value from before the first hold.
+// The engine reads these variables every frame
 typedef struct { const char *name, *value, *env; int ref; } ue_set_row;
-typedef struct { int state, nlog; uint32_t bits; uint64_t off; } ue_set_st;   // state: 0 not read yet, 1 held, -1 nothing to do
-static void ue_set_apply(const ue_set_row *r, ue_set_st *s) {
-    if (s->state < 0) return;
+typedef struct { int state, nlog, saved; const ue_set_row *held; uint32_t bits, orig[2]; uint64_t off; } ue_set_st;   // state: 0 not looked up yet, 1 found, -1 not found
+static int ue_set_on(const ue_set_row *r) { const char *e = *r->env ? getenv(r->env) : "1"; return e && !strcmp(e, "1"); }
+// One variable: `on` is its row to hold (the last row on), NULL to give the game's value back
+static void ue_set_apply(const ue_set_row *r0, const ue_set_row *on, ue_set_st *s) {
+    if (s->state < 0 || (!on && !s->saved)) return;
+    const ue_set_row *by = on ? on : s->held;
+    const char *src = by && *by->env ? by->env : "game profile ue_set";
     if (!s->state) {
         s->state = -1;
-        const char *e = *r->env ? getenv(r->env) : NULL;
-        if (*r->env && (!e || strcmp(e, "1"))) return;
-        if (strchr(r->value, '.')) { float f = strtof(r->value, NULL); memcpy(&s->bits, &f, 4); } else { int32_t v = (int32_t)strtol(r->value, NULL, 10); memcpy(&s->bits, &v, 4); }
-        const char *src = *r->env ? r->env : "game profile ue_set";
-        if (!(s->off = dm_ue_cvar(r->name))) { LOG("[RED] main: Unreal %s not found in main by the rewriter (ue_cvar.py NAMES / REFS; %s %s not applied)", r->name, src, r->value); return; }
-        LOG("main: Unreal %s at main+%#llx (%s), held at %s (%s)", r->name, (unsigned long long)s->off, r->ref ? "a global registered by reference" : "both copies", r->value, src);
+        if (!(s->off = dm_ue_cvar(r0->name))) { LOG("[RED] main: Unreal %s not found in main by the rewriter (ue_cvar.py NAMES / REFS; %s %s not applied)", r0->name, src, on->value); return; }
+        LOG("main: Unreal %s at main+%#llx (%s)", r0->name, (unsigned long long)s->off, r0->ref ? "a global registered by reference" : "both copies");
         s->state = 1;
     }
+    if (on != s->held && on) {
+        if (strchr(on->value, '.')) { float f = strtof(on->value, NULL); memcpy(&s->bits, &f, 4); } else { int32_t v = (int32_t)strtol(on->value, NULL, 10); memcpy(&s->bits, &v, 4); }
+        LOG("main: Unreal %s held at %s (%s)", r0->name, on->value, src); s->nlog = 0;
+    }
+    s->held = on;
     uint8_t *base = NULL;
     for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) base = g_mod[i].base;
     if (!base) return;
     uint64_t val = (uint64_t)(uintptr_t)(base + s->off);
-    if (!r->ref && (!rd((uint64_t)(uintptr_t)(base + s->off + 0x10), &val, sizeof val) || !val)) return;   // not created yet
-    for (int c = 0; c < (r->ref ? 1 : 2); c++) {
-        uint32_t cur, *p = (uint32_t *)(uintptr_t)(val + 4 * (uint64_t)c);
-        if (!rd((uint64_t)(uintptr_t)p, &cur, sizeof cur) || cur == s->bits) continue;
-        dm_guest_write_prepare(p, sizeof *p); __atomic_store_n(p, s->bits, __ATOMIC_RELAXED);
-        if (s->nlog < 4) { s->nlog++; LOG("main: Unreal %s%s → %s (%s)", r->name, r->ref ? "" : c ? " (render thread)" : " (game thread)", r->value, *r->env ? r->env : "game profile ue_set"); }
+    if (!r0->ref && (!rd((uint64_t)(uintptr_t)(base + s->off + 0x10), &val, sizeof val) || !val)) return;   // not created yet
+    int n = r0->ref ? 1 : 2;
+    uint32_t *p[2] = {(uint32_t *)(uintptr_t)val, (uint32_t *)(uintptr_t)(val + 4)};
+    if (on && !s->saved) { for (int c = 0; c < n; c++) if (!rd((uint64_t)(uintptr_t)p[c], &s->orig[c], 4)) return; s->saved = 1; }
+    for (int c = 0; c < n; c++) {
+        uint32_t cur, want = on ? s->bits : s->orig[c];
+        if (!rd((uint64_t)(uintptr_t)p[c], &cur, sizeof cur) || cur == want) continue;
+        dm_guest_write_prepare(p[c], sizeof *p[c]); __atomic_store_n(p[c], want, __ATOMIC_RELAXED);
+        if (on && s->nlog < 4) { s->nlog++; LOG("main: Unreal %s%s → %s (%s)", r0->name, r0->ref ? "" : c ? " (render thread)" : " (game thread)", on->value, src); }
     }
+    if (!on) { s->saved = 0; LOG("main: Unreal %s back to the game's value (%s off)", r0->name, src); }
 }
 void dm_ue_set_tick(void) {
 #ifdef DM_GAME_UE_SET
     static const ue_set_row rows[] = DM_GAME_UE_SET;
-    static ue_set_st st[sizeof rows / sizeof rows[0]];
-    for (size_t i = 0; i < sizeof rows / sizeof rows[0]; i++) ue_set_apply(&rows[i], &st[i]);
+    enum { N = sizeof rows / sizeof rows[0] };
+    static ue_set_st st[N];
+    for (size_t i = 0; i < N; i++) {
+        size_t k = 0; while (strcmp(rows[k].name, rows[i].name)) k++;
+        if (k != i) continue;   // a variable's rows are handled at its first
+        const ue_set_row *on = NULL;
+        for (size_t j = i; j < N; j++) if (!strcmp(rows[j].name, rows[i].name) && ue_set_on(&rows[j])) on = &rows[j];
+        ue_set_apply(&rows[i], on, &st[i]);
+    }
 #endif
 }
