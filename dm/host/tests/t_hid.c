@@ -319,7 +319,9 @@ static void t_vibration(void) {
     dm_haptics_init(vibration_sink, 1);
     CHECK(!h_hid_VibPermit() && h_hid_VibHandles(h, 2, &id, STYLE_FULLKEY) == 2,
           "startup handles do not wait for a routed haptics output");
-    CHECK(!h_hid_VibMounted(&h[0]) && !h_hid_VibMountedOunce(&h[0]), "no routed output: device not mounted");
+    CHECK(h_hid_VibMounted(&h[0]) && h_hid_VibMounted(&h[1]) && h_hid_VibMountedOunce(&h[0]) && h_hid_VibMountedOunce(&h[1]), "no routed output yet: both channels are mounted");
+    h_hid_VibInfo(info, &h[0]); CHECK(info[0] == 1 && info[1] == 1, "left motor answers before routing");
+    h_hid_VibInfo(info, &h[1]); CHECK(info[0] == 1 && info[1] == 2, "right motor answers before routing");
     h_hid_SendVib(&h[0], &v);
     CHECK(dm_haptics_actual(0, 0).amplitude_low == 0, "a value before routing is not retained");
     dm_haptics_route(0, 1); dm_haptics_route(1, 1);

@@ -757,13 +757,18 @@ HLE_FORCE("_ZN2nn3hid22GetSixAxisSensorStatesEPNS0_18SixAxisSensorStateEiRKNS0_1
           int, h_hid_SixStates, SixAxisState *out, int n, const uint32_t *h) { return six_states(out, n, *h); }
 // Vibration handles: byte 0 = SDK style index (FullKey 3, Handheld 4), byte 1 = npad id, byte 2 = motor.
 // See libnx hid.c _hidGetVibrationDeviceHandles. Only the styles this host connects are exposed.
-static uint32_t vib_targets(uint32_t h) {
+// The players a vibration handle names, before its haptics output is asked about: the handle bytes are checked and the npad's style decides the rest. A game asks whether
+// a channel is mounted once, often at boot: on the console the controller is there then, while a Bluetooth pad here may connect seconds later, so mounted and
+// GetVibrationDeviceInfo answer from this (Echoes of Wisdom cached "not mounted" at boot and never sent rumble, upstream nxnative PR #2859); sends keep only the
+// players that have a routed output (vib_targets)
+static uint32_t vib_valid(uint32_t h) {
     unsigned type = h & 0xff, id = h >> 8 & 0xff, motor = h >> 16 & 0xff;
     if (h >> 24 || motor > 1 || (type != 3 && type != 4)) return 0;
     int p = player_of(id);
     if (style_for_player(id, p) != (1u << (type - 3))) return 0;
-    return dm_haptics_available() & (p == 0 ? 1u | merged_players() : 1u << p);
+    return p == 0 ? 1u | merged_players() : 1u << p;
 }
+static uint32_t vib_targets(uint32_t h) { return vib_valid(h) & dm_haptics_available(); }   // the players of a send: a valid channel with a routed output
 static void vib_send(const uint32_t *handles, const dm_vibration *values, int n) {
     if (!handles || !values || n <= 0) return;
     dm_vibration_update updates[DM_PLAYERS * 2];
@@ -933,17 +938,17 @@ HLE_FORCE("_ZN2nn3hid34ResetSixAxisSensorFusionParametersERKNS0_19SixAxisSensorH
 HLE_FORCE("_ZN2nn3hid41IsFirmwareUpdateAvailableForSixAxisSensorERKNS0_19SixAxisSensorHandleE", "six-axis sensor firmware update: none", unsigned, h_hid_SixFw, const uint32_t *h) { (void)h; return 0; }
 // GetActual returns the sanitized guest value accepted by the host, before output-device adaptation.
 HLE_FORCE("_ZN2nn3hid22GetVibrationDeviceInfoEPNS0_19VibrationDeviceInfoERKNS0_21VibrationDeviceHandleE", "vibration: linear resonant actuator, left or right", void, h_hid_VibInfo, uint32_t *info, const uint32_t *h) {
-    int on = h && vib_targets(*h); info[0] = on ? 1 : 0; info[1] = on ? 1 + (*h >> 16 & 1) : 0;
+    int on = h && vib_valid(*h) != 0; info[0] = on ? 1 : 0; info[1] = on ? 1 + (*h >> 16 & 1) : 0;
 }
 // The SDK's own call reaches the hid service (a null read in hid::detail::IsVibrationDeviceMounted; Super Mario Odyssey asks for each handle of a controller).
-// On Horizon a device is mounted when the npad's connected controller has that style and an actuator on that side: here, when the channel has an output, as GetVibrationDeviceInfo reports it
-HLE_FORCE("_ZN2nn3hid24IsVibrationDeviceMountedERKNS0_21VibrationDeviceHandleE", "vibration: device mounted when the channel has an output", unsigned, h_hid_VibMounted, const uint32_t *h) {
-    return h && vib_targets(*h);
+// On Horizon a device is mounted when the npad's connected controller has that style and an actuator on that side: here, when the handle names a channel of the npad's controller (vib_valid), routed or not
+HLE_FORCE("_ZN2nn3hid24IsVibrationDeviceMountedERKNS0_21VibrationDeviceHandleE", "vibration: device mounted when the handle names a valid npad channel", unsigned, h_hid_VibMounted, const uint32_t *h) {
+    return h && vib_valid(*h) != 0;
 }
 // SDK 22 (Switch 2 / Ounce): IsOunceVibrationDeviceMounted replaces IsVibrationDeviceMounted (The Legend of Zelda: Ocarina of Time calls it when rumble is on).
 // The SDK's own call reaches the hid service (CreateHidServerProxy -> sm abort, Result 0xe15 at sdk+0x6c8e54).
-HLE_FORCE("_ZN2nn3hid29IsOunceVibrationDeviceMountedERKNS0_21VibrationDeviceHandleE", "vibration: Ounce device mounted when the channel has an output", unsigned, h_hid_VibMountedOunce, const uint32_t *h) {
-    return h && vib_targets(*h);
+HLE_FORCE("_ZN2nn3hid29IsOunceVibrationDeviceMountedERKNS0_21VibrationDeviceHandleE", "vibration: Ounce device mounted when the handle names a valid npad channel", unsigned, h_hid_VibMountedOunce, const uint32_t *h) {
+    return h && vib_valid(*h) != 0;
 }
 // A forced vibration session lets the application vibrate while the system's vibration setting is off (hid's Begin/EndPermitVibrationSession). The host has no such system setting: its own
 // rumble switch is the player's and a session does not override it, so there is nothing to begin or end. The SDK's own calls read the null hid service object: Super Mario Party (SDK 9.4)
