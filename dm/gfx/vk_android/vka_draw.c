@@ -314,12 +314,18 @@ static int view_same(const view_t *a, const view_t *b) {
 // The same texture: by its initialization serial, not the pointer (each SET_RT record holds its own snapshot of the objects, hle_nvn.c tex_snap, so two records of the
 // same targets never share pointers; with pointers every SET_RT ended the pass: Orbitals' G-buffer reopened ~280 times a frame over the same images)
 static int tex_same(const tex_t *a, const tex_t *b) { return a == b || (a && b && a->serial == b->serial && g_rt_serial); }   // (DM_VK_RT_SERIAL=0: by pointer, as before)
+// Trailing empty colour slots do not change the targets, and a target with no view record is drawn through the same view as one whose record sets no field (nxnative
+// d6b5fc1b, issue #2806: Orbitals). A pass continued so keeps its own slot count, which its pipelines take (R.ncolor)
 static int rt_same(const p_set_rt *a, int ha, const p_set_rt *b, int hb) {
     if (!ha || !hb) return !ha && !hb;
-    if (a->n != b->n || !tex_same(a->depth, b->depth) || !!a->has_dview != !!b->has_dview || (a->has_dview && !view_same(&a->dview, &b->dview))) return 0;
-    for (int i = 0; i < a->n && i < 8; i++) {
-        if (!tex_same(a->color[i], b->color[i]) || !!a->has_cview[i] != !!b->has_cview[i]) return 0;
-        if (a->color[i] && a->has_cview[i] && !view_same(&a->cview[i], &b->cview[i])) return 0;
+    static const view_t none;
+    int na = a->n < 8 ? a->n : 8, nb = b->n < 8 ? b->n : 8;
+    while (na && !a->color[na - 1]) na--;
+    while (nb && !b->color[nb - 1]) nb--;
+    if (na != nb || !tex_same(a->depth, b->depth) || (a->depth && !view_same(a->has_dview ? &a->dview : &none, b->has_dview ? &b->dview : &none))) return 0;
+    for (int i = 0; i < na; i++) {
+        if (!tex_same(a->color[i], b->color[i])) return 0;
+        if (a->color[i] && !view_same(a->has_cview[i] ? &a->cview[i] : &none, b->has_cview[i] ? &b->cview[i] : &none)) return 0;
     }
     return 1;
 }
@@ -585,12 +591,16 @@ static void pass_redrawn(vka_img *const *im, int n) {
 }
 // DM_VK_RP_END_LOG: which part of two SET_RT differs (the pass ends at the next draw over other targets)
 static const char *rt_diff(const p_set_rt *a, const p_set_rt *b, char *buf, size_t n) {
-    if (a->n != b->n) { snprintf(buf, n, "colour count %d -> %d", b->n, a->n); return buf; }
+    static const view_t none;   // (as rt_same: trailing empty colour slots dropped, no view record = a record that sets nothing)
+    int na = a->n < 8 ? a->n : 8, nb = b->n < 8 ? b->n : 8;
+    while (na && !a->color[na - 1]) na--;
+    while (nb && !b->color[nb - 1]) nb--;
+    if (na != nb) { snprintf(buf, n, "colour count %d -> %d", nb, na); return buf; }
     if (!tex_same(a->depth, b->depth)) { snprintf(buf, n, "depth texture %llu -> %llu", b->depth ? (unsigned long long)b->depth->serial : 0ull, a->depth ? (unsigned long long)a->depth->serial : 0ull); return buf; }
-    if (!!a->has_dview != !!b->has_dview || (a->has_dview && !view_same(&a->dview, &b->dview))) { snprintf(buf, n, "depth view"); return buf; }
-    for (int i = 0; i < a->n && i < 8; i++) {
+    if (a->depth && !view_same(a->has_dview ? &a->dview : &none, b->has_dview ? &b->dview : &none)) { snprintf(buf, n, "depth view"); return buf; }
+    for (int i = 0; i < na; i++) {
         if (!tex_same(a->color[i], b->color[i])) { snprintf(buf, n, "colour %d texture %llu -> %llu", i, b->color[i] ? (unsigned long long)b->color[i]->serial : 0ull, a->color[i] ? (unsigned long long)a->color[i]->serial : 0ull); return buf; }
-        if (!!a->has_cview[i] != !!b->has_cview[i] || (a->color[i] && a->has_cview[i] && !view_same(&a->cview[i], &b->cview[i]))) { snprintf(buf, n, "colour %d view", i); return buf; }
+        if (a->color[i] && !view_same(a->has_cview[i] ? &a->cview[i] : &none, b->has_cview[i] ? &b->cview[i] : &none)) { snprintf(buf, n, "colour %d view", i); return buf; }
     }
     snprintf(buf, n, "the same targets (the render area)"); return buf;
 }
