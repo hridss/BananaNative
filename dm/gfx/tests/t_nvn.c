@@ -16,6 +16,7 @@ void nvn_present_config(int hz, int display_mode);
 #include <fcntl.h>
 #include <errno.h>
 #include <unistd.h>
+#include <sys/wait.h>
 uint64_t now_ns(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (uint64_t)t.tv_sec * 1000000000ull + t.tv_nsec; }
 
 static int g_fail, g_n;
@@ -63,6 +64,12 @@ static size_t tex_size(int fmt, int w, int h, int flags, size_t *align) {
 }
 
 int main(void) {
+    // An empty DM_NVN_TSV (set but empty, as an `env NAME=` line or env.txt can leave it) must count as off: no counting
+    // trampolines. nvn_counting caches its answer at its first call, so read it in a forked child.
+    { pid_t p = fork();
+      if (!p) { unsetenv("DM_NVN_COUNT"); setenv("DM_NVN_TSV", "", 1); _exit(nvn_counting() == 0 ? 0 : 1); }
+      int st = -1; if (p > 0) waitpid(p, &st, 0);
+      EXPECT("empty DM_NVN_TSV: call counts off", 0, WIFEXITED(st) ? WEXITSTATUS(st) : -1); }
     // Engine-native limiters have no FPS state page. Their launcher cap must
     // still pace presents and select the display-link rate in display mode.
     { win_t w={.interval=1};nvn_present_config(60,1);dm_fps_state=NULL;
