@@ -212,6 +212,10 @@ static int init_once(void) {
     // VK_EXT_image_2d_view_of_3d: a sampled or storage 2D view of one depth slice of a 3D image (NVN's TextureView of a 3D texture overridden to a 2D target; vka_tex.c view_of)
     int x_2dv3 = has_ext(de, nde, VK_EXT_IMAGE_2D_VIEW_OF_3D_EXTENSION_NAME);
     if (x_2dv3) dext[ndext++] = VK_EXT_IMAGE_2D_VIEW_OF_3D_EXTENSION_NAME;
+    // VK_EXT_transform_feedback for NVN transform feedback (vka_tf.c). DM_VK_XFB=0 (restart) leaves it off: such draws are then skipped or drawn without capture, as before
+    const char *xfb_env = getenv("DM_VK_XFB");
+    int x_xfb = has_ext(de, nde, VK_EXT_TRANSFORM_FEEDBACK_EXTENSION_NAME) && !(xfb_env && !strcmp(xfb_env, "0"));
+    if (x_xfb) dext[ndext++] = VK_EXT_TRANSFORM_FEEDBACK_EXTENSION_NAME;
     free(de);
 
     // Every feature the device has, but robustness and capture-replay (they cost and nothing needs them); the shader side takes what it needs from the same device
@@ -224,10 +228,11 @@ static int init_once(void) {
     VkPhysicalDeviceMeshShaderFeaturesEXT fmesh = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT};
     VkPhysicalDeviceFaultFeaturesEXT ffault = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FAULT_FEATURES_EXT};
     VkPhysicalDeviceImage2DViewOf3DFeaturesEXT f2v3 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_2D_VIEW_OF_3D_FEATURES_EXT};
+    VkPhysicalDeviceTransformFeedbackFeaturesEXT fxfb = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT};   // transform feedback (vka_tf.c)
     void *chain = placed ? &fmp : NULL;
 #define LINK(on, st) if (on) { (st).pNext = chain; chain = &(st); }
     struct { VkStructureType sType; void *pNext; VkBool32 queuePerfHint; } fph = {(VkStructureType)1000302001};   // VkPhysicalDeviceQueuePerfHintFeaturesQCOM (not in the NDK's headers yet)
-    LINK(x_vin, fvin) LINK(x_rob, frob) LINK(x_i8, fi8) LINK(x_div, fdiv) LINK(x_ph, fph) LINK(x_gpl, fgpl) LINK(x_mesh, fmesh) LINK(x_fault, ffault) LINK(x_2dv3, f2v3)
+    LINK(x_vin, fvin) LINK(x_rob, frob) LINK(x_i8, fi8) LINK(x_div, fdiv) LINK(x_ph, fph) LINK(x_gpl, fgpl) LINK(x_mesh, fmesh) LINK(x_fault, ffault) LINK(x_2dv3, f2v3) LINK(x_xfb, fxfb)
 #undef LINK
     VkPhysicalDeviceVulkan13Features f13 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES, .pNext = chain};
     VkPhysicalDeviceVulkan12Features f12 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, .pNext = &f13};
@@ -246,6 +251,7 @@ static int init_once(void) {
     V.tess = f2.features.tessellationShader; V.depth_clamp = f2.features.depthClamp; V.fill_lines = f2.features.fillModeNonSolid; V.depth_bias_clamp = f2.features.depthBiasClamp;
     V.multi_vp = f2.features.multiViewport; V.a2c = 1; V.vstores = f2.features.vertexPipelineStoresAndAtomics; V.fstores = f2.features.fragmentStoresAndAtomics; V.mesh = x_mesh && fmesh.meshShader; V.task = V.mesh && fmesh.taskShader;
     if (!f12.timelineSemaphore || !f13.dynamicRendering) { VRED("the device lacks timeline semaphores (%d) or dynamic rendering (%d)", f12.timelineSemaphore, f13.dynamicRendering); return 0; }
+    fxfb.geometryStreams = VK_FALSE; V.xfb = x_xfb && fxfb.transformFeedback;   // transform feedback (vka_tf.c): captures of stream 0 only
     V.imageless = f12.imagelessFramebuffer;   // (enabled with the rest of f12)
     V.draw_count = f12.drawIndirectCount;
     V.minmax = f12.samplerFilterMinmax;   // (enabled with the rest of f12)
@@ -260,6 +266,7 @@ static int init_once(void) {
 #define D(f) vk.f = (PFN_##f)vk.vkGetDeviceProcAddr(V.dev, #f);
     VKA_DEVICE_FNS(D)
 #undef D
+    if (V.xfb && !(vk.vkCmdBindTransformFeedbackBuffersEXT && vk.vkCmdBeginTransformFeedbackEXT && vk.vkCmdEndTransformFeedbackEXT)) V.xfb = 0;   // transform feedback (vka_tf.c)
     fp_wrap_compiles();
     vka_shader_pfb_hook();   // (over the FPCR wrapper: the module it makes is the rewritten one)
     if (!vk.vkMapMemory2KHR) vk.vkMapMemory2KHR = (PFN_vkMapMemory2KHR)vk.vkGetDeviceProcAddr(V.dev, "vkMapMemory2");   // core in 1.4
