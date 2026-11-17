@@ -535,11 +535,14 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
         } else if (variant != null) {   // Game settings › Aspect ratio: the pack's native-aspect modules (<pack>/<variant>/, loader.c) and the picture shown at that aspect
             env.add("DM_PATCH_VARIANT=" + variant);
             env.add("DM_VK_PICTURE_ASPECT=" + aspect);
-        } else if (aspect != null && Profile.of(id) != null && Arrays.asList(Profile.of(id).cameraAspects.split(",")).contains(aspect)) {   // a shape the host's camera patch follows (game.tsv aspect rows): the picture at that shape, no variant
+        } else if (aspect != null && aspect.matches("[0-9]+:[0-9]+") && Profile.of(id) != null && Arrays.asList(Profile.of(id).cameraAspects.split(",")).contains(aspect)) {   // a shape the host's camera patch follows (game.tsv aspect rows): the picture at that shape, no variant
             env.add("DM_VK_PICTURE_ASPECT=" + aspect);
         } else if (ScreenShape.CHOICE.equals(aspect) && Profile.of(id) != null && !Profile.of(id).cameraAspects.isEmpty()) {   // Screen shape: the window's own shape (ScreenShape), read now, once; a 16:9-ish window passes nothing
             android.graphics.Rect b = getWindowManager().getCurrentWindowMetrics().getBounds();
             String shape = ScreenShape.ratio(b.width(), b.height(), orientationFixed());
+            boolean tallOnly = true;   // a host that follows taller shapes only (every aspect row narrower than 16:9, Pokopia): a wider window keeps 16:9, as a variant's does
+            for (String r : Profile.of(id).cameraAspects.split(",")) if (r.trim().matches("[0-9]+:[0-9]+") && ScreenShape.tall(r.trim()) == null) tallOnly = false;   // "screen" (Screen shape only) is not a ratio
+            if (tallOnly) shape = ScreenShape.tall(shape);
             if (shape != null) env.add("DM_VK_PICTURE_ASPECT=" + shape);
             shapeNote = ("[nxlaunch] aspect ratio: screen shape, window " + b.width() + "x" + b.height() + (orientationFixed() ? " (landscape)" : "") + (shape == null ? ": about 16:9, nothing passed" : " -> " + shape));
         }

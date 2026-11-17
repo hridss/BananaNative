@@ -49,6 +49,13 @@ mem_used	0x5600000
 # (the Android launcher's Game resolution; loader.c levels_apply), the table stays: the game's own maximum must stay, or the terrain breaks (the game note, Render size)
 res_levels	76a489f3bd3642fa5e18bd83d32c98ba	0x2849658	34	0x2804ff0:8	0x2805160:8	0x2805198:8	0x2805458:8	0x28055c0:8	0x2808b60:9	0x2808b69:10	0x2808b73:9	0x2808b7c:9
 
+# ---- Graphics ----
+# Game settings > Aspect ratio: Screen shape only (the window's own shape, ScreenShape.tall: 1:1 up to 16:9; 16:9 or wider keeps 16:9).
+# The host follows it (dm/host/android/pkp_aspect.c, patches.py OBS rows): the frame fills the screen at that shape
+# (DM_VK_PICTURE_ASPECT), the world cameras see the taller view, the UI is laid out for it and the HUD sits in the corners.
+# A non-ratio row: GameSettings lists no fixed shapes, only Screen shape (fixed ones only showed a phone's own shape anyway)
+aspect	screen
+
 # ---- Shader split (shader_split.py) ----
 shader_groups	/motor_asset_re/=rdb
 shader_note	Pokemon Pokopia shaders

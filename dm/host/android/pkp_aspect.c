@@ -24,6 +24,8 @@
 #include "hle.h"
 #include "dm.h"
 #include <math.h>
+#include <errno.h>
+#include <stdio.h>
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
@@ -43,15 +45,24 @@ static float rdf(uint64_t a) { float f; memcpy(&f, (void *)a, 4); return f; }
 static void wrf(uint64_t a, float f) { memcpy((void *)a, &f, 4); }
 static uint32_t rdu(uint64_t a) { uint32_t u; memcpy(&u, (void *)a, 4); return u; }
 
+// Without DM_PKP_ASPECT, the launcher's Game settings › Aspect ratio (game.tsv aspect rows) or Screen
+// shape: DM_VK_PICTURE_ASPECT=<w>:<h>, the shape the present shows the 16:9 frame at.
 static void config_init(void) {
-    const char *e = getenv("DM_PKP_ASPECT");
-    if (!e || !*e) return;
-    char *end;
-    errno = 0;
-    double a = strtod(e, &end);
-    if (end == e || *end || errno == ERANGE || !isfinite(a) || a <= 0.4 || a >= K169 - 0.02) return;
+    const char *e = getenv("DM_PKP_ASPECT"), *src = "DM_PKP_ASPECT";
+    double a = 0;
+    if (e && *e) {
+        char *end;
+        errno = 0;
+        a = strtod(e, &end);
+        if (end == e || *end || errno == ERANGE || !isfinite(a)) return;
+    } else if ((e = getenv("DM_VK_PICTURE_ASPECT")) && *e) {
+        unsigned w = 0, h = 0;
+        if (sscanf(e, "%u:%u", &w, &h) != 2 || !w || !h) return;
+        a = (double)w / h; src = "DM_VK_PICTURE_ASPECT";
+    } else return;
+    if (a <= 0.4 || a >= K169 - 0.02) return;
     g_aspect = a;
-    LOG("pkp aspect: startup %.6f (restart to change; world camera only)", a);
+    LOG("pkp aspect: startup %.6f from %s (restart to change)", a, src);
 }
 
 static double aspect(void) {
@@ -94,6 +105,7 @@ static void cam_submit(uint64_t *r, int param) {
     remember(r[20]);
 }
 
+
 // A scene camera's original FOV becomes taller. One already corrected is left
 // alone, including when the game submits its copied render camera again.
 static void proj_build(uint64_t *r, int param) {
@@ -121,13 +133,196 @@ static void proj_build(uint64_t *r, int param) {
 
 // Restore the original horizontal reach for a corrected scene camera or its
 // game-owned copy. The view-projection multiplication follows this gate.
+// Every other perspective camera with the 16:9 aspect field (the UI's ScreenLayout cameras: near 0.1 /
+// far 20000, a 45-degree view of a 1920x1080 plane 1303.6 away; the HUD's 0.1 / 55 cameras; render copies)
+// gets the same result as a corrected scene camera: its vertical scale P11 times a / (16/9), the
+// horizontal one unchanged. The UI is then laid out 1920 wide and 1920 / a high, squeezed into the game's
+// 16:9 frame, and the stretched picture shows it in its own proportions. The FOV field is left alone (the
+// scene path changes it for culling; the UI culls nothing). DM_PKP_UI=0 keeps the old world-only fix.
+#define DEFAULT_CROP ""
+static int g_ui = -1;
+static int ui_on(void) {
+    if (g_ui < 0) { const char *e = getenv("DM_PKP_UI"); g_ui = !(e && *e == '0'); LOG("pkp aspect: UI %s (DM_PKP_UI)", g_ui ? "squeezed" : "left at 16:9"); }
+    return g_ui;
+}
+// Camera families by (near, far): each one logged once. DM_PKP_CROP=<near>:<far>[,...] lists families whose view is a
+// set built for exactly 16:9 (a taller view shows the empty space above and below it): those keep their vertical
+// view and lose the sides instead (P00 / k), which on the stretched picture fills the screen in proportion.
+static float g_crop[8][2]; static int g_ncrop = -1;
+static int crop_family(float nr, float fr) {
+    if (g_ncrop < 0) {
+        g_ncrop = 0; const char *e = getenv("DM_PKP_CROP");
+        if (!e) e = DEFAULT_CROP;
+        for (char *q = (char *)e; *q && g_ncrop < 8;) { float a = strtof(q, &q); if (*q != ':') break; q++; float b = strtof(q, &q); g_crop[g_ncrop][0] = a; g_crop[g_ncrop][1] = b; g_ncrop++; while (*q == ',') q++; }
+        LOG("pkp aspect: crop families: %s", *e ? e : "none");
+    }
+    for (int i = 0; i < g_ncrop; i++) if (fabsf(nr - g_crop[i][0]) <= 1e-4f * fmaxf(1, g_crop[i][0]) && fabsf(fr - g_crop[i][1]) <= 1e-3f * fmaxf(1, g_crop[i][1])) return 1;
+    return 0;
+}
+static void ui_squeeze(uint64_t cam, float *p, double a) {
+    if (!ui_on()) return;
+    float nr = rdf(cam + 320), fr = rdf(cam + 324);
+    int crop = !(rdu(cam + CAM_FLAGS) & 1) && crop_family(nr, fr);
+    if (crop) p[0] /= (float)(a / K169); else p[5] *= (float)(a / K169);
+    static float seen[32][2]; static int ns; static _Atomic int lk;
+    int known = 0;
+    for (int i = 0; i < ns; i++) if (seen[i][0] == nr && seen[i][1] == fr) { known = 1; break; }
+    if (!known && !atomic_exchange(&lk, 1)) {
+        if (ns < 32) { seen[ns][0] = nr; seen[ns][1] = fr; ns++;
+            LOG("pkp aspect %.4f: camera family near %g far %g%s: %s", a, nr, fr, rdu(cam + CAM_FLAGS) & 1 ? " (orthographic)" : "", crop ? "sides cropped (P00 / k)" : "taller view (P11 x k)"); }
+        atomic_store(&lk, 0);
+    }
+}
+
+// Text: glyphs come in screen pixels (y down), and the 2D batch's constants map them to the screen as
+// (2 sx / w, -2 sy / h, -1, 1) (main+0x17b97b4: sx, sy the batch's scale, w x h its target). Gate param 2
+// sits after the store, x8 = the four words. Pixel mode on a 1080-high target (sx = sy = 1: 2/1920,
+// -2/1080) gets the same vertical squeeze about the centre: y scale and y offset times a / (16/9). The
+// normalized mode (1, -2: full-screen quads in 0..1) is left alone, so full-screen layers keep filling it.
+static int text_prog(unsigned id) {
+    static unsigned ids[8]; static int n = -1;
+    if (n < 0) {
+        const char *e = getenv("DM_PKP_TEXT_PROGS"); if (!e || !*e) e = "1a,11,14";
+        n = 0; for (char *q = (char *)e; *q && n < 8;) { ids[n++] = (unsigned)strtoul(q, &q, 16); while (*q == ',') q++; }
+        LOG("pkp aspect: text programs squeezed: %s", e);
+    }
+    for (int i = 0; i < n; i++) if (ids[i] == id) return 1;
+    return 0;
+}
+static void text_consts(uint64_t *r, double a) {
+    if (!ui_on() || !r[8]) return;
+    float *w = (float *)r[8];
+    // Only the text programs: the scene's own full-screen composite is a pixel-mode batch on the same
+    // 1920x1080 target. x1 = the batch's material, [+0x10] its "PROG" object, [+0x10] the program number
+    // << 8 (this build: 0x1a, 0x11, 0x14 text, the key help among them; 0x03, 0x0b, 0x0e, 0x1d the other 2D batches). DM_PKP_TEXT_PROGS=<hex,...>
+    uint64_t prog = r[1] ? *(uint64_t *)(r[1] + 0x10) : 0;
+    if (!prog || *(uint32_t *)(prog + 0x40 + 8) != 0x474f5250u) return;   // "PROG"
+    unsigned id = *(uint32_t *)(prog + 0x10) >> 8;
+    if (fabsf(w[0] * 960.0f - 1.0f) > 0.01f || fabsf(w[1] * 540.0f + 1.0f) > 0.01f || w[3] != 1.0f) return;
+    static _Atomic uint64_t seen[4];
+    if (id < 256 && !(atomic_fetch_or(&seen[id / 64], 1ull << (id % 64)) & 1ull << (id % 64)))
+        LOG("pkp aspect: 2D program %#x in pixel mode: %s", id, text_prog(id) ? "squeezed (text)" : "left (DM_PKP_TEXT_PROGS)");
+    if (!text_prog(id)) return;
+    float k = (float)(a / K169);
+    w[1] *= k; w[3] = k;
+}
+
+// ScreenLayout panes (main+0x1f71de0, the transform update; gate param 3 at its tail main+0x1f72270, after the
+// pane's global matrix is final and before its children are updated). A pane: +0xd0 parent, +0xe0 global matrix
+// (4x4 rows, translation +0x30), +0xe8 local matrix, +0xf0 / +0xf2 int16 size, +0x154 / +0x158 base size floats
+// (size animations scale those), +0x10d anchor (always centre here: the 16:9 layouts never anchor to an edge).
+// x20 = what the update did (0 nothing, 1 full, 2 translation only). With the UI squeezed, the visible layout is
+// 1920 wide and 1080 / k high (k = a / (16/9)); two rules make the HUD and full-screen layers use it:
+//  - edge: a pane whose parent is a centred full-screen container (>= 1920x1080) and whose own y is at least
+//    DM_PKP_EDGE (default 300) from the centre moves 540 (1/k - 1) toward that edge (180 at 4:3). Its children are
+//    updated from its global matrix after this, so the group moves as one. Recomputed at every update: no drift.
+//  - cover: a centred pane whose drawn size covers the 16:9 screen but not the taller one (a background, a fade)
+//    gets its size and base size times 1/k on both axes: it fills the screen with its proportions kept (the sides
+//    fall off screen), and its children (centre-anchored) stay where they are. DM_PKP_COVER=0 turns it off.
+enum { MOVED = 0x40000000 };   // a flag bit the game never sets (seen: 0x0241b19d at most): this pane was moved by the edge rules
+static float g_edge_t = -1, g_edge_t2 = -1, g_edge_gap = -1; static int g_cover = -1; static _Atomic unsigned g_pane_logs;
+static void pane_rules(uint64_t *r, double a) {
+    if (!ui_on() || !(a < K169 - 0.02)) return;
+    if (g_edge_t < 0) {
+        const char *e = getenv("DM_PKP_EDGE"); g_edge_t = e && *e ? strtof(e, NULL) : 300.0f;
+        e = getenv("DM_PKP_EDGE_GAP"); g_edge_gap = e && *e ? strtof(e, NULL) : 160.0f;
+        e = getenv("DM_PKP_EDGE2"); g_edge_t2 = e && *e ? strtof(e, NULL) : 430.0f;
+        e = getenv("DM_PKP_COVER"); g_cover = !(e && *e == '0');
+        LOG("pkp aspect: HUD edge rules: |y| >= %g under a full-screen container, global |y| >= %g elsewhere (0 off); cover rule %s", g_edge_t, g_edge_t2, g_cover ? "on" : "off");
+    }
+    uint64_t n = r[19];
+    if (!n || !r[20] || (n >> 32) != 0x40) return;
+    uint64_t par = *(uint64_t *)(n + 0xd0), gp = *(uint64_t *)(n + 0xe0), lp = *(uint64_t *)(n + 0xe8);
+    if ((gp >> 32) != 0x40 || (lp >> 32) != 0x40) return;
+    float *g = (float *)gp, *l = (float *)lp;
+    double k = a / K169, inv = 1.0 / k;
+    if (g_cover) {
+        int16_t *sz = (int16_t *)(n + 0xf0);
+        float dw = sz[0] * hypotf(g[0], g[1]), dh = sz[1] * hypotf(g[4], g[5]);
+        // at least 1800x1000 drawn (the title's backdrop zooms between 0.95 and 1), centred, not yet as tall as the screen;
+        // menu windows (1730 wide) are not layers. The factor makes the drawn height reach 1080 / k
+        if (dw >= 1800 && dh >= 1000 && dh < 1080 * inv - 20 && fabsf(g[12]) < 2 && fabsf(g[13]) < 2) {
+            double f = fmax(inv, 1080 * inv / dh);
+            if (!*(uint64_t *)(n + 0x38)) {   // a leaf (no child list, +0x38): pictures draw from their texture size, so scale its matrix
+                for (int i = 0; i < 3; i++) { g[i] *= (float)f; g[4 + i] *= (float)f; }
+            } else {   // a container with children: its size (the children are centre-anchored and stay)
+                sz[0] = (int16_t)lround(sz[0] * f); sz[1] = (int16_t)lround(sz[1] * f);
+                float *base = (float *)(n + 0x154);
+                if (base[0] > 0) base[0] *= (float)f; if (base[1] > 0) base[1] *= (float)f;
+            }
+            if (atomic_fetch_add_explicit(&g_pane_logs, 1, memory_order_relaxed) < 12) LOG("pkp aspect: cover pane %#llx: drawn %.0fx%.0f -> size %dx%d", (unsigned long long)n, dw, dh, sz[0], sz[1]);
+        }
+    }
+    uint32_t *fl = (uint32_t *)(n + 0x104);
+    *fl &= ~MOVED;
+    if (!par || (par >> 32) != 0x40) return;
+    int16_t *ps = (int16_t *)(par + 0xf0);
+    uint64_t pgp = *(uint64_t *)(par + 0xe0);
+    if ((pgp >> 32) != 0x40) return;
+    float *pg = (float *)pgp;
+    int under_screen = 0;   // some ancestor is a full-screen container (the field HUD, the Pokedex, the title): rule 1's layouts
+    uint64_t root = par, top = par;   // top: the layout's outermost container (the root's child)
+    for (uint64_t c = par; c && (c >> 32) == 0x40; c = *(uint64_t *)(c + 0xd0)) {   // a group that moved takes this pane along
+        if (*(uint32_t *)(c + 0x104) & MOVED) return;
+        int16_t *cs = (int16_t *)(c + 0xf0);
+        if (cs[0] >= 1900 && cs[1] >= 1060) under_screen = 1;
+        top = root; root = c;
+    }
+    // HUD sub-layouts (the field key help's text rows: 1920x512 strips) are drawn under their host pane, so a host that
+    // moved has moved them without their own matrices showing it: rule 2 only in screen-height panel layouts (the bag's
+    // and menus' key help part: 1200x1080, 1208x1020)
+    int panel_layout = top != root && ((int16_t *)(top + 0xf0))[1] >= 1000;
+    // A part (a layout placed inside another one's pane, e.g. the field HUD's tool wheel and key help) is linked to its
+    // host by something other than +0xd0: its chain ends at its own root, which sits where the host is. Only a layout
+    // whose root is at the centre is a screen of its own; in a part, a moved host has already moved it
+    uint64_t rgp = *(uint64_t *)(root + 0xe0);
+    int own_screen = (rgp >> 32) == 0x40 && fabsf(((float *)rgp)[12]) < 1 && fabsf(((float *)rgp)[13]) < 1;
+    float y = l[13], gy = g[13];
+    int move = 0;
+    // 1. under a centred, unscaled full-screen container (>= 1920x1080): DM_PKP_EDGE (300) from the centre (the
+    //    field HUD's key help group at -332, the tool wheel at -451, the title's copyright)
+    //    Or by its near edge: a pane clearly off the centre (|y| >= 100), at most 600 tall (not a panel spanning the
+    //    screen) and reaching within DM_PKP_EDGE_GAP (160) of the 16:9 frame's edge belongs to that edge (the bag's item
+    //    window band: 1920x520 at +180, top edge 100 below the frame top; a menu's map panel near the bottom)
+    float half = 0.5f * ((int16_t *)(n + 0xf0))[1] * fabsf(g[5]);
+    // Only wide bands (>= 1500: the bag window is 1672): a side panel near the edge (the menu's 616-wide map) belongs with the panel beside
+    // it (16:9: the map's bottom lines up with the red menu panel's), which stays centred
+    int near_edge = g_edge_gap > 0 && ((int16_t *)(n + 0xf0))[0] * fabsf(g[0]) >= 1500 && fabsf(y) >= 100 && half <= 300 && fabsf(y) + half >= 540 - g_edge_gap;
+    //    The container may also be a large centred panel (>= 1200x900) inside a full-screen layout: the bag's 1648x940
+    //    panel, whose 1648x1024 bottom section at -314 holds the key help bar
+    //    (the bag's panel is drawn at scale 0.97: parents within 10 % of 1). Also in a layout of its own (root at the
+    //    centre) without a full-screen container: the menu's 1500x1714 frame, whose key help bar sits at -486
+    //    And a layout's root itself (a 4x4 null at the centre without a parent): the bag's and menus' key help is a
+    //    layout of its own, a 1920x72 bar placed at (-960, -463) straight under its root
+    int16_t *nsz = (int16_t *)(n + 0xf0);
+    int at_root = !*(uint64_t *)(par + 0xd0) && nsz[0] >= 1900 && nsz[1] <= 200;   // only a full-width bar (any other root child may be a HUD part drawn under a moved host)
+    int screen_box = (ps[0] >= 1900 && ps[1] >= 1060) || ((under_screen || own_screen) && ps[0] >= 1200 && ps[1] >= 900) || at_root;
+    if (g_edge_t > 0 && screen_box && fabsf(pg[12]) <= 1 && fabsf(pg[13]) <= 1 && fabsf(pg[5] - 1) <= 0.1f
+        && (fabsf(y) >= g_edge_t || near_edge)) move = 1;
+    // 2. in screen-height panel layouts without a full-screen container (their outer container >= 1000 tall: menus'
+    //    key help parts, 818x200 bars inside 818x600 / 1200x1080 panels placed by their own animations): the top pane of
+    //    what sits in the 16:9 edge zone (global |y| >= DM_PKP_EDGE2, default 430) under a parent that does not, and only
+    //    a pane that reaches outside its parent's box, never a panel's own piece. Layouts whose root is not at the centre
+    //    and HUD sub-layouts (1920x512 strips: the field key help's text rows) are left out: they are drawn under a host
+    //    pane, and a moved host has moved them already without their own matrices showing it
+    else if (g_edge_t2 > 0 && !under_screen && own_screen && panel_layout && fabsf(y) + 0.5f * ((int16_t *)(n + 0xf0))[1] > 0.5f * ps[1] + 1 && fabsf(gy) >= g_edge_t2 && fabsf(pg[13]) < g_edge_t2 && fabsf(pg[5] - 1) <= 0.01f) move = 1;
+    if (!move) return;
+    g[13] += copysignf((float)(540.0 * (inv - 1)), gy);
+    *fl |= MOVED;
+}
+
 static void proj_done(uint64_t *r, int param) {
-    (void)param;
     double a = aspect();
+    if (param == 2) { if (a) text_consts(r, a); return; }
+    if (param == 3) { if (a) pane_rules(r, a); return; }
     uint64_t cam = r[19];
-    if (!a || !cam || (rdu(cam + CAM_FLAGS) & 1) || !ours(rdu(cam + CAM_FOV)) || !close_to(rdf(cam + CAM_ASPECT), K169)) return;
+    if (!a || !cam || !close_to(rdf(cam + CAM_ASPECT), K169)) return;
     float *p = (float *)(cam + CAM_PROJ);
     if (!isfinite(p[0]) || !isfinite(p[5]) || !(fabsf(p[5]) > 1e-6f)) return;
+    // Orthographic: only the UI's screen-pixel cameras (P00 = 2/1920: text and 2D layers, near 0.001 far
+    // 10000), never the world's (the 64 / 80000 shadow cameras are 16:9 too, but hundreds of units wide)
+    if (rdu(cam + CAM_FLAGS) & 1) { if (fabsf(fabsf(p[0]) * 960.0f - 1.0f) < 0.01f) ui_squeeze(cam, p, a); return; }
+    if (!ours(rdu(cam + CAM_FOV))) { ui_squeeze(cam, p, a); return; }
     p[0] = copysignf((float)(fabsf(p[5]) / a), p[0]);
 }
 

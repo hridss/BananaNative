@@ -301,6 +301,13 @@ DM_PATCH_FRONT	developer	Game			text			both
 DM_PATCH_VARIANT	developer	Game			text			both							
 DM_PHONE_MOTION	internal	Input			text			both						Mac or iOS only	
 DM_PKP_ASPECT	developer	Diagnostics			text			both							
+DM_PKP_COVER	developer	Diagnostics			text			both							
+DM_PKP_CROP	developer	Diagnostics			text			both							
+DM_PKP_EDGE	developer	Diagnostics			text			both							
+DM_PKP_EDGE2	developer	Diagnostics			text			both							
+DM_PKP_EDGE_GAP	developer	Diagnostics			text			both							
+DM_PKP_TEXT_PROGS	developer	Diagnostics			text			both							
+DM_PKP_UI	developer	Diagnostics			text			both							
 DM_POSE_GET	developer	Diagnostics			text			both							
 DM_POSE_SET	developer	Diagnostics			text			both							
 DM_PREEMPT	developer	Game			text			both							
