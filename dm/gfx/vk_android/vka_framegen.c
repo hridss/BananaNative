@@ -55,8 +55,8 @@ int nxhost_framegen_status(char *buf, int n) {
 }
 
 #ifndef NX_LSFG
-int vka_fg_frame(uint64_t serial, const int *crop, double period, uint64_t fence, int format, vka_img **gen, double *hold, double *out_period) {
-    (void)serial; (void)crop; (void)period; (void)fence; (void)format; (void)gen;
+int vka_fg_frame(uint64_t serial, const int *crop, double period, uint64_t fence, int format, vka_img **gen, double *hold, double *out_period, double game_t) {
+    (void)serial; (void)crop; (void)period; (void)fence; (void)format; (void)gen; (void)game_t;
     settings_init(); *hold = 0; *out_period = 0;
     if (atomic_load(&g_on) > 0) { atomic_store(&g_state, -1); reason("%s", "not in this build (built without NX_LSFG)"); vka_fps_fg(-1, 1); }
     return 0;
@@ -324,7 +324,7 @@ static void fg_dump(unsigned k, uint64_t count, size_t ng) {
     if (mem) vk.vkFreeMemory(V.dev, mem, NULL);
 }
 
-int vka_fg_frame(uint64_t serial, const int *crop, double period, uint64_t fence, int format, vka_img **gen, double *hold, double *out_period) {
+int vka_fg_frame(uint64_t serial, const int *crop, double period, uint64_t fence, int format, vka_img **gen, double *hold, double *out_period, double game_t) {
     settings_init();
     *hold = 0; *out_period = 0;
     // After a GPU hang (vka_dev.c) nothing more goes to the queue, as in the present: the fence of a submission behind the hang is never signalled, and the wait for it
@@ -412,7 +412,9 @@ int vka_fg_frame(uint64_t serial, const int *crop, double period, uint64_t fence
     }
     F.pacer.decoupled = &nxhost_fps_decoupled && nxhost_fps_decoupled();   // the game's speed follows its measured rate (hle_fpslock.c sead_rate), not only held by the limiter
     F.pacer.min_base = (float)VKA_ENV("DM_LSFG_MIN_FPS", 30);   // its floor (live)
-    lsfg_plan plan = lsfg_pacer_plan(&F.pacer, F.gens, mult, target, mono_s());
+    // The game frame's interval from the game's side (DM_LSFG_PACE_GAME, live, on): measured here, on the present thread, a present backlog lengthened it, the holds with
+    // it, and the backlog kept itself up (Orbitals at 20 fps: the latency grew from 70 to 160 ms and the game fell from 19 to 15 fps within a minute)
+    lsfg_plan plan = lsfg_pacer_plan(&F.pacer, F.gens, mult, target, game_t > 0 && VKA_ENV("DM_LSFG_PACE_GAME", 1) ? game_t : mono_s());
     uint64_t count = F.count++;
     int warm = plan.warm && count + 1 >= 2;
     F.warm_streak = warm ? F.warm_streak + 1 : 0;

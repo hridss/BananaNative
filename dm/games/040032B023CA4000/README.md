@@ -66,6 +66,8 @@ On a first start the language, gamma and terms screens come before the title: `A
 - [A draw skipped for a background pipeline left a kept texture empty](../../../docs/reference/rendering.md#a-draw-skipped-for-a-background-pipeline-left-a-kept-texture-empty-android): on Android, the colour grading table's one draw skipped on a first start; the main menu's backgrounds stayed black.
 
 ## Open
+- [A present copy that waited for its frame's timeline value came after the next frame's work (Android)](../../../docs/reference/frame-rate.md#a-present-copy-that-waited-for-its-frames-timeline-value-came-after-the-next-frames-work-android): from the last submission to the screen p50 96-102 ms, 50-54 after.
+- [Frame generation's pacing fed on its own present backlog (Android)](../../../docs/reference/frame-rate.md#frame-generations-pacing-fed-on-its-own-present-backlog-android): with frame generation the latency grew from 83 to 163 ms and the game fell from 19 to 15 fps within a minute; 55-57 ms and steady after.
 
 - 60 fps, later chapters (and the engine region's room on an iPhone there: [Memory](#memory)), online play (Gameshare, Play Online), the sound (Wwise opens with no red line; not listened to).
 - An IPA (none built yet) and an iPhone or iPad run.
