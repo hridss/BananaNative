@@ -95,6 +95,7 @@ run: $(B)/t_language $(B)/t_motion $(B)/t_heap_size $(B)/t_touch $(B)/t_gesture 
 	$(B)/t_android_texown
 	$(B)/t_android_mapbudget
 	$(B)/t_android_psogate
+	$(B)/t_android_psosync
 	$(B)/t_android_hangparts
 	$(B)/t_android_auto
 	$(B)/t_nvn_dpool
@@ -482,6 +483,14 @@ $(B)/t_android_wbfollow: t_android_wbfollow.c $(VKA)/vka_wbfollow.h | $(B)
 run: $(B)/t_android_wbfollow
 $(B)/t_android_psogate: t_android_psogate.c $(VKA)/vka_psogate.h | $(B)
 	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -fsanitize=address,undefined -I.. -o $@ t_android_psogate.c
+# Which draws are not skipped while their pipeline is made in the background (vka_psosync.h vkps_why; vka_draw.c draw_body): small targets and draws that write memory,
+# the size limit's edges, other draws left skipped. Built and run with run; android-psosync builds and runs it alone
+run: $(B)/t_android_psosync
+$(B)/t_android_psosync: t_android_psosync.c $(VKA)/vka_psosync.h | $(B)
+	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -fsanitize=address,undefined -I.. -o $@ t_android_psosync.c
+.PHONY: android-psosync
+android-psosync: $(B)/t_android_psosync
+	$(B)/t_android_psosync
 # Where in a submission the GPU stopped, from the parts' timestamps (vka_hangparts.h; vka_exec.c vka_exec_hang_parts)
 $(B)/t_android_hangparts: t_android_hangparts.c $(VKA)/vka_hangparts.h | $(B)
 	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -fsanitize=address,undefined -I.. -o $@ t_android_hangparts.c
