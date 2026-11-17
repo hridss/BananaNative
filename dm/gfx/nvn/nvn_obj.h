@@ -122,7 +122,12 @@ typedef struct { int32_t mode, pad; uint64_t addr; } p_render_cond;   // mode 0 
 typedef struct { volatile uint32_t *val; uint32_t mode, value; } p_wait_event;   // nvnCommandBufferWaitEvent: the event's word, NVNeventWaitMode (0 EQUAL, 1 GEQUAL_WRAP), the value
 typedef struct { const sync_t *sync; } p_wait_sync;                                // nvnCommandBufferWaitSync
 typedef struct { float depth; int32_t depth_mask, stencil, stencil_mask; } p_clear_ds;
-typedef struct { int32_t first, n; float v[16][6]; } p_viewports;          // x, y, w, h, near, far (near and far are overridden by DEPTH_RANGE)
+// x, y, w, h, near, far: the old six-float stride and record size are kept. The depth range is a command of its own (DEPTH_RANGE), so the first viewport's unused near slot
+// carries the device's window origin when the command was recorded: 1 + NVNwindowOriginMode, 0 in older captures (the device origin at replay, as before; nxnative 8f51289d)
+typedef struct {
+    int32_t first, n;
+    union { float v[16][6]; struct { float xywh[4]; int32_t origin; }; };
+} p_viewports;
 typedef struct { int32_t x, y, w, h; } p_scissor;
 typedef struct { float n, f; } p_depth_range;
 typedef struct { uint32_t on, index; } p_prim_restart;

@@ -1471,6 +1471,7 @@ NVN(nvnCommandBufferSetViewports, void, NVNcommandBuffer *c, int first, int n, c
     if (n < 0 || first + n > 16) { LOG("[RED] SetViewports first=%d n=%d", first, n); return; }
     p_viewports *r = REC(c, OP_VIEWPORTS, p_viewports); r->first = first; r->n = n;
     for (int i = 0; i < n; i++) memcpy(r->v[i], v + 4 * i, 16);
+    r->origin = (int32_t)((dev_t_ *)CB(c)->dev)->origin + 1;   // the window origin the viewport was set for, not the device's when the queue replays it
 }
 NVN(nvnCommandBufferSetScissor, void, NVNcommandBuffer *c, int x, int y, int w, int h) { *REC(c, OP_SCISSOR, p_scissor) = (p_scissor){x, y, w, h}; }
 NVN(nvnCommandBufferSetDepthRange, void, NVNcommandBuffer *c, float n, float f) { *REC(c, OP_DEPTH_RANGE, p_depth_range) = (p_depth_range){n, f}; }

@@ -512,6 +512,7 @@ typedef struct {
     va_st attr[16]; int nattr; vs_st stream[16]; int nstream; NVNbufferRange vbuf[16];
     uint32_t st_vmask[2], st_wmask[2], st_ref[2];
     p_poly_offset po; float vp[16][4]; float dr[2]; int has_vp, depth_clamp; uint8_t vp_sw[16][4];
+    uint8_t vp_origin[16];             // per viewport: the recording device's window origin, 1 + NVNwindowOriginMode (p_viewports.origin), 0 = the device origin now
     float blend_color[4], alpha_ref;
     p_prim_restart restart; int rast_discard, tf_on;
     int inited;

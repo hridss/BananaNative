@@ -88,6 +88,7 @@ int cap_rec_fields(uint32_t op, uint8_t *payload, uint32_t size, const cap_ops *
 int cap_tex_fields(tex_t *t, const cap_ops *ops, void *ctx);
 // Layout fingerprint of every payload struct the walk knows (text): stored in the capture, compared by the replayer
 const char *cap_layout(void);
+int cap_layout_matches(const char *layout, size_t n);   // a capture's CAP_LAYT text is this build's, or this build's before p_viewports carried the recording origin
 
 // Writing: chunks, compressed with LZFSE when that makes them smaller
 typedef struct { FILE *f; uint64_t raw, stored; int err; } cap_writer;

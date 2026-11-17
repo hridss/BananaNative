@@ -264,7 +264,7 @@ __attribute__((visibility("default"))) int nxhost_replay(int argc, char **argv) 
     head_get(head, hn, "frame", frame, sizeof frame); head_get(head, hn, "build", build, sizeof build); head_get(head, hn, "backend", backend, sizeof backend);
     if (strcmp(backend, "vulkan")) RFAIL("the capture is of the %s replay: this replayer replays Android captures (DM_NVN_CAPTURE on the phone)", backend);
     if (strcmp(title, DM_GAME_ID)) RFAIL("the capture is of %s, this replayer is built for %s", title, DM_GAME_ID);
-    if (ln != strlen(cap_layout()) || memcmp(lay, cap_layout(), ln)) RFAIL("the capture's record layout differs from this build's (nvn_obj.h changed since the capture): capture again");
+    if (!cap_layout_matches(lay, ln)) RFAIL("the capture's record layout differs from this build's (nvn_obj.h changed since the capture): capture again");
     if (!head_get(head, hn, "iface", v, sizeof v) || atoi(v) != VCAP_IFACE) RFAIL("the capture's shader interface hashes are of another kind: capture again");
     printf("capture %s: %s frame %s, build %s, host %s, chain %s (this build: chain %s)\n", path, title, frame, build, commit, chain, DMSH_CHAIN);
     apply_env(head, hn);

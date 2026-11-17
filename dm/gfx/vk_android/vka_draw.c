@@ -126,7 +126,7 @@ int vka_state_op(vka_dstate *d, uint32_t op, const void *a) {
         for (int f = 0; f < 2; f++) if (b->face & (1 << f)) { if (b->which == 0) d->st_vmask[f] = (uint32_t)b->value_mask; else if (b->which == 1) d->st_wmask[f] = (uint32_t)b->mask; else d->st_ref[f] = (uint32_t)b->ref; }
         break; }
     case OP_POLY_OFFSET: d->po = *(const p_poly_offset *)a; break;
-    case OP_VIEWPORTS: { const p_viewports *b = a; for (int i = 0; i < b->n && b->first + i < 16; i++) memcpy(d->vp[b->first + i], b->v[i], 16); d->has_vp = 1; break; }
+    case OP_VIEWPORTS: { const p_viewports *b = a; for (int i = 0; i < b->n && b->first + i < 16; i++) { memcpy(d->vp[b->first + i], b->v[i], 16); d->vp_origin[b->first + i] = (uint8_t)b->origin; } d->has_vp = 1; break; }
     case OP_DEPTH_RANGE: { const p_depth_range *b = a; d->dr[0] = b->n; d->dr[1] = b->f; break; }
     case OP_DEPTH_CLAMP: d->depth_clamp = ((const p_depth_clamp *)a)->on; break;
     case OP_VP_SWIZZLE: { const p_vp_swizzle *b = a; if (b->first >= 0 && b->first + b->n <= 16) memcpy(d->vp_sw[b->first], b->sw, 4 * (size_t)b->n); break; }
@@ -2557,7 +2557,9 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
     // Viewport and scissor. The translator writes clip space for Metal (y up, origin upper left): Metal's viewport, flipped for a lower-left window origin as on Metal, then given
     // a negative height, maps it as Metal does (android/SHADERS.md "Depth and Y")
     float vx = d->has_vp ? d->vp[0][0] : 0, vy = d->has_vp ? d->vp[0][1] : 0, vw = d->has_vp ? d->vp[0][2] : (float)R.full_w, vh = d->has_vp ? d->vp[0][3] : (float)R.full_h;
-    if (vka_origin_ll()) { vy += vh; vh = -vh; }
+    // The window origin is the one the viewport was recorded with (p_viewports.origin), not the device's now: the replay runs behind the game's thread, which may have
+    // switched it since. A capture from before the origin was recorded, and the implicit full-target viewport, take the device's
+    if (d->has_vp && d->vp_origin[0] ? d->vp_origin[0] == NVN_WINDOW_ORIGIN_MODE_LOWER_LEFT + 1 : vka_origin_ll()) { vy += vh; vh = -vh; }
     { uint32_t sw; memcpy(&sw, d->vp_sw[0], 4);
       if (sw == 0x100) { vy += vh; vh = -vh; }
       else if (sw) VRED_ONCE("viewport swizzle %d,%d,%d,%d not implemented (drawn unswizzled)", d->vp_sw[0][0], d->vp_sw[0][1] ^ 2, d->vp_sw[0][2] ^ 4, d->vp_sw[0][3] ^ 6); }
