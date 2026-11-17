@@ -82,6 +82,14 @@ Most service calls can be found before they crash, before the first boot or the 
 - **Fix:** the hook returns 0 now; SDK 7 and later callers ignore it.
 - **Found on:** [Fire Emblem: Three Houses](../../dm/games/010055D009F78000/README.md) (SDK 6.5.0).
 
+### Friends presence is accepted offline
+
+- **Symptom:** the loading screen stays at 22% for ever while the music plays (Twelve Minutes). No red line, no crash. `DM_FS=1` shows `level0` and the FMOD master bank read, then no other scene and no save mount; `DM_HLECOUNT` shows `account::TryOpenPreselectedUser`, `GetUserId`, `GetNickname` and `friends::UserPresence::Initialize` once each, and `fs::MountSaveData` never.
+- **Cause:** the host's `UserPresence::Initialize` returned `RES_FAIL` like the other friends calls. The game's start-up takes the failure as fatal and stops before it mounts its save, so the loading screen waits for a scene that is never asked for. A presence is the game's own object until the friends service publishes it, so failing to set one up is not what an offline console reports.
+- **Fix:** `UserPresence::Initialize`, `SetDescription` and `Commit` succeed and publish nothing (`hle_friends.c`). The calls that need the service (friend lists, notification queue, online play sessions, invitations) still fail.
+- **Check:** `make -C dm/host/tests GAME=<id> run` runs `t_friends`.
+- **Found on:** Twelve Minutes (`0100CD701434C000`, Unity 2019.4.31f1 IL2CPP, SDK 12.3.7; seedds/nxnative#217), which has no profile in this repository; Core Keeper is reported to abort on the same failure.
+
 ## File system and save data
 
 ### Directory handle allocation failure
