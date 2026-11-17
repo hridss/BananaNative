@@ -156,16 +156,16 @@ final class GameUpscaler {
      */
     static void screenRows(Context c, String titleId, LinearLayout box) {
         TextView head = new TextView(c);
-        head.setText("Screen scaling");
+        head.setText(Tx.s(R.string.common_screen_scaling));
         head.setPadding(0, 24, 0, 0);
         box.addView(head);
         RadioGroup g = new RadioGroup(c);
-        for (int i = 0; i < DlssTune.SCREEN_NAMES.length; i++) { RadioButton b = new RadioButton(c); b.setText(DlssTune.SCREEN_NAMES[i]); b.setId(3400 + i); g.addView(b); if (i == screen(c, titleId)) b.setChecked(true); }
+        for (int i = 0; i < DlssTune.SCREEN_NAMES.length; i++) { RadioButton b = new RadioButton(c); b.setText(Tx.arr(R.array.arr_screen_scale)[i]); b.setId(3400 + i); g.addView(b); if (i == screen(c, titleId)) b.setChecked(true); }
         box.addView(g);
-        TextView l = new TextView(c); l.setText("Screen sharpness"); box.addView(l);
+        TextView l = new TextView(c); l.setText(Tx.s(R.string.common_screen_sharpness)); box.addView(l);
         RadioGroup s = new RadioGroup(c);
         s.setOrientation(LinearLayout.HORIZONTAL);
-        for (int i = 0; i < SHARPS.length; i++) { RadioButton b = new RadioButton(c); b.setText(SHARP_NAMES[i]); b.setId(3500 + i); s.addView(b); if (SHARPS[i] == sharp(c, titleId)) b.setChecked(true); }
+        for (int i = 0; i < SHARPS.length; i++) { RadioButton b = new RadioButton(c); b.setText(Tx.arr(R.array.arr_fsr_sharp)[i]); b.setId(3500 + i); s.addView(b); if (SHARPS[i] == sharp(c, titleId)) b.setChecked(true); }
         s.setOnCheckedChangeListener((gr, id) -> sharp(c, titleId, SHARPS[id - 3500]));
         box.addView(s);
         Runnable shown = () -> { int v = DlssTune.showsScreenSharp(screen(c, titleId)) ? android.view.View.VISIBLE : android.view.View.GONE; l.setVisibility(v); s.setVisibility(v); };

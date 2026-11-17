@@ -71,6 +71,8 @@
     <string name="common_resolution">Résolution</string>
     <string name="common_rumble">Vibrations</string>
     <string name="common_screen_rotation">Rotation de l\'écran</string>
+    <string name="common_screen_scaling">Mise à l\'échelle de l\'écran</string>
+    <string name="common_screen_sharpness">Netteté de l\'écran</string>
     <string name="common_share_log">Partager le journal</string>
     <string name="common_stop">Arrêter</string>
     <string name="common_system">Système</string>
@@ -701,6 +703,14 @@
         <item>Bilinéaire (le plus rapide, le plus doux)</item>
         <item>FSR 3.1 (net, stable)</item>
     </string-array>
+    <string-array name="arr_screen_scale">
+        <item>Plus proche voisin</item>
+        <item>Bilinéaire</item>
+        <item>Bicubique</item>
+        <item>FSR 1</item>
+        <item>SGSR 1</item>
+        <item>Appareil (économie d\'énergie)</item>
+    </string-array>
     <string-array name="arr_panel_look">
         <item>Petit</item>
         <item>Normal</item>
@@ -750,6 +760,7 @@
     <string name="home_shaders_need_one_update">Les shaders ont besoin d\'une mise à jour</string>
     <string name="home_nup">" (.nup)"</string>
     <string name="game_applies_from_the_next_frame">S\'applique dès l\'image suivante et reste enregistré pour ce jeu (le même réglage que Paramètres du jeu › Upscaler).</string>
+    <string name="game_applies_from_the_next_frame_2">S\'applique dès l\'image suivante et reste enregistré pour ce jeu (le même réglage que Paramètres du jeu › Mise à l\'échelle de l\'écran).</string>
     <string name="game_applies_at_the_next_start">S\'applique au prochain démarrage (cette exécution n\'accepte pas de changements en direct : DM_CTL est désactivé).</string>
     <string name="game_applies_at_once_kept_for">S\'applique immédiatement et reste enregistré pour ce jeu (le même réglage que Paramètres du jeu › Avancé).</string>
     <string name="game_shaders_the_game_lacks_are_3">Les shaders qui manquent au jeu sont créés pendant son exécution. L\'interrupteur se trouve dans la page du jeu › Avancé › Shaders pendant le jeu (activé par défaut ; un changement s\'applique au prochain démarrage).</string>

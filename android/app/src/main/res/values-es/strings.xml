@@ -71,6 +71,8 @@
     <string name="common_resolution">Resolución</string>
     <string name="common_rumble">Vibración</string>
     <string name="common_screen_rotation">Rotación de pantalla</string>
+    <string name="common_screen_scaling">Escalado de pantalla</string>
+    <string name="common_screen_sharpness">Nitidez de pantalla</string>
     <string name="common_share_log">Compartir registro</string>
     <string name="common_stop">Detener</string>
     <string name="common_system">Sistema</string>
@@ -701,6 +703,14 @@
         <item>Bilineal (el más rápido, el más suave)</item>
         <item>FSR 3.1 (nítido, estable)</item>
     </string-array>
+    <string-array name="arr_screen_scale">
+        <item>Vecino más cercano</item>
+        <item>Bilineal</item>
+        <item>Bicúbico</item>
+        <item>FSR 1</item>
+        <item>SGSR 1</item>
+        <item>Dispositivo (ahorro de energía)</item>
+    </string-array>
     <string-array name="arr_panel_look">
         <item>Pequeño</item>
         <item>Normal</item>
@@ -750,6 +760,7 @@
     <string name="home_shaders_need_one_update">Los shaders necesitan una actualización</string>
     <string name="home_nup">" (.nup)"</string>
     <string name="game_applies_from_the_next_frame">Se aplica desde el siguiente fotograma y se guarda para este juego (el mismo ajuste que Ajustes del juego › Escalador).</string>
+    <string name="game_applies_from_the_next_frame_2">Se aplica desde el siguiente fotograma y se guarda para este juego (el mismo ajuste que Ajustes del juego › Escalado de pantalla).</string>
     <string name="game_applies_at_the_next_start">Se aplica al próximo inicio (esta ejecución no admite cambios en vivo: DM_CTL está desactivado).</string>
     <string name="game_applies_at_once_kept_for">Se aplica al instante y se guarda para este juego (el mismo ajuste que Ajustes del juego › Avanzado).</string>
     <string name="game_shaders_the_game_lacks_are_3">Los shaders que le faltan al juego se crean mientras se ejecuta. El interruptor está en la página del juego › Avanzado › Shaders mientras juegas (activado por defecto; un cambio se aplica al próximo inicio).</string>

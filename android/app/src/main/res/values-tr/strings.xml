@@ -71,6 +71,8 @@
     <string name="common_resolution">Çözünürlük</string>
     <string name="common_rumble">Titreşim</string>
     <string name="common_screen_rotation">Ekran yönü</string>
+    <string name="common_screen_scaling">Ekran ölçekleme</string>
+    <string name="common_screen_sharpness">Ekran keskinliği</string>
     <string name="common_share_log">Günlüğü paylaş</string>
     <string name="common_stop">Durdur</string>
     <string name="common_system">Sistem</string>
@@ -698,6 +700,14 @@
         <item>Bilinear (en hızlı, en yumuşak)</item>
         <item>FSR 3.1 (keskin, dengeli)</item>
     </string-array>
+    <string-array name="arr_screen_scale">
+        <item>En yakın komşu</item>
+        <item>Bilinear</item>
+        <item>Bikübik</item>
+        <item>FSR 1</item>
+        <item>SGSR 1</item>
+        <item>Cihaz (güç tasarrufu)</item>
+    </string-array>
     <string-array name="arr_panel_look">
         <item>Küçük</item>
         <item>Normal</item>
@@ -746,6 +756,7 @@
     <string name="home_shaders_need_one_update">Gölgelendiricilerin bir güncellemeye ihtiyacı var</string>
     <string name="home_nup">" (.nup)"</string>
     <string name="game_applies_from_the_next_frame">Bir sonraki kareden itibaren uygulanır, bu oyun için saklanır (Oyun ayarları › Yükseltici ile aynı ayar).</string>
+    <string name="game_applies_from_the_next_frame_2">Bir sonraki kareden itibaren uygulanır, bu oyun için saklanır (Oyun ayarları › Ekran ölçekleme ile aynı ayar).</string>
     <string name="game_applies_at_the_next_start">Bir sonraki başlatmada uygulanır (bu çalıştırma canlı değişiklik almaz: DM_CTL kapalı).</string>
     <string name="game_applies_at_once_kept_for">Hemen uygulanır, bu oyun için saklanır (Oyun ayarları › Gelişmiş ile aynı ayar).</string>
     <string name="game_shaders_the_game_lacks_are_3">Oyunda eksik olan gölgelendiriciler oyun çalışırken oluşturulur. Anahtar, oynarken oyun sayfası › Gelişmiş › Gölgelendiriciler altındadır (varsayılan olarak açık; değişiklik bir sonraki başlatmada uygulanır).</string>

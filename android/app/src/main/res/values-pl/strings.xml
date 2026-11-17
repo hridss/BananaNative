@@ -71,6 +71,8 @@
     <string name="common_resolution">Rozdzielczość</string>
     <string name="common_rumble">Wibracje</string>
     <string name="common_screen_rotation">Obrót ekranu</string>
+    <string name="common_screen_scaling">Skalowanie ekranu</string>
+    <string name="common_screen_sharpness">Ostrość ekranu</string>
     <string name="common_share_log">Udostępnij log</string>
     <string name="common_stop">Zatrzymaj</string>
     <string name="common_system">System</string>
@@ -704,6 +706,14 @@
         <item>Dwuliniowe (najszybsze, najmiększe)</item>
         <item>FSR 3.1 (ostry, stabilny)</item>
     </string-array>
+    <string-array name="arr_screen_scale">
+        <item>Najbliższy sąsiad</item>
+        <item>Dwuliniowe</item>
+        <item>Dwusześcienne</item>
+        <item>FSR 1</item>
+        <item>SGSR 1</item>
+        <item>Urządzenie (oszczędzanie energii)</item>
+    </string-array>
     <string-array name="arr_panel_look">
         <item>Mały</item>
         <item>Normalny</item>
@@ -754,6 +764,7 @@
     <string name="home_shaders_need_one_update">Shadery wymagają aktualizacji</string>
     <string name="home_nup">" (.nup)"</string>
     <string name="game_applies_from_the_next_frame">Działa od następnej klatki, zapamiętane dla tej gry (to samo ustawienie co Ustawienia gry › Skaler).</string>
+    <string name="game_applies_from_the_next_frame_2">Działa od następnej klatki, zapamiętane dla tej gry (to samo ustawienie co Ustawienia gry › Skalowanie ekranu).</string>
     <string name="game_applies_at_the_next_start">Zadziała od następnego uruchomienia (to uruchomienie nie przyjmuje zmian na żywo: DM_CTL jest wyłączone).</string>
     <string name="game_applies_at_once_kept_for">Działa od razu, zapamiętane dla tej gry (to samo ustawienie co Ustawienia gry › Zaawansowane).</string>
     <string name="game_shaders_the_game_lacks_are_3">Shadery, których grze brakuje, powstają w trakcie działania. Przełącznik jest podczas gry w: strona gry › Zaawansowane › Shadery (domyślnie włączony; zmiana zadziała od następnego uruchomienia).</string>

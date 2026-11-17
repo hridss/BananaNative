@@ -88,7 +88,8 @@ final class DlssTune {
     }
 
     /** The Screen scaling row: its choices in the order shown (stored index), each one's DM_VK_PRESENT_SCALE */
-    static final String[] SCREEN_NAMES = {"Nearest neighbor", "Bilinear", "Bicubic", "FSR 1", "SGSR 1", "Device (power saving)"};
+    static final String[] SCREEN_NAMES = {   // the English the tests see; the launcher shows Tx.arr(R.array.arr_screen_scale), the same order
+        "Nearest neighbor", "Bilinear", "Bicubic", "FSR 1", "SGSR 1", "Device (power saving)"};
     static final String[] SCREEN_KEYS = {"nearest", "bilinear", "bicubic", "fsr1", "sgsr1", "device"};
     static final int SCREEN_NEAREST = 0, SCREEN_BILINEAR = 1, SCREEN_BICUBIC = 2, SCREEN_FSR1 = 3, SCREEN_SGSR1 = 4, SCREEN_DEVICE = 5;
     static boolean screenValid(Integer s) { return s != null && s >= 0 && s < SCREEN_NAMES.length; }

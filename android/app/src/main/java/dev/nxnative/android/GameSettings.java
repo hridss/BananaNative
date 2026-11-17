@@ -387,9 +387,9 @@ final class GameSettings {
                 picture.add(new Ui.Setting(a, "✨", DlssTune.sharpTitle(dm), v -> dlssSharp(a, g, again)).value(dflt(GameUpscaler.ownDlssSharp(a, id), DlssTune.sharpName(GameUpscaler.dlssSharp(a, id)))).chevron(a).sub());
             // Screen scaling: the present's scaling of the window to the screen (GameUpscaler.screen, DlssTune.SCREEN_NAMES), with Screen sharpness under FSR 1; the in-game panel changes it live
             int sc = GameUpscaler.screen(a, id);
-            picture.add(new Ui.Setting(a, "📐", "Screen scaling", v -> screenScale(a, g, again)).value(shortName(DlssTune.SCREEN_NAMES[sc])).chevron(a));
+            picture.add(new Ui.Setting(a, "📐", Tx.s(R.string.common_screen_scaling), v -> screenScale(a, g, again)).value(shortName(Tx.arr(R.array.arr_screen_scale)[sc])).chevron(a));
             if (DlssTune.showsScreenSharp(sc))
-                picture.add(new Ui.Setting(a, "✨", "Screen sharpness", v -> screenSharp(a, g, again)).value(dflt(GameUpscaler.ownSharp(a, id), GameUpscaler.sharpName(a, id))).chevron(a).sub());
+                picture.add(new Ui.Setting(a, "✨", Tx.s(R.string.common_screen_sharpness), v -> screenSharp(a, g, again)).value(dflt(GameUpscaler.ownSharp(a, id), GameUpscaler.sharpName(a, id))).chevron(a).sub());
         } else {
             picture.add(track(recRows, Recommend.UPSCALER, new Ui.Setting(a, "🔍", Tx.s(R.string.common_upscaler), v -> upscaler(a, g, again)).value(shortName(Tx.arr(R.array.arr_upscaler_modes)[GameUpscaler.mode(a, id)])).chevron(a)));
             if (GameUpscaler.mode(a, id) == GameUpscaler.MODE_FSR)   // only with FSR 1 chosen
@@ -1082,12 +1082,13 @@ final class GameSettings {
     }
 
     private static void screenScale(MainActivity a, Game g, Runnable done) {   // a game on the DLSS stand-in: the present's scaling (GameUpscaler.screen, DM_VK_PRESENT_SCALE); the in-game panel changes it live
-        choose(a, "Screen scaling · " + g.name, DlssTune.SCREEN_NAMES, "Default (" + DlssTune.SCREEN_NAMES[GameUpscaler.screenDefault(a, g.titleId)] + ")", GameUpscaler.ownScreen(a, g.titleId),
+        choose(a, Tx.s(R.string.game_title_for, Tx.s(R.string.common_screen_scaling), g.name), Tx.arr(R.array.arr_screen_scale),
+               Tx.s(R.string.game_default_value, Tx.arr(R.array.arr_screen_scale)[GameUpscaler.screenDefault(a, g.titleId)]), GameUpscaler.ownScreen(a, g.titleId),
                GameUpscaler.screen(a, g.titleId), v -> GameUpscaler.screen(a, g.titleId, v), done);
     }
 
     private static void screenSharp(MainActivity a, Game g, Runnable done) {   // the present's FSR 1 RCAS under Screen scaling (the same ndsr_sharp as FSR sharpness, DM_VK_FSR_SHARP)
-        choose(a, "Screen sharpness · " + g.name, GameUpscaler.SHARP_NAMES, firstLabel(null, GameUpscaler.sharpName(GameUpscaler.sharp(a))), GameUpscaler.ownSharp(a, g.titleId),
+        choose(a, Tx.s(R.string.game_title_for, Tx.s(R.string.common_screen_sharpness), g.name), Tx.arr(R.array.arr_fsr_sharp), firstLabel(null, GameUpscaler.sharpName(GameUpscaler.sharp(a))), GameUpscaler.ownSharp(a, g.titleId),
                GameUpscaler.sharpIndex(GameUpscaler.sharp(a, g.titleId)), v -> GameUpscaler.sharp(a, g.titleId, v == null ? null : GameUpscaler.SHARPS[v]), done);
     }
 

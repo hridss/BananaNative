@@ -71,6 +71,8 @@
     <string name="common_resolution">الدقة</string>
     <string name="common_rumble">الاهتزاز</string>
     <string name="common_screen_rotation">تدوير الشاشة</string>
+    <string name="common_screen_scaling">تحجيم الشاشة</string>
+    <string name="common_screen_sharpness">حدة الشاشة</string>
     <string name="common_share_log">مشاركة السجل</string>
     <string name="common_stop">إيقاف</string>
     <string name="common_system">النظام</string>
@@ -710,6 +712,14 @@
         <item>ثنائي الخطية (الأسرع، الأنعم)</item>
         <item>FSR 3.1 (حاد، مستقر)</item>
     </string-array>
+    <string-array name="arr_screen_scale">
+        <item>أقرب جار</item>
+        <item>ثنائي الخطية</item>
+        <item>ثنائي التكعيب</item>
+        <item>FSR 1</item>
+        <item>SGSR 1</item>
+        <item>الجهاز (توفير الطاقة)</item>
+    </string-array>
     <string-array name="arr_panel_look">
         <item>صغير</item>
         <item>عادي</item>
@@ -762,6 +772,7 @@
     <string name="home_shaders_need_one_update">المُظلِّلات تحتاج إلى تحديث واحد</string>
     <string name="home_nup">" (.nup)"</string>
     <string name="game_applies_from_the_next_frame">يسري من الإطار التالي ويُحفظ لهذه اللعبة (هو نفس إعداد إعدادات اللعبة › مكبّر الدقة).</string>
+    <string name="game_applies_from_the_next_frame_2">يسري من الإطار التالي ويُحفظ لهذه اللعبة (هو نفس إعداد إعدادات اللعبة › تحجيم الشاشة).</string>
     <string name="game_applies_at_the_next_start">يسري عند البدء التالي (هذا التشغيل لا يقبل تغييرات مباشرة: DM_CTL متوقف).</string>
     <string name="game_applies_at_once_kept_for">يسري فورًا ويُحفظ لهذه اللعبة (هو نفس إعداد إعدادات اللعبة › متقدم).</string>
     <string name="game_shaders_the_game_lacks_are_3">المُظلِّلات التي تنقص اللعبة تُبنى أثناء تشغيلها. المفتاح في صفحة اللعبة › متقدم › المُظلِّلات أثناء اللعب (مفعّل افتراضيًا؛ ويسري التغيير عند البدء التالي).</string>

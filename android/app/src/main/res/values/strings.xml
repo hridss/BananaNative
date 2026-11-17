@@ -82,6 +82,8 @@
     <string name="common_resolution">Resolution</string>
     <string name="common_rumble">Rumble</string>
     <string name="common_screen_rotation">Screen rotation</string>
+    <string name="common_screen_scaling">Screen scaling</string>
+    <string name="common_screen_sharpness">Screen sharpness</string>
     <string name="common_share_log">Share log</string>
     <string name="common_stop">Stop</string>
     <string name="common_system">System</string>
@@ -746,6 +748,14 @@
         <item>Bilinear (fastest, softest)</item>
         <item>FSR 3.1 (sharp, steady)</item>
     </string-array>
+    <string-array name="arr_screen_scale">
+        <item>Nearest neighbor</item>
+        <item>Bilinear</item>
+        <item>Bicubic</item>
+        <item>FSR 1</item>
+        <item>SGSR 1</item>
+        <item>Device (power saving)</item>
+    </string-array>
     <string-array name="arr_panel_look">
         <item>Small</item>
         <item>Normal</item>
@@ -798,6 +808,7 @@
     <string name="home_shaders_need_one_update">Shaders need one update</string>
     <string name="home_nup">" (.nup)"</string>
     <string name="game_applies_from_the_next_frame">Applies from the next frame, kept for this game (the same setting as Game settings › Upscaler).</string>
+    <string name="game_applies_from_the_next_frame_2">Applies from the next frame, kept for this game (the same setting as Game settings › Screen scaling).</string>
     <string name="game_applies_at_the_next_start">Applies at the next start (this run takes no live changes: DM_CTL is off).</string>
     <string name="game_applies_at_once_kept_for">Applies at once, kept for this game (the same setting as Game settings › Advanced).</string>
     <string name="game_shaders_the_game_lacks_are_3">Shaders the game lacks are built as it runs. The switch is under the game page › Advanced › Shaders while playing (on by default; a change applies at the next start).</string>

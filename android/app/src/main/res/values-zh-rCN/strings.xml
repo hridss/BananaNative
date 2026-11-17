@@ -71,6 +71,8 @@
     <string name="common_resolution">分辨率</string>
     <string name="common_rumble">震动</string>
     <string name="common_screen_rotation">屏幕旋转</string>
+    <string name="common_screen_scaling">屏幕缩放</string>
+    <string name="common_screen_sharpness">屏幕锐度</string>
     <string name="common_share_log">分享日志</string>
     <string name="common_stop">停止</string>
     <string name="common_system">系统</string>
@@ -695,6 +697,14 @@
         <item>双线性（最快，最柔和）</item>
         <item>FSR 3.1（锐利，稳定）</item>
     </string-array>
+    <string-array name="arr_screen_scale">
+        <item>最近邻</item>
+        <item>双线性</item>
+        <item>双三次</item>
+        <item>FSR 1</item>
+        <item>SGSR 1</item>
+        <item>设备（省电）</item>
+    </string-array>
     <string-array name="arr_panel_look">
         <item>小</item>
         <item>中</item>
@@ -742,6 +752,7 @@
     <string name="home_shaders_need_one_update">着色器需要更新一次</string>
     <string name="home_nup">" (.nup)"</string>
     <string name="game_applies_from_the_next_frame">从下一帧起生效，并为此游戏保留（与游戏设置 › 放大器相同的设置）。</string>
+    <string name="game_applies_from_the_next_frame_2">从下一帧起生效，并为此游戏保留（与游戏设置 › 屏幕缩放相同的设置）。</string>
     <string name="game_applies_at_the_next_start">下次启动时生效（本次运行不接受实时更改：DM_CTL 已关闭）。</string>
     <string name="game_applies_at_once_kept_for">立即生效，并为此游戏保留（与游戏设置 › 高级相同的设置）。</string>
     <string name="game_shaders_the_game_lacks_are_3">游戏缺少的着色器会在运行时生成。开关位于游戏页面 › 高级 › 游玩时生成着色器（默认开启；更改在下次启动时生效）。</string>

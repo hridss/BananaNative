@@ -544,8 +544,8 @@ final class SidePanel extends FrameLayout {
         resolutionRow();
         if (!Prefs.simpleRes(act, game()) && Prefs.dlssGame(game())) {   // a game on the DLSS stand-in: Screen scaling (the window to the screen), under Resolution
             GameUpscaler.screenRows(act, game(), box);
-            note(act instanceof GameActivity && ((GameActivity) act).live() ? "Applies from the next frame, kept for this game (the same setting as Game settings › Screen scaling)."
-                    : "Applies at the next start (this run takes no live changes: DM_CTL is off).");
+            note(act instanceof GameActivity && ((GameActivity) act).live() ? Tx.s(R.string.game_applies_from_the_next_frame_2)
+                    : Tx.s(R.string.game_applies_at_the_next_start));
         }
 
         picture();
