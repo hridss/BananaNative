@@ -199,6 +199,14 @@ The yield back-off (`DM_YIELD_BACKOFF`) and the rewriter's spin waits (`patch_ns
 - **Found on:** [Hyrule Warriors: Definitive Edition](../../dm/games/0100AE00096EA000/README.md#power) (KTGL, SDK 3.5.1): its main thread waits for its frame's event with `TimedWaitEvent(30 ns)` and `SleepThread(1 µs)` in turn, its update thread with `TimedWaitEvent(500 ns)` alone. In its first battle at 60 fps on the Mac: CPU 102% → 27% of a core, CPU energy 4.6 → 1.5 W, wakeups 358,000 → 72,000 a second, frame time p95 17.5 → 16.9 ms.
 - **Check:** `make -C dm/host/tests GAME=<id> build/t_pollwait && dm/host/tests/build/t_pollwait`: loops of waits alone and of waits between short sleeps (condition variable and `WaitSynchronization`) back off after 2 ms, a loop with 30 µs of work between its waits does not, and a lengthened wait returns at the signal.
 
+### Timed waits on the wall clock (Android)
+
+- **Symptom:** after the phone's clock is set back during play (network time, the user), a game thread that waits with a timeout sleeps for the time the clock went back; a game that polls with timed waits stops, as if a wake-up were lost.
+- **Cause:** a guest wait's timeout was a `pthread_cond_timedwait` deadline taken on `CLOCK_REALTIME`, the condition variable's default clock. Set back by an hour during a 2 ms `TimedWait`, the timeout came an hour late.
+- **Fix:** on Android a thread's condition variables (`cv`, `pcv`) are made for `CLOCK_MONOTONIC` (`wait_cv_init` in `hle_thread.c`) and their deadlines are taken on it (`WAIT_CLOCK`). Apple has no `pthread_condattr_setclock`: its waits keep the wall clock.
+- **Found on:** no game run: found in Peanuts Native's stress test of the host's waits, written while looking for a rare freeze of [The Legend of Zelda: Echoes of Wisdom](../../dm/games/01008CF01BAAC000/README.md) (this was not shown to be that freeze's cause).
+- **Check:** `t_pollwait` on Android (NDK build, run on the phone): a thread's wait condition variable keeps a deadline of the monotonic clock's now + 50 ms (it returns at once without the fix).
+
 ### Yields that make progress return at once (`thr_yield`)
 
 - **Symptom:** a loading screen sits for a minute with the CPU nearly idle; one thread yields thousands of times a second, every yield a back-off sleep (the power line's top yielder, with as many back-off sleeps).

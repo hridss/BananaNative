@@ -265,6 +265,17 @@ static void wake(thr_t *t, int64_t res) {
     wait_unlink(t); t->wkind = 0; t->woke = 1; t->wres = res; pthread_cond_signal(&t->cv);
     note_runnable(t);
 }
+// A guest wait's timeout runs on the monotonic clock on Android. pthread_cond_timedwait takes its deadline on the wall clock unless the condition variable says
+// otherwise, and Android's wall clock is set while a game runs (network time, the user): set back by an hour during a 2 ms TimedWait, the wait's timeout came an
+// hour late, and a game that polls with timed waits had a thread that never woke. A thread's condition variables (cv, pcv) are made for CLOCK_MONOTONIC and their
+// deadlines are taken there. Apple has no pthread_condattr_setclock: the wall clock, as before
+#ifdef __ANDROID__
+#define WAIT_CLOCK CLOCK_MONOTONIC
+static void wait_cv_init(pthread_cond_t *cv) { pthread_condattr_t a; pthread_condattr_init(&a); pthread_condattr_setclock(&a, WAIT_CLOCK); pthread_cond_init(cv, &a); pthread_condattr_destroy(&a); }
+#else
+#define WAIT_CLOCK CLOCK_REALTIME
+static void wait_cv_init(pthread_cond_t *cv) { pthread_cond_init(cv, NULL); }
+#endif
 // Suspend until woken or timed out (ns<0 infinite, 0 immediate timeout); returns wres or R_TIMEOUT
 static int64_t block_wait(thr_t *t, int kind, int64_t ns);
 static int64_t block(thr_t *t, int kind, int64_t ns) {
@@ -283,7 +294,7 @@ static int64_t block_wait(thr_t *t, int kind, int64_t ns) {
     struct timespec dl;
     int det_wait = ns > 0 && dm_detclock_enabled();
     uint64_t guest_deadline = det_wait ? guest_ns() + (uint64_t)ns : 0;
-    if (ns > 0 && !det_wait) { clock_gettime(CLOCK_REALTIME, &dl); dl.tv_sec += ns / 1000000000; dl.tv_nsec += ns % 1000000000;
+    if (ns > 0 && !det_wait) { clock_gettime(WAIT_CLOCK, &dl); dl.tv_sec += ns / 1000000000; dl.tv_nsec += ns % 1000000000;
                   if (dl.tv_nsec >= 1000000000) { dl.tv_sec++; dl.tv_nsec -= 1000000000; } }
     while (!t->woke) {
         int rc;
@@ -543,7 +554,7 @@ uint32_t svc_thread_main_init(void) {
     pause_install();
     hitch_init();
     thr_t *t = calloc(1, sizeof *t);
-    pthread_cond_init(&t->cv, NULL); pthread_cond_init(&t->pcv, NULL);
+    wait_cv_init(&t->cv); wait_cv_init(&t->pcv);
     // Its affinity is its ideal core alone, as Horizon creates every thread (Mesosphere KThread::Initialize); it was 7, which a same-core handoff now takes for a thread that can run elsewhere (dm_yield_to_core_peers)
     t->started = t->entered = 1; t->prio = 44; t->core = 0; t->mask = 1; t->pt = pthread_self(); t->mport = plat_thread_of(t->pt); t->host_work = &dm_host_work;
     // The iOS boot pthread inherits default QoS. Apply the guest policy before
@@ -966,7 +977,7 @@ static int svc_thread_impl(int num, uint64_t *regs) {
     switch (num) {
     case 0x08: {  // CreateThread(→w1 handle; x1 entry, x2 argument, x3 stack top, w4 priority, w5 core)
         thr_t *t = calloc(1, sizeof *t);
-        pthread_cond_init(&t->cv, NULL); pthread_cond_init(&t->pcv, NULL);
+        wait_cv_init(&t->cv); wait_cv_init(&t->pcv);
         t->entry = regs[1]; t->arg = regs[2]; t->stack_top = regs[3] & ~0xFull;
         // Core -2 (IdealCoreUseProcessValue) = the process's default ideal core (0 for this game), with an affinity mask of just that core - as in the Horizon kernel. It used to be recorded as -2 and GetCurrentProcessorNumber answered -2;
         //   SMBW's font engine picks its per-core engine slot by the current core number and crashed indexing with -2 (main +0x107dbc0, SequenceBackgroundWorker thread)
@@ -1044,7 +1055,7 @@ static int svc_thread_impl(int num, uint64_t *regs) {
             while (!t->paused && !t->exited) {
                 pthread_mutex_unlock(&G); pthread_kill(t->pt, SIGUSR2); pthread_mutex_lock(&G);
                 if (t->paused || t->exited) break;
-                struct timespec dl; clock_gettime(CLOCK_REALTIME, &dl); dl.tv_nsec += 100000; if (dl.tv_nsec >= 1000000000) { dl.tv_sec++; dl.tv_nsec -= 1000000000; }
+                struct timespec dl; clock_gettime(WAIT_CLOCK, &dl); dl.tv_nsec += 100000; if (dl.tv_nsec >= 1000000000) { dl.tv_sec++; dl.tv_nsec -= 1000000000; }
                 pthread_cond_timedwait(&t->pcv, &G, &dl);
                 if (!warned && now_ns() - t0 > 1000000000ull) { warned = 1; LOG("[RED] thread %#x still not suspended after more than 1 second (stuck in host code?)", t->handle); }
             }
