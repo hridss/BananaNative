@@ -211,6 +211,10 @@ static int init_once(void) {
     const char *fault_env = getenv("DM_VK_DEVICE_FAULT");
     int x_fault = has_ext(de, nde, VK_EXT_DEVICE_FAULT_EXTENSION_NAME) && !(fault_env && !strcmp(fault_env, "0"));
     if (x_fault) dext[ndext++] = VK_EXT_DEVICE_FAULT_EXTENSION_NAME;
+    // VK_KHR_fragment_shading_rate, only for DM_VK_VRS (restart): its pipeline rate (vka_draw.c vrs_pass). Off by default: the dynamic state changes every game pipeline
+    int x_vrs = VKA_ENV("DM_VK_VRS", 0) && has_ext(de, nde, VK_KHR_FRAGMENT_SHADING_RATE_EXTENSION_NAME);
+    if (VKA_ENV("DM_VK_VRS", 0) && !x_vrs) VRED("DM_VK_VRS: the device has no VK_KHR_fragment_shading_rate: every pass shades each pixel");
+    if (x_vrs) dext[ndext++] = VK_KHR_FRAGMENT_SHADING_RATE_EXTENSION_NAME;
     V.mem_budget = has_ext(de, nde, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);   // the image heap's budget, for the texture cache's limit (vka_tex.c img_limit_update)
     if (V.mem_budget) dext[ndext++] = VK_EXT_MEMORY_BUDGET_EXTENSION_NAME;
     // GPU timestamps on the host clock, for DM_VK_TSCAL (vka_exec.c): where the device has calibrated timestamps
@@ -228,10 +232,11 @@ static int init_once(void) {
     VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT fgpl = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_FEATURES_EXT};
     VkPhysicalDeviceMeshShaderFeaturesEXT fmesh = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT};
     VkPhysicalDeviceFaultFeaturesEXT ffault = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FAULT_FEATURES_EXT};
+    VkPhysicalDeviceFragmentShadingRateFeaturesKHR fvrs = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADING_RATE_FEATURES_KHR};
     void *chain = placed ? &fmp : NULL;
 #define LINK(on, st) if (on) { (st).pNext = chain; chain = &(st); }
     struct { VkStructureType sType; void *pNext; VkBool32 queuePerfHint; } fph = {(VkStructureType)1000302001};   // VkPhysicalDeviceQueuePerfHintFeaturesQCOM (not in the NDK's headers yet)
-    LINK(x_vin, fvin) LINK(x_rob, frob) LINK(x_i8, fi8) LINK(x_div, fdiv) LINK(x_ph, fph) LINK(x_gpl, fgpl) LINK(x_mesh, fmesh) LINK(x_fault, ffault)
+    LINK(x_vin, fvin) LINK(x_rob, frob) LINK(x_i8, fi8) LINK(x_div, fdiv) LINK(x_ph, fph) LINK(x_gpl, fgpl) LINK(x_mesh, fmesh) LINK(x_fault, ffault) LINK(x_vrs, fvrs)
 #undef LINK
     VkPhysicalDeviceVulkan13Features f13 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES, .pNext = chain};
     VkPhysicalDeviceVulkan12Features f12 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, .pNext = &f13};
@@ -245,6 +250,9 @@ static int init_once(void) {
     // Mesh shading: the task and mesh stages only (multiview, shading-rate and query support each need more of the device than the replay enables or uses)
     fmesh.multiviewMeshShader = VK_FALSE; fmesh.primitiveFragmentShadingRateMeshShader = VK_FALSE; fmesh.meshShaderQueries = VK_FALSE;
     if (x_mesh && !fmesh.meshShader) fmesh.taskShader = VK_FALSE;   // (task shading is of no use without mesh shading)
+    fvrs.primitiveFragmentShadingRate = fvrs.attachmentFragmentShadingRate = VK_FALSE;   // the pipeline's rate only (DM_VK_VRS)
+    V.vrs = x_vrs && fvrs.pipelineFragmentShadingRate;
+    if (x_vrs && !V.vrs) { VRED("DM_VK_VRS: the device's fragment shading rate has no pipeline rate: every pass shades each pixel"); x_vrs = 0; }
     V.push_desc = x_push; V.vin_dyn = x_vin && fvin.vertexInputDynamicState; V.null_desc = x_rob && frob.nullDescriptor; V.idx8 = x_i8 && fi8.indexTypeUint8;
     V.divisor = x_div && fdiv.vertexAttributeInstanceRateDivisor; V.logic_op = f2.features.logicOp; V.dual_src = f2.features.dualSrcBlend; V.geom = f2.features.geometryShader;
     V.tess = f2.features.tessellationShader; V.depth_clamp = f2.features.depthClamp; V.fill_lines = f2.features.fillModeNonSolid; V.depth_bias_clamp = f2.features.depthBiasClamp;
@@ -267,6 +275,17 @@ static int init_once(void) {
     void vka_hostmem_install(void); vka_hostmem_install();   // the live objects counted (vka_hostmem.c): first, so the wrappers below call through it
     fp_wrap_compiles();
     vka_shader_pfb_hook();   // (over the FPCR wrapper: the module it makes is the rewritten one)
+    if (V.vrs) {
+        V.cmd_fsr = (PFN_vkCmdSetFragmentShadingRateKHR)vk.vkGetDeviceProcAddr(V.dev, "vkCmdSetFragmentShadingRateKHR");
+        VkPhysicalDeviceFragmentShadingRatePropertiesKHR pv = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADING_RATE_PROPERTIES_KHR};
+        VkPhysicalDeviceProperties2 pp = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = &pv};
+        vk.vkGetPhysicalDeviceProperties2(V.pd, &pp);
+        V.vrs_max = pv.maxFragmentSize.width < pv.maxFragmentSize.height ? pv.maxFragmentSize.width : pv.maxFragmentSize.height;
+        if (!V.cmd_fsr || V.vrs_max < 2) { VRED("DM_VK_VRS: no vkCmdSetFragmentShadingRateKHR or no fragment larger than a pixel (%u): off", V.vrs_max); V.vrs = 0; }
+        else VLOG("DM_VK_VRS: the game's pipelines take the fragment shading rate as dynamic state; fragments up to %ux%u, with depth or stencil written by the shader %s, "
+                  "the passes of DM_VK_VRS_PASSES shaded at DM_VK_VRS_RATE (live)", pv.maxFragmentSize.width, pv.maxFragmentSize.height,
+                  pv.fragmentShadingRateWithShaderDepthStencilWrites ? "too" : "not (such a draw is shaded per pixel)");
+    }
     if (!vk.vkMapMemory2KHR) vk.vkMapMemory2KHR = (PFN_vkMapMemory2KHR)vk.vkGetDeviceProcAddr(V.dev, "vkMapMemory2");   // core in 1.4
     if (!vk.vkUnmapMemory2KHR) vk.vkUnmapMemory2KHR = (PFN_vkUnmapMemory2KHR)vk.vkGetDeviceProcAddr(V.dev, "vkUnmapMemory2");
     if (!vk.vkMapMemory2KHR || !vk.vkUnmapMemory2KHR) V.placed = V.placed_range = 0;

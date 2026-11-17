@@ -457,6 +457,7 @@ static int pstate_fill(pstate *P, vka_shader *const sh[VKA_NSTAGE], const vka_la
         if (!mesh || (base[i] != VK_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY && base[i] != VK_DYNAMIC_STATE_PRIMITIVE_RESTART_ENABLE)) P->dyn[nd++] = base[i];
     if (!k->vin_static && !mesh) P->dyn[nd++] = VK_DYNAMIC_STATE_VERTEX_INPUT_EXT;
     if (V.depth_bounds) P->dyn[nd++] = VK_DYNAMIC_STATE_DEPTH_BOUNDS;   // NVN's SetDepthBounds, set at the draw (vka_draw.c); the pipeline's own (0, 1) otherwise
+    if (V.vrs) P->dyn[nd++] = VK_DYNAMIC_STATE_FRAGMENT_SHADING_RATE_KHR;   // DM_VK_VRS: each pass sets it (vka_draw.c vrs_pass)
     P->dy = (VkPipelineDynamicStateCreateInfo){VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO, .dynamicStateCount = nd, .pDynamicStates = P->dyn};
     for (int i = 0; i < k->ncolor; i++) P->cf[i] = (VkFormat)k->cfmt[i];
     P->ri = (VkPipelineRenderingCreateInfo){VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO, .colorAttachmentCount = k->ncolor, .pColorAttachmentFormats = P->cf,
@@ -726,7 +727,10 @@ static int dyn_part(VkDynamicState d) {
 }
 static void dyn_of(const pstate *P, int part, VkDynamicState *out, VkPipelineDynamicStateCreateInfo *dy) {
     uint32_t n = 0;
-    for (uint32_t i = 0; i < P->dy.dynamicStateCount; i++) { int d = dyn_part(P->dyn[i]); if (d == part || (part == L_PREFS && (d == L_PRE || d == L_FS))) out[n++] = P->dyn[i]; }
+    for (uint32_t i = 0; i < P->dy.dynamicStateCount; i++) {
+        int d = dyn_part(P->dyn[i]), both = P->dyn[i] == VK_DYNAMIC_STATE_FRAGMENT_SHADING_RATE_KHR;   // (the shading rate is state of both the pre-rasterization and the fragment shader parts)
+        if (d == part || (both && part == L_PRE) || (part == L_PREFS && (d == L_PRE || d == L_FS))) out[n++] = P->dyn[i];
+    }
     *dy = (VkPipelineDynamicStateCreateInfo){VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO, .dynamicStateCount = n, .pDynamicStates = out};
 }
 // One try of the probe: the library made (and destroyed), its result

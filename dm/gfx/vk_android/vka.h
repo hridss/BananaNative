@@ -121,6 +121,9 @@ typedef struct {
     // never (restart). cs_groups: maxComputeWorkGroupCount[0]
     int memu; uint32_t cs_groups;
     int cache_ctl;                                  // pipelineCreationCacheControl (core 1.3): a pipeline may be asked for with FAIL_ON_PIPELINE_COMPILE_REQUIRED (vka_pso.c cs_obtain's cache-only try)
+    // DM_VK_VRS=1 (restart) and the device's pipeline fragment shading rate (VK_KHR_fragment_shading_rate): the game's pipelines take the rate as dynamic state and each pass
+    // sets it (vka_draw.c vrs_pass); vrs_max: the largest side of a fragment (maxFragmentSize)
+    int vrs; uint32_t vrs_max; PFN_vkCmdSetFragmentShadingRateKHR cmd_fsr;
     int gpl;                                        // graphics pipeline libraries with fast linking (VK_EXT_graphics_pipeline_library): a pipeline the cache lacks is linked from stage libraries at once, the optimized one made in the background (vka_pso.c)
     uint32_t max_push, max_vin_bindings, subgroup_size, subgroup_min, subgroup_max, subgroup_stages;   // subgroup_stages: VkShaderStageFlags with subgroup operations
     uint32_t subgroup_req_stages;                   // VkShaderStageFlags a pipeline may pin the subgroup size in (requiredSubgroupSizeStages; 0 without subgroupSizeControl)

@@ -137,6 +137,7 @@ void mtl_set_frame(uint64_t f) {
           vka_rp_bar_stats(pb, sizeof pb, n); if (pb[0]) VLOG("%s", pb);
           vka_gbar_stats(pb, sizeof pb, n); if (pb[0]) VLOG("%s", pb);
           oq_stats(pb, sizeof pb, n); if (pb[0]) VLOG("%s", pb);
+          { void vka_vrs_stats(char *b, size_t n, double frames); vka_vrs_stats(pb, sizeof pb, n); if (pb[0]) VLOG("%s", pb); }
           { void vka_drv_memo_stats(char *b, size_t n); vka_drv_memo_stats(pb, sizeof pb); if (pb[0]) VLOG("%s", pb); }
           vka_memu_stats(pb, sizeof pb); if (pb[0]) VLOG("%s", pb);
           { void vka_memu_stop_stats(char *b, size_t n, double frames); vka_memu_stop_stats(pb, sizeof pb, n); if (pb[0]) VLOG("%s", pb); } }

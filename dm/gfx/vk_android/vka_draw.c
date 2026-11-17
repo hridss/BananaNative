@@ -575,6 +575,48 @@ static void pass_redrawn(vka_img *const *im, int n) {
     for (int i = 0; i < n && ok; i++) ok = im[i] && im[i]->wr_prev && f - im[i]->wr_prev <= 2;
     vka_pso_redrawn = ok;
 }
+// ---------- Fragment shading rate by pass (DM_VK_VRS) ----------
+// With DM_VK_VRS=1 (restart; vka_dev.c) the game's pipelines take the fragment shading rate as dynamic state, and each pass sets it as it begins: DM_VK_VRS_RATE (live,
+// default 2) pixels a side for a pass whose shape is one of DM_VK_VRS_PASSES (live; ',' or ';' between shapes written as the GPU profile prints them without the clears: "c0:97 d:130"
+// is colour slot 0 of VkFormat 97 with a depth target of VkFormat 130), one pixel for every other pass. A fragment of 2x2 pixels runs the fragment shader once for the four:
+// for passes whose picture varies slowly (lighting, translucency, blurs) at a quarter of their shading work. No shape by default
+typedef struct { VkCommandBuffer cb; uint32_t s; } vrs_arg;
+static void vrs_cmd(const void *a) {
+    vrs_arg w; memcpy(&w, a, sizeof w);
+    VkExtent2D e = {w.s, w.s}; VkFragmentShadingRateCombinerOpKHR ops[2] = {VK_FRAGMENT_SHADING_RATE_COMBINER_OP_KEEP_KHR, VK_FRAGMENT_SHADING_RATE_COMBINER_OP_KEEP_KHR};
+    V.cmd_fsr(w.cb, &e, ops);
+}
+static uint64_t g_vrs_n, g_vrs_coarse;   // passes begun, those at a coarser rate (vka_vrs_stats)
+static int vrs_listed(const char *list, const char *shape) {   // shape is one of list's entries, ',' or ';' between them (spaces around an entry ignored)
+    size_t n = strlen(shape);
+    for (const char *p = list; *p;) {
+        while (*p == ' ' || *p == ';' || *p == ',') p++;
+        const char *e = p; while (*e && *e != ';' && *e != ',') e++;
+        const char *t = e; while (t > p && t[-1] == ' ') t--;
+        if ((size_t)(t - p) == n && n && !memcmp(p, shape, n)) return 1;
+        p = e;
+    }
+    return 0;
+}
+static void vrs_pass(const VkRenderingAttachmentInfo *ca, int n, int depth) {
+    static uint32_t gen; static char list[512]; static int have;
+    uint32_t g = atomic_load_explicit(&vka_env_gen, memory_order_relaxed);
+    if (g != gen) { gen = g; have = vka_env_str("DM_VK_VRS_PASSES", list, sizeof list) && list[0]; }
+    uint32_t s = 1;
+    if (have) {
+        char shape[128]; size_t bn = 0; shape[0] = 0;
+        for (int i = 0; i < n && bn < sizeof shape; i++) if (ca[i].imageView) bn += (size_t)snprintf(shape + bn, sizeof shape - bn, "%sc%d:%d", bn ? " " : "", i, R.cf[i]);
+        if (depth && bn < sizeof shape) snprintf(shape + bn, sizeof shape - bn, "%sd:%d", bn ? " " : "", R.df ? R.df : R.sf);
+        if (vrs_listed(list, shape)) { int r = VKA_ENV("DM_VK_VRS_RATE", 2); s = r >= 4 ? 4 : r >= 2 ? 2 : 1; if (s > V.vrs_max) s = V.vrs_max; }
+    }
+    g_vrs_n++; g_vrs_coarse += s > 1;
+    vrs_arg w = {g_cb, s}; if (!vka_enc_call(vrs_cmd, &w, sizeof w)) vrs_cmd(&w);
+}
+void vka_vrs_stats(char *b, size_t n, double frames) {   // with the replay statistics: the passes a frame shaded at a coarser rate
+    static uint64_t n0, c0; b[0] = 0;
+    if (V.vrs && frames > 0) snprintf(b, n, "fragment shading rate (DM_VK_VRS): %.1f of %.1f passes a frame coarser (DM_VK_VRS_RATE)", (g_vrs_coarse - c0) / frames, (g_vrs_n - n0) / frames);
+    n0 = g_vrs_n; c0 = g_vrs_coarse;
+}
 // Opens the pass over the bound targets: 0 = it cannot (no target can be an attachment), logged
 static int rp_begin(const p_set_rt *rt, int has_rt, const p_scissor *sc, int has_sc, const vka_dstate *d) {
     if (R.on) { if (!g_pass_keep || (rt_same(rt, has_rt, &R.rt, R.has_rt) && rp_area_fits(sc, has_sc, d, rt, has_rt))) return 1; vka_rp_end(); }   // a new SET_RT of other targets ends the pass at its first draw (exec does not)   // a new SET_RT of other targets ends the pass at its first draw (exec does not)
@@ -718,6 +760,7 @@ static int rp_begin(const p_set_rt *rt, int has_rt, const p_scissor *sc, int has
         last = cur; lastw = w;
     }
     if (!R.classic) vk.vkCmdBeginRendering(g_cb, &ri);
+    if (V.vrs) vrs_pass(ca, n, dp || sp);   // the pass's fragment shading rate (DM_VK_VRS)
     R.on = 1; vka_n_rp++; if (g_dyn_filter == 2) vka_dyn_invalidate();   // DM_VK_DYN_FILTER=2: the dynamic state set again at each pass (bisect)
     g_zdir = 0;
     if (dp) { g_zs.npb++; if (dp->loadOp == VK_ATTACHMENT_LOAD_OP_CLEAR) g_zs.nlc++; for (int k = 0; k < nlate; k++) if (late[k]->asp & VK_IMAGE_ASPECT_DEPTH_BIT) g_zs.ncl++; }
