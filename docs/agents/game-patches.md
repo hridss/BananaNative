@@ -49,6 +49,7 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
 | `build` → `engine` | the render target pool sized at load for the starting render setting (at least the first larger size on a device of more than 12 GB), and render_cfg's max_render raised with it (DM_RT_POOL_MB; loader.c) | memory | gap | judgement | 1 | `rt_pool`: [Fire Emblem Fortune's Weave](../../dm/games/04007EF01F8AE000/README.md) | the pool's size is one movz in the game's text, at a fixed offset per build (the build and the word checked before the write); a fingerprint of the pool's constructor call could find it in other builds |
 | `build` → `engine` | Unity QualitySettings.vSyncCount held at 1 | frame rate | gap | judgement | 1 | [Fire Emblem Engage](../../dm/games/0100A6301214E000/README.md) | an IL2CPP player registers the setter by its icall name, so the place can be found in any Unity game; holding it at 1 stays this profile's choice (its logic steps by the count) |
 | `build` → `game` | a native-aspect variant's seven shape-dependent words, written at load for the picture's shape from 1:1 to 16:9 (DM_VK_PICTURE_ASPECT, the Android launcher's Aspect ratio › Screen shape) | rendering | gap | judgement | 1 | `shape_table`: [Fire Emblem Fortune's Weave](../../dm/games/04007EF01F8AE000/README.md) | the words are where this build's variant (patches.py _SHAPE_WORDS) reads its values: fixed offsets per main build, checked to hold their 4:3 values before they are written |
+| `build` → `game` | dress-up slots: an empty slot skips the call that reads its handle | race | gap | judgement | 1 | [Pokémon Shield](../../dm/games/01008DB008C2C000/README.md) | the game's own dress-up function: its four call sites can be found by the function's fingerprint in another build |
 | `build` → `game` | frame buffer scale: the scene at the window's full size instead of 80 % | rendering | gap | judgement | 1 | [Donkey Kong Bananza](../../dm/games/040074A01BF12000/README.md) | the game's own per-mode table entry, multiplied in at two fixed offsets; a function fingerprint of the scene setup (the two fmul after the table load) could carry it over the game's updates |
 | `build` → `game` | frame limiter 30 → 60 fps and the 1/60 update step | frame rate | gap | judgement | 1 | [DARK SOULS: REMASTERED](../../dm/games/01004AB00A260000/README.md) | the game's own limiter constant and fixed step |
 | `build` → `game` | frame limiter spin: its branch back cut | frame rate | gap | judgement | 1 | [Need For Speed™ Hot Pursuit Remastered](../../dm/games/010029B0118E8000/README.md) | the engine's own spin limiter; a function-matched rule could carry it over the game's updates |
@@ -134,7 +135,7 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
 | [Pokemon Pokopia](#pokemon-pokopia) | 0 | 6 | 0 | 0 | 1 | `build` → `game` |
 | [Pokémon Brilliant Diamond](#pokémon-brilliant-diamond) | 0 | 0 | 0 | 0 | 1 | `build` → `engine` |
 | [Pokémon Legends: Arceus](#pokémon-legends-arceus) | 0 | 0 | 0 | 1 | 0 | `game` |
-| [Pokémon Shield](#pokémon-shield) | 0 | 0 | 0 | 0 | 1 | `build` → `game` |
+| [Pokémon Shield](#pokémon-shield) | 4 | 0 | 0 | 0 | 1 | `build` → `game` ×2 |
 | [Pokémon Shining Pearl](#pokémon-shining-pearl) | 0 | 0 | 0 | 0 | 1 | `build` → `engine` |
 | [Pokémon Sword](#pokémon-sword) | 0 | 0 | 0 | 0 | 1 | `build` → `game` |
 | [Super Mario Bros. Wonder - Nintendo Switch 2 Edition](#super-mario-bros-wonder---nintendo-switch-2-edition) | 1 | 0 | 0 | 0 | 0 | `build` → `host` |
@@ -591,11 +592,16 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
 
 ### Pokémon Shield
 
-[Pokémon Shield](../../dm/games/01008DB008C2C000/README.md), `01008DB008C2C000`.
+[Pokémon Shield](../../dm/games/01008DB008C2C000/README.md), `01008DB008C2C000`, [patches.py](../../dm/games/01008DB008C2C000/patches.py).
 
+- **`build` → `game`**, race, gap, judgement: dress-up slots: an empty slot skips the call that reads its handle. The game's own dress-up function: its four call sites can be found by the function's fingerprint in another build
 - **`build` → `game`**, frame rate, blocked: one version of each game on hand, checked: Sword main a3b75bcd3311385a and Shield main a16802625e7826bf (1.3.2): the same offset in both: Game Freak's frame time of present interval 2 at a fixed address (Pokémon Sword and Shield). The game's own table of frame times by present interval (16666667, 33333334, 50000000 ... ns as 64-bit words), which a search for those values could find in any build
 
-- **1.3.2 `main`** `a1680262…`
+- **1.3.2 `main`** `a1680262…` ([patches.py:10](../../dm/games/01008DB008C2C000/patches.py#L10))
+  - cut `+0xcab14c`: dress-up slot (part index + 7) empty: skip main+0x64f970 (cbz x0 → main+0xcab16c instead of main+0xcab15c)
+  - cut `+0xcab198`: dress-up slot (part index) empty: skip main+0x64f970 (cbz x0 → main+0xcab1b8 instead of main+0xcab1a8)
+  - cut `+0xcab224`: dress-up slot (part index) empty: skip main+0x64f970 (cbz x0 → main+0xcab244 instead of main+0xcab234)
+  - cut `+0xcab274`: dress-up slot (part index + 7) empty: skip main+0x64f970 (cbz x0 → main+0xcab294 instead of main+0xcab284)
   - host [hle_fpslock.c:92](../../dm/host/hle_fpslock.c#L92): engine frame limit set to fps_target: Game Freak frame time of interval 2
 
 ### Pokémon Shining Pearl
