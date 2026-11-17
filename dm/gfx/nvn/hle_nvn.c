@@ -1303,7 +1303,10 @@ static void hostseg_release(uintptr_t lo, uintptr_t hi) {
 }
 NVN(nvnCommandBufferAddCommandMemory, void, NVNcommandBuffer *c, const NVNmemoryPool *p, ptrdiff_t off, size_t n) {
     const pool_t *pl = (const pool_t *)p;
-    if (!pl || n < 64) { if (cs_on()) { pthread_mutex_lock(&g_cs_mu); g_cs.hostseg++; pthread_mutex_unlock(&g_cs_mu); } size_t sz = hostseg_size(CB(c), !pl, n); cmd_new_segment(CB(c), hostseg_take(CB(c), sz), sz); return; }
+    // Real grants may be only 40/56 bytes (Borderlands 3). Keep their guest storage, so a recording that overflows has a guest origin for hostseg_release to reclaim its
+    // segment by. The floor: once a recording has a record, a later segment change writes a 16-byte JUMP at the write position, after up to 7 bytes of alignment;
+    // cmd_alloc_keep checks whether each full record fits (nxnative bf93977b takes a record header, 8 bytes: its segment chain is not written into the guest memory)
+    if (!pl || n < 24) { if (cs_on()) { pthread_mutex_lock(&g_cs_mu); g_cs.hostseg++; pthread_mutex_unlock(&g_cs_mu); } size_t sz = hostseg_size(CB(c), !pl, n); cmd_new_segment(CB(c), hostseg_take(CB(c), sz), sz); return; }
     if (!pl->mem) { LOG("[RED] AddCommandMemory: pool has no CPU storage"); return; }
     hostseg_release((uintptr_t)(pl->mem + off), (uintptr_t)(pl->mem + off + n));
     dm_guest_write_prepare(pl->mem + off, n);
