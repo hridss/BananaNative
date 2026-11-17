@@ -55,6 +55,16 @@ class ExitNotice(unittest.TestCase):
         self.assertIsNone(self.cause(RUN + 'state=host_exit\nrc=0\n', EXIT_SELF, 0))    # the game returned by itself
         self.assertIsNone(self.cause(RUN, EXIT_SELF, 0, log='received SIGTERM: graceful exit\ngraceful exit done (0.1 s)\n'))
 
+    def test_running_pid(self):   # GameReturn: the app's icon goes back to the game only while the record says the game started last runs
+        self.assertEqual(self.java('running', self.file(RUN), '040074A01BF12000'), '1234')
+        self.assertEqual(self.java('running', self.file(RUN), '040074a01bf12000'), '1234')        # a title ID in either case
+        self.assertEqual(self.java('running', self.file(RUN), '0100152000022000'), '-1')        # another game runs than the one Home started last
+        self.assertEqual(self.java('running', self.file(RUN), '-'), '-1')                       # no game started from this install's Home yet
+        self.assertEqual(self.java('running', self.file(None), '040074A01BF12000'), '-1')       # no record
+        for end in ('state=stopped\n', 'state=native\nsig=11\n', 'state=java\n', 'state=host_exit\nrc=0\n'):
+            self.assertEqual(self.java('running', self.file(RUN + end), '040074A01BF12000'), '-1', end)   # a run that ended
+        self.assertEqual(self.java('running', self.file(RUN.replace('pid=1234', 'pid=x')), '040074A01BF12000'), '-1')
+
     def test_pending(self):
         self.assertEqual(self.java('pending', self.file(RUN)), 'true')
         self.assertEqual(self.java('pending', self.file(RUN + 'state=stopped\n')), 'false')
