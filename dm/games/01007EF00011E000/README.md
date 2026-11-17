@@ -117,6 +117,7 @@ On the Mac, frame times stayed at 60 fps; crop comparisons showed sharper edges 
 
 ## Files and shaders
 
+- **Resolved: main's duplicate shaders filed under their first copy (2026-11-17, upstream nxnative 82c354b0, [issue #2927](https://github.com/seedds/nxnative/issues/2927)).** 1.9.0's 68 embedded shader copies are 37 keys, each copy byte-identical; 11 map rows (9 source labels, 2 package indices) follow the first copy now. Upstream's fresh full split kept all 19,592 keys, stages and packages, every package record byte-identical by key, and facts and pairs unchanged. [Main's copies of a shader taken last, unchecked](../../../docs/reference/packing.md#mains-copies-of-a-shader-taken-last-unchecked).
 - RomFS is almost all Yaz0 (`.s*` extensions) and SARC (`Pack/*.pack`); `romfs_marker` `Pack/Bootup_Graphics.pack`.
 - 19,592 shaders: `Shader/*.sbfsha` (BNSH), the gsys / ksys resource packs in `Pack/Bootup_Graphics.pack` and the terrain pack in `Pack/TitleBG.pack`, particle effects in `Effect/*.sesetlist` (11,373 shaders, 101 compute), layouts (`.sblarc`) and 37 in `main`. All bind with Mario's texture handle layout; the full build had no failure and no unresolved binding.
 - **Resolved: duplicate pipeline keys from disabled blend state.** A recording held 4,829 keys for 1,982 distinct pipelines from 1,818 Metal 4 bases; 2,845 keys differed only in blend factors of targets whose blending was disabled. [Pipeline keys omit unused colour state](../../../docs/reference/shaders.md#pipeline-keys-omit-unused-colour-state) describes the shared normalization.
@@ -196,6 +197,7 @@ Before publishing, the fixes were integrated with main's pipeline archive and GP
 
 ## Found on this game
 
+- [Main's copies of a shader taken last, unchecked](../../../docs/reference/packing.md#mains-copies-of-a-shader-taken-last-unchecked): 1.9.0's map, resolved under [Files and shaders](#files-and-shaders).
 - **Open, a SIGSEGV in `nn::util::RelocationTable::Relocate` at one cutscene ([issue #810](https://github.com/seedds/nxnative/issues/810)):** not a host bug as far as the reporter's files show. Their `Event/Demo154_2.sbeventpack` has our length (1,196,295 bytes) but another SHA-256 (`e74e7826…`, ours `b822e8a2…`), from a copy of the base game that fails its hash check, with the damaged files kept as read; the model's relocation table is inside that file, so heap placement is not the cause. Open until the scene loads from a clean copy of the game.
 - **Resolved, parallel rewriting (2026-10-31):** [Parallel scans preserve rewrite output](../../../docs/reference/rewriter.md#parallel-scans-preserve-rewrite-output). All 21 binary and TSV outputs of the three modules of v1114112 are byte-identical to the sequential rewriter. The full regression against `635e8008` passed: zero red diagnostics, matching screenshots, and no frame-time or memory regression (M4 Pro, Xcode 27.2 with the per-run compiler override on both revisions).
 - [Benchmark captures perturb the measured frame pacing](../../../docs/reference/frame-rate.md#benchmark-captures-perturb-the-measured-frame-pacing).

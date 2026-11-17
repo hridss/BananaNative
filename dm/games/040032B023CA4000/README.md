@@ -26,6 +26,7 @@ Orbitals cannot be played alone: Play Local waits for a second player to join, a
 
 ## Shaders
 
+- **Open: decoded Unreal archives and the first-copy split (2026-11-17, [upstream issue #2924](https://github.com/seedds/nxnative/issues/2924#issuecomment-6943096981)).** The archives decoded with `main` are filed under each key's first copy now; upstream's packing reported 20,461 rows on each side that differ, which a comparison joined by key and a check of the duplicates' bytes in the decoded archives must sort out before the map changes. The map is unchanged; until then the phone's targeted split may fall back to a full scan. [Main's copies of a shader taken last, unchecked](../../../docs/reference/packing.md#mains-copies-of-a-shader-taken-last-unchecked).
 - 23,432 unique in [`shader_map.tsv`](shader_map.tsv) (3,556 vertex, 16,459 pixel, 3,415 compute, 2 geometry) from the container's two IoStore shader libraries (global 4,515, game 36,480 shaders), split in 57 s: Unreal Engine 5.6 IoStore shader libraries for the Switch 2. All build: a full Mac build took 19 minutes on the M6 the first time, 6 minutes on chain `73b94575300e` with the Metal compile cache warm.
 - Resolved: 5 global compute shaders (`3ea35c5a0f1ea749`, `45389d82b79dbf0c`, `50c768e8620cf18e`, `868f60d0648f0110`, `c2f9e9baad57e2d0`) stopped at `Ampere instruction 394 … is not implemented`: Unreal's ShaderPrint counter, an image atomic whose handle is in a register (Ampere forms with a handle in a register).
 
