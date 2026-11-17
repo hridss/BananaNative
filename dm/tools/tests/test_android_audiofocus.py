@@ -1,5 +1,6 @@
 """The game's audio focus on Android (AudioFocus.java with android/app/src/jvmtest's AudioFocusJvmTest): a permanent loss (another app playing while the game is minimized)
 gets no gain from Android, so the return to the game asks for the focus again; otherwise the sound stayed suspended (Native.audioInterrupt) with the game running.
+A permanent loss while the game is on screen (another app playing on a second screen or in split screen) has no return to wait for, so it does not suspend the sound.
 The JVM part is skipped without a JDK."""
 import shutil
 import subprocess
@@ -16,7 +17,9 @@ ACTIVITY = REPO / 'android/app/src/main/java/dev/nxnative/android/GameActivity.j
 class Wiring(unittest.TestCase):
     def test_activity_uses_it(self):
         t = ACTIVITY.read_text(encoding='utf-8')
-        self.assertIn('Native.audioInterrupt(focusState.changed(f))', t)   # the listener goes through AudioFocus
+        self.assertIn('setOnAudioFocusChangeListener(this::focusChanged, ui)', t)
+        self.assertIn('boolean intr = focusState.changed(f, !stopped);', t)   # the listener goes through AudioFocus, which is told whether the game is on screen
+        self.assertIn('Native.audioInterrupt(intr);', t)
         self.assertIn('focusState.requested(g)', t)                          # every request's answer is recorded
         start = t[t.index('protected void onStart()'):t.index('protected void onResume()')]
         self.assertIn('focusState.askAgain()', start)                        # the return asks again

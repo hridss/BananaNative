@@ -82,6 +82,12 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
     private AudioManager audio;
     private AudioFocusRequest focus;
     private final AudioFocus focusState = new AudioFocus();
+    /** The focus listener (AudioFocus): a loss for good while the game is on screen leaves the sound on, and the log says so once per loss */
+    private void focusChanged(int f) {
+        boolean intr = focusState.changed(f, !stopped);
+        if (f == AudioManager.AUDIOFOCUS_LOSS && !intr) Native.note("audio focus lost for good with the game on screen: its sound goes on");
+        Native.audioInterrupt(intr);
+    }
     private boolean requestFocus() { boolean g = audio.requestAudioFocus(focus) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED; focusState.requested(g); return g; }
     private volatile AudioDeviceCallback route;
     private boolean routeReady;
@@ -1179,7 +1185,7 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
         audio = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
         focus = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
                 .setAudioAttributes(new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_GAME).setContentType(AudioAttributes.CONTENT_TYPE_UNKNOWN).build())
-                .setOnAudioFocusChangeListener(f -> Native.audioInterrupt(focusState.changed(f)), ui)
+                .setOnAudioFocusChangeListener(this::focusChanged, ui)
                 .build();
         // Granted at once calls no listener: an interruption the screen that went saw (a call while in the background) is over for this one
         if (requestFocus()) Native.audioInterrupt(false);
