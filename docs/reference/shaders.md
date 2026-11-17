@@ -970,6 +970,13 @@ Finding, keying and translating shaders (`dm/gfx/tools/shader_split.py`, `dmsh_b
 - **Found on:** [Splatoon Raiders](../../dm/games/0400380020056000/README.md): 26 such loops around the whole program in its uber shaders; the mid-size shader went from 176 loops to 0, the largest from 364 to 5 (upstream's Mac measurements).
 - **Check:** `DMSH_TEST_XLATE=<translator> python3 dm/gfx/tests/test_dmsh_control_flow.py`.
 
+### A constant jump-entry condition wrapped in a guard moved a loop exit's ballots out of the loop
+
+- **Symptom:** none seen on a picture: a warp-aggregated atomic in a loop (a ballot that elects a leader, the lanes with its key leave the loop and reduce) votes with the lanes of every iteration together, so the ballot mixes keys and other keys' results are lost.
+- **Cause:** `GotoElimination.GuardEntryCondition` (from upstream's ray-tracing port) evaluates a block's condition through a temporary, so a goto that bypasses the condition's definition reads no undefined value. It did that for constant conditions too. The constant `false` label condition is the shape `LoopExitCohort` recognizes when it moves a subgroup block back into the iteration that left the loop; wrapped in a temporary, the block stayed after the loop.
+- **Fix:** a constant condition (defined on every path) keeps its direct `&&` / `||` with the guard; other conditions keep the guarded evaluation (upstream seedds/nxnative 87d3a47a). Translator change: the chain version moves and every library is rebuilt.
+- **Found on:** no game here; upstream's PRAGMATA compute shader `607ceeefb9478700`, whose four reduction ballots return to their inner loops (checked offline on the Mac).
+
 
 ### A translator call that needs reflection fails only on the phone (Android)
 
