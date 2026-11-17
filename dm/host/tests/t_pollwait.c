@@ -80,6 +80,11 @@ int main(void) {
     me_handle = svc_thread_main_init();
     poll_run(500, 0, 0);
     puts("PASS: 500 ns condition variable waits back off at 2 ms, not before");
+    {   // the state dump's SVC history (svc_thread): the last call is the timed-out WaitProcessWideKeyAtomic with its arguments
+        thr_t *me = pthread_getspecific(g_keythr); unsigned k = (me->nhist - 1) & 7;
+        assert(me->nhist >= 201 && me->hist[k].svc == 0x1C && me->hist[k].res == R_TIMEOUT && me->hist[k].a0 == (uint64_t)&mutex_word && me->hist[k].a1 == (uint64_t)&condition_key && me->hist[k].n == 0);
+        puts("PASS: the SVC history keeps the last wait, its arguments and its result");
+    }
     poll_run(30, 1, 0);
     puts("PASS: 30 ns waits between 1 us sleeps back off at 2 ms, not before");
     uint64_t r[32] = {0}; svc_thread(0x45, r); assert(r[0] == 0); uint32_t ev_w = (uint32_t)r[1], ev_r = (uint32_t)r[2];

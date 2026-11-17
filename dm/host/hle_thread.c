@@ -90,6 +90,11 @@ typedef struct thr {
     uint32_t woke_by;          // the guest thread whose wake() ended the current wait (its handle; 0 = a host thread or a timeout)
     uint64_t gw_ns, gw_max_ns; uint32_t gw_max_by; int gw_max_kind;
     uint64_t gsl_ns, gnat_ns, gnat_t0;   // time in SleepThread's sleeps and in native HLE waits (dm_thread_native_wait) since the last dm_guest_wait_take   // time blocked in guest waits since the last dm_guest_wait_take, and the longest one (who ended it, its kind)
+    // For the state dump of a frozen game (svc_thread_dump); nothing here decides anything. w_t0 / w_ns: when the current guest wait began and its timeout (block);
+    // w_dur: how long the waits of the current SVC lasted; nmade: threads this one's SVCs woke or moved to a mutex's queue (wake, lock_acquire_for);
+    // hist: its last synchronisation SVCs (svc_thread), written by the thread itself
+    uint64_t w_t0, w_dur; int64_t w_ns; uint32_t nmade;
+    struct { uint64_t t, a0, a1, dur; uint32_t res, by; uint16_t svc, n; } hist[8]; unsigned nhist;
 } thr_t;
 static thr_t *g_all;
 extern __thread _Atomic int dm_host_work;   // declared in hle.h too; defined in hle_nvn.c
@@ -261,7 +266,7 @@ static void note_runnable(thr_t *t) {
     if (t->prio < self->prio && t->mask == 1ull << (self->core & 63) && !(self->mask & ~t->mask)) self->yield_pending = 1;   // a waker that can run on another core is not held (dm_yield_to_core_peers)
 }
 static void wake(thr_t *t, int64_t res) {
-    { thr_t *self = pthread_getspecific(g_keythr); t->woke_by = self ? self->handle : 0; }
+    { thr_t *self = pthread_getspecific(g_keythr); t->woke_by = self ? self->handle : 0; if (self) self->nmade++; }   // nmade: for the waker's SVC history
     wait_unlink(t); t->wkind = 0; t->woke = 1; t->wres = res; pthread_cond_signal(&t->cv);
     note_runnable(t);
 }
@@ -283,8 +288,10 @@ static int64_t block(thr_t *t, int kind, int64_t ns) {
     if (ns == 0) { wait_unlink(t); t->wkind = 0; return R_TIMEOUT; }
     // The time blocked, for the [longframe] line (dm_guest_wait_take): a frame whose presenting thread stood in a guest wait names the kind and the thread that ended it
     uint64_t t0 = now_ns(); t->woke_by = 0;
+    t->w_t0 = t0; t->w_ns = ns;   // since when and with what timeout, for the state dump
     int64_t r = block_wait(t, kind, ns);
     uint64_t d = now_ns() - t0; t->gw_ns += d;
+    t->w_dur += d;   // for the thread's SVC history (svc_thread)
     if (d > t->gw_max_ns) { t->gw_max_ns = d; t->gw_max_by = t->woke ? t->woke_by : 0; t->gw_max_kind = kind; }
     return r;
 }
@@ -332,6 +339,7 @@ static void lock_acquire_for(thr_t *t, uint64_t addr, uint32_t tag) {
     }
     t->wkind = 1; t->waddr = addr; t->wtag = tag;      // Still in g_wait, changed to a lock wait
     t->wseq = ++g_wseq;                                  // The kernel inserts it anew into the lock owner's wait queue: at equal priority it goes after the existing lock waiters
+    { thr_t *self = pthread_getspecific(g_keythr); if (self) self->nmade++; }   // a waiter moved to the mutex's queue counts in the signaller's SVC history too
 }
 
 // ---------- Threads ----------
@@ -744,6 +752,32 @@ void svc_thread_dump(void) {
                 m ? m->name : "?", m ? t->last_lr - (uint64_t)m->base : t->last_lr);
         if (have_raw) { char hx[200]; int q = 0; for (int i = 0; i < 64; i += 4) q += snprintf(hx + q, sizeof hx - q, "%08x ", *(uint32_t *)(raw + i));
                         fprintf(stderr, "[dm]   %#x waited-for object, 64 bytes from %#llx: %s\n", t->handle, t->waddr & ~0xfull, hx); }
+        // What a frozen game's dump did not say (a hunt for a lost wake-up had only "waits: condvar" and "sync object addr=0" to go on):
+        //   wait:    how long the thread has waited and with what timeout; for WaitSynchronization each handle, its kind and whether it is signalled now (a waiter
+        //            parked on a signalled object is a lost wake-up), and a cancel left pending;
+        //   history: its last synchronisation SVCs, newest first (svc_thread): age, SVC, x0, x1, result, time blocked, who ended the wait (0 = a host thread or the
+        //            timeout), threads it woke or moved to a mutex's queue. "0x1d ... made 0" just before the freeze is a signal that reached nobody
+        if (!t->exited && t->started) {
+            char ln[1500]; int q = 0;
+            if (t->wkind) {
+                q = snprintf(ln, sizeof ln, "waiting %.3f s, timeout ", (nowns - t->w_t0) / 1e9);
+                q += t->w_ns < 0 ? snprintf(ln + q, sizeof ln - q, "none") : snprintf(ln + q, sizeof ln - q, "%.3f ms", t->w_ns / 1e6);
+                if (t->wkind == 4) { const uint32_t *whs = t->whs; int whn = t->whn; uint32_t hv[16];
+                    if (whn > 16) whn = 16;
+                    if (whs && whn > 0 && !plat_mem_read((uint64_t)(uintptr_t)whs, hv, (size_t)whn * 4)) for (int i = 0; i < whn && q < (int)sizeof ln - 80; i++) {
+                        unsigned k = hv[i] - 0x1000; int ty = k > 0 && k < MAX_H ? g_h[k].type : -1; void *o = ty > 0 ? g_h[k].obj : NULL;
+                        if (ty == O_EVENT_R && o) q += snprintf(ln + q, sizeof ln - q, "; handle %#x event %p signalled %d", hv[i], o, ((event_t *)o)->signaled);
+                        else if (ty == O_THREAD && o) q += snprintf(ln + q, sizeof ln - q, "; handle %#x thread exited %d", hv[i], ((thr_t *)o)->exited);
+                        else q += snprintf(ln + q, sizeof ln - q, "; handle %#x of no waitable kind (%d)", hv[i], ty); } }
+                fprintf(stderr, "[dm]   %#x wait: %s%s\n", t->handle, ln, t->cancel ? "; a cancel is pending" : "");
+            }
+            q = 0; ln[0] = 0;
+            for (unsigned i = 0; i < 8 && i < t->nhist && q < (int)sizeof ln - 160; i++) { unsigned k = (t->nhist - 1 - i) & 7;
+                q += snprintf(ln + q, sizeof ln - q, " | -%.3fs %#x(%#llx, %#llx) = %#x", (nowns - t->hist[k].t) / 1e9, t->hist[k].svc, (unsigned long long)t->hist[k].a0, (unsigned long long)t->hist[k].a1, t->hist[k].res);
+                if (t->hist[k].dur) q += snprintf(ln + q, sizeof ln - q, " blocked %.3f ms ended by %#x", t->hist[k].dur / 1e6, t->hist[k].by);
+                if (t->hist[k].svc == 0x11 || t->hist[k].svc == 0x1B || t->hist[k].svc == 0x1C || t->hist[k].svc == 0x1D || t->hist[k].svc == 0x35 || t->hist[k].n) q += snprintf(ln + q, sizeof ln - q, " made %u", t->hist[k].n); }
+            if (q) fprintf(stderr, "[dm]   %#x history (age, svc(x0, x1) = result; of %u):%s\n", t->handle, t->nhist, ln);
+        }
         // A thread in an SVC: the guest code that called it, from its stack. Engines built without frame pointers (Batman: Arkham Knight's Unreal Engine 3) leave the frame-pointer backtrace
         // at the SVC wrapper, so the words of its stack that point into a module are listed, nearest first, with x19-x28. The gate block's sp (regs[99]) holds the x29 / x30 the block
         // pushed (x30 = the return address into the wrapper's caller, which the backtrace skips: the wrappers are leaf functions), the guest stack at the SVC follows at +16.
@@ -958,8 +992,22 @@ void dm_guest_sleep_ns(int64_t ns) {
     sleep_precise(now_ns() + (uint64_t)ns);
     if (me) me->sleeping = 0;
 }
+// Each thread's last eight synchronisation SVCs, for the state dump (svc_thread_dump): what it was called with, what it returned, when, how long it blocked, who
+// ended the wait, and how many threads it woke or moved to a mutex's queue. A frozen game shows its last steps there: a signal that reached nobody, a wait that ended
+// in a timeout, the wait a thread never came back from. Yields and sleeps are left out (a thread that polls would fill the list with them)
+static int hist_svc(int num) {
+    return num == 0x09 || num == 0x11 || num == 0x12 || num == 0x17 || num == 0x18 || num == 0x19 || num == 0x1A || num == 0x1B || num == 0x1C || num == 0x1D || num == 0x32 || num == 0x34 || num == 0x35;
+}
 int svc_thread(int num, uint64_t *regs) {
+    // The call's arguments, before the result overwrites them (the history above)
+    thr_t *hme = hist_svc(num) ? pthread_getspecific(g_keythr) : NULL; uint64_t ha0 = regs[0], ha1 = regs[1]; uint32_t hn0 = 0;
+    if (hme) { hn0 = hme->nmade; hme->w_dur = 0; hme->woke_by = 0; }
     int r = svc_thread_impl(num, regs);
+    if (hme) {   // written by the thread itself, read by the dump without a lock (a line of it may be half new)
+        unsigned k = hme->nhist++ & 7;
+        hme->hist[k].t = now_ns(); hme->hist[k].a0 = ha0; hme->hist[k].a1 = ha1; hme->hist[k].dur = hme->w_dur; hme->hist[k].res = (uint32_t)regs[0];
+        hme->hist[k].by = hme->woke_by; hme->hist[k].svc = (uint16_t)num; hme->hist[k].n = (uint16_t)(hme->nmade - hn0);
+    }
     thr_t *me = pthread_getspecific(g_keythr);
     // The default path hands off only after a wake. The optional broader mode
     // also checks peers that were already runnable, without serializing every
