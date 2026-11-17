@@ -527,6 +527,7 @@ def rewrite_variants(py, srcs, out, g, in_process=False):
 VK_BUILD = REPO / 'dm/gfx/tools/vk_android_build.py'
 VK_BUILD_WIN = REPO / 'dm/gfx/tools/vk_android_win.py'   # vk_android_build.py with what Windows needs put around it (that file's header)
 SPLIT = REPO / 'dm/gfx/tools/shader_split.py'
+LIST_SEP = '\x1f'   # shader_split.py's list separator (path_list): the add-on roots it splits, any of which may hold a comma
 VK_LIB, VK_PREFIX = 'dmsh_vk.lib', 'v-'   # dmsh_abi_vk.h DMSH_VK_LIB_FILE / DMSH_VK_DIR_PREFIX
 
 
@@ -597,6 +598,66 @@ def collected_nros(work):
     return d if (d / 'nro.tsv').is_file() and (Path(work) / 'android-nro.key').is_file() else None
 
 
+# What a split that lacks shaders of the profile's map says. The map's rows name the file each shader comes from, so the message gives a count and an example of
+# the missing shaders whose files the game files do not have. Add-on content is named, as one possible reason and no more (no game has shown it), only when nothing
+# else is known to explain the missing shaders: the dump has no add-on content at all, and every missing shader comes from a file the dump does not have (one whose
+# file is there differs for another reason)
+def lacking_shaders(g, rd, hard, total, dlc, tmp):
+    """The message for a split without the keys hard (sorted) of the profile's total: rd is the RomFS the split read, dlc how many add-on contents the dump has
+    (None: not known). A source is a RomFS path up to its first '#', and may go on into a container: its longest part that exists decides whether the file is there"""
+    src = {}
+    with open(g.dir / 'shader_map.tsv', encoding='utf-8') as f:
+        for c in (l.rstrip('\n').split('\t') for l in f):
+            if len(c) > 4 and c[0].endswith('.bin') and c[3] not in src: src[c[3]] = c[4].split('#')[0]
+    there = {}
+    def has(p):
+        if p not in there:
+            parts = p.strip('/').split('/')
+            while parts and not (hit := Path(rd) / '/'.join(parts)).exists(): parts.pop()
+            there[p] = bool(parts) and hit.is_file()
+        return there[p]
+    try:
+        if pack_dump.nup.split(str(rd)): raise ValueError('a RomFS in a .nup')   # its files are nodes of the package, which Path.exists does not see
+        gone = [k for k in hard if src.get(k, '').startswith('/') and not has(src[k])]
+    except Exception: gone, dlc = [], None   # the game files cannot be asked: only what the tables say
+    lack = f'the dump\'s shaders lack {len(hard)} of the {total} in the profile\'s shader_map.tsv (e.g. {", ".join(hard[:3])})'
+    if gone and len(gone) == len(hard) and dlc == 0:
+        return (f'{lack}: all of them come from files the game files do not have (e.g. {src[gone[0]]}), and the dump has no add-on content. The dump is '
+                f'incomplete; one possible reason (not seen with any game yet) is that these files belong to add-on content (DLC) the dump does not have. If the '
+                f'game has DLC, put its dump in the game folder\'s dlc/ folder, then pack again (the split is in {tmp})')
+    what = f', {len(gone)} of them from files the game files do not have (e.g. {src[gone[0]]})' if gone else ''
+    return f'{lack}{what}: the dump is of another version or incomplete, and the profile\'s shader library cannot be built from it (the split is in {tmp})'
+
+
+# A split that reads no shader at all made a pack with an empty shader library, which cannot draw (a provisional profile whose game keeps its shaders in a file
+# shader_split.py has no reader for: its map has no rows, so nothing was "lacking"). A game that draws through the Vulkan or OpenGL layer has no NVN shaders for
+# the split to find, and its profile says so
+def no_nvn_shaders(g):
+    """Whether the profile says the game has no NVN shaders: its shader_note says "no NVN shaders", or it lists the shaders captured from a run instead
+    (vk_capture.tsv, gl_capture.tsv)"""
+    try: note = g.get('shader_note', '') or ''
+    except Exception: note = ''
+    return 'no nvn shaders' in note.lower() or any((g.dir / f).is_file() for f in ('vk_capture.tsv', 'gl_capture.tsv'))
+
+
+def empty_split(g, rd, tmp):
+    """The message for a split that read no shader, of a game whose profile does not say it has none"""
+    return (f'the shader split read no shader from {rd} or main: the pack would have an empty shader library, and the game could not draw. Either the game keeps '
+            f'its shaders in a form shader_split.py does not read yet (the profile\'s README.md says where they are, when that is known), or the dump is incomplete. '
+            f'--no-shaders packs the code alone; a game that draws through the Vulkan or OpenGL layer says "no NVN shaders" in its profile\'s shader_note '
+            f'(dm/games/{g.id}/game.tsv) (the split is in {tmp})')
+
+
+def require_shaders(g):
+    """Stops a pack of a profile whose shader_map.tsv has no rows and that does not say the game has no NVN shaders, before a shader package or a library left by
+    an earlier run (both empty, and current by every check) is packed"""
+    f = g.dir / 'shader_map.tsv'
+    if f.is_file() and not map_keys(f) and not no_nvn_shaders(g):
+        raise Error(f'the profile {g.id} has no shader in its shader_map.tsv, and does not say that the game has none: its shader library would be empty, and the game '
+                    f'could not draw. The game keeps its shaders in a form shader_split.py does not read yet (the profile\'s README.md says where, when that is known). '
+                    f'--no-shaders packs the code alone')
+
+
 def split_shaders(a, g, vdir, pkg, parts=None, aoc=(), nros=None):   # parts: the version's (romfs, exefs) when they are not vdir's own (pack_dump.version_part); aoc: add-on RomFS roots to split too; nros: collected_nros
     """The Switch shader package from the dump, as the phone's split step makes it (the version's romfs and main, android/app PackService "split"): shader_split.py into
     <pkg> (written beside it, then renamed, so a stopped split leaves no half package). Its tables go beside the package. The library is the profile's (its shader_map.tsv
@@ -609,14 +670,14 @@ def split_shaders(a, g, vdir, pkg, parts=None, aoc=(), nros=None):   # parts: th
     env = child_env(DM_GAME=g.id, DM_SPLIT_TARGETED='1', **({'DM_NRO_DIR': str(nros)} if nros else {}))   # as the phone: only the files the profile's map names, when the build is the profile's and the tables come out the same
     # a program n > 0 keeps its shaders in the application's add-ons (pack_dump.split_addons): a Switch 2 Edition's NVN2 archives are in its add-on (Wonder's 010015100B515001)
     r = subprocess.run([py, str(SPLIT), str(rd), str(ed / 'main'), str(tmp / 'pkg'),
-                        *[str(tmp / f) for f in ('shader_map.tsv', 'shader_facts.tsv', 'shader_pairs.tsv', 'pso_pairs.tsv')], *([','.join(map(str, aoc))] if aoc else [])], env=env)
+                        *[str(tmp / f) for f in ('shader_map.tsv', 'shader_facts.tsv', 'shader_pairs.tsv', 'pso_pairs.tsv')], *([LIST_SEP.join(map(str, aoc))] if aoc else [])], env=env)   # LIST_SEP: shader_split.py's path_list (a path may hold a comma)
     if r.returncode: raise Error(f'shader_split.py exit code {r.returncode}')
+    if not map_keys(tmp / 'shader_map.tsv') and not no_nvn_shaders(g): raise Error(empty_split(g, rd, tmp))   # no shader read is a failure, not an empty library
     if (g.dir / 'shader_map.tsv').is_file():
         want, have = map_keys(g.dir / 'shader_map.tsv'), map_keys(tmp / 'shader_map.tsv')
         missing = sorted(want - have)
         if hard := [k for k in missing if k not in optional_keys(g)]:
-            raise Error(f'the dump\'s shaders lack {len(hard)} of the {len(want)} in the profile\'s shader_map.tsv (e.g. {", ".join(hard[:3])}): the dump is of another version '
-                        f'or incomplete, and the profile\'s shader library cannot be built from it (the split is in {tmp})')
+            raise Error(lacking_shaders(g, rd, hard, len(want), getattr(a, 'dlc_count', None), tmp))
         for f in ('shader_map.tsv', 'shader_facts.tsv', 'shader_pairs.tsv'):
             if (g.dir / f).is_file() and table_lines(g.dir / f) != table_lines(tmp / f):   # the comment lines name the game and the split's wording at the time
                 print(f'shaders: the dump\'s {f} differs from the profile\'s ({len(have - want)} shaders more); the library is the profile\'s, its shaders found in the package by key')
@@ -633,6 +694,7 @@ def split_shaders(a, g, vdir, pkg, parts=None, aoc=(), nros=None):   # parts: th
 def pack_shaders(a, g, work, out, vdir, parts=None, aoc=()):
     """shaders/v-<V>/ in the pack: an up-to-date library from the cache (built there first when it is missing or stale, from the shader package, split from the dump
     first when there is none and --shader-pkg names none). → the library path in the pack, or None"""
+    require_shaders(g)   # an empty map without the profile's word for it is no library to pack
     v = vk_chain(); name = VK_PREFIX + v
     cache = (a.shader_cache or work / 'android-shaders' / 'lib').resolve(); lib = cache / name
     dst = out / 'shaders' / name
@@ -767,6 +829,7 @@ def main():
         except ImportError as e: raise Error(f'{e.name} is missing in {sys.executable}: see android/README.md for the environment') from None
         if capstone.cs_version()[0] != 5: raise Error(f'Capstone {capstone.__version__}: the rewriter needs Capstone 5')
         app, vers, dlc = pack_dump.scan(folder)
+        a.dlc_count = len(dlc)   # for split_shaders' message (lacking_shaders): a dump without add-on content whose missing shaders come from files it does not have
         app0, conorig = app, None
         if a.program:   # program n > 0: its package program/<n> stands where a version folder would; program 0's newest RomFS is its "conorig"
             if pack_dump.nup.is_nup(folder): raise Error(f'--program {a.program}: {folder} is a .nup, which holds program 0 only; pack from the dump folder (updates/<version>/program/{a.program}/)')

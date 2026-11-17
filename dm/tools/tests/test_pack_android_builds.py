@@ -58,13 +58,15 @@ class OptionalKeys(unittest.TestCase):
 class SplitAbsent(unittest.TestCase):
     """split_shaders: the keys of the profile's map that the dump lacks and shader_optional.tsv names go to <package>/_absent.tsv; any other missing key stops the pack"""
 
-    def run_split(self, dump_keys, optional):
+    def run_split(self, dump_keys, optional, profile_keys=('k1', 'k2', 'k3'), note=None, capture=None):
         root = Path(self.enterContext(tempfile.TemporaryDirectory()))
         prof = root / 'profile'; prof.mkdir()
         row = lambda k: f'cs_x.bin\t0\tcompute\t{k}\tsrc\n'
-        (prof / 'shader_map.tsv').write_text('# map\npackage\tindex\tstage\tdm_ctl_sha16\tsource\n' + ''.join(row(k) for k in ('k1', 'k2', 'k3')))
+        (prof / 'shader_map.tsv').write_text('# map\npackage\tindex\tstage\tdm_ctl_sha16\tsource\n' + ''.join(row(k) for k in profile_keys))
         if optional: (prof / 'shader_optional.tsv').write_text(''.join(f'{k}\t1.0.0\n' for k in optional))
+        if capture: (prof / capture).write_text('')
         g = Profile('main', {}); g.dir = prof; g.id = '0000000000000000'
+        if note is not None: g.get = lambda key, default=None: note if key == 'shader_note' else default
         def fake_run(cmd, env=None):   # shader_split.py: <romfs> <main> <pkg> <map> <facts> <pairs> <pso_pairs>
             Path(cmd[4]).mkdir(parents=True)
             Path(cmd[5]).write_text('# map\npackage\tindex\tstage\tdm_ctl_sha16\tsource\n' + ''.join(row(k) for k in dump_keys))
@@ -89,6 +91,57 @@ class SplitAbsent(unittest.TestCase):
     def test_other_missing_key_stops(self):
         with self.assertRaises(pa.Error) as e: self.run_split(['k1'], ['k3'])
         self.assertIn('lack 1 of the 3', str(e.exception))
+
+    def test_missing_shaders_say_how_many_files_are_not_there(self):   # lacking_shaders: a count and an example, and add-on content named only when nothing else explains it
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        prof, rd = root / 'profile', root / 'romfs'; prof.mkdir(); (rd / 'Common/agl.sarc').parent.mkdir(parents=True)
+        (rd / 'Common/agl.sarc').write_text('x'); (rd / 'Course').mkdir()
+        rows = [('k1', '/Common/agl.sarc/agl_common.sharcb#BAHS@0x10'), ('k2', '/Course/Dlc/course.ptcl#BNSH@0xab000#var0'), ('k3', '/Course/Dlc/course.ptcl#BNSH@0x1#var1'),
+                ('k4', 'main#BNSH@0x128f000#var0')]
+        (prof / 'shader_map.tsv').write_text('# map\npackage\tindex\tstage\tdm_ctl_sha16\tsource\n' + ''.join(f'cs_x.bin\t{i}\tcompute\t{k}\t{s}\n' for i, (k, s) in enumerate(rows)))
+        g = Profile('main', {}); g.dir = prof
+        said = pa.lacking_shaders(g, rd, ['k2', 'k3'], 4, 0, root / 'tmp')   # their file is not there, and the dump has no add-on content
+        self.assertIn('lack 2 of the 4 in the profile\'s shader_map.tsv (e.g. k2, k3): all of them come from files the game files do not have (e.g. /Course/Dlc/course.ptcl)', said)
+        self.assertIn('one possible reason (not seen with any game yet) is that these files belong to add-on content (DLC) the dump does not have', said)
+        self.assertNotIn('another version', said); self.assertNotIn('usually', said, 'no more is said than the files show')
+        said = pa.lacking_shaders(g, rd, ['k1', 'k2', 'k3'], 4, 0, root / 'tmp')   # one of the missing shaders comes from a file that is there: DLC does not explain the dump
+        self.assertIn('lack 3 of the 4', said); self.assertIn('2 of them from files the game files do not have (e.g. /Course/Dlc/course.ptcl): the dump is of another version or incomplete', said)
+        self.assertNotIn('DLC', said)
+        said = pa.lacking_shaders(g, rd, ['k2', 'k3'], 4, 1, root / 'tmp')   # the same with add-on content in the dump: not the DLC
+        self.assertIn('2 of them from files the game files do not have (e.g. /Course/Dlc/course.ptcl): the dump is of another version or incomplete', said)
+        self.assertNotIn('DLC', said)
+        said = pa.lacking_shaders(g, rd, ['k1', 'k4'], 4, 0, root / 'tmp')   # the container is there (its shaders differ), and main always is
+        self.assertIn('lack 2 of the 4 in the profile\'s shader_map.tsv (e.g. k1, k4): the dump is of another version or incomplete', said)
+        self.assertNotIn('DLC', said)
+        said = pa.lacking_shaders(g, rd, ['k2'], 4, None, root / 'tmp')   # how much add-on content the dump has is not known: the count, and no guess
+        self.assertIn('1 of them from files the game files do not have (e.g. /Course/Dlc/course.ptcl): the dump is of another version or incomplete', said)
+        self.assertNotIn('DLC', said)
+        said = pa.lacking_shaders(g, f'{root}/game.nup:base/romfs', ['k2'], 4, 0, root / 'tmp')   # a RomFS in a .nup is not asked: what the tables say
+        self.assertIn('lack 1 of the 4 in the profile\'s shader_map.tsv (e.g. k2): the dump is of another version or incomplete', said)
+        self.assertNotIn('DLC', said)
+
+    def test_a_split_without_shaders_stops(self):
+        for keys in ((), ('k1',)):   # with rows in the profile's map too: the same words, not "lack 1 of the 1"
+            with self.assertRaises(pa.Error) as e: self.run_split([], [], keys, note='Some Game shaders (provisional profile; none read yet)')
+            self.assertIn('the shader split read no shader', str(e.exception)); self.assertIn('--no-shaders packs the code alone', str(e.exception))
+
+    def test_a_game_without_nvn_shaders_packs_an_empty_split(self):
+        for kw in ({'note': 'Hades has no NVN shaders (its SPIR-V shaders go through the Vulkan layer)'}, {'capture': 'gl_capture.tsv'}, {'capture': 'vk_capture.tsv'}):
+            self.assertTrue(self.run_split([], [], (), **kw).is_dir(), kw)
+
+    def test_the_profiles_say_which_games_have_no_nvn_shaders(self):   # the profiles as they are: every map without rows, and what its profile says
+        none = sorted(d.name for d in (REPO / 'dm/games').iterdir() if (d / 'shader_map.tsv').is_file() and not pa.map_keys(d / 'shader_map.tsv'))
+        said = [t for t in none if pa.no_nvn_shaders(pa.game.load(t))]
+        self.assertEqual([t for t in none if t not in said], [], 'a profile with an empty map says why')
+        for t in none: pa.require_shaders(pa.game.load(t))
+        pa.require_shaders(pa.game.load('0100152000022000'))   # a map with rows: nothing to ask
+        g = Profile('main', {}); g.dir = Path(self.enterContext(tempfile.TemporaryDirectory())); g.id = '0000000000000000'
+        (g.dir / 'shader_map.tsv').write_text('# map\npackage\tindex\tstage\tdm_ctl_sha16\tsource\n')
+        with self.assertRaises(pa.Error) as e: pa.require_shaders(g)
+        self.assertIn('has no shader in its shader_map.tsv', str(e.exception))
+        src = (REPO / 'scripts/pack_android.py').read_text(encoding='utf-8')
+        body = src[src.index('def pack_shaders('):]
+        self.assertLess(body.index('require_shaders(g)'), body.index('library_current(lib, g)'), 'before a cached library is taken')
 
     def test_absent_optional(self):
         """pack_shaders builds the library without the keys of _absent.tsv only when the profile's shader_optional.tsv names every one"""
