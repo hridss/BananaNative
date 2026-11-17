@@ -20,9 +20,17 @@
 // DM_PKP_ASPECT=<picture width/height> is opt-in and read once per game process.
 // Changing it requires a restart: live changes cannot safely restore cameras
 // that the game has copied or stopped rebuilding. Default/off never writes a
-// camera. The picture may use DM_VK_PICTURE_ASPECT; this does not fix the UI.
+// camera. The picture may use DM_VK_PICTURE_ASPECT; when DM_PATCH_VARIANT is
+// unset, this also drives Screen shape UI scaling/anchoring (gates 30|1..3).
+//
+// With DM_PATCH_VARIANT=43 (native 4:3 pack variant, main build 76a489f3...),
+// world cameras run at 4:3 (W1) plus the T95 7-deg Pokedex portrait camera fix
+// on gate 30|0, while gates 30|3..5 dispatch kg175 UI rules (pkp_ui43.c) and
+// 30|1..2 are no-ops. Any other DM_PATCH_VARIANT disables aspect() / UI squeeze
+// so variants are never double-corrected.
 #include "hle.h"
 #include "dm.h"
+#include "pkp_ui43.h"
 #include <math.h>
 #include <errno.h>
 #include <stdio.h>
@@ -31,7 +39,19 @@
 #include <string.h>
 
 #define K169 (16.0 / 9.0)
-enum { CAM_PROJ = 192, CAM_FOV = 328, CAM_ASPECT = 332, CAM_FLAGS = 344, NCAM = 8, NPUT = 32 };
+#define PKP_MAIN_BUILD "76a489f3bd3642fa5e18bd83d32c98ba"
+enum {
+    CAM_PROJ = 192,
+    CAM_FOV = 328,
+    CAM_ASPECT = 332,
+    CAM_FLAGS = 344,
+    NCAM = 8,
+    NPUT = 32,
+    PKP_FITW_OFF = 0x9131a8,
+    PKP_FITW_ORIG_INSN = 0x6e0c0400u,
+    PKP_T95_FOV_BITS = 0x3dfa35ddu,
+    PKP_T95_LR2_OFF = 0x22bba04u
+};
 
 static _Atomic uint64_t g_cam[NCAM];
 static _Atomic uint32_t g_cam_fov[NCAM]; // an unchanged scene camera never loses provenance
@@ -39,15 +59,55 @@ static _Atomic uint32_t g_put[NPUT];   // corrected FOV bit patterns, including 
 static _Atomic unsigned g_put_at, g_puts;
 static pthread_once_t g_config_once = PTHREAD_ONCE_INIT;
 static double g_aspect;
+static int g_variant_43;
+static uint64_t g_main_base;
 
 static int close_to(double a, double b) { return fabs(a - b) < 0.02; }
 static float rdf(uint64_t a) { float f; memcpy(&f, (void *)a, 4); return f; }
 static void wrf(uint64_t a, float f) { memcpy((void *)a, &f, 4); }
 static uint32_t rdu(uint64_t a) { uint32_t u; memcpy(&u, (void *)a, 4); return u; }
 
-// Without DM_PKP_ASPECT, the launcher's Game settings › Aspect ratio (game.tsv aspect rows) or Screen
-// shape: DM_VK_PICTURE_ASPECT=<w>:<h>, the shape the present shows the 16:9 frame at.
+static const module_t *find_main_mod(void) {
+    for (int i = 0; i < g_nmod; i++)
+        if (!strcmp(g_mod[i].name, "main")) return &g_mod[i];
+    return NULL;
+}
+
+static int is_fitw_branch(uint32_t insn) {
+    if (insn == PKP_FITW_ORIG_INSN || (insn >> 26) != 0x05u) return 0;
+    int32_t imm26 = (int32_t)(insn << 6) >> 6;
+    int64_t target = (int64_t)PKP_FITW_OFF + (int64_t)imm26 * 4;
+    return target >= 0x2749480 && target < 0x274a000;
+}
+
+// With DM_PATCH_VARIANT=43, lock to 4:3 + kg175 UI once main+0x9131a8 shows the variant branch.
+// Any other DM_PATCH_VARIANT disables camera/UI correction. When DM_PATCH_VARIANT is unset, fall
+// back from DM_PKP_ASPECT to Screen shape's DM_VK_PICTURE_ASPECT=<w>:<h>.
 static void config_init(void) {
+    const module_t *m = find_main_mod();
+    if (!m || strcmp(m->build_id, PKP_MAIN_BUILD)) return;
+    g_main_base = (uint64_t)(uintptr_t)m->base;
+    const char *var = getenv("DM_PATCH_VARIANT");
+    if (var && *var) {
+        if (!strcmp(var, "43")) {
+            if (!m->base || (m->text_end && m->text_end < PKP_FITW_OFF + 4)) {
+                LOG("[RED] pkp ui43: DM_PATCH_VARIANT=43 but main image is unavailable; falling back to non-variant mode");
+                return;
+            }
+            uint32_t insn = rdu(g_main_base + PKP_FITW_OFF);
+            if (!is_fitw_branch(insn)) {
+                LOG("[RED] pkp ui43: DM_PATCH_VARIANT=43 but main+%#x is %#010x (not 4:3 fitw cut); falling back to non-variant mode",
+                    PKP_FITW_OFF, insn);
+                return;
+            }
+            g_variant_43 = 1;
+            g_aspect = 4.0 / 3.0;
+            LOG("pkp aspect: variant 43 active (4:3 world camera + kg175 UI)");
+            return;
+        }
+        LOG("pkp aspect: disabled under DM_PATCH_VARIANT=%s", var);
+        return;
+    }
     const char *e = getenv("DM_PKP_ASPECT"), *src = "DM_PKP_ASPECT";
     double a = 0;
     if (e && *e) {
@@ -66,9 +126,15 @@ static void config_init(void) {
 }
 
 static double aspect(void) {
-    if (strcmp(dm_main_build(), "76a489f3bd3642fa5e18bd83d32c98ba")) return 0;
+    if (strcmp(dm_main_build(), PKP_MAIN_BUILD)) return 0;
     pthread_once(&g_config_once, config_init);
     return g_aspect;
+}
+
+static int is_variant_43(void) {
+    if (strcmp(dm_main_build(), PKP_MAIN_BUILD)) return 0;
+    pthread_once(&g_config_once, config_init);
+    return g_variant_43;
 }
 
 static int cam_index(uint64_t cam) {
@@ -100,8 +166,7 @@ static void put(uint32_t fb) {
 }
 
 static void cam_submit(uint64_t *r, int param) {
-    (void)param;
-    if (!aspect() || !r[20]) return;
+    if (param != 0 || !aspect() || !r[20]) return;
     remember(r[20]);
 }
 
@@ -109,7 +174,7 @@ static void cam_submit(uint64_t *r, int param) {
 // A scene camera's original FOV becomes taller. One already corrected is left
 // alone, including when the game submits its copied render camera again.
 static void proj_build(uint64_t *r, int param) {
-    (void)param;
+    if (param != 0) return;
     double a = aspect();
     uint64_t cam = r[0];
     int index = cam_index(cam);
@@ -311,19 +376,61 @@ static void pane_rules(uint64_t *r, double a) {
     *fl |= MOVED;
 }
 
+// Compare low 32 bits of lr2 so PAC/TBI bits (39..63 on 39-bit-VA Android) do not break T95.
+static int t95_caller_is_22bba04(uint64_t fp) {
+    if (!g_main_base || fp < 0x10000ull || (fp & 7)) return 0;
+    uint64_t caller_fp = 0;
+    memcpy(&caller_fp, (const void *)(uintptr_t)fp, sizeof caller_fp);
+    if (caller_fp < 0x10000ull || (caller_fp & 7)) return 0;
+    uint64_t lr2 = 0;
+    memcpy(&lr2, (const void *)(uintptr_t)(caller_fp + 8), sizeof lr2);
+    return (uint32_t)lr2 == (uint32_t)(g_main_base + PKP_T95_LR2_OFF);
+}
+
 static void proj_done(uint64_t *r, int param) {
+    int v43 = is_variant_43();
+    if (param == 4) {
+        if (v43) pkp_ui43_pre_bake((void *)(uintptr_t)r[0], (void *)(uintptr_t)r[1]);
+        return;
+    }
+    if (param == 5) {
+        if (v43) pkp_ui43_post_bake((void *)(uintptr_t)r[19]);
+        return;
+    }
     double a = aspect();
-    if (param == 2) { if (a) text_consts(r, a); return; }
-    if (param == 3) { if (a) pane_rules(r, a); return; }
+    if (param == 3) {
+        if (v43) pkp_ui43_gmx_fix(r);
+        else if (a) pane_rules(r, a);
+        return;
+    }
+    if (param == 2) {
+        if (!v43 && a) text_consts(r, a);
+        return;
+    }
+    if (param != 0 && (param != 1 || v43)) return;
     uint64_t cam = r[19];
-    if (!a || !cam || !close_to(rdf(cam + CAM_ASPECT), K169)) return;
-    float *p = (float *)(cam + CAM_PROJ);
+    if (!a || !cam) return;
+    float *p = (float *)(uintptr_t)(cam + CAM_PROJ);
     if (!isfinite(p[0]) || !isfinite(p[5]) || !(fabsf(p[5]) > 1e-6f)) return;
     // Orthographic: only the UI's screen-pixel cameras (P00 = 2/1920: text and 2D layers, near 0.001 far
     // 10000), never the world's (the 64 / 80000 shadow cameras are 16:9 too, but hundreds of units wide)
-    if (rdu(cam + CAM_FLAGS) & 1) { if (fabsf(fabsf(p[0]) * 960.0f - 1.0f) < 0.01f) ui_squeeze(cam, p, a); return; }
-    if (!ours(rdu(cam + CAM_FOV))) { ui_squeeze(cam, p, a); return; }
-    p[0] = copysignf((float)(fabsf(p[5]) / a), p[0]);
+    if (rdu(cam + CAM_FLAGS) & 1) {
+        if (!v43 && close_to(rdf(cam + CAM_ASPECT), K169) && fabsf(fabsf(p[0]) * 960.0f - 1.0f) < 0.01f)
+            ui_squeeze(cam, p, a);
+        return;
+    }
+    uint32_t fb = rdu(cam + CAM_FOV);
+    if (ours(fb)) {
+        if (close_to(rdf(cam + CAM_ASPECT), K169))
+            p[0] = copysignf((float)(fabsf(p[5]) / a), p[0]);
+        return;
+    }
+    if (v43) {
+        if (fb == PKP_T95_FOV_BITS && t95_caller_is_22bba04(r[29]))
+            p[0] /= 0.75f;
+    } else if (close_to(rdf(cam + CAM_ASPECT), K169)) {
+        ui_squeeze(cam, p, a);
+    }
 }
 
 __attribute__((constructor)) static void pkp_aspect_attach(void) {

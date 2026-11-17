@@ -44,6 +44,7 @@ run: $(B)/t_language $(B)/t_motion $(B)/t_heap_size $(B)/t_touch $(B)/t_gesture 
 	$(B)/t_mtf_speed
 	$(B)/t_mtf_wide
 	$(B)/t_pkp_aspect
+	$(B)/t_android_pkp_ui43
 	$(B)/t_drs_steps
 	$(B)/t_uecvar
 	$(B)/t_audren_work
@@ -667,5 +668,8 @@ run: $(B)/t_drs_steps
 $(B)/t_drs_steps: t_drs_steps.c ../drs_steps.h | $(B)
 	$(CLANG) -O1 -g -o $@ t_drs_steps.c -lm
 run: $(B)/t_pkp_aspect
-$(B)/t_pkp_aspect: t_pkp_aspect.c ../android/pkp_aspect.c ../hle.h ../dm.h $(GAME_H) | $(B)
+$(B)/t_pkp_aspect: t_pkp_aspect.c ../android/pkp_aspect.c ../android/pkp_ui43.c ../android/pkp_ui43.h ../hle.h ../dm.h $(GAME_H) | $(B)
 	$(CLANG) -O1 -g -Wno-unused-function -I.. $(GINC) -o $@ t_pkp_aspect.c -lm -pthread
+run: $(B)/t_android_pkp_ui43
+$(B)/t_android_pkp_ui43: t_android_pkp_ui43.c ../android/pkp_ui43.c ../android/pkp_ui43.h | $(B)
+	$(CLANG) -O1 -g -Wall -Wno-unused-function -o $@ t_android_pkp_ui43.c -lm
