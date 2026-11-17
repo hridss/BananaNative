@@ -1,0 +1,45 @@
+# Provisional game profile of Chained Echoes (Switch, base game v0 + update v1310720 + the Ashes of Elrant DLC), Unity 2020.3.36f1 IL2CPP, SDK 14.3.0, NVN. Written by Peanuts Native from a survey of
+# the game files with dm/games/profile_guess.py; the game has not been booted with it. Every key marked "guess" follows a rule or a sibling profile and is not measured. README.md beside this file.
+# Format: see dm/games/README.md
+
+# ---- Identity ----
+title_id	0100C510166F0000
+program_id	0100C510166F0000
+
+# ---- App ----
+name	Chained Echoes
+ipa	ChainedEchoes.ipa
+app_category	public.app-category.role-playing-games
+# guess: a 2D role-playing game moved with the stick or the D-pad; the 3D layout has the D-pad. Nothing in the files decides it
+pad_layout	full
+
+# ---- Versions ----
+# The display version was not read (the import keeps no control data)
+build	v1310720	?	main=17b6a110cc529fbe702b09f1ba1da61d	subsdk0=c781dd63daf0ddcdb9975da50a198f93	sdk=2aef2cffb104ee7c9e212fd2f4c731e9
+package	v1310720
+shader_versions	v1310720
+
+# ---- Files ----
+# load order as on Horizon: main, subsdk0, sdk. subsdk0 is NintendoSDK_movie: main takes 25 functions from it (movie::Extractor, movie::Decoder: Unity's video player), none of which
+# the host supplies itself
+modules	main subsdk0 sdk
+# the file every Unity player has (as the other Unity profiles); profile_guess.py's rule would name the largest file, a music bundle
+romfs_marker	Data/globalgamemanagers
+# the file types that are big or already compressed (profile_guess.py's rule)
+zip_store	.bundle:.resource:.ress:.assets:.dat:.metallib
+
+# ---- Memory ----
+# guess for this build, not measured here. The NPDM declares 16 MB of system resource, so there is virtual address memory; main also imports nn::os::SetMemoryHeapSize. The 5 GB block
+# (256 MB in front + 4.375 GB alias region + 256 MB stack region + 128 MB heap region) with the hardware pool, as upstream nxnative's profile of update 1.1.1 (v131072), which played the
+# prologue on the Mac with it: the alias region's high-water mark +3.5 GB of 64 GB, 1.95 GB resident. The sdk build (2aef2cff…) is the one that profile used, with the SDK-wide
+# node area cut and 2 MB region alignment (dm/tools/sdk_patches.py). No heap check has run on either build
+sys_resource	0x1000000
+mem_reserve	0x140000000
+mem_alias	0x118000000
+mem_stack	0x10000000
+app_pool	0xCD500000
+
+# ---- Shader split (shader_split.py; Unity Shader objects, read by unityfs.py) ----
+# guess (Fire Emblem Engage's groups, the other Unity 2020.3 game with Addressables): engine built-ins (Resources/) go to engine, the Addressables bundles to assets, the player's serialized files to data
+shader_groups	/Resources/=engine /StreamingAssets/=assets /Data/=data
+shader_note	Chained Echoes shaders (provisional profile)
