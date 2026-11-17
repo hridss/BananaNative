@@ -93,7 +93,7 @@
 
     <!-- Home, the dock, adding and removing a game -->
     <string name="home_a_command_from_another_app">Команду від іншого додатка проігноровано (Налаштування › Керування через ADB вимкнено)</string>
-    <string name="home_a_dump_folder_copied_into">Папка дампа (скопійована в додаток: для читання папки з її місця потрібен доступ до всіх файлів)</string>
+    <string name="home_a_dump_folder_copied_into">Папка дампа (скопійована в додаток: для читання папки на її поточному місці потрібен доступ до всіх файлів)</string>
     <string name="home_a_shortcut_that_starts_this">Ярлик для швидкого запуску цієї гри</string>
     <string name="home_a_zip_or_a_pack">.zip-архів або папка паку</string>
     <string name="home_a_zip_or_a_save">.zip-архів або папка збережень</string>
@@ -121,7 +121,7 @@
     <string name="home_keep_both">Залишити обидва</string>
     <string name="home_lossless_dll_installed">Lossless.dll встановлено</string>
     <string name="home_more">Більше</string>
-    <string name="home_needed_to_read_a_dump">Потрібно для читання папки дампа з її місця. Файл .nup працює без цього, а папку дампа можна натомість скопіювати в додаток.</string>
+    <string name="home_needed_to_read_a_dump">Потрібно для читання папки дампа на її поточному місці. Файл .nup працює без цього, а папку дампа можна натомість скопіювати в додаток.</string>
     <string name="home_no_game_added">Ігор ще не додано</string>
     <string name="home_not_set">не задано</string>
     <string name="home_one_zip_into_a_folder">Один .zip-архів у вибрану вами папку</string>
@@ -523,7 +523,7 @@
     <string name="home_checking_name">Перевірка %1$s…</string>
     <plurals name="home_checking_games">
         <item quantity="one">Перевірка %1$d гри…</item>
-        <item quantity="few">Перевірка %1$d ігор…</item>
+        <item quantity="few">Перевірка %1$d гри…</item>
         <item quantity="many">Перевірка %1$d ігор…</item>
         <item quantity="other">Перевірка %1$d ігор…</item>
     </plurals>
@@ -978,7 +978,7 @@
     <string name="game_applies_now_resizes_picture">Застосовується зараз: гра змінює розмір зображення за кілька кадрів. Збережено для цієї гри (той самий параметр, що й Налаштування гри › Роздільна здатність гри).</string>
     <string name="game_fit_keeps_shape_note">«Вписати» зберігає пропорції гри, «Розтягнути» заповнює весь екран; нижче 100 % зображення зменшується з чорними полями навколо. Застосовується зараз і зберігається для цієї гри.</string>
     <string name="home_game_details">Title ID: %1$s\nГра: %2$s\nПак: %3$s\nШейдери: %4$s\nЗбереження: %5$s</string>
-    <string name="home_nup_in_place">%1$s (.nup використовується з місця зберігання, обрано через системний провідник)</string>
+    <string name="home_nup_in_place">%1$s (.nup використовується безпосередньо з поточного місця, обрано через файловий менеджер)</string>
     <string name="home_shaders_present">наявні (%1$s)</string>
 
     <!-- found by the whole-file sweep -->
@@ -1083,7 +1083,7 @@
     <string name="game_default_main_screens">За замовчуванням (головного екрана: %1$s)</string>
     <string name="game_aspect_native">" (нативне)"</string>
     <string name="game_aspect_3d_view">" (3D-сцена)"</string>
-    <string name="game_aspect_3d_follows">" (3D-сцена підлаштовується; HUD і меню зберігають макет 16:9)"</string>
+    <string name="game_aspect_3d_follows">" (3D-сцена підлаштовується; HUD і меню зберігають формат 16:9)"</string>
     <string name="game_auto_colon">Авто: %1$s</string>
     <string name="game_none_lower">немає</string>
     <string name="game_automatic_paren">" (автоматично)"</string>
