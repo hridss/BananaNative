@@ -12,9 +12,11 @@ import re, struct, sys, os
 
 # The variables the host may write: the engine's frame limit, its present interval (rhi., or nvn. in the Switch RHI of UE 4.18), the texture streaming pool, and a game's own frame-limit
 # variable a profile names with ue_fps_cvar (SHIN MEGAMI TENSEI V: Vengeance's Project.FrameRateLimit, which its settings apply to t.MaxFPS), and the dynamic resolution's floor
-# (hle_uecvar.c, DM_UE_DYNRES_MIN), and the static meshes' LOD distance scale (hle_uecvar.c, ue_lod_scale). A name a profile names must be listed here
+# (hle_uecvar.c, DM_UE_DYNRES_MIN), and the static meshes' LOD distance scale (hle_uecvar.c, ue_lod_scale), and the tonemapper's sharpening and the upscale filter that
+# brings a dynamic resolution under 100 % back to the output, and the anti-aliasing method (2: temporal, with its upsampling) (a profile's ue_set rows: Orbitals). A name a
+# profile names must be listed here
 NAMES = ('t.MaxFPS', 'rhi.SyncInterval', 'nvn.SyncInterval', 'r.Streaming.PoolSize', 'Project.FrameRateLimit', 'r.DynamicRes.MinScreenPercentage',
-         'r.StaticMeshLODDistanceScale')
+         'r.StaticMeshLODDistanceScale', 'r.Tonemapper.Sharpen', 'r.Upscale.Quality', 'r.AntiAliasingMethod')
 # Variables registered by reference (FAutoConsoleVariableRef): the engine reads a global of its own, which the static constructor passes to IConsoleManager's register call
 # (x2, an address made by adrp + add) with the name (x1). Their fixup (UE_CVAR:<name>) gives that global's offset, not an object's (game.py marks a profile's ue_set rows of
 # these): the translucent lighting volume and its size, the lights' draw distance (hle_uecvar.c dm_ue_set_tick)
