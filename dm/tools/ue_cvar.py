@@ -19,8 +19,8 @@ NAMES = ('t.MaxFPS', 'rhi.SyncInterval', 'nvn.SyncInterval', 'r.Streaming.PoolSi
          'r.StaticMeshLODDistanceScale', 'r.Tonemapper.Sharpen', 'r.Upscale.Quality', 'r.AntiAliasingMethod')
 # Variables registered by reference (FAutoConsoleVariableRef): the engine reads a global of its own, which the static constructor passes to IConsoleManager's register call
 # (x2, an address made by adrp + add) with the name (x1). Their fixup (UE_CVAR:<name>) gives that global's offset, not an object's (game.py marks a profile's ue_set rows of
-# these): the translucent lighting volume and its size, the lights' draw distance (hle_uecvar.c dm_ue_set_tick)
-REFS = ('r.TranslucentLightingVolume', 'r.TranslucencyLightingVolumeDim', 'r.LightMaxDrawDistanceScale')
+# these): the translucent lighting volume and its size, the lights' draw distance, the skeletal meshes' LOD bias (hle_uecvar.c dm_ue_set_tick)
+REFS = ('r.TranslucentLightingVolume', 'r.TranslucencyLightingVolumeDim', 'r.LightMaxDrawDistanceScale', 'r.SkeletalMeshLODBias')
 RET = 0xD65F03C0
 
 def adrp_page(w, pc):
