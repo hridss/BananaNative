@@ -13,6 +13,7 @@ OP_ACCESS_CHAIN, OP_IN_BOUNDS_ACCESS_CHAIN, OP_DECORATE, OP_MEMBER_DECORATE = 65
 OP_COMPOSITE_EXTRACT, OP_COMPOSITE_INSERT, OP_COPY_OBJECT, OP_BITCAST, OP_FADD, OP_FMUL = 81, 82, 83, 124, 129, 133
 OP_EMIT_VERTEX, OP_EMIT_STREAM_VERTEX, OP_LABEL, OP_RETURN, OP_RETURN_VALUE, OP_IMAGE_TEXEL_POINTER = 218, 220, 248, 253, 254, 60
 OP_SPEC_CONSTANT_FALSE, OP_SELECT, OP_IMAGE_READ, OP_IMAGE_WRITE = 49, 169, 98, 99
+OP_SAMPLED_IMAGE = 86
 # decorations, storage classes, builtins
 DEC_SPEC_ID, DEC_BLOCK, DEC_BUFFER_BLOCK, DEC_BUILTIN, DEC_LOCATION, DEC_BINDING, DEC_SET = 1, 2, 3, 11, 30, 33, 34
 SC_UNIFORM_CONSTANT, SC_INPUT, SC_UNIFORM, SC_OUTPUT, SC_FUNCTION, SC_PUSH_CONSTANT, SC_STORAGE_BUFFER = 0, 1, 2, 3, 7, 9, 12
@@ -647,6 +648,198 @@ def buffer_block_to_storage(m):
             x[1] = sb_ptr(x[1]); sb.add(x[2])
     m.index()
     return len(blocks)
+
+
+POOL_VAR_SUFFIX = '_cb0_40000000'   # the name ending vk_android_build.py classify reads as the texture / sampler pool (POOL_SUFFIX)
+POOL_TEX_LEN, POOL_SAMP_LEN = 1 << 20, 1 << 12   # the pools' ID ranges (dmsh_abi_vk.h DMSH_VK_POOL_TEX_COUNT / DMSH_VK_POOL_SAMP_COUNT)
+UBO_WORDS = 4096   # a uniform buffer as the translator declares it: 4096 16-byte rows (64 KiB)
+
+
+def _literal_word(op, k):
+    """Whether word k of a function-body instruction of opcode op is a literal, not an id (vka_spvpatch.c pf_lit's table): an extended instruction's number, memory
+    and image operand masks, composite indices, shuffle components, merge and branch-weight literals, switch case values"""
+    if op == OP_EXT_INST: return k == 4
+    if op == OP_LOAD: return k >= 4
+    if op == OP_STORE: return k >= 3
+    if op == 79: return k >= 5                      # OpVectorShuffle
+    if op == OP_COMPOSITE_EXTRACT: return k >= 4
+    if op == OP_COMPOSITE_INSERT: return k >= 5
+    if op == 247: return k == 2                     # OpSelectionMerge
+    if op == 246: return k >= 3                     # OpLoopMerge
+    if op == 250: return k >= 4                     # OpBranchConditional
+    if op == 251: return k >= 3 and not (k - 3) & 1   # OpSwitch: its literals
+    if op in (87, 88, 91, 92, 95, 98): return k == 5   # image operands' mask (the operands after it are ids)
+    if op in (89, 90, 93, 94, 96, 97): return k == 6
+    return False
+
+
+def _id_words(x):
+    """The words of a function-body instruction that are ids (literals left out)"""
+    op = x[0] & 0xffff
+    return [v for k, v in enumerate(x) if k and not _literal_word(op, k)]
+
+
+def ubo_handle_tables(m, specs):
+    """A texture array the shader indexes with a handle's position in the game's own uniform buffer (Ryujinx's BindlessToArray over a uniform slot: element k is the handle at
+    byte off + 8 k of c[3 + slot]). The translator sizes it to every handle a 64 KiB buffer holds, 8,192 (Program.cs QueryTextureArrayLengthFromBuffer), which the replay
+    cannot bind as descriptors (one per element, every draw). So the shader reads the table itself, as the Metal build's pool_arrays has it: each access chain into the array
+    and its load become a load of that handle word from the uniform buffer (its <prefix>_c<n> block, added when the shader has none), its texture ID (low 20 bits) indexing
+    the texture pool (set 1 binding 0) and its sampler ID (high 12 bits; or the sampler word ORed in, or a constant ID) the sampler pool (binding 1), joined by OpSampledImage
+    before each use (a sampled image must be made in the block that uses it). The new variables are named so that classify reads them as CBUF, TEX_POOL and SAMP_POOL, and
+    the replay binds them as it binds those (its texture pool reads reported as any pool read's: vka_spvpatch.c vka_spv_pool_fb). Like every pool read, the IDs index the
+    pool's table as the game wrote them, without the bound pool's base (vka_bind.c vka_drv_fill).
+    specs: {array variable: {'prefix': stage prefix, 'slot': uniform slot, 'off': byte offset of element 0, 'samp': None (the sampler ID is the same word's high 12 bits),
+    ('id', sampler ID) or (slot, byte offset) of one sampler word ORed into every element's handle}}. An array used other than through one-index access chains that are
+    loaded and the loads used by image instructions is left as it is. → the number of arrays rewritten"""
+    if not specs: return 0
+    OP_IADD, OP_SHR, OP_SHL, OP_OR, OP_AND, OP_PHI, OP_CALL, OP_COMPOSITE_CONSTRUCT = 128, 194, 196, 197, 199, 245, 57, 80
+    DEC_ARRAY_STRIDE, DEC_OFFSET = 6, 35
+    users = collections.defaultdict(list)   # id → indices of the instructions in function bodies that take it as an operand
+    body = False
+    for k, x in enumerate(m.ins):
+        body = body or x[0] & 0xffff == OP_FUNCTION
+        if body:
+            for v in _id_words(x): users[v].append(k)
+    plans = {}
+    for var, sp in specs.items():
+        if var not in m.vars: continue
+        ptr, sc = m.vars[var]; arr = m.pointee(ptr)[1]
+        if sc != SC_UNIFORM_CONSTANT or m.op(arr) != OP_TYPE_ARRAY: continue
+        elem = m.types[arr][2]
+        img = m.types[elem][2] if m.op(elem) == OP_TYPE_SAMPLED_IMAGE else elem if m.op(elem) == OP_TYPE_IMAGE else None
+        if img is None or m.types[img][3] == DIM_BUFFER or m.types[img][7] != 1: continue
+        sites, ok = [], True
+        for k in users.get(var, ()):
+            ac = m.ins[k]
+            if ac[0] & 0xffff not in (OP_ACCESS_CHAIN, OP_IN_BOUNDS_ACCESS_CHAIN) or len(ac) != 5 or ac[3] != var: ok = False; break
+            for j in users.get(ac[2], ()):
+                if j == k: continue   # (the access chain itself: its result is among its words)
+                ld = m.ins[j]
+                if ld[0] & 0xffff != OP_LOAD or ld[3] != ac[2]: ok = False; break
+                cons = [c_ for c_ in users.get(ld[2], []) if c_ != j]
+                if any(m.ins[c][0] & 0xffff in (OP_PHI, OP_STORE, OP_CALL, OP_SELECT, OP_COPY_OBJECT, OP_COMPOSITE_CONSTRUCT) for c in cons): ok = False; break
+                sites.append((k, j, cons))
+            if not ok: break
+        if ok: plans[var] = (sp, elem, img, sites)
+    if not plans: return 0
+    # declarations first: they move the function bodies
+    u32 = m.add_type(OP_TYPE_INT, 32, 0)
+    c = lambda v: m.add_const(u32, v)
+    cbufs, pools, decl_names, decl_decos, new_vars, strided = {}, {}, [], [], [], set()
+    def named(name, sc_):
+        return next((v for v, (p, s) in m.vars.items() if s == sc_ and m.names.get(v) == name), None)
+    def cbuf(prefix, slot):   # (variable, scalar type, pointer to the scalar) of uniform slot `slot`'s block
+        if (prefix, slot) in cbufs: return cbufs[prefix, slot]
+        v = named(f'{prefix}_c{slot + 3}', SC_UNIFORM)
+        if v is not None:   # the translator's own block: one member, 4096 rows of 4 32-bit components
+            st = m.pointee(m.vars[v][0])[1]
+            row = m.types[st][2] if m.op(st) == OP_TYPE_STRUCT and len(m.types[st]) == 3 else None
+            vec = m.types[row][2] if row is not None and m.op(row) == OP_TYPE_ARRAY else None
+            if vec is None or m.op(vec) != OP_TYPE_VECTOR or m.types[vec][3] != 4 or m.consts.get(m.types[row][3], (0, [0]))[1][0] != UBO_WORDS: v = None
+            else: sca = m.types[vec][2]
+        if v is None:
+            sca = u32; vec = m.add_type(OP_TYPE_VECTOR, u32, 4); row = m.add_type(OP_TYPE_ARRAY, vec, c(UBO_WORDS))
+            st = m.new_id(); x = [3 << 16 | OP_TYPE_STRUCT, st, row]; m._insert_decl(x); m.types[st] = x
+            if DEC_ARRAY_STRIDE not in m.decos.get(row, {}) and row not in strided: decl_decos.append([4 << 16 | OP_DECORATE, row, DEC_ARRAY_STRIDE, 16]); strided.add(row)
+            decl_decos.extend([[3 << 16 | OP_DECORATE, st, DEC_BLOCK], [5 << 16 | OP_MEMBER_DECORATE, st, 0, DEC_OFFSET, 0]])
+            v = m.new_id(); m._insert_decl([4 << 16 | OP_VARIABLE, m.add_type(OP_TYPE_POINTER, SC_UNIFORM, st), v, SC_UNIFORM])
+            decl_names.append([2 + len(lit_string(f'{prefix}_c{slot + 3}')) << 16 | OP_NAME, v, *lit_string(f'{prefix}_c{slot + 3}')])
+            decl_decos.extend([[4 << 16 | OP_DECORATE, v, DEC_SET, 0], [4 << 16 | OP_DECORATE, v, DEC_BINDING, 0x7000 + len(new_vars)]]); new_vars.append(v)
+        cbufs[prefix, slot] = (v, sca, m.add_type(OP_TYPE_POINTER, SC_UNIFORM, sca))
+        return cbufs[prefix, slot]
+    def pool(prefix, ty, n, tag):   # (variable, pointer to an element) of the texture or sampler pool read as an array of `ty`
+        if (ty, n) in pools: return pools[ty, n]
+        at = m.add_type(OP_TYPE_ARRAY, ty, c(n)); pt = m.add_type(OP_TYPE_POINTER, SC_UNIFORM_CONSTANT, at)
+        v = next((v for v, (p, s) in m.vars.items() if p == pt and m.names.get(v, '').endswith(POOL_VAR_SUFFIX) and DEC_BINDING in m.decos.get(v, {})), None)
+        if v is None:
+            v = m.new_id(); m._insert_decl([4 << 16 | OP_VARIABLE, pt, v, SC_UNIFORM_CONSTANT])
+            nm = f'{prefix}_{tag}{len(pools)}{POOL_VAR_SUFFIX}'
+            decl_names.append([2 + len(lit_string(nm)) << 16 | OP_NAME, v, *lit_string(nm)])
+            decl_decos.extend([[4 << 16 | OP_DECORATE, v, DEC_SET, 0], [4 << 16 | OP_DECORATE, v, DEC_BINDING, 0x7000 + len(new_vars)]]); new_vars.append(v)
+        pools[ty, n] = (v, m.add_type(OP_TYPE_POINTER, SC_UNIFORM_CONSTANT, ty))
+        return pools[ty, n]
+    smp_t = m.add_type(OP_TYPE_SAMPLER)
+    for var, (sp, elem, img, sites) in plans.items():
+        cbuf(sp['prefix'], sp['slot']); pool(sp['prefix'], img, POOL_TEX_LEN, 'tpool')
+        if m.op(elem) == OP_TYPE_SAMPLED_IMAGE: pool(sp['prefix'], smp_t, POOL_SAMP_LEN, 'spool')
+        if isinstance(sp['samp'], tuple) and sp['samp'][0] != 'id': cbuf(sp['prefix'], sp['samp'][0])
+    for v in (0, 1, 2, 3, 20, 0xfffff): c(v)
+    for sp, *_ in plans.values():
+        c(sp['off'] // 4)
+        if isinstance(sp['samp'], tuple): (c(sp['samp'][1]) if sp['samp'][0] == 'id' else (c(sp['samp'][1] // 16), c(sp['samp'][1] // 4 & 3)))
+    if decl_decos:
+        at = max(k for k, x in enumerate(m.ins) if x[0] & 0xffff in (OP_DECORATE, OP_MEMBER_DECORATE)) + 1
+        m.ins[at:at] = decl_decos
+    if decl_names:
+        names = [k for k, x in enumerate(m.ins) if x[0] & 0xffff == OP_NAME]
+        at = names[-1] + 1 if names else next(k for k, x in enumerate(m.ins) if x[0] & 0xffff in (OP_DECORATE, OP_MEMBER_DECORATE))
+        m.ins[at:at] = decl_names
+    if m.header[1] >= 0x10400:   # SPIR-V 1.4 on: every global variable the entry point uses is in its interface (a reused block the shader did not read before as well)
+        have = set(m.interface())
+        add = list(dict.fromkeys(v for v in [x[0] for x in cbufs.values()] + [x[0] for x in pools.values()] if v not in have))
+        if add: m.entry.extend(add); m.entry[0] = len(m.entry) << 16 | OP_ENTRY_POINT
+    m.index()
+    # the bodies, at the instructions' indices from here on
+    rtype, body = {i: t for i, (t, _) in m.consts.items()}, False   # a value's type: its result type
+    for x in m.ins:
+        op = x[0] & 0xffff; body = body or op == OP_FUNCTION
+        if body and len(x) > 2 and op not in NO_RESULT_OPS and op not in (OP_LABEL, OP_NAME, OP_DECORATE): rtype[x[2]] = x[1]
+    ins_of = lambda op, ty, *w: (lambda r: (r, [(3 + len(w)) << 16 | op, ty, r, *w]))(m.new_id())
+    f0 = next(k for k, x in enumerate(m.ins) if x[0] & 0xffff == OP_FUNCTION)
+    drop, at_load, before = set(), {}, collections.defaultdict(list)
+    for var, (sp, elem, img, _) in plans.items():
+        def word(code, slot, w):   # the handle word at 32-bit word index w (an id) of a uniform slot's block → u32
+            v, sca, pt = cbufs[sp['prefix'], slot]
+            r1, i1 = ins_of(OP_SHR, u32, w, c(2)); r2, i2 = ins_of(OP_AND, u32, w, c(3))
+            r3, i3 = ins_of(OP_ACCESS_CHAIN, pt, v, c(0), r1, r2); r4, i4 = ins_of(OP_LOAD, sca, r3)
+            code += [i1, i2, i3, i4]
+            if sca == u32: return r4
+            r5, i5 = ins_of(OP_BITCAST, u32, r4); code.append(i5); return r5
+        tv, tpt = pools[img, POOL_TEX_LEN]
+        combined = m.op(elem) == OP_TYPE_SAMPLED_IMAGE
+        for k_ac in [k for k, x in enumerate(m.ins) if len(x) == 5 and x[0] & 0xffff in (OP_ACCESS_CHAIN, OP_IN_BOUNDS_ACCESS_CHAIN) and x[3] == var]:
+            drop.add(k_ac)
+            ptr_id, idx = m.ins[k_ac][2], m.ins[k_ac][4]
+            for k_ld in [k for k, x in enumerate(m.ins) if x[0] & 0xffff == OP_LOAD and x[3] == ptr_id]:
+                ld = m.ins[k_ld]; code = []
+                ity = rtype.get(idx, u32)
+                ku = idx
+                if ity != u32: ku, i0 = ins_of(OP_BITCAST, u32, idx); code.append(i0)
+                w, i1 = ins_of(OP_SHL, u32, ku, c(1)); code.append(i1)
+                if sp['off']: w, i2 = ins_of(OP_IADD, u32, w, c(sp['off'] // 4)); code.append(i2)
+                h = word(code, sp['slot'], w)
+                s = sp['samp']
+                if isinstance(s, tuple) and s[0] != 'id':   # one sampler word ORed into every handle (handle type 1)
+                    v2, sca2, pt2 = cbufs[sp['prefix'], s[0]]
+                    r3, i3 = ins_of(OP_ACCESS_CHAIN, pt2, v2, c(0), c(s[1] // 16), c(s[1] // 4 & 3)); r4, i4 = ins_of(OP_LOAD, sca2, r3); code += [i3, i4]
+                    if sca2 != u32: r4, i5 = ins_of(OP_BITCAST, u32, r4); code.append(i5)
+                    h, i6 = ins_of(OP_OR, u32, h, r4); code.append(i6)
+                tid, i7 = ins_of(OP_AND, u32, h, c(0xfffff)); pi, i8 = ins_of(OP_ACCESS_CHAIN, tpt, tv, tid); code += [i7, i8]
+                if not combined:
+                    code.append([4 << 16 | OP_LOAD, img, ld[2], pi]); at_load[k_ld] = code; continue
+                im, i9 = ins_of(OP_LOAD, img, pi); code.append(i9)
+                if isinstance(s, tuple) and s[0] == 'id': sid = c(s[1])
+                else: sid, i10 = ins_of(OP_SHR, u32, h, c(20)); code.append(i10)
+                sv, spt = pools[smp_t, POOL_SAMP_LEN]
+                ps_, i11 = ins_of(OP_ACCESS_CHAIN, spt, sv, sid); sm, i12 = ins_of(OP_LOAD, smp_t, ps_); code += [i11, i12]
+                at_load[k_ld] = code
+                for kc in sorted({k for k in range(f0, len(m.ins)) if k != k_ld and ld[2] in _id_words(m.ins[k])}):   # a sampled image made right before each use
+                    r, i13 = ins_of(OP_SAMPLED_IMAGE, elem, im, sm)
+                    x = m.ins[kc]; xo = x[0] & 0xffff
+                    x[1:] = [r if v == ld[2] and not _literal_word(xo, j) else v for j, v in enumerate(x[1:], 1)]
+                    before[kc].append(i13)
+    gone = set(plans)
+    out = []
+    for k, x in enumerate(m.ins):
+        op = x[0] & 0xffff
+        if k in drop or (op == OP_VARIABLE and len(x) > 2 and x[2] in gone) or (op in (OP_NAME, OP_DECORATE) and x[1] in gone): continue
+        if op == OP_ENTRY_POINT and gone & set(x[3:]):
+            _, n = string_at(x, 3); x = x[:n] + [v for v in x[n:] if v not in gone]; x[0] = len(x) << 16 | OP_ENTRY_POINT
+        out += before.get(k, [])
+        out += at_load[k] if k in at_load else [x]
+    m.ins = out
+    m.index()
+    return len(plans)
 
 
 def dual_source(m):

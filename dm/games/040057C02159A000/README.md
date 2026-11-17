@@ -53,4 +53,5 @@ The exhibits use the Joy-Con 2's features: the mouse sensor, the Joy-Con 2 npad 
 - [A Nintendo application's scene id](../../../docs/reference/services.md#a-nintendo-applications-scene-id): a null read as each scene module starts.
 - [Application GPU scheduling time](../../../docs/reference/services.md#application-gpu-scheduling-time): a null read after the first frame; the whole interval is the application's (upstream c3efaa90).
 - [Bezel Engine's two memory setups](../../../docs/reference/memory.md#bezel-engines-two-memory-setups): the virtual-memory path, with the Switch 2 layout.
+- [Arrays of 8,192 handles in a uniform buffer (Android)](../../../docs/reference/shaders.md#arrays-of-8192-handles-in-a-uniform-buffer-android): the visitors and the information desk drew black or not at all; every draw of 416 pixel shaders was skipped.
 - [A ray tracing shader in NVN2 BNSH program slot 6 drops its whole archive](../../../docs/reference/shaders.md#a-ray-tracing-shader-in-nvn2-bnsh-program-slot-6-drops-its-whole-archive): `libexgfx_resident.ounce.bea`'s other 1,006 shaders were left out of the split, and the pack refused to build the Android library.
