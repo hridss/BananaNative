@@ -258,15 +258,6 @@ HLE_FORCE("_ZN2nn2gs3sdk26SetGraphicsFrameLengthModeENS1_23GraphicsFrameLengthMo
           void, h_gs_FrameLength, int mode) {
     static int last = -1; if (mode != last) { LOG("gs: graphics frame length mode %d (0 auto, 1 30 fps, 2 60 fps, 3 120 fps)", mode); last = mode; }
 }
-// The GPU time the application used between two ticks (Switch 2 SDKs; Nintendo Switch 2 Welcome Tour asks each frame, main+0x30a83c). The SDK's own (gs::sdk::QueryApplicationGpuTimeSpan)
-// locks the gs graphics server's context, which the host does not have (null in os::SdkMutexType::Lock, as SetGraphicsFrameLengthMode above). The host has no per-application GPU
-// accounting: success and a fixed 8 ms, under a 60 fps frame, so a game that sizes its picture by it stays at full size, and a span that is not 0 takes no divide or "not
-// measured" path (the game reads the span only on success)
-HLE_FORCE("_ZN2nn2oe27QueryApplicationGpuTimeSpanEPNS_8TimeSpanEmm", "application GPU time between two ticks: a fixed 8 ms, no accounting on the host", Result, h_oe_GpuTimeSpan, int64_t *out, uint64_t from, uint64_t to) {
-    static atomic_int once; if (!atomic_exchange(&once, 1)) LOG("oe::QueryApplicationGpuTimeSpan %#llx..%#llx: a fixed 8 ms (the host has no per-application GPU time)", (unsigned long long)from, (unsigned long long)to);
-    if (out) *out = 8000000;   // nn::TimeSpan: nanoseconds
-    return RES_OK;
-}
 HLE_FORCE("_ZN2nn2oe27GetDefaultDisplayResolutionEPiS1_", "default display resolution: 1920x1080 docked, 1280x720 handheld", void, h_oe_DefRes, int *w, int *h) {
     int con = opmode() == 1; if (w) *w = con ? 1920 : 1280; if (h) *h = con ? 1080 : 720;
 }

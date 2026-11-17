@@ -51,5 +51,5 @@ The exhibits use the Joy-Con 2's features: the mouse sensor, the Joy-Con 2 npad 
 - [Switch 2 SDK hid calls that open the hid service themselves](../../../docs/reference/services.md#switch-2-sdk-hid-calls-that-open-the-hid-service-themselves): the abort on the second phone run, in `GetMousePointerSpeedScale`.
 - [Acceleration structure sizes left unwritten (NVN2 ray tracing)](../../../docs/reference/nvn-objects.md#acceleration-structure-sizes-left-unwritten-nvn2-ray-tracing): the 4 GiB heap behind the phone freezes and the abort past the 9 GB pool.
 - [A Nintendo application's scene id](../../../docs/reference/services.md#a-nintendo-applications-scene-id): a null read as each scene module starts.
-- [The application's GPU time span](../../../docs/reference/services.md#the-applications-gpu-time-span): a null read after the first frame.
+- [Application GPU scheduling time](../../../docs/reference/services.md#application-gpu-scheduling-time): a null read after the first frame; the whole interval is the application's (upstream c3efaa90).
 - [Bezel Engine's two memory setups](../../../docs/reference/memory.md#bezel-engines-two-memory-setups): the virtual-memory path, with the Switch 2 layout.

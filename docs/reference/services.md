@@ -1080,19 +1080,19 @@ Most service calls can be found before they crash, before the first boot or the 
 - **Fix:** hooked: no limit; the host's language is `DM_LANG` alone (`hle_oe.c`).
 - **Found on:** Hyrule Warriors: Age of Imprisonment (upstream nxnative, d70ee900; its profile is not on this branch).
 
+### Application GPU scheduling time
+
+- **Symptom:** a null read in `nn::os::SdkMutexType::Lock`, at `sdk+0x151fb0`, called from `nn::gs::sdk::QueryApplicationGpuTimeSpan` after the first rendered frame.
+- **Cause:** the query asks the graphics server's session (command 27), which the host never opens, how much of an interval the GPU was given to the application rather than to another of the console GPU's clients (the system's own rendering). Its two times are nanoseconds on the system tick clock; callers pass intervals bracketed by their own GPU counter timestamps.
+- **Fix:** `hle_nv.c` answers the whole interval (`end - begin`, 0 if `end` is not later) with success. The host's counter timestamps are its model of the console GPU's timeline ([GPU timestamps per submission segment](frame-rate.md#gpu-timestamps-per-submission-segment)), on which the application is the only client. It is not the GPU's busy time: Welcome Tour's Bezel profiler queries each render pass's GPU region (`main+0x30a8f4`) and the whole frame's (`main+0x30a808`), and the frame load its dynamic resolution reads is the frame's scheduled time, plus the time the application was not scheduled since the previous frame, plus 0.36 ms. With busy time the GPU's idle time between frames would count as taken, and every frame would read as full. The earlier stub returned `0xaf3` (not even the SDK's own unavailable-session result, `0x30af3` at `sdk+0x41200c`); Bezel then took each region's length and left out the 0.36 ms margin.
+- **Found on:** [Nintendo Switch 2 Welcome Tour](../../dm/games/040057C02159A000/README.md), update v262144 (`sdk+0x411dc0`, called from `main+0x30a840`).
+
 ### The target frame rate (graphics frame length)
 
 - **Symptom:** a null read at boot in `nn::os::SdkMutexType` under `nn::gs::sdk::SetGraphicsFrameLengthMode`, called from `nn::oe::SetGraphicsTargetFrameRate`.
 - **Cause:** `SetGraphicsTargetFrameRate` maps up to 59 fps to mode 1, up to 119 to mode 2 and above to mode 3 (`SetGraphicsTargetFrameRateAuto` to mode 0) and calls `SetGraphicsFrameLengthMode`, which locks the gs graphics server's context and sends it the mode. The host has no graphics server, so the context is null.
 - **Fix:** `SetGraphicsFrameLengthMode` is hooked and logs the mode once per change; both `oe` paths reach it. The host paces by the window's present interval (`hle_oe.c`).
 - **Found on:** Hyrule Warriors: Age of Imprisonment (upstream nxnative, d70ee900; its profile is not on this branch): 60 / its present interval at boot.
-
-### The application's GPU time span
-
-- **Symptom:** a null read in `nn::os::SdkMutexType` under `nn::gs::sdk::QueryApplicationGpuTimeSpan`, after the first frame.
-- **Cause:** a Switch 2 game can ask each frame for the GPU time it used between two ticks (`nn::oe::QueryApplicationGpuTimeSpan`). The SDK's own locks the gs graphics server's context, as `SetGraphicsFrameLengthMode` does, and the host has no graphics server.
-- **Fix:** hooked: success and a fixed span of 8 ms, logged once (`hle_oe.c`). The host has no GPU time per application; 8 ms is under a 60 fps frame, so a game that sizes its picture by the span stays at full size, and a span that is not 0 takes no divide or "not measured" path. The game reads the span only on success. From upstream nxnative's pull request #1425 (b0f14c1a), where Welcome Tour ran the same with 0 and with 8 ms on the Mac.
-- **Found on:** [Nintendo Switch 2 Welcome Tour](../../dm/games/040057C02159A000/README.md) (`main+0x30a83c`).
 
 ### `vi::InitializeWithVrrLfcEnabled`
 
