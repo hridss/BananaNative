@@ -56,11 +56,14 @@ without shaders draws nothing for the shaders it lacks).
 
     linux/build.sh <base game title ID>        # e.g. 0400C3F00006E000 → linux/build/<id>/nxhost_<id>
 
-Cross build with Docker on an x86_64 or arm64 machine. The image (`linux/Dockerfile`: Ubuntu 24.04, clang, lld, the arm64
-libraries) is built on first use. SDL3: `linux/sysroot/{include/SDL3,lib/libSDL3.so}` when there is one (copied from the
-target system), else SDL3 built from source by `linux/build-sdl3.sh` (git tag `release-3.4.2`). The first build takes
-some minutes. One binary per game: the game profile is compiled in, as on Android. Run time needs glibc ≥ 2.39, libSDL3,
-libxcb, libz, and a Vulkan driver with `VK_EXT_map_memory_placed` (Turnip).
+Cross build with Docker on an x86_64 or arm64 machine. The image (`linux/Dockerfile`: Ubuntu 24.04, clang, lld, the
+arm64 libraries) is built on first use, by `linux/build.sh` or `linux/build-sdl3.sh` (`linux/common.sh`). With rootless
+Docker the container runs as root, which is the caller there: run as the caller's own ID it could not write to the
+repository (`CMake Error: Unable to (re)create the private pkgRedirects directory`). SDL3:
+`linux/sysroot/{include/SDL3,lib/libSDL3.so}` when there is one (copied from the target system), else SDL3 built from
+source by `linux/build-sdl3.sh` (git tag `release-3.4.2`). The first build takes some minutes. One binary per game: the
+game profile is compiled in, as on Android. Run time needs glibc ≥ 2.39, libSDL3, libxcb, libz, and a Vulkan driver with
+`VK_EXT_map_memory_placed` (Turnip).
 
 ## Run
 
