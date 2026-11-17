@@ -45,9 +45,12 @@ without shaders draws nothing for the shaders it lacks).
   why Android packs run unchanged.
 - `-Dmain=nx_host_main`: `dm/host/main.c`'s `main` is called by `nxhost_main`; the real `main` is in `main_linux.c`.
 - Left out: `dm/host/android/jni_android.c`, libadrenotools (custom GPU drivers).
-- Changes to shared files, all inside `#ifdef NX_LINUX` (an Android build compiles them out):
-  `dm/gfx/vk_android/vka_dev.c` (instance extensions from the front end; display timing off unless asked, below) and
-  `dm/gfx/vk_android/vka_present.c` (the surface from the front end).
+- Changes to shared files, inside `#ifdef NX_LINUX` (an Android build compiles them out):
+  `dm/gfx/vk_android/vka_dev.c` (instance extensions from the front end; display timing off unless asked, below),
+  `dm/gfx/vk_android/vka_present.c` (the surface from the front end) and `dm/gfx/vk_android/vka.h`
+  (`VKA_SYSTEM_LOADER`, the loader `vka_dev.c` and `vka_readiness.c` open: `libvulkan.so.1`, since a desktop Linux has
+  `libvulkan.so` only with its `-dev` package; [rendering.md](../docs/reference/rendering.md), "The aarch64 Linux host
+  finds no Vulkan loader on a distribution without the Vulkan -dev package").
 
 ## Build
 

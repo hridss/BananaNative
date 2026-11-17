@@ -1747,6 +1747,13 @@ Digimon Story Cyber Sleuth: Complete Edition (Media.Vision's MVGL engine, SDK 6.
 - **Open:** not checked on the phone. If a game makes many render targets and abandons them without finalizing their pool, they now stay until the pool goes; the log line above shows the size. A GPU-written image could instead be read back to guest memory before it is evicted (a copy per eviction), which would let the limit hold; not done.
 - **Found on:** [Mario Kart World](../../dm/games/0400C3F00006E000/README.md#found-on-this-game) (issue #215, logs of 2026-11-13).
 
+### The aarch64 Linux host finds no Vulkan loader on a distribution without the Vulkan -dev package
+
+- **Symptom:** on the aarch64 Linux host the game ends at start with `[RED] vk: no libvulkan.so: libvulkan.so: cannot open shared object file: No such file or directory` and `[RED] vk: selftest: no Vulkan device`; `--vk-selftest` returns 1. The system has a working Vulkan driver (`vulkaninfo` lists Turnip).
+- **Cause:** the replay opened the loader as `libvulkan.so`, the name of the NDK's library on Android. A desktop distribution ships the loader as `libvulkan.so.1`; the unversioned `libvulkan.so` link is in its `-dev` package (Fedora `vulkan-loader-devel`, Debian and Ubuntu `libvulkan-dev`), which a handheld image does not install.
+- **Fix:** `VKA_SYSTEM_LOADER` in `vka.h` is `libvulkan.so.1` under `NX_LINUX` and `libvulkan.so` otherwise; `vka_dev.c` and `vka_readiness.c` open it. Android preprocesses to the same code as before.
+- **Found on:** [Mario Kart World](../../dm/games/0400C3F00006E000/README.md) 1.8.0, aarch64 Linux build of the host on an AYN Thor (12 GB RAM) with ArmadaOS 20261109, Fedora-based (2026-11-17). Resolved: `--vk-selftest` passes and the game plays.
+
 ### Present times through Gamescope's layer fault the GPU (Linux)
 
 - **Symptom:** on the aarch64 Linux host under Steam's Game Mode (Gamescope), on Turnip (Adreno 740, Mesa 26.2.7, AYN Odin 2 Pro, 12 GB RAM), the game ends within seconds of its first frames: the kernel log has `a6xx_irq` `gpu fault` and `hangcheck recover` with the task `vk-present`, at the 15th present, once followed by a reboot of the device; or the replay's encoder thread (`vk-enc`) hangs inside the driver and the picture stops.
