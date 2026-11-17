@@ -15,8 +15,8 @@ CUTS = {
 # The rewriter finds the same place by the controller's code (nso_code.py sead_find), and in any other build (the base game v0: main+0x1eadf0, not a profile build, so no
 # row here); this row names it for v458752 whatever the search finds (an override, and a fallback should it stop finding it)
 sead_why = "sead's frame-rate controller: 60 / interval (w8 / w21, the controller in x20); the host makes it the measured rate (hle_fpslock.c sead_rate)"
-# v458752 main: the 3D cameras and the 2D layer follow the picture's shape (Game settings > Aspect ratio / Screen shape; dm/host/android/dkb_wide.c, GPL-3.0-or-later). Three observation
-# gates, the site kind in the gate number's parameter from bit 5 up (0 camera: the register in bits 0-4, 1 HUD). The camera gate is on the projection update of the scene camera's updater (x19:
+# v458752 main: the 3D cameras and the 2D layer follow the picture's shape (Game settings > Aspect ratio / Screen shape; dm/host/android/dkb_wide.c, GPL-3.0-or-later). Four observation
+# gates, the site kind in the gate number's parameter from bit 5 up (0 camera: the register in bits 0-4, 1 HUD, 4 the aspect setter: below). The camera gate is on the projection update of the scene camera's updater (x19:
 # near +0xf8, far +0xfc, aspect +0x100, fovy in degrees +0x104), before its two reads of the fovy and the aspect; the callback rewrites them in the updater (aspect; for a narrower picture also
 # the fovy, so the horizontal reach stays). The two HUD gates are the instruction after the matrix copy main+0xb1314 in the two layout projection setups (main+0x45f840 and main+0x803b60, the same
 # code twice; the HUD's is the second): the layouts are drawn in perspective (fovy 15 degrees, aspect 1920 / 1080, the camera 4101.7 units from the layout plane); the copy in the draw info (x0, the matrix at +0x10) has its x row (wider picture) or
@@ -33,10 +33,16 @@ _dkb_hud = 32 | 1 << 13
 # bottom of the 16:9 layer move to the canvas's edges. The three words are position independent (two read sp, which the gate block has restored by then)
 _dkb_pane = 32 | 2 << 13
 _dkb_layout = 32 | 3 << 13
+# Kind 4, a view's aspect just stored (issue #348): the camera gate's rebuild runs only from the near and far setters, and the aspect setter (main+0x45d5b0) stores the getters' 16:9
+# after them, so the gameplay camera kept 16:9 (its 3D stretched at 21:9 and 4:3). The gate is the instruction after its store (str s8,[x0,#0x100] at main+0x45d5d4), x0 still the
+# view; for a picture wider than 16:9 the stored 16:9 becomes the picture's aspect. The word reads and moves sp, which the gate block has restored by then (as dkb-pc-recomp, which
+# patches this setter)
+_dkb_aspect = 32 | 4 << 13
 OBS = {
     'e25c90c1c136638885659fd55bf8a03b': [   # v458752
         (0x204b20, 27 | (8 | 21 << 5 | 20 << 10) << 8, '1ad50d08', sead_why),
         (0x45e238, _DKB_WIDE | 19 << 8, 'bd410660', 'scene camera updater projection update, before it reads the fovy (ldr s0,[x19,#0x104]); x19 the updater (aspect +0x100, fovy degrees +0x104)'),
+        (0x45d5d8, _dkb_aspect, 'fc4207e8', 'aspect setter main+0x45d5b0, after its store of the view aspect (str s8,[x0,#0x100]): the next word (ldr d8,[sp],#0x20); x0 the view'),
         (0x45f9e0, _dkb_hud, 'bd400e80', 'layout system projection setup main+0x45f840, after its copy main+0xb1314 (ldr s0,[x20,#0xc]); x0 the draw info, the perspective matrix at +0x10'),
         (0x803c9c, _dkb_hud, '910003e8', 'the second layout projection setup main+0x803b60 (the scene\'s layouts: HUD), after its copy main+0xb1314 (mov x8,sp; the adrp before it is not relocatable); x0 the draw info'),
         (0x861a00, _dkb_pane, 'a94057f6', 'pane constructor main+0x8615e0, after it stored the size (ldp x22,x21,[sp]); x19 the pane (size +0x50, translate +0x30), x23 its layout file record'),
@@ -53,9 +59,9 @@ BINDING = [
      'why': "an override and fallback of the rewriter's search (nso_code.py sead_find), which finds the same place in every build of this game by the controller's code",
      'checked': 'v0 and v458752 by disassembly, 2026-11-10: the search finds main+0x1eadf0 and main+0x204b20, nso_fnmap.py maps one to the other exactly'},
     {'what': 'camera aspect and 2D layer: the 3D camera follows the picture shape and the layout perspective stays in the middle 16:9 (Game settings > Aspect ratio / Screen shape)', 'now': 'build', 'goal': 'game', 'purpose': 'rendering',
-     'why': "sead::PerspectiveProjection and the draw info's projection copy are engine code, but the three gate sites (the scene camera updater's projection update and the two layout projection setups after their copies) are fixed addresses of this build",
-     'blocked': 'one build on hand; the projection update and the matrix copy are plain code a function fingerprint could find',
-     'checked': 'v458752 by disassembly, 2026-11-13: every original word read from the main image; the prior art\'s sites (dkbwide set) match the same words; the layout uniform block seen on the phone (DM_VK_UB_PEEK)'},
+     'why': "sead::PerspectiveProjection and the draw info's projection copy are engine code, but the four gate sites (the scene camera updater's projection update, the aspect setter after its store, and the two layout projection setups after their copies) are fixed addresses of this build",
+     'blocked': 'one build on hand; the projection update, the aspect setter and the matrix copy are plain code a function fingerprint could find',
+     'checked': 'v458752 by disassembly, 2026-11-13: every original word read from the main image; the prior art\'s sites (dkbwide set) match the same words; the layout uniform block seen on the phone (DM_VK_UB_PEEK). 2026-11-16: the aspect setter\'s next word read, x0 the view'},
     {'what': 'layout panes on a picture narrower than 16:9: full-screen picture panes cover the picture, panes near the top and bottom of the 16:9 layer move to its edges', 'now': 'build', 'goal': 'game', 'purpose': 'rendering',
      'why': "nn::ui2d's pane constructor and Layout::Build are SDK code linked into main, and the game's own layout class is its own; the three gate sites and the pane and layout offsets are fixed for this build. The names of the groups left as authored are this game's layouts",
      'blocked': 'one build on hand; the constructor and the two build ends are plain code a function fingerprint could find',

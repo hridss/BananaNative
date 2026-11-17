@@ -3,7 +3,7 @@
 //
 // The game draws a 16:9 frame whatever the screen; Game settings > Aspect ratio / Screen shape fit that frame into DM_VK_PICTURE_ASPECT=<w>:<h> (vka_present.c). For the scene to be neither
 // stretched nor cropped, the cameras must use the picture's ratio and the HUD must stay in the middle 16:9. Shared parts (the shape, the table of converted lenses, the row squeeze) are in
-// wide_shape.h; this file is the game's sites (six gates in patches.py, OBS_DKB_WIDE; the kind in the parameter's bits from 5 up, the register of a camera site in bits 0-4): the camera
+// wide_shape.h; this file is the game's sites (seven gates in patches.py, OBS_DKB_WIDE; the kind in the parameter's bits from 5 up, the register of a camera site in bits 0-4): the camera
 // and the HUD projection here, and for a picture narrower than 16:9 the layouts' panes ("The layouts' panes" below):
 //   Camera  main+0x45e238 (ldr s0,[x19,#0x104]), in the projection update of the scene camera's updater (x19): near +0xf8, far +0xfc, aspect +0x100, fovy in degrees +0x104. It turns them
 //           into a sead::PerspectiveProjection (radians at +0xa0, sin, cos, tan at +0xac, aspect at +0xb0; the next block, +0x1c0..+0x1e0, is the culling frustum made from the same
@@ -12,6 +12,13 @@
 //             narrower         (Vert+) the aspect becomes the picture's, and the fovy's tangent grows by (16/9) / aspect, so the horizontal reach stays what a 16:9 picture shows.
 //           Only an aspect within 0.01 of 16:9 is touched (a split view or an offscreen lens has another one). The game's constructor (main+0x462504, default 16:9) and its aspect setter
 //           (main+0x45d5d4) write the 16:9 in again whenever they run; the converted-lens table (the fovy written, per updater) keeps a Vert+ fovy from being scaled twice then.
+//   Aspect  main+0x45d5d8 (ldr d8,[sp],#0x20), the instruction after the aspect setter main+0x45d5b0 stored a view's aspect (str s8,[x0,#0x100] at main+0x45d5d4; x0 is still
+//           the view). The camera gate's rebuild runs only from the near and far setters (main+0x45d710, main+0x45d780); the aspect setter calls none, and in the camera setup
+//           (main+0x45d194 to 0x45d1e8) it stores the getters' 1280 / 720 after them. The gameplay camera then kept 16:9: the 3D was a stretched 16:9 view at 21:9 (a 2688x1216
+//           screen: scaled sideways by 1.245) and at 4:3 (the Ingot Isle spawn: vertically by 1.33), with the HUD right (issue #348). For a picture wider than 16:9 a stored
+//           16:9 becomes the picture's aspect here, so every later use sees it (dkb-pc-recomp corrects this setter too; changing the getters it reads, main+0x45d560 / 0x45d570,
+//           corrected the gameplay view in a 4:3 test). A narrower picture is left to the camera gate: its Vert+ field of view is that gate's, and the gameplay camera's own
+//           field of view (45 degrees, a lens set through main+0x45d590) is not handled yet.
 //   HUD     main+0x45f9e0 and main+0x803c9c, the instruction after the matrix copy main+0xb1314 in the two layout projection setups (main+0x45f840 and main+0x803b60, the
 //           same code twice; the HUD's draw info is the second's; x0 the draw info, the matrix at +0x10, 4x4 floats row by row). The game's layouts (HUD, menus) are drawn in
 //           perspective, not orthographically: each setup builds a
@@ -37,7 +44,7 @@ enum { C_ASPECT = 0x100, C_FOVY = 0x104, HUD_MTX = 0x10 };   // the draw info's 
 
 static ws_cfg_t g_cfg = WS_CFG_INIT;
 static ws_seen_t g_seen;   // updaters whose fovy we scaled: where, and the fovy (degrees) we wrote
-static _Atomic unsigned g_fixes, g_huds;
+static _Atomic unsigned g_fixes, g_huds, g_aspects;
 
 static double aspect(void) { return ws_aspect(&g_cfg, DKB_MAIN_BUILD, "dkb"); }
 
@@ -57,6 +64,16 @@ static void camera(uint64_t obj) {
         ws_seen_set(g_seen, obj, nf);
     }
     ws_wrf(obj + C_ASPECT, (float)a);
+}
+
+// A view whose aspect the aspect setter has just stored ("Aspect" above): a 16:9 becomes a wider picture's aspect; a narrower picture, another aspect and the field of view are left alone
+static void aspect_stored(uint64_t view) {
+    double a = aspect();
+    if (!(a > K169) || !view || (view & 3)) return;
+    float asp = ws_rdf(view + C_ASPECT);
+    if (!ws_close_to(asp, K169, 0.01)) return;
+    ws_wrf(view + C_ASPECT, (float)a);
+    if (atomic_fetch_add_explicit(&g_aspects, 1, memory_order_relaxed) == 0) LOG("dkb wide: first view aspect stored %.4f -> %.4f (the aspect setter)", asp, a);
 }
 
 // The layout system's draw info after its projection was set (x0); the matrix is a copy of the game's, row by row
@@ -282,7 +299,7 @@ out:
 }
 
 // The gate number's upper bits (param): the site kind from bit 5 (0 camera: the register in bits 0-4, 1 HUD: x0 the draw info, 2 a pane just sized: x19 the pane and x23 its record,
-// 3 a layout just built: x19)
+// 3 a layout just built: x19, 4 a view's aspect just stored: x0 the view)
 static void dkb_wide_gate(uint64_t *r, int param) {
     if (param < 0) return;
     switch (param >> 5) {
@@ -290,6 +307,7 @@ static void dkb_wide_gate(uint64_t *r, int param) {
     case 1: hud(r[0]); break;
     case 2: pane_tall(r[19], r[23]); break;
     case 3: layout_built(r[19]); break;
+    case 4: aspect_stored(r[0]); break;
     }
 }
 

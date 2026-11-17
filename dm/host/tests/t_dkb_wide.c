@@ -1,4 +1,5 @@
 // Donkey Kong Bananza camera and UI callback (android/dkb_wide.c): opt-in and build gates, Hor+ / Vert+ on the scene camera's updater, repeated callbacks, a game that writes 16:9 back,
+// the aspect setter's store given a wider picture's aspect (narrower ones left to the camera gate),
 // objects that are no 16:9 lens, and the layout system's perspective projection squeezed into the middle 16:9 (orthographic and other shapes, scaled ones and null pointers untouched). Every case runs in its own process
 // (the picture shape is read once). The layouts' panes: full-screen picture panes made as tall as the canvas and panes near the top and bottom moved to its edges, for shapes narrower
 // than 16:9 only, on pane trees linked as the game links them (groups kept whole, parts, origins, rotation and scale, trees the walk refuses, repeats).
@@ -89,6 +90,34 @@ static void check(int which) {   // 0..13 no change; 14 another build; 15..20 th
     gate(a + 1);
     // a huge field of view is held under 172 degrees
     if (A < K169) { make(p, 150, K169); gate(a); assert(ws_rdf(a + C_FOVY) <= 172.0f && isfinite(ws_rdf(a + C_FOVY))); }
+}
+
+static void aspect_gate(uint64_t view) {   // the aspect gate: x0 the view the aspect setter has just stored into, kind 4
+    uint64_t r[31] = {0};
+    r[0] = view;
+    callbacks[OBS_DKB_WIDE](r, 4 << 5);
+}
+static void aspect_check(int which) {   // 0..2 no change (unset, 16:9, another build); 3 21:9 and 4 13:6 wider; 5 4:3 and 6 1:1 narrower, left to the camera gate
+    static const char *env[] = {NULL, "16:9", "21:9", "21:9", "13:6", "4:3", "1:1"};
+    _Alignas(16) unsigned char p[0x120], before[0x120], cam[0x120], once[0x120];
+    uint64_t a = (uintptr_t)p;
+    setup(env[which], which == 2 ? "0000" : DKB_MAIN_BUILD);
+    memset(p, 0, sizeof p);
+    make(p, 45, K169);
+    memcpy(before, p, sizeof p);
+    aspect_gate(a);
+    if (which < 3 || which > 4) { assert(!memcmp(before, p, sizeof p)); return; }
+    double A = which == 3 ? 21.0 / 9 : 13.0 / 6;
+    assert(fabs(ws_rdf(a + C_ASPECT) - A) < 1e-6 && ws_rdf(a + C_FOVY) == 45.0f);   // the aspect only: Hor+ keeps the vertical field of view
+    memcpy(once, p, sizeof p);
+    for (int i = 0; i < 100; i++) aspect_gate(a);
+    assert(!memcmp(once, p, sizeof p));                                                // the gate again and again: the same
+    ws_wrf(a + C_ASPECT, (float)K169); aspect_gate(a); assert(!memcmp(once, p, sizeof p));   // the setter stores the 16:9 again: converted again
+    gate(a); assert(!memcmp(once, p, sizeof p));                                       // the camera gate's rebuild afterwards leaves it so
+    memset(cam, 0, sizeof cam); make(cam, 45, K169); gate((uintptr_t)cam); assert(!memcmp(once, cam, sizeof cam));   // the camera gate alone gives the same
+    make(p, 45, 1.0); memcpy(before, p, sizeof p); aspect_gate(a); assert(!memcmp(before, p, sizeof p));               // another aspect (the caller with its own): untouched
+    aspect_gate(0);
+    aspect_gate(a + 1);
 }
 
 // the draw info: the projection copy at +0x10 (4x4 floats row by row), the layout system's perspective (main+0x45f840: fovy 15 degrees, aspect 1920 / 1080, near 1, far 10000)
@@ -329,6 +358,15 @@ int main(void) {
         if (!WIFEXITED(status) || WEXITSTATUS(status)) { fprintf(stderr, "dkb wide case %d failed\n", i); return 1; }
     }
     puts("dkb wide: 21 opt-in, build, Hor+, Vert+ and repeat cases passed");
+    for (int i = 0; i < 7; i++) {
+        pid_t child = fork();
+        assert(child >= 0);
+        if (!child) { aspect_check(i); _exit(0); }
+        int status;
+        assert(waitpid(child, &status, 0) == child);
+        if (!WIFEXITED(status) || WEXITSTATUS(status)) { fprintf(stderr, "dkb wide aspect case %d failed\n", i); return 1; }
+    }
+    puts("dkb wide: 7 aspect setter cases passed");
     for (int i = 0; i < 10; i++) {
         pid_t child = fork();
         assert(child >= 0);
