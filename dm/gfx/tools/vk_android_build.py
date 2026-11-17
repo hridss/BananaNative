@@ -426,6 +426,26 @@ def ubo_img(nm):
     return (bank - 3, (h & 0x3fff) * 4) if 3 <= bank <= 16 and h >> 28 == 0 else None
 
 
+UBO_TABLE_MIN = 33   # a texture array from a uniform buffer this long or longer is read through the pools (vk_android_spv.py ubo_handle_tables); shorter ones stay descriptor arrays
+
+
+def ubo_table_specs(m):
+    """The texture arrays the shader indexes by a handle's position in one of the game's uniform buffers (Ryujinx's BindlessToArray over c[3..16], <stage>_t<type>_cb<slots>_<handle>,
+    which Program.cs sizes to 8,192 elements: every handle 64 KiB holds) → vk_android_spv.py ubo_handle_tables' specs. The replay walks a descriptor array element by element,
+    one descriptor each and at most 512 a stage (vka_draw.c): Nintendo Switch 2 Welcome Tour's 416 character and prop shaders had every draw skipped (docs/reference/shaders.md,
+    Arrays of 8,192 handles in a uniform buffer). Images and buffer textures stay at 32 elements in the translator and keep their descriptors"""
+    specs = {}
+    for r in m.resources():
+        if r['desc'] not in (spv.VK_COMBINED, spv.VK_SAMPLED_IMAGE) or r['count'] < UBO_TABLE_MIN or not r['dim'] or r['dim']['dim'] == spv.DIM_BUFFER: continue
+        if r['name'].endswith(POOL_SUFFIX): continue
+        d = NS['decode_ubo_tex'](r['name'])
+        if not d: continue
+        (slot, off), s = d
+        specs[r['id']] = {'prefix': r['name'].split('_', 1)[0], 'slot': slot, 'off': off,
+                          'samp': ('id', s[1]) if s[0] == 'id' else None if s == (slot, off) else (s[0], s[1])}   # the handle's own high 12 bits, a constant, or one word ORed in
+    return specs
+
+
 def classify(stage, r, res, m):
     """A descriptor variable → its binding record (dict): the kind and slot from its name (dmsh_build.py reflect's rules, on the SPIR-V names the MSL members come from)"""
     nm, desc = r['name'], r['desc']
@@ -608,6 +628,7 @@ def finish(key, w, job, c1):
     if not hmma: spv.promote_locals(m)   # simplify GlobalToStorage helpers (binary search, CAS, branchless inPool) and promote single-store locals
     if not hmma: spv.loop_pool_search(m)   # the raw helpers' pool table search one loop of one step (vk_android_spv.py loop_pool_search)
     spv.buffer_textures_split(m)   # a buffer texture's combined image and sampler of Dim Buffer → a texel buffer (vk_android_spv.py)
+    ubo_tables = spv.ubo_handle_tables(m, ubo_table_specs(m))   # texture arrays of 8,192 uniform-buffer handles read through the pools (vk_android_spv.py ubo_handle_tables)
     binds = [classify(stage, r, res, m) for r in m.resources()]
     storage_slots(stage, binds, res)
     try: place(stage, binds, m)
@@ -649,7 +670,7 @@ def finish(key, w, job, c1):
             if not sp: e['kind'] = abi.KIND_UNKNOWN; continue   # (the replay then refuses the shader)
             e['bytes'] = sp['bytes']; shared = sp['workgroup']
     refl = {'key': key, 'stage': stage, 'source': f'{name}#{k}', 'pc_paired': pc_of[key], 'c1': c1.hex(), 'local': job.get('local') or [1, 1, 1], 'shared': shared,
-            'notes': res['notes'], 'vs_pad': pad, 'mesh': res.get('mesh'), 'ps_prim': prim, 'caps_dropped': dropped, 'caps_added': added, 'precise': n_precise, 'hmma_lds': hmma, 'drv_reads': drv_reads(binds, m), 'tf': job.get('tf'), **fa,
+            'notes': res['notes'], 'vs_pad': pad, 'mesh': res.get('mesh'), 'ps_prim': prim, 'caps_dropped': dropped, 'caps_added': added, 'precise': n_precise, 'hmma_lds': hmma, 'ubo_tables': ubo_tables, 'drv_reads': drv_reads(binds, m), 'tf': job.get('tf'), **fa,
             'bindings': [{kk: v for kk, v in e.items() if kk not in ('id', 'tbind', 'index')} for e in binds]}
     loose = os.environ.get('DMSH_VK_LOOSE') == '1'
     return 'ok', '', (refl, [(variant, len(data), *pack_module(data), data if loose else None) for variant, data in mods])   # compressed here, in parallel

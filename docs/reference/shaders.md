@@ -1424,6 +1424,15 @@ Finding, keying and translating shaders (`dm/gfx/tools/shader_split.py`, `dmsh_b
 - **Found on:** [EA SPORTS FC 27](../../dm/games/0100C49025D3E000/README.md) (its lights in a match).
 - **Check:** `test_dmsh_reflect.py` (`DriverTableArrays`, `DriverReads`) and `test_dmsh_abi.py` (the translator's table length agrees with the header).
 
+### Arrays of 8,192 handles in a uniform buffer (Android)
+
+- **Symptom:** (Android) characters and props draw as black silhouettes or not at all; the log has `[RED] vk: shader …: more than 512 descriptors; skipped` (only the first 16 are printed, every draw with such a shader is skipped).
+- **Cause:** upstream nxnative's translator sizes Ryujinx's texture array from a game uniform buffer (`BindlessToArray` over c[3..16], `fp_t2d_cb12_0`) to every handle 64 KiB holds, 8,192 (`Program.cs` `QueryTextureArrayLengthFromBuffer`, for Kirby Air Riders' light probes at element 390), where it was 32 ([An array of handles in a uniform buffer](#an-array-of-handles-in-a-uniform-buffer)). The Metal build turns such an array into a table the host fills (`dmsh_build.py` `pool_arrays`); the Vulkan library kept it a descriptor array (`tex_ubo`, count 8,192), which the replay walks one descriptor per element and refuses past 512 a stage (`vka_bind.c` `vka_walk`). Raising the limit is no fix: three such arrays are 24,576 descriptors a draw, far past push descriptors.
+- **Fix:** a Vulkan chain change, no ABI change. `vk_android_build.py` `ubo_table_specs` picks the sampled and combined arrays of 33 or more uniform-buffer handles, and `vk_android_spv.py` `ubo_handle_tables` makes the shader read the table itself: each access chain into the array and its load become a load of the handle word at byte off + 8 k of the slot's block (the translator's own `<stage>_c<n>`, or a new one), its texture ID indexing the texture pool (set 1 binding 0) and its sampler ID (the same word's high 12 bits, a constant ID, or one sampler word ORed in) the sampler pool, joined by `OpSampledImage` before each use. The records are then an ordinary `CBUF`, `TEX_POOL` and `SAMP_POOL`; the replay reports the pool reads as any pool read's ([texture pool reads](rendering.md)). Images and buffer textures stay at 32 elements in the translator and keep their descriptors.
+- **Open:** like every pool read on the Vulkan replay, the IDs index the pool table as the game wrote them, without the bound pool's base: right for a game's first texture and sampler pool only. Pool reads carry no `NonUniform` decoration.
+- **Found on:** Nintendo Switch 2 Welcome Tour (`040057C02159A000`): 416 of its 6,754 shaders, 807 such arrays, all pixel shaders (the visitors and the information desk); with the translator at upstream 8d62601f.
+- **Check:** `dm/gfx/tests/test_vk_ubo_tables.py` (spirv-val, and the handle words run on the generated code).
+
 ### A texture slot that shares its c2 word with an image slot
 
 - **Symptom:** characters and props glowing white, about 10⁴ too bright, in DRAGON QUEST VII Reimagined's opening cutscene only, while walls and gameplay look right.
