@@ -6,6 +6,8 @@ Update 1.1.0 (v196608) over the base game, SDK 20.5.1, NintendoWare G3d / Ui2d /
 
 Playable on the Mac: title movie and logo, file selection, the opening autosave and its reload, and Link's opening Suthorn Ruins corridor through the raised door, rubble jump and upper hall. Movement, jumping, sword input and the right-stick camera work. Both Mac and iOS shader builds produce all 9,858 libraries with no unresolved bindings. An unsigned IPA was built (about 7.8 GB); iOS gameplay remains untested.
 
+Android (AYN Thor, Adreno 740, build `c60a38ad`, 2026-11-16): a fresh save reaches the opening prologue and Suthorn Ruins corridor in about 30 s on both drivers, once the stand-in font has U+25A1 ([Found on this game](#found-on-this-game)). Turnip (Mesa 27.0.0-devel): 60 fps, no red line. Qualcomm's own driver: about 35 fps in the dark opening room (GPU 17 ms) and one red line, `texture copy 0x35 → 0x35 needs a draw (… VkFormat 129)`, not traced.
+
 ## What it needs
 
 | Setting | Where | Why |
@@ -15,6 +17,7 @@ Playable on the Mac: title movie and logo, file selection, the opening autosave 
 | `sys_resource 0` | `game.tsv` | NPDM META +0x14 is zero: virtual address memory is disabled |
 | `pad_layout full` | `game.tsv` | the right stick rotates the camera |
 | `depth_mode zero` | `game.tsv` | the game selects near-zero depth; offline pipeline bases must use the same vertex entry |
+| `fps_target 60` | `game.tsv` | the game's frame governor (static manager `main+0x34bd4b0`, enable byte `+0x3e4`) drops to 30 fps after one frame over 1/60 s and, measuring wall time at interval 2, never returns; the host turns it off at 60 or holds it at 30 (`hle_fpslock.c`, the "Grezzo frame governor enable" row) |
 
 No game-specific rewriter cuts, SDK cuts or host branches are needed for the tested route. Only update 1.1.0 is registered; the base build has not been brought up.
 
@@ -56,4 +59,6 @@ The development build is `01008CF01BAAC000_build/` beside the NSPs, with runs an
 - **Mac app pair tables:** [Shader-pair tables in a Mac app](../../../docs/reference/shaders.md#shader-pair-tables-in-a-mac-app).
 - **An archive built for the profile's default GL depth was rejected at runtime:** [Offline pipeline archive and profile depth disagree](../../../docs/reference/shaders.md#offline-pipeline-archive-and-profile-depth-disagree).
 - **Unused conditional cube inputs are not rendering errors:** [A 2D texture in a cube slot binds the zero cube](../../../docs/reference/rendering.md#a-2d-texture-in-a-cube-slot-binds-the-zero-cube).
+- **Android: a crash at boot on U+25A1, which the stand-in standard font lacked** (`CRASH sig=11 addr=0x38 pc=main+0x8b37c`, AYN Thor, 2026-11-16): [A game crashes on a glyph the standard shared font lacks](../../../docs/reference/services.md#a-game-crashes-on-a-glyph-the-standard-shared-font-lacks).
 - **A stale `DM_ROMFS` crashed the game 0.3 s after `nnMain`:** [A stale `DM_ROMFS` path crashes the game soon after `nnMain`](../../../docs/reference/packing.md#a-stale-dm_romfs-path-crashes-the-game-soon-after-nnmain).
+- **A cached vibration-device answer prevented rumble after a late controller connection** (upstream, a Bluetooth pad on a Mac): [A vibration device before its controller connects](../../../docs/reference/services.md#a-vibration-device-before-its-controller-connects)

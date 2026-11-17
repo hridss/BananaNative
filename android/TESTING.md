@@ -316,7 +316,7 @@ The screen turns red with a white 128×128 square near the bottom-left corner an
 
 The log lines, in order:
 
-1. `[nxlaunch] graphics selftest: nxnative … ; device …` and `nxhost_vk_selftest(0x…, 600)`;
+1. `[nxlaunch] graphics selftest: nxnative … ; device …`, `[nxlaunch] graphics selftest: GPU driver: system` (or the driver picked on the main screen, then `[nxlaunch] env DM_VK_DRIVER=…`) and `nxhost_vk_selftest(0x…, 600)`;
 2. `[vk] device Adreno (TM) 840, Vulkan 1.4.… ; placed maps yes …, update-after-bind yes, display timing yes …`;
 3. `[vk] draw path: push descriptors yes (…), vertex input dynamic state yes, null descriptors yes, 8-bit indices …, geometry yes …; uniform alignment …, storage alignment …` (what the draws use: send this line back whatever it says);
 4. `[vk] window 0x…`, `[vk] selftest: 64 MiB of guest memory at 0x…, placed Vulkan memory`, `[vk] selftest: shaders made; …`;

@@ -333,6 +333,30 @@ static void concurrency(void) {
         assert(!pages(0, alias, 2 * P));
     }
 }
+// UnmapMemory gives the destination's whole host pages back (guest_drop_pages): the source has the bytes, the pages of the destination inside the range read zero on Linux
+// (MADV_DONTNEED), the host pages at its edges are untouched, and the range stays readable and writable. Elsewhere (Darwin: a hint that keeps the contents) nothing is dropped
+static void unmap_gives_pages_back(void) {
+    size_t pg = memory_getpagesize(), n = 8 * pg;
+    uintptr_t sa = alias + 64 * pg;
+    uintptr_t d = (stack + 0x80000 + pg - 1) / pg * pg + (pg > P ? P : 0);   // with host pages over 4 KiB the range starts 4 KiB into one and ends 4 KiB into another
+    assert(!pages(1, sa, n));
+    memset((void *)sa, 0x5a, n);
+    assert(!map(d, sa, n));
+    memset((void *)d, 0x77, n);   // the thread's stack in use
+    if (pg > P) { memset((void *)(d - P), 0x33, P); memset((void *)(d + n), 0x44, P); }   // a neighbour's 4 KiB pages in the edge host pages
+    assert(!unmap(d, sa, n));
+    for (size_t i = 0; i < n; i++) assert(((uint8_t *)sa)[i] == 0x77);   // the contents moved back
+    if (pg > P) assert(*(uint8_t *)(d - P) == 0x33 && *(uint8_t *)(d + n) == 0x44);
+#ifdef __linux__
+    uintptr_t lo = (d + pg - 1) / pg * pg, hi = (d + n) / pg * pg;
+    assert(hi - lo >= 6 * pg);
+    for (uintptr_t a = lo; a < hi; a++) assert(*(uint8_t *)a == 0);   // the host pages inside the range are zero again
+    for (uintptr_t a = d; a < lo; a++) assert(*(uint8_t *)a == 0x77);   // an edge host page is kept whole
+    for (uintptr_t a = hi; a < d + n; a++) assert(*(uint8_t *)a == 0x77);
+#endif
+    memset((void *)d, 0x11, n);   // still writable
+    assert(!pages(0, sa, n));
+}
 static void fragmented_queries(void) {
     // Independent byte-sized model checks word boundaries and free runs across
     // the alias partition. Preserve every live page's marker on overlapping maps.
@@ -549,7 +573,7 @@ int main(int argc, char **argv) {
     for (unsigned i = 0; i < 8; ++i) assert(!pthread_create(&threads[i], NULL, init_worker, &addresses[i]));
     for (unsigned i = 0; i < 8; ++i) { assert(!pthread_join(threads[i], NULL)); assert(addresses[i] == addresses[0]); }
     alias = addresses[0]; stack = info(I_StackAddr); heap = info(I_HeapAddr);
-    lazy_commit(); alias_lifecycle(); ownership(); module_sources(); module_back_patch(); failures(); release_fallback(); concurrency(); fragmented_queries();
+    lazy_commit(); alias_lifecycle(); ownership(); unmap_gives_pages_back(); module_sources(); module_back_patch(); failures(); release_fallback(); concurrency(); fragmented_queries();
     guest_helper(); read_mapped_race();
     if (!DM_GAME_MEM_MAP_LIMIT) metadata_limit();
     else reported_lower();

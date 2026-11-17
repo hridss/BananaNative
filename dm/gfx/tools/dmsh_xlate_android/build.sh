@@ -17,6 +17,6 @@ pub() {   # pub <form dir> [msbuild properties...]
 }
 [[ $WHAT == exe || $WHAT == all ]] && pub exe
 [[ $WHAT == lib || $WHAT == all ]] && { pub lib -p:NativeLib=Shared -p:OutputType=Library; mv -f $O/lib/dmsh_xlate.so $O/lib/libdmsh_xlate.so; }
-[[ $WHAT == run || $WHAT == all ]] && { mkdir -p $O/run; clang --target=aarch64-linux-android33 -O2 -Wall -o $O/run/xlate_run $HERE/xlate_run.c -ldl
-  clang --target=aarch64-linux-android33 -O2 -Wall -o $O/run/spv_val_run $HERE/spv_val_run.c -ldl; }
+[[ $WHAT == run || $WHAT == all ]] && { mkdir -p $O/run; clang --target=aarch64-linux-android31 -O2 -Wall -o $O/run/xlate_run $HERE/xlate_run.c -ldl
+  clang --target=aarch64-linux-android31 -O2 -Wall -o $O/run/spv_val_run $HERE/spv_val_run.c -ldl; }
 ls -la $O/exe $O/lib $O/run 2>/dev/null | grep -E 'dmsh_xlate($|\.so$)|xlate_run$' || true

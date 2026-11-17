@@ -53,6 +53,7 @@ Build with `scripts/build_ipa_from_nsp.py <dump folder> --platform mac`; its fin
 ## Found on this game
 
 - **The targeted split took the full scan** (a Unity bundle member's source, a Unity file without type trees, or a whole CPK): [The targeted split misses Unity bundle members, Unity files without type trees and CPK entries](../../../docs/reference/packing.md#the-targeted-split-misses-unity-bundle-members-unity-files-without-type-trees-and-cpk-entries-android).
+- **A code mod's `subsdk1` without `eh_frame_hdr` stopped the rewrite** (`KeyError: 15`): [A module without `eh_frame_hdr` stops the rewrite](../../../docs/reference/rewriter.md#a-module-without-eh_frame_hdr-stops-the-rewrite-with-keyerror-15).
 - SDK 11.4.3's instance of [the SDK's address-region node area](../../../docs/reference/memory.md#the-sdks-address-region-node-area), with the cut keyed by the shared SDK build ID.
 - Legacy kernels held directly in [Unity ComputeShader objects](../../../docs/reference/shaders.md#unity-computeshader-objects).
 - [VP8 decoding through libvpx](../../../docs/reference/movies.md#vp8-uses-the-same-libvpx-worker-and-output-paths).
@@ -60,6 +61,7 @@ Build with `scripts/build_ipa_from_nsp.py <dump folder> --platform mac`; its fin
 - [AudioOut stop releases pending buffers](../../../docs/reference/audio.md#stopping-an-audioout-releases-its-pending-buffers), reported on 1.0.0 in PR #190.
 - [Unity's integer target frame rate](../../../docs/reference/frame-rate.md#unitys-integer-target-frame-rate).
 - Missing models on Android after memory was given back inside a joined placed segment: [Guest memory given back inside a placed segment (Android)](../../../docs/reference/memory.md#guest-memory-given-back-inside-a-placed-segment-android).
+- [Unity's vSyncCount and targetFrameRate, found through the internal-call table](../../../docs/reference/frame-rate.md#unitys-vsynccount-and-targetframerate-found-through-the-internal-call-table) (upstream on the Mac; on Android the build row stays, and the found field is written once with it).
 
 ## Open
 

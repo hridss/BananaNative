@@ -15,6 +15,7 @@
 - [GPU drivers](GPU-Drivers)
 - [Side panel in game](Side-Panel-In-Game)
 - [Cheats](Cheats)
+- [Mods](Mods)
 
 **Settings and speed**
 - [Settings overview](Settings-Overview)

@@ -35,6 +35,12 @@ public final class ProfileOptionsJvmTest {
         List<Profile.Option> l = Profile.parseOptions(liveStr);
         check(l.size() == 1 && l.get(0).live, "live parsed as true");
 
+        List<Profile.Option> so = Profile.parseOptions("DM_SET_TEST|Settings only|Only in the launcher|settings");
+        check(so.size() == 1 && so.get(0).settingsOnly && !so.get(0).live, "settings parsed as settings-only restart");
+        check(!bc.get(0).settingsOnly && !l.get(0).settingsOnly, "restart and live are not settings-only");
+        check(!so.get(0).equals(bc.get(0)) && so.get(0).toString().endsWith("|settings"), "settings-only differs and encodes as settings");
+        check(Profile.buildOptionsEnv(so, e -> true).equals(java.util.Collections.singletonList("DM_SET_TEST=1")), "settings-only option still passes its env");
+
         String multi = "DM_OOT_MAX_RESOLUTION|Max resolution|Force full 3D resolution|restart|DM_OOT_TEXTURE_POOL_X2|OOT_PATCHES;"
                 + "DM_OOT_TEXTURE_POOL_X2|Texture pool ×2|Double graphics allocation|restart||OOT_PATCHES;"
                 + "DM_OOT_FPS_UNLOCK|Unlocked frame rate|Update step follows elapsed time|restart||OOT_PATCHES";

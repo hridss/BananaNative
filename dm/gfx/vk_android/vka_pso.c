@@ -812,7 +812,8 @@ int plat_maps_count(int *max);
 static pthread_mutex_t g_gate_mu = PTHREAD_MUTEX_INITIALIZER; static pthread_cond_t g_gate_cv = PTHREAD_COND_INITIALIZER;
 static vkpg_state g_gate; static _Atomic int g_gate_slots = 1, g_gate_slots_logged, g_gate_maps = -1, g_gate_mx; static _Atomic uint64_t g_gate_spec_held; static _Atomic uint64_t g_gate_t, g_gate_frame_wait_ns, g_gate_spec_wait_ns;
 // DM_VK_PSO_SLOTS's default: 1 on Turnip (driverID), 4 elsewhere (vka_psogate.h vkpg_cap_default)
-static int gate_cap(void) { return VKA_ENV("DM_VK_PSO_SLOTS", vkpg_cap_default(V.driver_id == VK_DRIVER_ID_MESA_TURNIP)); }
+// RAM saver Strong (DM_VK_RAM_SAVER=2) keeps it at 1 everywhere: each compile in the driver holds tens to hundreds of MiB while it runs
+static int gate_cap(void) { return VKA_ENV("DM_VK_PSO_SLOTS", VKA_ENV("DM_VK_RAM_SAVER", 0) >= 2 ? 1 : vkpg_cap_default(V.driver_id == VK_DRIVER_ID_MESA_TURNIP)); }
 static int gate_slots(void) {
     uint64_t t = now_ns(), last = atomic_load(&g_gate_t);
     if ((!last || t - last >= 500000000ull) && atomic_compare_exchange_strong(&g_gate_t, &last, t)) {
@@ -822,7 +823,7 @@ static int gate_slots(void) {
         atomic_store(&g_gate_maps, maps); atomic_store(&g_gate_mx, mx);
         if ((n != was || !last) && atomic_fetch_add(&g_gate_slots_logged, 1) < 32)
             VLOG("background pipeline compiles: %d at once (was %d): MemAvailable %llu MiB, memory maps %d of %d (DM_VK_PSO_SLOTS at most %d%s)", n, was, (unsigned long long)av, maps, mx,
-                 cap, getenv("DM_VK_PSO_SLOTS") ? "" : V.driver_id == VK_DRIVER_ID_MESA_TURNIP ? ", 1 on Turnip by default" : "");
+                 cap, getenv("DM_VK_PSO_SLOTS") ? "" : VKA_ENV("DM_VK_RAM_SAVER", 0) >= 2 ? ", 1 by default with RAM saver Strong" : V.driver_id == VK_DRIVER_ID_MESA_TURNIP ? ", 1 on Turnip by default" : "");
     }
     return atomic_load(&g_gate_slots);
 }

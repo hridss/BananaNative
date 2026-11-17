@@ -183,9 +183,6 @@ HLE_FORCE("_ZN2nn3ngc15ProfanityFilter24MaskProfanityWordsInTextEPiPDsj", "profa
 HLE_FORCE("_ZN2nn3ngc15ProfanityFilter11SetMaskModeENS1_8MaskModeE", "profanity mask mode; nothing is masked whatever the mode", void, h_ngc_MaskMode, void *self, int mode) { (void)self; (void)mode; }
 HLE_FORCE("_ZN2nn3ngc15ProfanityFilter8FinalizeEv", "profanity filter shutdown; the host mounted no word list", void, h_ngc_Fini, void *self) { (void)self; }
 
-// ---------- nsd server name resolution / pctl free communication: networking, out of scope ----------
-HLE_FORCE("_ZN2nn3nsd7ResolveEPNS0_4FqdnERKS1_", "server name resolution, networking out of scope; cut", Result, h_nsd_Resolve, void *out, const void *in) { (void)out; (void)in; return RES_FAIL; }
-HLE_FORCE("_ZN2nn3nsd9ResolveExEPNS0_4FqdnERKS1_", "server name resolution, networking out of scope; cut", Result, h_nsd_ResolveEx, void *out, const void *in) { (void)out; (void)in; return RES_FAIL; }
 // bool arguments only look at the low 8 bits; returns bool
 // The permission query answers as TryBegin / IsFreeCommunicationAvailable do: the SDK's version calls the pctl service (pctl::detail::ipc::GetService), which the host never opens (DRAGON QUEST XI S imports it; from PR #38)
 // With a co-op node (DM_COOP set, hle_coop.c): communication with others is allowed, as on a console without parental controls, or a game does not open its local-wireless

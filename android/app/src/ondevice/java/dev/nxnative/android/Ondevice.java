@@ -355,6 +355,9 @@ final class Ondevice {
         return true;
     }
 
+    /** Whether the background code update of this dump was started in this process already (autoCodeUpdate tries once): the card then offers a tap to retry instead of waiting for ever */
+    static boolean codeUpdateTried(File dump) { return autoTried.contains("code:" + dump.getPath()); }
+
     /**
      * Whether this app made the pack, so the launcher may update its code by itself: its pack.tsv's made_by row (written by the phone's pack step), else, for a pack
      * made before that row, the job beside the dump that says it made this pack folder (job.json own_pack). Without either, the pack is treated as other tools'.
@@ -1096,7 +1099,7 @@ final class Ondevice {
         void startService(Job j) {
             if (userAsked) { userAsked = false; if (!sheetShowing()) h.post(() -> sheet(a)); }
             // Android 13+: the progress notification needs the user's yes; the job runs either way (without it the notification shows only in the task manager)
-            if (a.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
+            if (android.os.Build.VERSION.SDK_INT >= 33 && a.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
                 a.requestPermissions(new String[] {Manifest.permission.POST_NOTIFICATIONS}, ASK_NOTIFY);
             a.startForegroundService(new Intent(a, PackService.class).setAction(PackService.ACTION_START).putExtra(PackService.EXTRA_JOB, j.file.getPath()));
             if (!bound) bound = a.bindService(new Intent(a, PackService.class), this, 0);

@@ -481,6 +481,16 @@ JNIEXPORT jint JNICALL Java_dev_nxnative_android_Native_openLog(JNIEnv *env, jcl
     (void)cls; char *lp = jstr(env, log); int r = log_open(lp); free(lp); return r;
 }
 JNIEXPORT jboolean JNICALL Java_dev_nxnative_android_Native_hasSelftest(JNIEnv *env, jclass cls) { (void)env; (void)cls; return nxhost_vk_selftest != NULL; }
+// The selftest's environment (the picked GPU driver: DM_VK_DRIVER), set before its Vulkan device is made and written to its log, as start does for a game
+JNIEXPORT void JNICALL Java_dev_nxnative_android_Native_selftestEnv(JNIEnv *env, jclass cls, jobjectArray envs) {
+    (void)cls;
+    for (jsize i = 0, n = envs ? (*env)->GetArrayLength(env, envs) : 0; i < n; i++) {
+        jstring s = (jstring)(*env)->GetObjectArrayElement(env, envs, i);
+        char *kv = jstr(env, s); char *eq = strchr(kv, '=');
+        if (eq && eq > kv) { *eq = 0; setenv(kv, eq + 1, 1); fprintf(stderr, "[nxlaunch] env %s=%s\n", kv, eq + 1); }
+        free(kv); (*env)->DeleteLocalRef(env, s);
+    }
+}
 // Blocks for about frames / 60 s: call it on a thread of its own. 0 = every check passed; -1 = this host has no selftest
 JNIEXPORT jint JNICALL Java_dev_nxnative_android_Native_selftest(JNIEnv *env, jclass cls, jobject surface, jint frames) {
     (void)cls; if (!nxhost_vk_selftest) return -1;

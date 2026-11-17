@@ -3,6 +3,7 @@
 // such parameters are always declared as int/unsigned and truncated by ourselves. Variadic arguments go on the stack on Apple and in registers on Switch ⇒ variadic functions cannot use C's "..." directly.
 #pragma once
 #include "dm.h"
+#include <stdatomic.h>
 typedef struct { const char *name; void *fn; } hle_ent;
 #define HLE(mangled, ret, cname, ...)                                                             \
     static ret cname(__VA_ARGS__);                                                                \
@@ -61,10 +62,25 @@ void dm_focus_set(int st);
 // report the applet could not start (RES_FAIL cuts): those never had an applet open
 void dm_applet_enter(const char *name);
 void dm_applet_leave(void);
+// DM_ONLINE=1: the network services report an internet connection (nifm: available, an address; the network clock task and the network clock: the user clock's time). Nothing reaches
+// a network: every socket call still fails. A game that shows an event only when it believes it is online (Pokopia: Apples to Applin) then starts it. Read once per translation unit
+static inline int dm_online(void) {
+    static int v = -1;
+    if (v < 0) { const char *e = getenv("DM_ONLINE"); v = e && *e && strcmp(e, "0") != 0; }
+    return v;
+}
+// DM_NET_TRACE=1: logs each nifm / nsd / network clock / socket call the game makes with its result (first 400), to see what a game's online check asks. Read once per translation unit
+static inline int dm_net_trace(void) {
+    static int v = -1;
+    if (v < 0) { const char *e = getenv("DM_NET_TRACE"); v = e && *e && strcmp(e, "0") != 0; }
+    return v;
+}
+#define NET_TRACE(...) do { static _Atomic int n_; if (dm_net_trace() && atomic_fetch_add(&n_, 1) < 400) LOG("[net] " __VA_ARGS__); } while (0)
 static inline void dm_applet_leave_(const char *const *name) { (void)name; dm_applet_leave(); }
 #define DM_APPLET(name) const char *const dm_applet_ __attribute__((cleanup(dm_applet_leave_))) = (name); dm_applet_enter(dm_applet_)
 // Audio pause / resume following the lifecycle (called by the front end on going to background / returning to foreground)
 extern uint8_t *dm_fps_state;   // frame step state page (loader.c install_fps_state): +0 float target fps, +4 movie flag (dm_movie_playing, written by the host at each present: Tears of the Kingdom's step stub caps its first, undecided steps by it), +0x10 float render scale, +0x18 double game seconds stepped; NULL when the build has none
+extern int dm_fps_step_max;   // loader.c: the largest step the frame step stubs give the game (patch_nso.py ctx.step_max; 0 = FSTEP_MAX)
 int dm_movie_playing(void);   // hle_movie.c: a video decoder of the SDK's movie library handed out a picture in the last half second (the frame step then holds 30 fps)
 void dm_audio_suspend(int on);
 uint64_t dm_audio_render_calls(void);   // Cumulative sound card callback count (the silent sink is not counted)

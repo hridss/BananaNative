@@ -136,6 +136,7 @@ __attribute__((visibility("default"))) int nxhost_vk_readiness(char *buf, int n)
     if (!vkEnumeratePhysicalDevices || vkEnumeratePhysicalDevices(inst, &npd, &pd) < 0 || !npd || !pd) {
         put(&o, "error=no Vulkan physical device\n"); if (vkDestroyInstance) vkDestroyInstance(inst, NULL); return 1; }
     VkPhysicalDeviceProperties p; vkGetPhysicalDeviceProperties(pd, &p);
+    if (vka_driver_tag()) { int vka_driver_mapped(void); put(&o, "driver.customMapped=%d\n", vka_driver_mapped()); }   // 0: adrenotools fell back to the system's driver (vka_driverpath.h)
     put_str(&o, "gpu.name", p.deviceName);
     put(&o, "gpu.vendor=%#x\ngpu.device=%#x\ndriver.version=%#x\n", p.vendorID, p.deviceID, p.driverVersion);
     put_ver(&o, "vk.api", p.apiVersion);

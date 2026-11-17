@@ -11,7 +11,7 @@ NDK=${ANDROID_NDK_HOME:-$(ls -d ~/Library/Android/sdk/ndk/* 2>/dev/null | sort -
 mkdir -p $W; W=${W:A}
 [ -d $W/src ] || git clone -q --depth 1 -b $TAG https://github.com/KhronosGroup/SPIRV-Tools.git $W/src
 [ -d $W/src/external/spirv-headers ] || git clone -q --depth 1 -b $TAG https://github.com/KhronosGroup/SPIRV-Headers.git $W/src/external/spirv-headers
-cmake -S $W/src -B $W/build-android -G Ninja -DCMAKE_TOOLCHAIN_FILE=$NDK/build/cmake/android.toolchain.cmake -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-33 \
+cmake -S $W/src -B $W/build-android -G Ninja -DCMAKE_TOOLCHAIN_FILE=$NDK/build/cmake/android.toolchain.cmake -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-31 \
   -DCMAKE_BUILD_TYPE=Release -DSPIRV_SKIP_TESTS=ON -DSPIRV_WERROR=OFF -DCMAKE_SHARED_LINKER_FLAGS=-Wl,-z,max-page-size=16384 > $W/cmake.log
 ninja -C $W/build-android SPIRV-Tools-shared > $W/ninja.log
 $(ls -d $NDK/toolchains/llvm/prebuilt/*/bin | head -1)/llvm-strip -o $W/libSPIRV-Tools-shared.so $W/build-android/source/libSPIRV-Tools-shared.so

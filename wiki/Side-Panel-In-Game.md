@@ -21,7 +21,8 @@ A hint at the right edge shows how, once after install. With a controller: D-pad
 ### Performance
 - **Frame rate cap**: the same choices as on the game page ([Settings: Performance](Settings-Performance#frame-rate-cap)), applied now. A game's frame limit list is 60, 45, 40, 30, 20 fps; other games: The game's own, 60, 30, 20, 15 fps.
 - **Full game speed at low frame rates** (games whose speed follows their frame rate) and **Hold 60 fps: never drop to 30, no frame holds** (Mario Kart World).
-- **Upscaler** (and **FSR sharpness**): for a game whose upscaler the app replaces; applies from the next frame. Hidden for a game with Resolution presets unless Settings > Help > Tester settings is on.
+- **Upscaler** (and **FSR sharpness**): for a game whose upscaler the app replaces, or a game on the DLSS stand-in (its own modes and sliders); applies from the next frame. Hidden for a game with Resolution presets unless Settings > Help > Tester settings is on.
+- **Upscaling quality** and **Graphics quality** (Fire Emblem: Fortune's Weave), under the Upscaler.
 - **Dynamic resolution**: a slider from Off to 30 % (Donkey Kong Bananza).
 - **Frame generation**: the on switch, target, multiplier and motion estimation resolution ([Settings: Performance](Settings-Performance#frame-generation)).
 - The game's own **live** switches, if its profile has any. Ocarina of Time has four sliders here, each starting at Auto: **Draw distance**, **Shadow range**, **Foliage distance** and **Model detail distance** ([the game's page](Game-Zelda-Ocarina-of-Time)). They apply at once and are saved for the next start.
@@ -29,7 +30,8 @@ A hint at the right edge shows how, once after install. With a controller: D-pad
 The live lines on this tab (the frame rate now) refresh twice a second while it shows.
 
 ### Display
-- **Resolution**: the same choice as on the game page. For some games the window changes at once and the 3D picture at the next start; a line says which. Fire Emblem: Fortune's Weave shows three groups: Resolution, Upscaling quality, Graphics quality.
+- **Resolution**: the same choice as on the game page. For some games the window changes at once and the 3D picture at the next start; a line says which. Fire Emblem: Fortune's Weave shows Resolution alone here (its Upscaling quality and Graphics quality are on Performance).
+- **Screen scaling** (and **Screen sharpness** under FSR 1): a game on the DLSS stand-in (Fire Emblem: Fortune's Weave, Star Fox); how the picture is scaled to the screen, the same choice as on the game page ([Settings: Performance](Settings-Performance#upscaler)); applies from the next frame.
 - **Picture**: **Fit** or **Stretch**, **Size** 50 to 100 % in 5 % steps (the picture shrinks with its shape kept and black around it), and **Position (this screen)**: Top, Centre, Bottom.
 - **Overlay**: the master switch and one switch per item.
 
@@ -45,6 +47,7 @@ See [Settings: Controls](Settings-Controls).
 ### General
 - **Panel**: **Size** and **Text size**, each Small / Normal / Large, for every game, applied at once.
 - **Cheats** (only for a game with cheats and with Game settings > Cheats on): one switch per cheat, grouped by section, live. See [Cheats](Cheats).
+- **Hide everything (clean picture)**: one tap hides the stats, the build tag, the log, the on-screen controls and the panel's edge strip, for a clean screenshot or recording. The panel still opens with Back, a controller or the controls' top-centre button, where the same button reads **Show everything** and brings back what you had before (a log that was off stays off). Kept for the next start. (From a contribution by racerx.)
 - **Pause the game**: freezes the game until you tap the screen (or press A or Start on a gamepad). While paused, the game's clock, graphics, threads and audio are suspended.
 - **Pause when the game comes back from the background** (on by default): coming back from another app shows the game paused until a tap.
 - **Stop the game**: asks "Stop the game?"; unsaved progress is lost, and the log stays for **Share log**. A game that has not saved keeps its progress only in memory, also while paused or in the background, so stopping it then loses it.

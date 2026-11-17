@@ -21,6 +21,8 @@ endif()
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
 get_filename_component(ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
+# Source paths in the libraries (__FILE__ in log lines, debug info) relative to the repository, not the build machine's folders
+add_compile_options(-ffile-prefix-map=${ROOT}/=)
 set(HOST ${ROOT}/dm/host)
 set(GFX ${ROOT}/dm/gfx)
 set(TP ${ROOT}/dm/third_party)

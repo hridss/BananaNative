@@ -40,7 +40,8 @@ import game
 sys.path.insert(0, str(REPO / 'dm/gfx/tools'))
 import dmsh_chain
 
-REWRITER = ('patch_nso.py', 'nso.py', 'nso_code.py', 'nso_asm.py', 'nso_match.py', 'sdk_patches.py', 'ue_cvar.py', 'ue_malloc.py', 'fps_target.py', 'ue_region.py', 'loader_census.py')
+REWRITER = ('patch_nso.py', 'nso.py', 'nso_code.py', 'nso_asm.py', 'nso_match.py', 'sdk_patches.py', 'engine_patches.py', 'jump_solver.py', 'ue_cvar.py', 'ue_malloc.py', 'fps_target.py',
+            'ue_region.py', 'loader_census.py', 'monolith_fps.py', 'ue_fixed_rate.py', 'unity_fps.py', 'unity_bucket.py', 'ue_ring.py', 'snowdrop_pools.py')
 FORMAT = 1   # pack.tsv format; the launcher refuses another
 
 
@@ -67,14 +68,35 @@ def stage(text, every=0.0):
 
 
 def copy_counted(src, dst, what):
-    """shutil.copy2 in 8 MiB pieces with 'stage: <what>: <n> of <m> MB' at most twice a second: the shader library (700 MB for Ocarina of Time) to shared storage"""
+    """shutil.copy2 (its metadata best effort) in 8 MiB pieces with 'stage: <what>: <n> of <m> MB' at most twice a second: the shader library (700 MB for Ocarina of Time) to shared storage"""
     total = os.path.getsize(src); done = 0
     stage(f'{what}: 0 of {total >> 20:,} MB')
     with open(src, 'rb') as i, open(dst, 'wb') as o:
         while b := i.read(8 << 20):
             o.write(b); done += len(b)
             stage(f'{what}: {done >> 20:,} of {total >> 20:,} MB', 0.5)
-    shutil.copystat(src, dst)
+    keep_times(src, dst)
+
+
+def keep_times(src, dst):
+    """The modification time and mode of src on dst, best effort: exFAT/FAT storage that Android shows through its FUSE layer (/mnt/media_rw: an SD card, a USB drive) refuses
+    chmod and utime with EPERM, and shutil.copystat / copy2 then fail a finished copy (issue #360). The data is what counts; callers compare sizes, not times"""
+    try: shutil.copystat(src, dst)
+    except OSError: pass
+
+
+def copy_file(src, dst):
+    """shutil.copy2 that keeps going when the storage refuses the metadata (keep_times)"""
+    shutil.copyfile(src, dst); keep_times(src, dst)
+
+
+def same_copy(src, dst):
+    """dst is a current copy of src: same size (times do not survive exFAT), and for a small file the same bytes"""
+    try:
+        n = os.path.getsize(src)
+        if os.path.getsize(dst) != n: return False
+        return n > (1 << 20) or Path(src).read_bytes() == Path(dst).read_bytes()
+    except OSError: return False
 
 
 def child_env(**kw):
@@ -390,7 +412,8 @@ def swap_in(out, m, key):
     before the rewrite started, so a pack stopped at any point has either the old module with no key, a mix with no key, or the new module with its key:
     a module without its key is one the launcher refuses (PackCheck) and the next run rewrites"""
     st = staging(out, m)
-    for f in sorted(st.iterdir()): os.replace(f, out / f.name)
+    for f in sorted(st.iterdir()):
+        if f.exists() or f.is_symlink(): os.replace(f, out / f.name)   # an AppleDouble ._<name> on an exFAT/FAT drive goes with its file (split_shaders)
     st.rmdir()
     tmp = out / f'{m}.android.key.tmp'; write_lf(tmp, key + '\n'); os.replace(tmp, out / f'{m}.android.key')
 
@@ -602,7 +625,8 @@ def split_shaders(a, g, vdir, pkg, parts=None, aoc=(), nros=None):   # parts: th
     if absent:
         (pkg / '_absent.tsv').write_text(''.join(k + '\n' for k in absent))
         print(f'shaders: {len(absent)} of the profile\'s {len(want)} shaders are not in this dump (they belong to another registered build of the game, shader_optional.tsv): listed in {pkg.name}/_absent.tsv')
-    for f in tmp.iterdir(): f.replace(pkg.with_name(f.name))
+    for f in list(tmp.iterdir()):
+        if f.exists() or f.is_symlink(): f.replace(pkg.with_name(f.name))   # macOS on an exFAT/FAT drive moves a file's AppleDouble ._<name> with it, so the listing's ._ entry is gone by its turn
     tmp.rmdir()
 
 
@@ -638,7 +662,7 @@ def pack_shaders(a, g, work, out, vdir, parts=None, aoc=()):
             if WINDOWS:
                 kf = work / 'android-shaders' / 'keys.txt'; write_lf(kf, ''.join(k + '\n' for k in keys)); args = ['@' + str(kf)]
             else: args = keys
-        r = subprocess.run([py, str(VK_BUILD_WIN if WINDOWS else VK_BUILD), '--target', 'vulkan', str(pkg), str(cache), *args], env=env)
+        r = subprocess.run([py, str(VK_BUILD_WIN if WINDOWS or sys.platform.startswith('linux') else VK_BUILD), '--target', 'vulkan', str(pkg), str(cache), *args], env=env)   # on Linux too, for the translator's start (the repository's apphost is the Mac's; vk_android_win.py starts the dlls with dotnet)
         if r.returncode: raise Error(f'vk_android_build.py exit code {r.returncode} (a package that lacks the profile\'s shaders stops it: delete {pkg} and the split runs again)')
         if not library_current(lib, g): raise Error(f'vk_android_build.py finished but {lib} is not a full library of {g.id} with the current inputs')
     else: print(f'shaders: {lib} is current (game {g.id}, inputs {dmsh_chain.inputs(g)})')
@@ -648,10 +672,10 @@ def pack_shaders(a, g, work, out, vdir, parts=None, aoc=()):
         if WINDOWS: write_lf(lib / dmsh_chain.STAMP, (lib / dmsh_chain.STAMP).read_text(encoding='utf-8'))   # written in text mode: CR LF there
     for f in (VK_LIB, dmsh_chain.STAMP):
         s_, d_ = lib / f, dst / f
-        if d_.is_file() and d_.stat().st_size == s_.stat().st_size and d_.stat().st_mtime_ns == s_.stat().st_mtime_ns: continue
+        if same_copy(s_, d_): continue   # by size, not by time: exFAT cannot keep a modification time
         tmp = d_.with_name(f + '.partial')
         if f == VK_LIB: copy_counted(s_, tmp, 'copying the shader library into the pack')
-        else: shutil.copy2(s_, tmp)
+        else: copy_file(s_, tmp)
         os.replace(tmp, d_)   # replace: Windows' rename does not take an existing name
     others = sorted(o.name for o in (out / 'shaders').iterdir() if o.name != name and o.name.startswith(VK_PREFIX) and o.is_dir())
     if others:   # kept: another APK (the test and the play app, an older build) may load one of them from this pack; delete by hand to save the space

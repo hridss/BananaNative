@@ -9,9 +9,9 @@
 #include <stdio.h>
 #include <string.h>
 
-enum { VKS_MESH, VKS_SHADER, VKS_PIPELINE, VKS_FEATURE, VKS_MISSING, VKS_N };
+enum { VKS_MESH, VKS_SHADER, VKS_PIPELINE, VKS_FEATURE, VKS_MISSING, VKS_GUESTMEM, VKS_N };
 static const char *const vks_name[VKS_N] = {"mesh draws without VK_EXT_mesh_shader", "shaders refused", "pipelines not made", "features the device lacks",
-                                            "shaders missing from the pack"};
+                                            "shaders missing from the pack", "guest memory the GPU cannot see"};
 enum { VKS_WINDOW = 300, VKS_FIRST = 900, VKS_MIN_WORK = 200, VKS_DEFAULT_PCT = 5 };   // frames in a window; no verdict before this frame; fewer draws in a window say nothing
 
 typedef struct {

@@ -139,6 +139,12 @@ ondevice/java/dev/nxnative/android/PackService.java	the dump's shaders are not t
 ondevice/java/dev/nxnative/android/PackService.java	 differs). The dump may be incomplete or modified: dump the game again, then Retry
 
 # English source arrays of pickers: the UI shows the R.array.arr_* resources (Tx.arr); the constants stay for the tests, logs and the stored index order
+main/java/dev/nxnative/android/DlssTune.java	Nearest neighbor
+main/java/dev/nxnative/android/DlssTune.java	Bilinear
+main/java/dev/nxnative/android/DlssTune.java	Bicubic
+main/java/dev/nxnative/android/DlssTune.java	FSR 1
+main/java/dev/nxnative/android/DlssTune.java	SGSR 1
+main/java/dev/nxnative/android/DlssTune.java	Device (power saving)
 main/java/dev/nxnative/android/DlssTune.java	Balanced
 main/java/dev/nxnative/android/DlssTune.java	Clear
 main/java/dev/nxnative/android/DlssTune.java	Clearest
@@ -273,3 +279,4 @@ ondevice/java/dev/nxnative/android/Ondevice.java	\n\nDump:
 main/java/dev/nxnative/android/PackUi.java	# the game and the profile inputs this library was built from (dm/gfx/tools/dmsh_chain.py inputs)\ngame\t
 ondevice/java/dev/nxnative/android/Ondevice.java	 moved in, no check
 ondevice/java/dev/nxnative/android/Ondevice.java	; the sampled check decides)
+main/java/dev/nxnative/android/SelftestActivity.java	DM_VK_DRIVER=

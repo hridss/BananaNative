@@ -61,6 +61,7 @@ General host changes first needed here; each applies to every game:
 - **A network request kept on hold before it settles** (`hle_net.c`, `nn::nifm`): [Network requests stay on hold before they settle](../../../docs/reference/services.md#network-requests-stay-on-hold-before-they-settle).
 - **Rewriter:** an `adrp` re-encoded inside a copied exclusive window (`window_adrp`) and gates before a `ret` (`scratch_dead`): [`adrp` inside an exclusive window](../../../docs/reference/rewriter.md#adrp-inside-an-exclusive-window), [Observation gates on any relocatable instruction](../../../docs/reference/rewriter.md#observation-gates-on-any-relocatable-instruction) (the `scratch_dead` rule, removed on 2026-10-31). Spin waits that store (`patch_nso.py` "Spin waits"): [development.md, Power](../../../docs/development.md#power).
 - **An Unreal engine region that `-SwitchVirtualAddressSpaceSize=` cannot size**, given what the alias region has room for at its default path's store (`dm/tools/ue_region.py`; a cut in this build's `patches.py` until 2026-10-31): [Unreal's engine address region and its options](../../../docs/reference/memory.md#unreals-engine-address-region-and-its-options).
+- [Unreal's fixed frame rate, found by its reflection entry](../../../docs/reference/frame-rate.md#unreals-fixed-frame-rate-found-by-its-reflection-entry) (upstream on the Mac; on Android the host writes it since the port, no run yet).
 
 ## Open
 

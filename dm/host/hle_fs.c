@@ -107,6 +107,21 @@ static int save_txn_from_path(const char *hp) {
 __attribute__((weak)) void front_save_failed(int err) { LOG("front_save_failed(errno=%d): no front end attached (default weak implementation)", err); }
 // DM_FSLOG=<file>: each ReadFile logs one TSV line "seconds since boot\tguest path\toffset\tlength\tguest buffer address" (which bytes boot read, for offline reverse lookup against the manifest)
 static FILE *g_fslog; static char *g_fdpath[4096]; static pthread_mutex_t g_fslog_lock = PTHREAD_MUTEX_INITIALIZER;
+// DM_FSLOG names files of an image mount (a .nup package, a RomFS image) too: their handles carry (mount, entry), not an fd, so the path each entry was opened by
+// is kept per mount while the log is on (it printed "?" for every read of a .nup game: a replay could not tell the files apart). Image mounts are never unmounted
+// (h_fs_Unmount frees save names only), so an entry's path stays valid for the run
+static char **g_imgpath[MAX_MOUNT];
+static void fslog_img_open(int mi, int64_t k, const char *path) {
+    if (!g_fslog || mi < 0 || mi >= MAX_MOUNT || k < 0 || !g_mnt[mi].img || (uint64_t)k >= g_mnt[mi].img->n) return;
+    pthread_mutex_lock(&g_fslog_lock);
+    if (!g_imgpath[mi]) g_imgpath[mi] = calloc(g_mnt[mi].img->n, sizeof(char *));
+    if (g_imgpath[mi] && !g_imgpath[mi][k]) g_imgpath[mi][k] = strdup(path);
+    pthread_mutex_unlock(&g_fslog_lock);
+}
+static const char *fslog_img_path(uint64_t h) {   // under g_fslog_lock
+    int mi = IMG_M(h); uint64_t k = IMG_K(h);
+    return mi < MAX_MOUNT && g_imgpath[mi] && g_mnt[mi].img && k < g_mnt[mi].img->n && g_imgpath[mi][k] ? g_imgpath[mi][k] : "?";
+}
 static void fslog_init(void) { static int done; if (done) return; done = 1; const char *e = getenv("DM_FSLOG"); if (e && !(g_fslog = fopen(e, "w"))) die("cannot open DM_FSLOG %s", e); if (g_fslog) setvbuf(g_fslog, NULL, _IOLBF, 0); }   // line-buffered: runs end at the time-limit alarm or a crash, which never flush stdio
 
 static const char *envdir(const char *var, const char *rel, char *buf, size_t n) {
@@ -856,7 +871,7 @@ void dm_fs_time(uint64_t *open_ns, uint64_t *read_ns, uint64_t *read_bytes) {
 #ifndef DM_GAME_ROMFS_SUBST
 #define DM_GAME_ROMFS_SUBST ""
 #endif
-static int64_t img_subst(mount_t *m, const char *path, const char **donor, int *dlen) {   // the substitute entry for a damaged path (-1: none named, or not in the image)
+static int subst_name(const char *path, const char **donor, int *dlen) {   // the substitute romfs_substitute (or DM_ROMFS_SUBST) names for a damaged path, without the mount: 0 when none
     const char *c = strchr(path, ':'), *rest = c ? c + 1 : path, *s = getenv("DM_ROMFS_SUBST");
     while (*rest == '/') rest++;
     if (!s) s = DM_GAME_ROMFS_SUBST;
@@ -864,15 +879,48 @@ static int64_t img_subst(mount_t *m, const char *path, const char **donor, int *
     while (*s) {
         while (*s == ' ' || *s == '\t') s++;
         const char *end = s + strcspn(s, " \t"), *eq = memchr(s, '=', (size_t)(end - s));
-        if (eq && (size_t)(eq - s) == rl && !memcmp(s, rest, rl)) {
-            char d[1024]; snprintf(d, sizeof d, "/%.*s", (int)(end - eq - 1), eq + 1);
-            if (donor) { *donor = eq + 1; *dlen = (int)(end - eq - 1); }
-            int64_t k = img_find(m->img, d);
-            return k > 0 && m->img->e[k].type ? k : -1;
-        }
+        if (eq && (size_t)(eq - s) == rl && !memcmp(s, rest, rl)) { *donor = eq + 1; *dlen = (int)(end - eq - 1); return 1; }
         s = end;
     }
-    return -1;
+    return 0;
+}
+static int64_t img_subst(mount_t *m, const char *path, const char **donor, int *dlen) {   // the substitute entry for a damaged path (-1: none named, or not in the image)
+    const char *d0; int dl0;
+    if (!subst_name(path, &d0, &dl0)) return -1;
+    if (donor) { *donor = d0; *dlen = dl0; }
+    char d[1024]; snprintf(d, sizeof d, "/%.*s", dl0, d0);
+    int64_t k = img_find(m->img, d);
+    return k > 0 && m->img->e[k].type ? k : -1;
+}
+static int zstd_check_on(void) { static int on = -1; if (on < 0) { const char *e = getenv("DM_ROMFS_ZSTD_CHECK"); on = !(e && *e == '0'); } return on; }
+static int zstd_head_bad(const uint8_t h[4]) {   // neither a zstd frame nor a skippable frame begins here
+    uint32_t mg = (uint32_t)h[0] | (uint32_t)h[1] << 8 | (uint32_t)h[2] << 16 | (uint32_t)h[3] << 24;
+    return mg != 0xFD2FB528u && (mg & 0xFFFFFFF0u) != 0x184D2A50u;
+}
+// The same check for a game file in a folder (a read-only mount: the RomFS folder, an overlay): a *.zs whose first 4 bytes are no zstd frame is answered as a damaged image
+// entry is, with the same [RED] line (served as the substitute, a file of the same mount, when the profile names one; else "not found"). Before, a folder served it as it was and
+// only the game's own decompression failed, with no line from the host (Donkey Kong Bananza logs "LoadResult = 5" for such a model, then reads its null result). It does not
+// find a file cut short after a good first block (the frame is not walked). Returns the descriptor to use: fd itself, the substitute's (fd closed), or -1 (fd closed).
+// Called with the path lock held (host_path)
+static int folder_zcheck(int fd, const struct stat *st, const char *path) {
+    size_t pl = strlen(path);
+    if (!zstd_check_on() || pl <= 3 || strcmp(path + pl - 3, ".zs") || st->st_size < 4) return fd;
+    uint8_t h[4];
+    if (pread(fd, h, 4, 0) != 4 || !zstd_head_bad(h)) return fd;
+    close(fd);
+    const char *d = NULL; int dl = 0, sfd = -1;
+    if (subst_name(path, &d, &dl)) {
+        const char *c = strchr(path, ':');
+        char sp[1024], shp[1024]; snprintf(sp, sizeof sp, "%.*s:/%.*s", c ? (int)(c - path) : 0, path, dl, d);
+        if (host_path(sp, shp, sizeof shp, NULL)) sfd = open(shp, O_RDONLY);
+    }
+    static atomic_int n;
+    if (atomic_fetch_add(&n, 1) < 64) {
+        if (sfd >= 0) LOG("[RED] fs %s is not a zstd stream (begins %02x %02x %02x %02x; damaged): served as %.*s (romfs_substitute)", path, h[0], h[1], h[2], h[3], dl, d);
+        else LOG("[RED] fs %s is not a zstd stream (begins %02x %02x %02x %02x; damaged): answered \"not found\"%s (DM_ROMFS_ZSTD_CHECK=0 serves it as stored)%s", path, h[0], h[1], h[2], h[3],
+                 d ? ", its substitute is not in the folder" : "", h[0] | h[1] | h[2] | h[3] ? "" : "; it begins with zeros: a copy that stopped or was cut, copy the game files again");
+    }
+    return sfd;
 }
 // The entry to serve for entry k: k itself, a damaged file's substitute, or -1 (answered "not found")
 static int64_t img_serve(mount_t *m, int64_t k, const char *path) {
@@ -888,9 +936,8 @@ static int64_t img_serve(mount_t *m, int64_t k, const char *path) {
         __atomic_fetch_or(&ent->flags, (uint8_t)(IMG_ENT_ZCHECKED | IMG_ENT_BADZSTD), __ATOMIC_RELEASE);
         return sub;
     }
-    static int on = -1; if (on < 0) { const char *e = getenv("DM_ROMFS_ZSTD_CHECK"); on = !(e && *e == '0'); }
     int bad = 0; int64_t r = k;
-    if (on && ent->b >= 4) {
+    if (zstd_check_on() && ent->b >= 4) {
         uint8_t h[4];
         int got_header = 0;
         if (m->img->aux && (ent->flags & IMG_ENT_ZSTD)) {
@@ -905,8 +952,7 @@ static int64_t img_serve(mount_t *m, int64_t k, const char *path) {
             got_header = romfs_image_read(m->img->fd, h, 4, (off_t)ent->a);
         }
         if (got_header) {
-            uint32_t mg = (uint32_t)h[0] | (uint32_t)h[1] << 8 | (uint32_t)h[2] << 16 | (uint32_t)h[3] << 24;
-            bad = mg != 0xFD2FB528u && (mg & 0xFFFFFFF0u) != 0x184D2A50u;
+            bad = zstd_head_bad(h);
             if (bad) {
                 d = NULL; dl = 0; r = img_subst(m, path, &d, &dl);
                 if (r >= 0) LOG("[RED] fs %s is not a zstd stream (begins %02x %02x %02x %02x; damaged): served as %.*s (romfs_substitute)", path, h[0], h[1], h[2], h[3], dl, d);
@@ -936,6 +982,7 @@ HLE_FORCE("_ZN2nn2fs8OpenFileEPNS0_10FileHandleEPKci", "fsp-srv → open(2)", Re
             if (!nup_z_get(g_mnt[mi].img, ent->a, why, sizeof why)) { LOG("[RED] fs %s: cannot decompress it from %s: %s", path, ((nup_aux *)g_mnt[mi].img->aux)->what, why); return RES_FAIL; }
         }
         *out = FH_OUT(IMG_HANDLE(mi, k));
+        fslog_img_open(mi, k, path);   // DM_FSLOG names image files
         if (g_flag.fs) LOG("fs open [%.2fs] %s mode=%d → image entry %lld", (now_ns() - g_t0_ns) / 1e9, path, mode, (long long)k);
         return RES_OK;
     }
@@ -945,6 +992,7 @@ HLE_FORCE("_ZN2nn2fs8OpenFileEPNS0_10FileHandleEPKci", "fsp-srv → open(2)", Re
     if (fd < 0) return err_res("open", hp);
     struct stat st; fstat(fd, &st);
     if (S_ISDIR(st.st_mode)) { close(fd); return RES_PATH_NOT_FOUND; }
+    if (ro && (fd = folder_zcheck(fd, &st, path)) < 0) return RES_PATH_NOT_FOUND;   // a damaged *.zs game file (above)
     if (fd >= (int)sizeof g_fmode) die("fd beyond the table");
     g_fmode[fd] = (uint8_t)mode; *out = FH_OUT(fd);
     if (fd == 0) LOG("[RED] fs open %s returned descriptor 0 (stdin was closed in this process): the guest sees a null handle", hp);
@@ -1000,8 +1048,8 @@ HLE_FORCE("_ZN2nn2fs8ReadFileEPmNS0_10FileHandleElPvm", "fsp-srv → pread(2)", 
     if (g_fslog) { pthread_mutex_lock(&g_fslog_lock);
         static int hash_on = -1; if (hash_on < 0) hash_on = getenv("DM_FSLOG_HASH") != NULL;   // DM_FSLOG_HASH=1: append a column with the FNV-1a 64 of the content read (to compare whether the bytes read from two resource packs match)
         uint64_t fh = 0xcbf29ce484222325ull; if (hash_on) for (size_t i = 0; i < got; i++) fh = (fh ^ ((uint8_t *)buf)[i]) * 0x100000001b3ull;
-        if (hash_on) fprintf(g_fslog, "%.4f\t%s\t%lld\t%zu\t%p\t%016llx\n", (now_ns() - g_t0_ns) / 1e9, !IMG_H(h) && (int)h < 4096 && g_fdpath[(int)h] ? g_fdpath[(int)h] : "?", (long long)off, got, buf, (unsigned long long)fh);
-        else fprintf(g_fslog, "%.4f\t%s\t%lld\t%zu\t%p\n", (now_ns() - g_t0_ns) / 1e9, !IMG_H(h) && (int)h < 4096 && g_fdpath[(int)h] ? g_fdpath[(int)h] : "?", (long long)off, got, buf);
+        if (hash_on) fprintf(g_fslog, "%.4f\t%s\t%lld\t%zu\t%p\t%016llx\n", (now_ns() - g_t0_ns) / 1e9, IMG_H(h) ? fslog_img_path(h) : (int)h < 4096 && g_fdpath[(int)h] ? g_fdpath[(int)h] : "?", (long long)off, got, buf, (unsigned long long)fh);
+        else fprintf(g_fslog, "%.4f\t%s\t%lld\t%zu\t%p\n", (now_ns() - g_t0_ns) / 1e9, IMG_H(h) ? fslog_img_path(h) : (int)h < 4096 && g_fdpath[(int)h] ? g_fdpath[(int)h] : "?", (long long)off, got, buf);
         pthread_mutex_unlock(&g_fslog_lock); }
     if (g_flag.fs) {   // Read metering: print a line every 64 MiB accumulated or every 1000 reads
         static uint64_t n, bytes, next_b = 64 << 20; static pthread_mutex_t m = PTHREAD_MUTEX_INITIALIZER;

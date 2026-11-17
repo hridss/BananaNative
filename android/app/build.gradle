@@ -28,6 +28,9 @@ def nxVersionCode = providers.gradleProperty('nxVersionCode').getOrElse('1') as 
 def signStore = System.getenv('NX_SIGN_STORE'), signAlias = System.getenv('NX_SIGN_ALIAS'), signPass = System.getenv('NX_SIGN_PASS')
 if (nxLive && !(signStore && signAlias && signPass && new File(signStore).isFile()))
     throw new GradleException('nxLive needs the release key: NX_SIGN_STORE (an existing keystore), NX_SIGN_ALIAS and NX_SIGN_PASS')
+// -PnxMinSdk=31 lowers the APK's minSdk from 33 to 31 (Android 12/12L) for an experimental test build (internal android12 note); the default stays 33. Only 31..33 are accepted.
+def nxMinSdk = (providers.gradleProperty('nxMinSdk').getOrElse('33') as int)
+if (nxMinSdk < 31 || nxMinSdk > 33) throw new GradleException("nxMinSdk must be 31, 32 or 33, not $nxMinSdk")
 def nxLabel = providers.gradleProperty('nxLabel').getOrElse(nxApp ? "Banana Native $nxApp" : '')
 // The build tag the launcher shows over the game and in its main screen, and writes as the first line of each game log: branch@commit[+dirty] (no build time: the commit and the signer identify a build)
 def gitOut = { List<String> a -> try { providers.exec { commandLine(['git'] + a); ignoreExitValue = true }.standardOutput.asText.get().trim() } catch (Exception e) { '' } }
@@ -124,7 +127,7 @@ def presentOnlyOf = { String game -> tsvRows(game, 'fps_limit_present').isEmpty(
 // or a host frame step (fps_target with the rewriter's FRAME_STEP stubs in the profile's patches.py: Ocarina of Time), which Hold 60 fps keeps at one vsync, late time paid back
 def stepsOf = { String game -> def pp = new File(repo, "dm/games/$game/patches.py"); def ft = tsvRows(game, 'fps_target'); (!tsvRows(game, 'fps_steps').isEmpty() || (!ft.isEmpty() && ft[0].size() > 1 && ft[0][1].trim() != '0' && pp.isFile() && pp.text.contains('FRAME_STEP'))) ? '1' : '' }
 def variantsOf = { String game -> tsvRows(game, 'variant').findAll { it.size() > 1 && it[1].trim() }.collectMany { r -> (r.size() > 3 && r[3].trim() ? r[3].trim() : r[1].trim()).split('\\|').collect { l -> r[1].trim() + '=' + l.trim() } }.join(',') }   // game.tsv variant rows: "43=4:3,..." (Game settings > Aspect ratio); a label "4:3|screen" names one variant for two choices ("screen": Screen shape)
-// Profile-declared opt-in settings (game.tsv option rows: "<env>|<label>|<description>|<restart or live>", ';' between them: Profile.options)
+// Profile-declared opt-in settings (game.tsv option rows: "<env>|<label>|<description>|<restart, live or settings>", ';' between them: Profile.options)
 def optionsOf = { String game ->
     tsvRows(game, 'option').collect { c ->
         def env = c.size() > 1 ? c[1].trim() : ''
@@ -135,7 +138,7 @@ def optionsOf = { String game ->
         def needs = ''
         if (c.size() > 4) {
             c.drop(4).collectMany { it.trim().split(/\s+/) as List }.each { tok ->
-                if (tok == 'restart' || tok == 'live') mode = tok
+                if (tok == 'restart' || tok == 'live' || tok == 'settings') mode = tok
                 else if (tok.startsWith('implies=')) implies = tok.substring('implies='.length()).trim()
                 else if (tok.startsWith('needs=')) needs = tok.substring('needs='.length()).trim()
             }
@@ -221,7 +224,8 @@ def aspectsOf = { String game -> tsvRows(game, 'aspect').findAll { it.size() > 1
 // Whether the game has cheat files (game.tsv cheats rows: pack_android.py place_cheats copies them into the pack): "1", or empty. The launcher then offers Game settings › Cheats (Cheats.java)
 def cheatsOf = { String game -> tsvRows(game, 'cheats').isEmpty() ? '' : '1' }
 def timeOfDayOf = { String game -> tsvRows(game, 'time_of_day').any { it.size() > 1 && it[1].trim() == '1' } ? '1' : '' }   // the Game tab's Time of day row only for profiles whose day/night cycle follows the user clock
-def nxProfiles = nxGames.collect { g -> [g, nameOf(g).replaceAll(/[\t\n\\"]/, ' '), shaderTotalOf(g), shaderInputsOf(g), buildsOf(g), reqsOf(g), statusOf(g), deltaOf(g), stampOf(g), resolutionOf(g), romfsChecksOf(g), gpuTsOf(g), windowOf(g), decoupleOf(g), drsOf(g), fpsLimitOf(g), dlssOf(g), presentOnlyOf(g), stepsOf(g), tsvRows(g, 'mesh_vegetation_cut').isEmpty() ? '' : '1', optionsOf(g), sceneOf(g), presetsOf(g), skipLayersOf(g), recommendOf(g), variantsOf(g), presetFromOf(g), linkPlayOf(g), aspectsOf(g), timeOfDayOf(g), cheatsOf(g)].join('\\t') }.join('\\n')
+def modsOf = { String game -> tsvRows(game, 'mods').any { it.size() > 1 && it[1].trim() == '1' } ? '1' : '' }   // Game settings › Mods (folders of replacement files over the RomFS; Mods.java)
+def nxProfiles = nxGames.collect { g -> [g, nameOf(g).replaceAll(/[\t\n\\"]/, ' '), shaderTotalOf(g), shaderInputsOf(g), buildsOf(g), reqsOf(g), statusOf(g), deltaOf(g), stampOf(g), resolutionOf(g), romfsChecksOf(g), gpuTsOf(g), windowOf(g), decoupleOf(g), drsOf(g), fpsLimitOf(g), dlssOf(g), presentOnlyOf(g), stepsOf(g), tsvRows(g, 'mesh_vegetation_cut').isEmpty() ? '' : '1', optionsOf(g), sceneOf(g), presetsOf(g), skipLayersOf(g), recommendOf(g), variantsOf(g), presetFromOf(g), linkPlayOf(g), aspectsOf(g), timeOfDayOf(g), cheatsOf(g), modsOf(g)].join('\\t') }.join('\\n')
 def lockOf = { String key -> def f = new File(repo, 'dm/gfx/tools/dmsh_chain.lock'); f.isFile() ? (f.readLines().find { it.startsWith(key + '\t') }?.split('\t')?.getAt(1) ?: 'unknown') : 'unknown' }
 
 android {
@@ -232,7 +236,7 @@ android {
     defaultConfig {
         applicationId nxLive ? 'dev.bananative.android' : nxPlay ? 'dev.nxnative.android.play' : nxApp ? "dev.nxnative.android.$nxApp" : 'dev.nxnative.android'
         resValue 'string', 'app_name', nxPlay || nxLive ? 'Banana Native' : nxApp ? nxLabel : 'Banana Native test'
-        minSdk 33
+        minSdk nxMinSdk
         targetSdk 35
         versionCode nxVersionCode
         versionName nxVersion
@@ -243,6 +247,7 @@ android {
         buildConfigField 'String', 'NX_BRANCH', "\"${branch ?: 'unknown'}\""
         buildConfigField 'String', 'NX_DIRTY', "\"${commit ? dirty : ''}\""
         buildConfigField 'boolean', 'NX_LSFG', "$nxLsfg"
+        buildConfigField 'int', 'NX_MIN_SDK', "$nxMinSdk"
         // The play app and the release behave alike (saves/<id>, the user's build tag, no test switches); every other app is a test app
         buildConfigField 'boolean', 'NX_PLAY', "${nxPlay || nxLive}"
         // The public release (dev.bananative.android) alone checks GitHub for a newer release at start (Updater; a test app only through its update.txt)
@@ -370,7 +375,7 @@ tasks.register('apk', Copy) {
     dependsOn 'assembleRelease'
     from(layout.buildDirectory.dir('outputs/apk/release')) { include '*.apk' }
     into layout.projectDirectory.dir('out')
-    rename { nxLive ? "banana-native-${nxVersion}.apk" : nxPlay ? 'nxnative-android-play.apk' : nxApp ? "nxnative-android-${nxApp}.apk" : 'nxnative-android.apk' }
+    rename { nxLive ? "banana-native-${nxVersion}${nxMinSdk < 33 ? '-android12' : ''}.apk" : nxPlay ? 'nxnative-android-play.apk' : nxApp ? "nxnative-android-${nxApp}.apk" : 'nxnative-android.apk' }
 }
 
 // The on-device packer's native side (android/ONDEVICE.md "In the APK"; not with -PnxPackEngine=fake). android/ondevice/build.sh makes its stage on the Mac;

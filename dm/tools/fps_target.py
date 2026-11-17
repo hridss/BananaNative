@@ -6,7 +6,7 @@ they step the game (ldr sN, [xB, #F]; scvtf sC, sN; fdiv sD, s60, sC, the 60.0 m
 The object's address is loaded from the global each time: ldr xB, [xA], xA made by adrp + add (the global) or adrp + ldr (its GOT slot, the module's relative relocations applied).
 A field with at least MIN_READERS such readers and a store of 30 is the target; exactly one must be, or nothing is written (two give a [RED] line).
 Found on Fire Emblem Fortune's Weave v131072 (Intelligent Systems' engine, its gxc graphics object; 59 readers, 30 set where gameplay starts and 60 for the title and menus, and its present
-asks for interval 60 / target). Checked on 100 mains (2026-11-03): it finds 55 of those 59 readers, and not one reader in any other main, Paper Mario: The Origami King
+asks for interval 60 / target). Checked on 100 mains on the drives (2026-11-03): it finds 55 of those 59 readers, and not one reader in any other main, Paper Mario: The Origami King
 and The Thousand-Year Door (Intelligent Systems' older engine) among them.
 Usage on its own: fps_target.py <module>... (what it finds in each)"""
 import struct, sys, os
@@ -39,7 +39,7 @@ def relocated(img):
 
 def globals_of(img):
     """global_of(i, b): the global whose value register xB holds at word offset i (ldr xB, [xA] a few words before, xA the global's address made by adrp + add, or loaded from
-    its GOT slot by adrp + ldr, the module's relative relocations applied), or None."""
+    its GOT slot by adrp + ldr, the module's relative relocations applied), or None. Also used by ue_fixed_rate.py (Unreal's GEngine)"""
     word = lambda a: struct.unpack_from('<I', img, a)[0]
     rel = None
     def page_of(i, a):

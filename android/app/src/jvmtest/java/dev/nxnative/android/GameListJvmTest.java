@@ -239,6 +239,7 @@ public final class GameListJvmTest {
     }
 
     static final String FIX3 = "0100000000AD0000";   // a game with a romfs_check row (System/RegionLangMask.txt 4 main), update 65536 (main seed 2) supported
+    static final String FIX4 = "0100000000AE0000";   // a game with a key:<name> romfs_check row (Fs.bin.zst key:ReleaseName 002), build 131072 (main seed 2) supported
 
     /** RegionLangMask.txt as Donkey Kong Bananza has it: line 4 is the first 20 bytes of its main's build ID */
     static String mask(int seed, String level) {
@@ -291,6 +292,74 @@ public final class GameListJvmTest {
                 && !RomfsCheck.sameBuild("100", "e25c90c1c1366388"), "sameBuild");
     }
 
+    /** A MessagePack map as Fire Emblem Fortune's Weave's Fs.bin begins: a nested map, an array, a string; then ReleaseName, then an array of two numbers */
+    static byte[] fsBin(String release) {
+        java.io.ByteArrayOutputStream o = new java.io.ByteArrayOutputStream();
+        int[] head = {0x84, 0xa6, 'C', 'o', 'n', 'f', 'i', 'g', 0x81, 0xa1, 'a', 0xdc, 0x00, 0x02, 0xcd, 0x01, 0x00, 0xc2,
+                0xac, 'C', 'o', 'n', 't', 'e', 'n', 't', 's', 'N', 'a', 'm', 'e', 0xd9, 0x03, 'a', 'p', 'p'};
+        for (int x : head) o.write(x);
+        o.write(0xab); o.writeBytes("ReleaseName".getBytes(StandardCharsets.UTF_8));
+        o.write(0xa0 | release.length()); o.writeBytes(release.getBytes(StandardCharsets.UTF_8));
+        o.write(0xaf); o.writeBytes("ReleaseVersions".getBytes(StandardCharsets.UTF_8));
+        o.write(0x92); o.write(0x02); o.write(0x00);
+        return o.toByteArray();
+    }
+
+    /** One zstd frame of one raw block holding b (as a .zst whose content did not compress): magic, a single-segment header with a 1-byte content size, the block */
+    static byte[] zstdRaw(byte[] b) {
+        byte[] f = new byte[4 + 2 + 3 + b.length];
+        f[0] = 0x28; f[1] = (byte) 0xb5; f[2] = 0x2f; f[3] = (byte) 0xfd; f[4] = 0x20; f[5] = (byte) b.length;
+        int h = b.length << 3 | 1;   // last block, raw
+        f[6] = (byte) h; f[7] = (byte) (h >> 8); f[8] = (byte) (h >> 16);
+        System.arraycopy(b, 0, f, 9, b.length);
+        return f;
+    }
+
+    /** The key:<name> form of a romfs_check row (Fire Emblem Fortune's Weave's Fs.bin.zst key:ReleaseName 002): read from a MessagePack map, plain or in a zstd frame */
+    static void romfsKeyChecks(File run) throws Exception {
+        File root = new File(run, "romfs-key");
+        write(new File(root, "good/Fs.bin.zst"), zstdRaw(fsBin("002")));
+        write(new File(root, "plain/Fs.bin"), fsBin("002"));
+        write(new File(root, "base/Fs.bin.zst"), zstdRaw(fsBin("000")));
+        write(new File(root, "notmap/Fs.bin.zst"), zstdRaw(new byte[] {(byte) 0x92, 1, 2}));
+        check("002".equals(RomfsCheck.key(new File(root, "good").getPath(), "Fs.bin.zst", "ReleaseName")), "key: read through the zstd frame, past a nested map, an array and a str8");
+        check("002".equals(RomfsCheck.key(new File(root, "plain").getPath(), "Fs.bin", "ReleaseName")), "key: a plain MessagePack file");
+        check("app".equals(RomfsCheck.key(new File(root, "good").getPath(), "Fs.bin.zst", "ContentsName")), "key: a str8 value");
+        check(RomfsCheck.key(new File(root, "good").getPath(), "Fs.bin.zst", "Config") == null && RomfsCheck.key(new File(root, "good").getPath(), "Fs.bin.zst", "Nope") == null,
+                "key: a value that is no string, and a key the map lacks, are null");
+        boolean threw = false;
+        try { RomfsCheck.key(new File(root, "notmap").getPath(), "Fs.bin.zst", "ReleaseName"); } catch (IOException e) { threw = true; }
+        check(threw, "key: a file that is not a map is an error");
+        Profile prof = Profile.of(FIX4);
+        check(prof != null && prof.romfsChecks.equals("Fs.bin.zst|key:ReleaseName|002"), "FIX4's profile has the key row");
+        check(RomfsCheck.check(prof, new File(root, "good").getPath(), null, 131072) == null, "check: release 002 passes");
+        String bad = RomfsCheck.check(prof, new File(root, "base").getPath(), null, 131072);
+        check(bad != null && bad.startsWith("This game folder's update data is not version 131072's full update RomFS (Fs.bin.zst: ReleaseName is \"000\", expected \"002\")"), "check: release 000 is refused: " + bad);
+        bad = RomfsCheck.check(prof, new File(root, "plain").getPath(), null, 131072);
+        check(bad != null && bad.contains("(Fs.bin.zst: missing, expected \"002\" under ReleaseName)"), "check: a RomFS without the file is refused: " + bad);
+        // Forgejo #417's shape: base/ holds update 131072's code (FIX4's only build) beside a RomFS of release 000; Prepare and the card name 131072, the build's own version
+        for (String rel : new String[] {"000", "002"}) {
+            File d = new File(root, "code-in-base-" + rel);
+            write(new File(d, "base/exefs/main"), nso(2, 5000));
+            write(new File(d, "base/exefs/sdk"), nso(3, 4096));
+            write(new File(d, "base/exefs/main.npdm"), npdm(FIX4));
+            write(new File(d, "base/romfs/Fs.bin.zst"), zstdRaw(fsBin(rel)));
+            DumpLayout.Found f = DumpLayout.find(d);
+            Pack p = pack(new File(root, "pack-" + rel), FIX4, "0", "main=" + id(2), "sdk=" + id(3));
+            write(new File(new File(root, "pack-" + rel), "pack.tsv"), new String(Files.readAllBytes(new File(new File(root, "pack-" + rel), "pack.tsv").toPath()), StandardCharsets.UTF_8).replace("updates/0/romfs", "base/romfs"));
+            p = Pack.read(new File(root, "pack-" + rel));
+            BuildCheck.Result r = BuildCheck.build(p, d);
+            if (rel.equals("002")) {
+                check(f.error == null && f.version == 0 && f.build == 131072, "code in base/ with release 002's RomFS passes Prepare: " + f.error);
+                check(r.ok(), "and the card: " + r.kind + " " + r.detail);
+            } else {
+                String want = "This game folder's update data is not version 131072's full update RomFS (Fs.bin.zst: ReleaseName is \"000\", expected \"002\")";
+                check(f.error != null && f.error.startsWith(want), "code in base/ with release 000's RomFS: Prepare names 131072: " + f.error);
+                check(r.kind == BuildCheck.Kind.ROMFS && r.detail.startsWith("Fs.bin.zst: ReleaseName is \"000\""), "and the card refuses it: " + r.kind + " " + r.detail);
+            }
+        }
+    }
+
     static File nup(File repo, File dump, File out, String python) throws IOException, InterruptedException {
         Process p = new ProcessBuilder(python, "-I", new File(repo, "dm/tools/nup_pack.py").getPath(), dump.getPath(), out.getPath(), "--raw").redirectErrorStream(true).start();
         String o = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
@@ -330,6 +399,7 @@ public final class GameListJvmTest {
         buildCheck(repo, run, python);
         layouts(repo, run, python);
         romfsChecks(repo, run, python);
+        romfsKeyChecks(run);
         gameList(run);
         System.out.println("ok " + n);
     }

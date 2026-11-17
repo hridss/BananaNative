@@ -1,7 +1,7 @@
 // Test runner for libdmsh_xlate.so on the phone (adb shell; android/ONDEVICE.md): loads the library as the app's job service does and calls dmsh_xlate_main on each job,
 // several jobs at once in threads of one process (the service's model), then prints the wall time, each job's time and exit code, and the peak memory of the process.
 // Usage: xlate_run <libdmsh_xlate.so> <threads> <out dir> <job.json>...   (each job's output folder is <out dir>/<job file name without .json>, its log <that folder>/log.txt)
-// Build: <NDK clang> --target=aarch64-linux-android33 -O2 -o xlate_run xlate_run.c -ldl   (build.sh run)
+// Build: <NDK clang> --target=aarch64-linux-android31 -O2 -o xlate_run xlate_run.c -ldl   (build.sh run)
 #include <dlfcn.h>
 #include <pthread.h>
 #include <stdatomic.h>

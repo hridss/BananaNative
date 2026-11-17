@@ -68,7 +68,7 @@ static int sk_plain_fail(void) { if (dm_coop_node()) dm_sk_seterr(SK_ENETDOWN); 
 HLE_FORCE("_ZN2nn6socket10InitializeEPvmmi", "connects to the bsd socket service; offline, creates no session (cut)", Result, h_sk_Init4, void *mem, uint64_t sz, uint64_t alloc, int conc) { (void)mem; (void)sz; (void)alloc; (void)conc; return RES_OK; }
 HLE_FORCE("_ZN2nn6socket8FinalizeEv", "pairs with Initialize (cut)", Result, h_sk_Fini, void) { return RES_OK; }
 HLE_FORCE("_ZN2nn6socket12GetLastErrnoEv", "offline: ENETDOWN", int, h_sk_Errno, void) { return dm_coop_node() ? dm_sk_geterr() : SK_ENETDOWN; }
-HLE_FORCE("_ZN2nn6socket6SocketEiii", "offline (cut): -1", int, h_sk_Socket3i, int a, int b, int c) { coop_node *cn = dm_coop_node(); if (cn) return dm_coop_ret(coop_vnet_socket(cn, a, b, c)); return sk_plain_fail(); }
+HLE_FORCE("_ZN2nn6socket6SocketEiii", "offline (cut): -1", int, h_sk_Socket3i, int a, int b, int c) { coop_node *cn = dm_coop_node(); if (cn) return dm_coop_ret(coop_vnet_socket(cn, a, b, c)); NET_TRACE("socket::Socket(%d, %d, %d) -> fail", a, b, c); return sk_plain_fail(); }
 HLE_FORCE("_ZN2nn6socket8ShutdownEii", "offline (cut)", int, h_sk_Shutdown, int s, int h) { (void)h; if (dm_coop_vfd(s)) return 0; return sk_plain_fail(); }
 HLE_FORCE("_ZN2nn6socket4BindEiPK8sockaddrj", "offline (cut)", int, h_sk_Bind, int s, const void *a, unsigned n) { if (dm_coop_vfd(s)) return dm_coop_ret(coop_vnet_bind(dm_coop_node(), s, a, n)); return sk_plain_fail(); }
 int dm_sk_poll(void *fds, uint64_t n, int ms);   // hle_net.c: nothing to wait on → the timeout passes, 0; else -1
@@ -79,11 +79,11 @@ HLE_FORCE("_ZN2nn6socket6SelectEiP6fd_setS2_S2_P7timeval", "offline: waits out t
 HLE_FORCE("_ZN2nn6socket6SendToEiPKvmiPK8sockaddrj", "offline (cut)", long, h_sk_SendTo, int s, const void *b, unsigned long n, int f, const void *a, unsigned al) { if (dm_coop_vfd(s)) return dm_coop_ret(coop_vnet_sendto(dm_coop_node(), s, b, n, f, a, al)); return sk_plain_fail(); }
 HLE_FORCE("_ZN2nn6socket6SendToEiPKvmNS0_7MsgFlagEPKNS0_8SockAddrEj", "offline (cut)", long, h_sk_SendTo2, int s, const void *b, unsigned long n, int f, const void *a, unsigned al) { if (dm_coop_vfd(s)) return dm_coop_ret(coop_vnet_sendto(dm_coop_node(), s, b, n, f, a, al)); return sk_plain_fail(); }
 HLE_FORCE("_ZN2nn6socket8RecvFromEiPvmiP8sockaddrPj", "offline (cut)", long, h_sk_RecvFrom2, int s, void *b, unsigned long n, int f, void *a, unsigned *al) { if (dm_coop_vfd(s)) return dm_coop_ret(coop_vnet_recvfrom(dm_coop_node(), s, b, n, f, a, al)); return sk_plain_fail(); }
-HLE_FORCE("_ZN2nn6socket11GetAddrInfoEPKcS2_PK8addrinfoPPS3_", "name resolution (cut): EAI_FAIL", int, h_sk_Gai2, const char *h, const char *s, const void *hint, void **res) { (void)h; (void)s; (void)hint; if (res) *res = NULL; return SK_EAI_FAIL; }
+HLE_FORCE("_ZN2nn6socket11GetAddrInfoEPKcS2_PK8addrinfoPPS3_", "name resolution (cut): EAI_FAIL", int, h_sk_Gai2, const char *h, const char *s, const void *hint, void **res) { (void)hint; NET_TRACE("socket::GetAddrInfo \"%.80s\" \"%.20s\" -> EAI_FAIL", h ? h : "(null)", s ? s : "(null)"); if (res) *res = NULL; return SK_EAI_FAIL; }
 HLE_FORCE("_ZN2nn6socket12FreeAddrInfoEP8addrinfo", "pairs with GetAddrInfo (cut)", void, h_sk_FreeAi2, void *ai) { (void)ai; }
 HLE_FORCE("_ZN2nn6socket11GAIStrErrorENS0_7AiErrnoE", "resolver error text", const char *, h_sk_GaiStr, int e) { (void)e; return "network unavailable"; }
 // SDK 11's overloads with plain sockaddr / int arguments (Big Brain Academy: Brain vs. Brain, through Pia)
-HLE_FORCE("_ZN2nn6socket7ConnectEiPK8sockaddrj", "offline (cut)", int, h_sk_Connect2, int s, const void *a, unsigned n) { (void)s; (void)a; (void)n; return sk_plain_fail(); }
+HLE_FORCE("_ZN2nn6socket7ConnectEiPK8sockaddrj", "offline (cut)", int, h_sk_Connect2, int s, const void *a, unsigned n) { (void)s; (void)a; (void)n; NET_TRACE("socket::Connect -> fail"); return sk_plain_fail(); }
 HLE_FORCE("_ZN2nn6socket6AcceptEiP8sockaddrPj", "offline (cut)", int, h_sk_Accept2, int s, void *a, unsigned *n) { (void)s; (void)a; (void)n; return sk_plain_fail(); }
 HLE_FORCE("_ZN2nn6socket11GetSockNameEiP8sockaddrPj", "offline (cut)", int, h_sk_GetSockName2, int s, void *a, unsigned *n) { if (dm_coop_vfd(s)) return dm_coop_ret(coop_vnet_getsockname(dm_coop_node(), s, a, n)); return sk_plain_fail(); }
 HLE_FORCE("_ZN2nn6socket10GetSockOptEiiiPvPj", "offline (cut)", int, h_sk_GetSockOpt2, int s, int l, int o, void *v, unsigned *n) { if (dm_coop_vfd(s)) return dm_coop_ret(coop_vnet_getsockopt(dm_coop_node(), s, l, o, v, n)); return sk_plain_fail(); }
@@ -141,6 +141,10 @@ HLE_FORCE("_ZN2nn4nifm18GetCurrentIpConfigEPNS0_10Ipv4ConfigEPiPNS0_10Ipv6Config
           void *v4, int *n4, void *v6, int *n6, int c4, int c6) { (void)v4; (void)v6; (void)c4; (void)c6; if (n4) *n4 = 0; if (n6) *n6 = 0; return RES_FAIL; }
 // EnvironmentIdentifier = char[8]: retail environment "lp1"
 HLE_FORCE("_ZN2nn3nsd24GetEnvironmentIdentifierEPNS0_21EnvironmentIdentifierE", "server environment name: retail lp1", void, h_nsd_EnvId, char *out) { memset(out, 0, 8); memcpy(out, "lp1", 3); }
+// nsd::GetApplicationServerEnvironmentType returns oe::ServerEnvironmentType (0 dd1, 1 lp1, 2 sd1, 3 sp1, 4 dp1: Hogwarts Legacy's table at main+0x42e6c50) and asks nsd:a / nsd:u for it;
+// the host serves neither, so the SDK aborts on the failed request (Result 0xe8d). oe::GetServerEnvironmentType is a branch through the sdk's PLT to this function in every sdk module on hand
+// (18, Switch 1 and Switch 2 titles), so this one takeover answers both
+HLE_FORCE("_ZN2nn3nsd35GetApplicationServerEnvironmentTypeEv", "server environment type: retail lp1 (1), as GetEnvironmentIdentifier; nsd is not served", int, h_nsd_AppSrvEnv, void) { return 1; }
 
 // ---------- friends: newer SDK overloads ----------
 HLE_FORCE("_ZN2nn7friends12SetAllocatorEPFPvmEPFvS1_mE", "friends library allocator; no session is created, ignored", void, h_fr_SetAlloc, void *a, void *f) { (void)a; (void)f; }

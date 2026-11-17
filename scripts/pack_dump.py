@@ -51,7 +51,10 @@ def clone(src, dst):   # an APFS clone on the same volume, else a copy (Windows 
     if in_nup(src): dst.write_bytes(src.read_bytes()); return
     try: cloned = os.name != 'nt' and subprocess.run(['cp', '-c', src, dst], capture_output=True).returncode == 0
     except OSError: cloned = False
-    if not cloned: shutil.copy2(src, dst)
+    if not cloned:
+        shutil.copyfile(src, dst)
+        try: shutil.copystat(src, dst)
+        except OSError: pass   # exFAT/FAT storage through Android's FUSE refuses chmod/utime (issue #360): the data is what counts
 
 
 def same(f, d): return d.is_file() and (f.read_bytes() == d.read_bytes() if in_nup(f) else filecmp.cmp(f, d, shallow=False))

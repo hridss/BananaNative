@@ -31,6 +31,14 @@ public final class UsersJvmTest {
         java.io.File save = new java.io.File("/x/saves/010015100B514000");
         check(Users.saveDir(save, Users.FIRST).equals(save), "the first user: the game's save folder");
         check(Users.saveDir(save, b).getPath().replace('\\', '/').equals("/x/saves/010015100B514000_user_" + b), "another user: beside it");
+        check(Users.activeSave(null, save).equals(save), "no user picked: the game's save folder");
+        Prefs.M.put("users", Users.format(Users.parse(Users.FIRST + "\tMario\n" + b + "\tLuigi\n")));
+        check(Users.activeSave(null, save).equals(save), "the first user is the default: the game's save folder");
+        Users.setDefault(null, b);
+        check(Users.activeSave(null, save).equals(Users.saveDir(save, b)) && Users.activeSave(null, save).getName().endsWith("_user_" + b), "the second user starts the game: its folder");
+        Users.setDefault(null, "ffffffffffffffffffffffffffffffff");
+        check(Users.activeSave(null, save).equals(save), "a default that is gone: the first user's");
+        check(Users.activeSave(null, null) == null, "no save folder: none");
         System.out.println("ok");
     }
 }

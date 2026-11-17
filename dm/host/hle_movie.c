@@ -85,6 +85,7 @@ typedef struct {
     struct { int in, off, size; int64_t pts; uint32_t flags; } pend[MD_NIN]; int npend;   // input packets waiting to be decoded (in arrival order)
     // Decoding: dmu lets only one guest thread take and decode packets at a time (packets enter libvpx in order); wmu / wcv hand one job to the host thread and wait for it
     pthread_mutex_t dmu, wmu; pthread_cond_t wcv; pthread_t wk;
+    pthread_mutex_t pkm; pthread_cond_t pkc; pthread_t pk; int pk_go, pk_quit, pk_on;   // the decoder's own thread (md_pump_thread): the SDK decodes on a codec thread, not on the caller's
     int job; const uint8_t *jp; int jn, jslot, jgot; int64_t jpts, jpts_out; int jflush;
     mavc *avc; int avc_drain; int64_t drain_pts; // H.264 (hle_movie_avc.c); avc_drain: the end-of-stream packet's output had a picture; the pictures still queued leave one per free slot, then an empty output with the
                                                  // end-of-stream flag and the packet's time (drain_pts)
@@ -488,6 +489,12 @@ static int md_aac(mdec_t *d, const uint8_t *p, int n, int slot) {
     return frames > 0;
 }
 static void md_aac_close(mdec_t *d) { AudioConverterDispose(d->aac); d->aac = NULL; }
+// Flush: the converter forgets the frames it holds (a seek is a discontinuity); one it cannot reset is made again at the next packet
+static void md_aac_flush(mdec_t *d) {
+    OSStatus st = AudioConverterReset(d->aac);
+    if (st) { LOG("[RED] movie: AAC flush failed (AudioToolbox %d), reopening the converter", (int)st); md_aac_close(d); }
+    d->aac_pkt = NULL; d->aac_pkt_n = 0;
+}
 #else
 // one packet → at most one AAC frame of PCM16 in the slot (the size GetOutputBufferSize promised); samples the decoder gave beyond it wait in maac for the next packet
 static int md_aac(mdec_t *d, const uint8_t *p, int n, int slot) {
@@ -501,6 +508,8 @@ static int md_aac(mdec_t *d, const uint8_t *p, int n, int slot) {
     return v > 0;
 }
 static void md_aac_close(mdec_t *d) { maac_free(d->aac); d->aac = NULL; }
+// Flush: the AMediaCodec decoder is closed and made again at the next packet (maac has no flush), so the samples it holds from before the seek are dropped
+static void md_aac_flush(mdec_t *d) { md_aac_close(d); }
 #endif
 // The H.264 decoder, made by Configure (when the stream's parameter sets come with it) or by the first packet; RGBA pictures in the native texture mode either way.
 // Absolum's movies bring csd-0 / csd-1 to Configure, and a decoder made there used to stay NV12: the frames' bytes went into the RGBA texture as they were
@@ -546,6 +555,39 @@ static void md_job(mdec_t *d, int job) {
     while (d->job != MDJ_NONE) pthread_cond_wait(&d->wcv, &d->wmu);
     pthread_mutex_unlock(&d->wmu);
 }
+// The SDK queues a video packet and returns: its codec thread decodes it and signals each result once the hardware has finished it. The host decoded inside the call that
+// started the decode, and Mario Strikers: Battle League's movie player crashed on it. Its worker (MoviePlayerWorker) feeds its decoder while the owner thread stops the movie,
+// destroys the player and clears its pointer (main+0xab55a4); the worker, still in SendInputBufferForDecode / ReleaseOutputBufferIndex for the whole decode (3-8 ms a packet),
+// then read the cleared player (main+0xab4e18, address 0) at the opening movie's first skip or a menu change. A video decoder now decodes on its own thread (md_pump_thread):
+// the send and release calls queue the work and return, and the teardown lands between the worker's iterations. Its results are signalled from the deferred thread, due at
+// once (the pump thread is not a guest thread, and SignalEvent is guest code); Stop, Flush and the destructor drop one still pending there, and Stop takes the deferred queue's
+// lock, so none is delivered after Stop. Open: 2 runs in 12 still crashed on one Mac (none in 30 on another), both after GetOutputBuffer, which in texture mode still writes
+// the whole frame on the caller (md_out_tex) where the SDK starts a GPU copy and returns (docs/reference/movies.md). Audio decoders decode on the caller and signal at once:
+// their players feed one packet per signal and a packet decodes quickly
+static void md_pump_ev(mdec_t *d, int ev) { if (MD_AUDIO(d)) md_event(d, ev); else md_defer_at(d, ev, now_ns()); }
+static void md_pump(mdec_t *d);
+static void *md_pump_thread(void *arg) {
+    mdec_t *d = arg;
+#ifdef __APPLE__
+    pthread_setname_np("dm movie pump");
+#else
+    pthread_setname_np(pthread_self(), "dm movie pump");   // Linux and Android take the thread as well
+#endif
+    pthread_mutex_lock(&d->pkm);
+    for (;;) {
+        while (!d->pk_go && !d->pk_quit) pthread_cond_wait(&d->pkc, &d->pkm);
+        if (d->pk_quit) break;
+        d->pk_go = 0; pthread_mutex_unlock(&d->pkm);
+        md_pump(d);
+        pthread_mutex_lock(&d->pkm);
+    }
+    pthread_mutex_unlock(&d->pkm);
+    return NULL;
+}
+static void md_pump_async(mdec_t *d) {   // decode what is queued on the decoder's thread
+    if (!d->pk_on) { md_pump(d); return; }
+    pthread_mutex_lock(&d->pkm); d->pk_go = 1; pthread_cond_signal(&d->pkc); pthread_mutex_unlock(&d->pkm);
+}
 // while packets are queued and an output slot is free, decode the head packet, until the queue is empty or every slot is taken; signal the input / output events by the result
 static void md_pump(mdec_t *d) {
     dm_host_lock(&d->dmu);
@@ -560,7 +602,7 @@ static void md_pump(mdec_t *d) {
             d->out[s].pic = got; d->out[s].pts = got ? d->jpts_out : d->drain_pts; d->out[s].flags = got ? 0 : 4; d->outq[d->noutq++] = s;
             if (!got) d->avc_drain = 0;
             pthread_mutex_unlock(&d->mu);
-            md_event(d, 1);
+            md_pump_ev(d, 1);
             continue;
         }
         int slot = -1;
@@ -587,8 +629,8 @@ static void md_pump(mdec_t *d) {
         if (more) { d->avc_drain = 1; d->drain_pts = pk.pts; }
         int ineos = d->in_eos;
         pthread_mutex_unlock(&d->mu);
-        if (!ineos) md_event(d, 0);   // no input is announced after an end-of-stream packet (h_movie_AcqIn)
-        if (ready) md_event(d, 1);
+        if (!ineos) md_pump_ev(d, 0);   // no input is announced after an end-of-stream packet (h_movie_AcqIn)
+        if (ready) md_pump_ev(d, 1);
     }
     pthread_mutex_unlock(&d->dmu);
 }
@@ -623,6 +665,8 @@ HLE_FORCE("_ZN5movie7DecoderC1ENS_11DecoderTypeENS_19DecoderOutputFormatENS_11De
     d->nout = !audio ? MD_NOUT_VIDEO : type == MD_TYPE_AAC ? MD_NOUT_AAC : MD_NOUT;
     for (int i = 0; i < MD_NIN; i++) { d->in[i] = malloc(MD_INCAP); d->infree[i] = i; }
     d->ninfree = MD_NIN;
+    pthread_mutex_init(&d->pkm, NULL); pthread_cond_init(&d->pkc, NULL);
+    if (!audio) { if (pthread_create(&d->pk, NULL, md_pump_thread, d)) die("movie: failed to create the decoder's thread"); d->pk_on = 1; }
     pthread_attr_t a; pthread_attr_init(&a); pthread_attr_setstacksize(&a, 1 << 20);
     if (pthread_create(&d->wk, &a, md_worker, d)) die("movie: failed to create the decoder thread");
     pthread_attr_destroy(&a);
@@ -641,8 +685,19 @@ HLE_FORCE("_ZN5movie7DecoderC1ENS_11DecoderTypeENS_19DecoderOutputFormatE", "mov
     h_movie_Decoder(self, type, fmt == 3 ? MD_FMT_NV12 : fmt == 2 ? MD_FMT_ABGR : fmt, 1, 0);
     mdec_t *d = md_of(self); if (d) d->out_align = 0x20;
 }
+// The base-object constructors: a game can reach C2 with no C1 (Mario Tennis Aces, NintendoSDK_movie 4.5.0: C1 is a thunk of 8 bytes, mov w4,#0; b C2, GitHub issue #1131). Left to the SDK, the guest's
+// constructor put a DecoderImpl there, and h_movie_Configure read its vtable as the host's decoder and branched to 0. The class has no virtual bases, so both constructors do the same
+HLE_FORCE("_ZN5movie7DecoderC2ENS_11DecoderTypeENS_19DecoderOutputFormatENS_11DecoderModeEi", "movie decoder (base-object constructor): host implementation", void, h_movie_Decoder_C2,
+          void **self, int type, int fmt, int mode, int prio) { h_movie_Decoder(self, type, fmt, mode, prio); }
+HLE_FORCE("_ZN5movie7DecoderC2ENS_11DecoderTypeENS_19DecoderOutputFormatENS_11DecoderModeE", "movie decoder (SDK 4, base-object constructor): host implementation", void, h_movie_Decoder4_C2,
+          void **self, int type, int fmt, int mode) { h_movie_Decoder4(self, type, fmt, mode); }
+HLE_FORCE("_ZN5movie7DecoderC2ENS_11DecoderTypeENS_19DecoderOutputFormatE", "movie decoder (SDK 3, base-object constructor): host implementation", void, h_movie_Decoder3_C2,
+          void **self, int type, int fmt) { h_movie_Decoder3(self, type, fmt); }
 static void md_free(void **self) {
     mdec_t *d = md_of(self); if (!d) return;
+    // The pump thread first, before its pending signals are dropped, the decoder thread is told to quit and any buffer is freed: a pump still running queues signals for
+    // this decoder (md_defer_at), and one queued after the drop would reach the deferred thread after free(d)
+    if (d->pk_on) { pthread_mutex_lock(&d->pkm); d->pk_quit = 1; pthread_cond_signal(&d->pkc); pthread_mutex_unlock(&d->pkm); pthread_join(d->pk, NULL); }
     md_defer_drop(d);
     if (!MD_AUDIO(d)) atomic_store_explicit(&g_movie_pic_ns, 0, memory_order_relaxed);
     self[1] = NULL;
@@ -653,6 +708,7 @@ static void md_free(void **self) {
     for (int i = 0; i < MD_NIN; i++) free(d->in[i]);
     for (int k = 0; k < MD_NOUT; k++) free(d->out[k].frm);
     free(d->bgra); free(d->lb); free(d->vhdr[0]); free(d->vhdr[1]); free(d->hold);
+    pthread_mutex_destroy(&d->pkm); pthread_cond_destroy(&d->pkc);
     pthread_mutex_destroy(&d->mu); pthread_mutex_destroy(&d->dmu); pthread_mutex_destroy(&d->wmu); pthread_cond_destroy(&d->wcv); free(d);
 }
 HLE_FORCE("_ZN5movie7DecoderD2Ev", "movie decoder destructor: frees the host object", void, h_movie_DecD2, void **self) { md_free(self); }
@@ -706,6 +762,14 @@ HLE_FORCE("_ZN5movie7Decoder5StartEv", "movie decoder start: all inputs empty, n
 static void md_reset(mdec_t *d, int close) {
     dm_host_lock(&d->dmu);   // wait for the packet being decoded
     if (close) md_job(d, MDJ_CLOSE);
+    else {
+        // Flush is a source discontinuity, not just an empty output queue.
+        // Do this while dmu excludes decoding the first packet after the seek.
+        if (d->aac) md_aac_flush(d);
+        // stb_vorbis_flush_pushdata enters page-search mode; our demuxer feeds
+        // one newly constructed page per packet, so reopen from csd instead.
+        if (d->vb) { stb_vorbis_close(d->vb); d->vb = NULL; }
+    }
     if (d->avc) mavc_drop(d->avc);   // H.264 pictures waiting for their turn belong to the old position
     dm_host_mutex_lock(&d->mu);
     // Every input goes back to the free list, as with MediaCodec, but one the client holds may still be sent: Big Brain Academy: Brain vs. Brain's event thread acquires inputs while its
@@ -735,9 +799,6 @@ HLE_FORCE("_ZN5movie7Decoder5ResetEv", "movie decoder reset", int, h_movie_Reset
 HLE_FORCE("_ZN5movie7Decoder5FlushEv", "movie decoder flush: all inputs and outputs returned", int, h_movie_Flush, void **self) {
     mdec_t *d = md_of(self); if (!d) return 0x1000;
     MD_TRACE(d, 5, "Flush"); md_defer_drop(d); md_reset(d, 0);
-    // A seek: start the overlap afresh. The decoder is closed and the next packet opens it again from the headers (md_vorbis_open). stb_vorbis_flush_pushdata is not used: it puts the decoder into its page search mode,
-    // and the packets md_vorbis hands it after that (one whole page per call) never gave a sample again (Smash: the opening movie lost its sound for good after the first Flush; t_movie_vpx)
-    if (d->vb) { dm_host_lock(&d->dmu); stb_vorbis_close(d->vb); d->vb = NULL; pthread_mutex_unlock(&d->dmu); }
     return 0;
 }
 HLE_FORCE("_ZN5movie7Decoder23AcquireInputBufferIndexEPiS1_", "movie decoder: acquire a free input index", int, h_movie_AcqIn, void **self, int *idx, int *left) {
@@ -777,6 +838,19 @@ HLE_FORCE("_ZN5movie7Decoder24SendInputBufferForDecodeEiiilj", "movie decoder: s
     mdec_t *d = md_of(self); if (!d) return 0x1000;
     if (i < 0 || i >= MD_NIN || off < 0 || size < 0 || (uint32_t)off + (uint32_t)size > MD_INCAP) return 0x100b;
     dm_host_mutex_lock(&d->mu);
+    for (int k = 0; k < d->npend; k++) if (d->pend[k].in == i) { pthread_mutex_unlock(&d->mu); if (!d->red_dec++) LOG("[RED] movie: input index %d sent twice, the second packet is dropped (first case)", i); return 0x100b; }
+    // ACodec::BaseState::onInputBufferFilled takes ownership of a client buffer but keeps it once mPortEOS[input] is set; MediaCodec's queueInputBuffer still succeeds.
+    // Inputs already acquired before EOS can arrive afterwards, with or without the flag. Tied Together's Unity player submits all four held indices as EOS: decoding
+    // each one produced four completion callbacks, and the first freed the event list still being traversed. Return only a client's buffer, once, without another decode or signal.
+    if (d->in_eos) {
+        if (!d->inown[i] && !d->instale[i]) { pthread_mutex_unlock(&d->mu); return 0x100b; }
+        if (d->inown[i]) d->infree[d->ninfree++] = i;   // a stale buffer was already returned by Flush / Stop
+        d->inown[i] = d->instale[i] = 0;
+        pthread_mutex_unlock(&d->mu);
+        MD_TRACE(d, 7, "SendInputBufferForDecode index %d after end of stream: returned without decoding", i);
+        return 0;
+    }
+    if (d->npend == MD_NIN) { pthread_mutex_unlock(&d->mu); if (!d->red_dec++) LOG("[RED] movie: more packets pending than input buffers, one dropped (first case)"); return 0x100b; }
     // An index the client acquired before a Flush and sends after it (Big Brain Academy: Brain vs. Brain loops its activity previews this way): the flush put it back in the free list,
     // so it is claimed from there now. Before, it could be handed out a second time, two packets shared one buffer (VideoToolbox -12909 on the overwritten one) and the fifth pending
     // packet wrote past pend[] into npend and dmu (the process died destroying dmu, 2 runs in 5)
@@ -786,19 +860,18 @@ HLE_FORCE("_ZN5movie7Decoder24SendInputBufferForDecodeEiiilj", "movie decoder: s
         break;
     }
     d->inown[i] = d->instale[i] = 0;
-    if (flags & 4) d->in_eos = 1;   // the last input until Flush / Stop (h_movie_AcqIn)
-    for (int k = 0; k < d->npend; k++) if (d->pend[k].in == i) { pthread_mutex_unlock(&d->mu); if (!d->red_dec++) LOG("[RED] movie: input index %d sent twice, the second packet is dropped (first case)", i); return 0x100b; }
-    if (d->npend == MD_NIN) { pthread_mutex_unlock(&d->mu); if (!d->red_dec++) LOG("[RED] movie: more packets pending than input buffers, one dropped (first case)"); return 0x100b; }
+    // The duplicate and full-queue checks are made above, before any state change, and in_eos is set below, for an accepted packet only
     int fmt_now = 0;
     if (d->type == MD_TYPE_VP9 && !d->w && size > 0 && vp9_size(d->in[i] + off, size, &d->w, &d->h)) LOG("[movie] VP9 key frame: %d×%d", d->w, d->h);
     if (d->type == MD_TYPE_VP8 && !d->w && size > 0 && vp8_size(d->in[i] + off, size, &d->w, &d->h)) LOG("[movie] VP8 key frame: %d×%d", d->w, d->h);
     if (!d->fmt_sent) { d->fmt_sent = 1; fmt_now = 1; if (!d->w && !MD_AUDIO(d)) { d->w = 1920; d->h = 1080; } }   // the size is fixed from here on (slots are allocated by it)
     d->pend[d->npend].in = i; d->pend[d->npend].off = off; d->pend[d->npend].size = size; d->pend[d->npend].pts = pts; d->pend[d->npend].flags = flags; d->npend++;
+    if (flags & 4) d->in_eos = 1;   // only an accepted end-of-stream packet: no more input until Flush / Stop
     int queued = d->npend;
     pthread_mutex_unlock(&d->mu);
     MD_TRACE(d, 7, "SendInputBufferForDecode index %d offset %d length %d time %lld µs flags %#x (%d packets queued)", i, off, size, (long long)pts, flags, queued);
     if (fmt_now) md_event(d, 2);
-    md_pump(d);
+    md_pump_async(d);
     return 0;
 }
 
@@ -860,7 +933,7 @@ HLE_FORCE("_ZN5movie7Decoder19GetOutputBufferSizeEPiS1_", "movie decoder: output
     return 0;
 }
 // Write one frame into the client buffer: the decoded picture, or a black frame (video range Y 16, UV 128) when there is none (an end-of-stream packet); a client texture keeps its last frame then
-// Native texture mode: the client Buffer's data pointer is the NVNtexture object itself (capacity given as 8; Metroid Dread main+0x226c98: the texture object embedded at +0x18 of a texture pool entry), plus the NVN device and a sync object (SetNvnDev / SetNvnSync).
+// Native texture mode: the client Buffer's data pointer is the NVNtexture object itself (capacity is not a byte extent; Metroid Dread gives 8, MK11 gives 0; Metroid Dread main+0x226c98: the texture object embedded at +0x18 of a texture pool entry), plus the NVN device and a sync object (SetNvnDev / SetNvnSync).
 // In the SDK, NnCodecConsumer draws the decoded frame into that texture on the GPU and signals the sync when done; the host writes the texture storage on the CPU (as WriteTexels; the replay layer re-uploads dirty pages), and the sync counts as done once written
 int nvn_host_write_texture(const void *nvntex, const void *src, int w, int h, size_t row, int *tw, int *th);
 int nvn_host_signal_sync(void *nvnsync);
@@ -916,8 +989,11 @@ static int md_letterbox_tex(mdec_t *d, const uint8_t **src, int h, size_t rowb) 
 static int md_out_tex(mdec_t *d, int i, void *buf) {
     // SDK 4's Buffer has no sync object (Dark Souls Remastered's subsdk0 exports no GetNvnSync): the game reads the texture once GetOutputBuffer returns, which the CPU write already satisfies
     static int sync_looked; if (!sync_looked) { G.nvn_sync = guest_sym("_ZNK5movie6Buffer10GetNvnSyncEv"); sync_looked = 1; }
-    uint8_t *p = G.data(buf); size_t cap = G.cap(buf);
-    if (!p || cap < 8) { LOG("[RED] movie: client buffer in native-texture mode is %zu bytes, needs 8 (a texture object)", cap); return 0x100b; }
+    // Native output is an opaque texture object, not a byte buffer. MK11's
+    // NX64Render_AsyncTexture::Internal_CreateRHI passes its texture and capacity
+    // zero to SetDataAndCapacity; the SDK consumer uses the pointer, not Capacity.
+    uint8_t *p = G.data(buf);
+    if (!p) { LOG("[RED] movie: client buffer in native-texture mode has no texture object"); return 0x100b; }
     void *tex = p; int tw = 0, th = 0, f = nvn_host_write_texture(tex, NULL, 0, 0, 0, &tw, &th);
     if (f < 0) { LOG("[RED] movie: buffer data %p in native-texture mode is not a texture object", tex); return 0x100b; }
     int bgr = f >= 0x99 && f <= 0x9C;   // BGRX8, BGRA8 and their sRGB forms (TRIANGLE STRATEGY): the SDK's consumer draws into the texture on the GPU, so the bytes follow its format
@@ -945,7 +1021,7 @@ static int md_out_tex(mdec_t *d, int i, void *buf) {
     int n = md_rendered(d, i), queued = d->npend, drain = d->avc_drain;
     pthread_mutex_unlock(&d->mu);
     if (n) MD_TRACE(d, 13, "GetOutputBuffer index %d: %d earlier rendered output%s returned (%d packets queued%s)", i, n, n > 1 ? "s" : "", queued, drain ? ", H.264 pictures draining" : "");
-    if (n && (queued || drain)) md_pump(d);
+    if (n && (queued || drain)) md_pump_async(d);
     return 0;
 }
 HLE_FORCE("_ZN5movie7Decoder15GetOutputBufferEiPNS_6BufferE", "movie decoder: get a frame", int, h_movie_GetOut, void **self, int i, void *buf) {
@@ -998,7 +1074,7 @@ static int md_rel(mdec_t *d, int i) {
     MD_TRACE(d, 13, "release output index %d%s (%d packets queued%s)", i, held ? "" : ": not held by the client, nothing to release", queued, drain ? ", H.264 pictures draining" : "");
     // An H.264 drain waits for a free slot too: AI: THE SOMNIUM FILES (Unity 2017.4) held all 16 video slots when its logo movie's end-of-stream packet came, the drain stopped
     // with no packet queued, the last pictures and the end-of-stream flag never came out, and the game waited for the movie's end for good
-    if (held && (queued || drain)) md_pump(d);
+    if (held && (queued || drain)) md_pump_async(d);
     return held;
 }
 HLE_FORCE("_ZN5movie7Decoder24ReleaseOutputBufferIndexEi", "movie decoder: release an output index (decodes queued packets again)", int, h_movie_RelOut, void **self, int i) {

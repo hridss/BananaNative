@@ -44,7 +44,7 @@ class Layout(unittest.TestCase):
             if rel.parts[0] == 'topics' and p.suffix == '.md':
                 head = '\n'.join((REPO / p).read_text(encoding='utf-8').split('\n')[:8])
                 self.assertTrue(STATUS.search(head), f'{p}: no "Status: checked against <release>" or "Status: unverified (why)" line in its first lines')
-                self.assertIn(f'topics/{rel.name}', readme, f'{p}: not listed in internal/README.md')
+                self.assertIn('/'.join(rel.parts), readme, f'{p}: not listed in internal/README.md')
 
 
 if __name__ == '__main__':

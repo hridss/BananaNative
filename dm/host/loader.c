@@ -254,6 +254,18 @@ static void read_layout(module_t *m, const char *dir) {
         else if (!strcmp(key, "UE_MALLOC_SLOT")) m->ue_malloc_slot = (unsigned)v;
         else if (!strcmp(key, "FPS_TARGET_PTR")) m->fps_target_ptr = v;
         else if (!strcmp(key, "FPS_TARGET_FIELD")) m->fps_target_field = (uint32_t)v;
+        else if (!strcmp(key, "STEP_MAX")) m->step_max = (uint32_t)v;
+        else if (!strcmp(key, "MONOLITH_INTERVAL")) m->monolith_interval = v;
+        else if (!strcmp(key, "NATIVE_FPS_BLOCKED")) m->native_fps_blocked = v != 0;
+        else if (!strcmp(key, "UE_FIXED_RATE_PTR")) m->ue_fixed_ptr = v;
+        else if (!strcmp(key, "UE_FIXED_RATE_FIELD")) m->ue_fixed_field = (uint32_t)v;
+        else if (!strcmp(key, "UE_FIXED_RATE_FLAG")) m->ue_fixed_flag = (uint32_t)v;
+        else if (!strcmp(key, "UNITY_TARGET_FPS")) m->unity_target_fps = v;
+        else if (!strcmp(key, "UNITY_QS_PTR")) m->unity_qs_ptr = v;
+        else if (!strcmp(key, "UNITY_QS_IDX")) m->unity_qs_idx = (uint32_t)v;
+        else if (!strcmp(key, "UNITY_QS_ARR")) m->unity_qs_arr = (uint32_t)v;
+        else if (!strcmp(key, "UNITY_QS_SIZE")) m->unity_qs_size = (uint32_t)v;
+        else if (!strcmp(key, "UNITY_QS_VSYNC")) m->unity_qs_vsync = (uint32_t)v;
         else if (!strncmp(key, "UE_CVAR:", 8)) {
             if (m->n_ue_cvar == (int)(sizeof m->ue_cvar / sizeof *m->ue_cvar) || strlen(key + 8) >= sizeof m->ue_cvar[0].name) die("%s: too many Unreal console variables, or too long a name: %s", path, key);
             strcpy(m->ue_cvar[m->n_ue_cvar].name, key + 8); m->ue_cvar[m->n_ue_cvar++].off = v;
@@ -282,12 +294,13 @@ static void read_layout(module_t *m, const char *dir) {
 // target, 0 = the game's own interval logic. The profile's fps_target, overridden by DM_FPS_TARGET (0, 30 or 60); the graphics layer decides the steps and paces presents
 // (hle_nvn.c fstep_tick)
 uint8_t *dm_fps_state;
+int dm_fps_step_max;   // the largest step the stubs give the game (STEP_MAX in its fixups table; 0 = FSTEP_MAX): the frame step holds frames and pays back within it (hle_nvn.c)
 static const char *g_fps_mod;   // the module holding the state page (for the log)
 static unsigned g_oot_patches;
 static void install_fps_state(module_t *m) {
     size_t used = m->oot_patches ? 0x48 : 0x40;
     if (m->fps_state_off + used > m->size || m->fps_state_off < m->key_page_off + m->key_page_size) die("%s: frame step state page out of range", m->name);
-    dm_fps_state = m->base + m->fps_state_off; g_fps_mod = m->name;
+    dm_fps_state = m->base + m->fps_state_off; g_fps_mod = m->name; dm_fps_step_max = (int)m->step_max;
     g_oot_patches = m->oot_patches;
 }
 
@@ -886,6 +899,34 @@ static void pac_patch_text(module_t *m) {
 #endif
 }
 
+// The module arena (Android): modules back to back in load order, as Horizon's loader places them (main, subsdk*, sdk adjacent, each after the last), so a game that
+// reads a little past its own module gets the next one's bytes without a fault. The Legend of Zelda: Link's Awakening builds its main camera actor with actor profile
+// 0xFFFF and indexes the profile table with it unchecked (main+0x1c180): the byte read, main+0x214c889, lies in subsdk0 on the console, and on the Mac too, where
+// vm_allocate hands out ascending addresses and the modules happen to be adjacent; Linux's mmap goes top-down, left the address unmapped, and the read faulted.
+// One PROT_NONE arena is reserved for the modules' spans (the sizes map_image computes) and each image is placed at the next cursor, so the layout is the console's
+// up to the patch area each module carries. DM_MODULE_ARENA=0: separate mappings, as before (docs/reference/memory.md)
+static uint8_t *g_arena, *g_arena_cur, *g_arena_end;
+static size_t module_span(module_t *m, const char *dir) {   // what map_image maps for m, before it runs
+    char path[1024]; snprintf(path, sizeof path, "%s/%s.patched.bin", dir, m->name);
+    struct stat st; if (stat(path, &st)) die("stat %s", path);
+    return m->patch_off < 0 ? (size_t)-m->patch_off + m->image_size : ((size_t)st.st_size + 0x3FFF) & ~(size_t)0x3FFF;
+}
+static void arena_reserve(module_t *mods, int n, const char **mdir) {
+    const char *e = getenv("DM_MODULE_ARENA"); if (e && !strcmp(e, "0")) return;
+    size_t total = 0; for (int i = 0; i < n; i++) total += module_span(&mods[i], mdir[i]);
+    uint8_t *a = mmap(NULL, total, PROT_NONE, MAP_PRIVATE | MAP_ANON | MAP_NORESERVE, -1, 0);
+    if (a == MAP_FAILED) { LOG("[RED] module arena of %#zx bytes not reserved: modules mapped apart", total); return; }
+    g_arena = g_arena_cur = a; g_arena_end = a + total;
+    LOG("module arena %p +%#zx: %d modules back to back in load order", a, total, n);
+}
+static uint8_t *module_mmap(const char *name, size_t len) {   // the next len bytes of the arena, or a mapping of their own without one
+    if (!g_arena) return mmap(NULL, len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+    if (g_arena_cur + len > g_arena_end) die("%s: %#zx bytes do not fit in the module arena (%#zx left)", name, len, (size_t)(g_arena_end - g_arena_cur));
+    uint8_t *p = mmap(g_arena_cur, len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_FIXED, -1, 0);
+    if (p != MAP_FAILED) g_arena_cur += len;
+    return p;
+}
+
 // Seal the code area immediately after copying into anonymous pages (16 KB pages): [0, text_end) and the patch area are read-only+execute, and from then on any write to the code area crashes on the spot;
 // what lies between (ro and data on the same page can only go together) is writable
 static void map_image(module_t *m, const char *dir) {
@@ -898,7 +939,7 @@ static void map_image(module_t *m, const char *dir) {
         if (sz < fl + bl) die("%s is shorter than FILE_IMAGE_LEN %#llx + BACK_LEN %#llx", path, (unsigned long long)fl, (unsigned long long)bl);
         m->size = m->image_size; m->patch_len = (sz - bl - fl + 0x3FFF) & ~0x3FFFull;
         if (m->patch_len > pre) die("%s patch area of %#llx bytes does not fit in the %#llx before the base", path, (unsigned long long)m->patch_len, (unsigned long long)pre);
-        uint8_t *a = mmap(NULL, pre + m->size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+        uint8_t *a = module_mmap(m->name, pre + m->size);   // the module arena (see above)
         if (a == MAP_FAILED) die("%s mmap %#llx", m->name, (unsigned long long)(pre + m->size));
         m->base = a + pre;
         memcpy(m->base, raw, fl); memcpy(a, raw + fl, sz - bl - fl); if (bl) memcpy(m->base + m->back_off, raw + sz - bl, bl);
@@ -911,7 +952,7 @@ static void map_image(module_t *m, const char *dir) {
         return;
     }
     m->size = (sz + 0x3FFF) & ~0x3FFFull;
-    m->base = mmap(NULL, m->size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+    m->base = module_mmap(m->name, m->size);   // the module arena (see above)
     if (m->base == MAP_FAILED) die("%s mmap", m->name);
     memcpy(m->base, raw, sz); free(raw); install_key_page(m); window_apply(m); shape_apply(m); fiber_pac_apply(m); pac_patch_text(m); rt_pool_apply(m);
     uint64_t rx = (m->text_end + 0x3FFF) & ~0x3FFFull;
@@ -959,6 +1000,9 @@ void load_modules(const char *dir, const char **names, int n) {
         read_layout(m, mdir[i]);
     }
     plat_slots_init();
+#if PLAT_ANDROID
+    arena_reserve(g_mod, n, mdir);   // the module arena (see map_image)
+#endif
     for (int i = 0; i < n; i++) {
         module_t *m = &g_mod[i];
         t = now_ns(); map_image(m, mdir[i]); tm += now_ns() - t;   // On return the code area is already read-only+execute; from here on the loader only writes data
@@ -968,6 +1012,9 @@ void load_modules(const char *dir, const char **names, int n) {
         LOG("%s: base %p size %#zx", names[i], m->base, m->size);
         m->loaded = 1; g_loaded[g_nloaded++] = m; g_nmod++;
     }
+#if PLAT_ANDROID
+    g_arena = NULL;   // the arena holds the startup modules only: NROs (preload_nros) are mapped on their own, as the ro service maps them wherever there is room
+#endif
     force_init();
     t = now_ns(); for (int i = 0; i < g_nmod; i++) relocate(&g_mod[i]); tr = now_ns() - t;
     force_check();

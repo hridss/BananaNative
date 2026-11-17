@@ -48,6 +48,7 @@ int g_nmod;
 uint64_t g_t0_ns;
 __thread _Atomic int dm_host_work;
 pthread_key_t g_key18;
+void dm_audren_dump(void) {}   // hle_thread.c declares it weak; Apple's linker needs a definition
 void crash_thread_init(void) {}
 void guest_thread_init(void) {}
 void guest_thread_set_id(uint64_t id) { (void)id; }

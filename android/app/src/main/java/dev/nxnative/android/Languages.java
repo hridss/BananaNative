@@ -1,6 +1,7 @@
 package dev.nxnative.android;
 
 import android.app.LocaleManager;
+import android.os.Build;
 import android.content.Context;
 import android.os.LocaleList;
 
@@ -29,10 +30,15 @@ final class Languages {
         new Lang("fr", R.string.lang_fr),
         new Lang("ar", R.string.lang_ar),
         new Lang("pl", R.string.lang_pl),
+        new Lang("ko", R.string.lang_ko),
+        new Lang("uk", R.string.lang_uk),
+        new Lang("de", R.string.lang_de),
+        new Lang("it", R.string.lang_it),
     };
 
     /** The language the player picked, or null for System default */
     static Lang picked(Context c) {
+        if (Build.VERSION.SDK_INT < 33) return null;   // no per-app language before Android 13 (LocaleManager): the phone's language is used
         LocaleManager m = c.getSystemService(LocaleManager.class);
         if (m == null) return null;
         LocaleList l = m.getApplicationLocales();
@@ -42,6 +48,7 @@ final class Languages {
 
     /** Picks a language (null: System default); the screens are rebuilt by the system, which recreates the activities */
     static void apply(Context c, Lang lang) {
+        if (Build.VERSION.SDK_INT < 33) return;
         LocaleManager m = c.getSystemService(LocaleManager.class);
         if (m == null) return;
         m.setApplicationLocales(lang == null ? LocaleList.getEmptyLocaleList() : LocaleList.forLanguageTags(lang.tag));

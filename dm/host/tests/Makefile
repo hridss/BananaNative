@@ -44,6 +44,7 @@ run: $(B)/t_language $(B)/t_motion $(B)/t_heap_size $(B)/t_touch $(B)/t_gesture 
 	$(B)/t_mtf_speed
 	$(B)/t_mtf_wide
 	$(B)/t_pkp_aspect
+	$(B)/t_drs_steps
 	$(B)/t_uecvar
 	$(B)/t_audren_work
 	$(B)/t_audren_layout
@@ -66,11 +67,13 @@ run: $(B)/t_language $(B)/t_motion $(B)/t_heap_size $(B)/t_touch $(B)/t_gesture 
 	$(B)/t_codec_video
 	$(B)/t_movie_avc
 	$(B)/t_nv
+	$(B)/t_objmap
 	$(B)/t_nfc
 	$(B)/t_motion
 	$(B)/t_pad_motion
 	$(B)/t_motion_apple
 	$(B)/t_pad_apple
+	$(B)/t_account
 	$(B)/t_motion_pro
 	$(B)/t_motion_pro_mac
 	TMPDIR="$(abspath $(B))" $(B)/t_hid
@@ -94,6 +97,8 @@ run: $(B)/t_language $(B)/t_motion $(B)/t_heap_size $(B)/t_touch $(B)/t_gesture 
 	$(B)/t_android_smap
 	$(B)/t_android_texown
 	$(B)/t_android_mapbudget
+	$(B)/t_android_driverpath
+	$(B)/t_android_rsslog
 	$(B)/t_android_psogate
 	$(B)/t_android_psosync
 	$(B)/t_android_tf
@@ -113,6 +118,7 @@ run: $(B)/t_language $(B)/t_motion $(B)/t_heap_size $(B)/t_touch $(B)/t_gesture 
 	$(B)/t_android_pace
 	$(B)/t_lse_unaligned
 	$(B)/t_android_skipwarn
+	$(B)/t_android_placefail
 	$(B)/t_android_gmem
 	$(B)/t_android_fpenv
 	$(B)/t_android_soft
@@ -123,10 +129,17 @@ run: $(B)/t_language $(B)/t_motion $(B)/t_heap_size $(B)/t_touch $(B)/t_gesture 
 	$(B)/t_android_gbar
 	$(B)/t_android_memu
 	TMPDIR="$(abspath $(B))" $(B)/t_android_layerreq
+	$(B)/t_server_environment
 run: $(B)/t_nro
 run: $(B)/t_pack_modules
 run: $(B)/t_game_args
 run: $(B)/t_symbols
+run: $(B)/t_server_environment
+$(B)/t_server_environment: t_server_environment.c ../hle_offline.c ../hle_net.c ../hle.h ../dm.h $(GAME_H) | $(B)
+	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -I.. $(GINC) -o $@ t_server_environment.c
+.PHONY: server-environment
+server-environment: $(B)/t_server_environment
+	$(B)/t_server_environment
 $(B)/t_symbols: t_symbols.c ../hle.c ../loader.c ../hle.h ../dm.h $(GAME_H) | $(B)
 	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -Wno-deprecated-declarations -I.. $(GINC) -o $@ t_symbols.c
 .PHONY: symbols
@@ -139,6 +152,16 @@ $(B)/t_audren_work: t_audren_work.c ../hle_audren.c ../hle.h ../dm.h $(GAME_H) |
 .PHONY: audren-work
 audren-work: $(B)/t_audren_work
 	$(B)/t_audren_work
+# The Android output path of hle_audio.c (the feeder ring, DM_AUDIO_FEED; a six-channel output through the stereo device callback) built for Linux: the NDK and arm64 headers
+# are stand-ins in stub_aaudio/, GAME only picks a profile header. make audio-feed, in `run` on a Linux host
+$(B)/t_audio_feed: t_audio_feed.c ../hle_audio.c ../hle.h ../dm.h stub_aaudio/aaudio/AAudio.h $(GAME_H) | $(B)
+	$(CLANG) -O1 -g -Wall -Wno-unused-function -D__ANDROID__ -D__aarch64__ -Istub_aaudio -I.. $(GINC) -o $@ t_audio_feed.c -lpthread
+.PHONY: audio-feed
+audio-feed: $(B)/t_audio_feed
+	$(B)/t_audio_feed
+ifeq ($(shell uname -s),Linux)
+run: audio-feed
+endif
 run: $(B)/t_audren_layout
 $(B)/t_audren_layout: t_audren_layout.c ../hle_audren.c ../hle.h ../dm.h $(GAME_H) | $(B)
 	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -I.. $(GINC) -o $@ t_audren_layout.c
@@ -253,6 +276,10 @@ $(B)/t_shared_font: t_shared_font.c ../hle_sdk16.c ../hle.h ../dm.h $(GAME_H) | 
 run: $(B)/t_nv
 $(B)/t_nv: t_nv.c ../../gfx/hle_nv.c ../hle.h ../dm.h $(GAME_H) | $(B)
 	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -I.. $(GINC) -o $@ t_nv.c
+# The guest object side table: linear probing with backward-shift deletion keeps every key once and reachable
+run: $(B)/t_objmap
+$(B)/t_objmap: t_objmap.c ../hle_os.c ../hle.h ../dm.h $(GAME_H) | $(B)
+	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -I.. $(GINC) -o $@ t_objmap.c
 # nn::nfc answered without nfc:user (NFC disabled), beside the nfp no-tag answers
 run: $(B)/t_nfc
 $(B)/t_nfc: t_nfc.c ../hle_sdk16.c ../hle.h ../dm.h $(GAME_H) | $(B)
@@ -277,6 +304,9 @@ run: $(B)/t_pad_apple
 $(B)/t_pad_apple: t_pad_apple.m ../pad_apple.h ../dm_input.h | $(B)
 	$(CLANG) -O1 -g -fobjc-arc -Wall -Werror -I.. -o $@ t_pad_apple.m -framework Foundation -framework GameController
 run: $(B)/t_motion_pro $(B)/t_motion_pro_mac
+run: $(B)/t_account
+$(B)/t_account: t_account.c ../hle_account.c ../hle.h ../dm.h $(GAME_H) | $(B)
+	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function $(GINC) -o $@ t_account.c
 $(B)/t_motion_pro: t_motion_pro.c ../motion_pro.h | $(B)
 	$(CLANG) -O1 -g -Wall -Werror -fsanitize=address,undefined -o $@ t_motion_pro.c
 $(B)/t_motion_pro_mac: t_motion_pro_mac.m ../motion_pro_mac.h ../motion_pro.h ../dm_input.h | $(B)
@@ -289,8 +319,8 @@ $(B)/t_haptics: t_haptics.c ../hle_haptics.c ../hle_haptics.h ../dm_input.h | $(
 	$(CLANG) -O1 -g -Wall -Werror -I.. -o $@ t_haptics.c ../hle_haptics.c
 $(B)/t_haptics_apple: t_haptics_apple.m ../haptics_apple.m ../haptics_apple.h ../hle_haptics.c ../hle_haptics.h | $(B)
 	$(CLANG) -O1 -g -fobjc-arc -Wall -Werror -I.. -o $@ t_haptics_apple.m ../hle_haptics.c -framework Cocoa -framework GameController -framework CoreHaptics -framework IOKit
-$(B)/t_time: t_time.c ../hle_time.c ../hle.h ../dm.h $(GAME_H) | $(B)
-	$(CLANG) -O1 -Wall -Werror -Wno-unused-function -I.. $(GINC) -o $@ t_time.c
+$(B)/t_time: t_time.c ../hle_time.c ../hle_net.c ../hle_table.c ../hle.h ../dm.h $(GAME_H) | $(B)
+	$(CLANG) -O1 -Wall -Werror -Wno-unused-function -I.. $(GINC) -o $@ t_time.c ../hle_table.c
 $(B)/t_oe: t_oe.c ../hle_oe.c ../hle.h ../dm.h $(GAME_H) | $(B)
 	$(CLANG) -O1 -Wno-unused-function -I.. $(GINC) -o $@ t_oe.c
 $(B)/t_condvar: t_condvar.c t_condvar_stub.c ../hle_thread.c ../dm.h $(GAME_H) | $(B)
@@ -429,7 +459,7 @@ coverage:
 	LLVM_PROFILE_FILE="$(call cov_profile,$(B)/cov)" $(MAKE) -i B=$(B)/cov SAN="$(COV_FLAGS)" run
 	@$(call cov_export,$(B)/cov)
 # The Android host's pure parts (dm/host/android): resampler, channel map, SPS size, MediaCodec picture layouts; gamepad / touch / sensor mapping
-run: $(B)/t_android_av $(B)/t_android_input $(B)/t_android_shlib $(B)/t_android_spvpatch $(B)/t_android_imgmem $(B)/t_android_zshare $(B)/t_android_texlimit $(B)/t_android_tstick $(B)/t_android_lowram $(B)/t_android_livemap $(B)/t_android_smap $(B)/t_android_mapbudget $(B)/t_android_psogate $(B)/t_android_hangparts $(B)/t_android_wbfollow $(B)/t_android_pckeep $(B)/t_android_pwlist $(B)/t_android_fmtlist $(B)/t_android_place $(B)/t_android_ovl $(B)/t_android_pace $(B)/t_lse_unaligned $(B)/t_android_skipwarn $(B)/t_android_gmem $(B)/t_android_fpenv $(B)/t_android_soft $(B)/t_android_qsched $(B)/t_android_poolslot $(B)/t_android_prepass $(B)/t_android_tlsig $(B)/t_android_texown $(B)/t_android_gbar $(B)/t_android_memu $(B)/t_android_auto $(B)/t_android_layerreq $(B)/t_android_holes
+run: $(B)/t_android_av $(B)/t_android_input $(B)/t_android_shlib $(B)/t_android_spvpatch $(B)/t_android_imgmem $(B)/t_android_zshare $(B)/t_android_texlimit $(B)/t_android_tstick $(B)/t_android_lowram $(B)/t_android_livemap $(B)/t_android_smap $(B)/t_android_mapbudget $(B)/t_android_rsslog $(B)/t_android_psogate $(B)/t_android_hangparts $(B)/t_android_wbfollow $(B)/t_android_pckeep $(B)/t_android_pwlist $(B)/t_android_fmtlist $(B)/t_android_place $(B)/t_android_ovl $(B)/t_android_pace $(B)/t_lse_unaligned $(B)/t_android_skipwarn $(B)/t_android_gmem $(B)/t_android_fpenv $(B)/t_android_soft $(B)/t_android_qsched $(B)/t_android_poolslot $(B)/t_android_prepass $(B)/t_android_tlsig $(B)/t_android_texown $(B)/t_android_gbar $(B)/t_android_memu $(B)/t_android_auto $(B)/t_android_layerreq $(B)/t_android_driverpath $(B)/t_android_placefail $(B)/t_android_holes
 $(B)/t_android_av: t_android_av.c ../android/av_android.h | $(B)
 	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -fsanitize=address,undefined -I.. $(WEAK_HOST) -o $@ t_android_av.c
 $(B)/t_android_input: t_android_input.c ../android/input_map.c ../android/input_map.h ../../gfx/vk_android/vka_present_fit.h ../motion_fusion.h ../dm_input.h | $(B)
@@ -466,6 +496,12 @@ $(B)/t_android_texown: t_android_texown.c $(VKA)/vka_texown.h ../../gfx/nvn/nvn_
 # The memory maps budget: the dirty tracker's block size by share of vm.max_map_count, compaction's picks, the lines of /proc/self/maps (vka_mapbudget.h; vka_mem.c maps_tick)
 $(B)/t_android_mapbudget: t_android_mapbudget.c $(VKA)/vka_mapbudget.h | $(B)
 	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -fsanitize=address,undefined -I.. -o $@ t_android_mapbudget.c
+# Whether a custom GPU driver is what runs: the custom library's lines in /proc/self/maps against the system driver's (vka_driverpath.h; vka_driver.c vka_driver_mapped)
+$(B)/t_android_driverpath: t_android_driverpath.c $(VKA)/vka_driverpath.h | $(B)
+	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -fsanitize=address,undefined -I.. -o $@ t_android_driverpath.c
+# The `[mem] rss:` line: smaps into categories, MemAvailable, zram swap (vka_rsslog.h; vka_mem.c rss_log)
+$(B)/t_android_rsslog: t_android_rsslog.c $(VKA)/vka_rsslog.h $(VKA)/vka_mapbudget.h | $(B)
+	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -fsanitize=address,undefined -I.. -o $@ t_android_rsslog.c
 # The descriptor pools' ranges: a finalized pool's range is used again (nvn_dpool.h; hle_nvn.c "Descriptor pools")
 $(B)/t_nvn_dpool: t_nvn_dpool.c ../../gfx/nvn/nvn_dpool.h | $(B)
 	$(CLANG) -O1 -g -Wall -Werror -fsanitize=address,undefined -I.. -o $@ t_nvn_dpool.c
@@ -572,6 +608,9 @@ $(B)/t_lse_unaligned: t_lse_unaligned.c ../lse_unaligned.h | $(B)
 # The skipped-work warning's window logic (vka_skipwarn.h)
 $(B)/t_android_skipwarn: t_android_skipwarn.c $(VKA)/vka_skipwarn.h | $(B)
 	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -fsanitize=address,undefined -I.. -o $@ t_android_skipwarn.c
+# Whether placed maps work at all (vka_placefail.h)
+$(B)/t_android_placefail: t_android_placefail.c $(VKA)/vka_placefail.h $(VKA)/vka_skipwarn.h | $(B)
+	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -fsanitize=address,undefined -I.. -o $@ t_android_placefail.c
 $(B)/t_android_fpenv: t_android_fpenv.c $(VKA)/vka_fpenv.h | $(B)
 	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -fsanitize=address,undefined -I.. -o $@ t_android_fpenv.c
 # GPU waits across NVN queues on the Android replay (dm/gfx/vk_android/vka_qsched.h): parks, producers, the SDK's predicates, syncs, timeline signals, safety valves
@@ -659,6 +698,9 @@ $(B)/t_oot_fog: t_oot_fog.c ../android/oot_fog.c ../hle.h ../dm.h $(GAME_H) | $(
 run: $(B)/t_dkb_wide
 $(B)/t_dkb_wide: t_dkb_wide.c ../android/dkb_wide.c ../android/wide_shape.h ../hle.h ../dm.h $(GAME_H) | $(B)
 	$(CLANG) -O1 -g -Wno-unused-function -I.. $(GINC) -o $@ t_dkb_wide.c -lm -pthread
+run: $(B)/t_drs_steps
+$(B)/t_drs_steps: t_drs_steps.c ../drs_steps.h | $(B)
+	$(CLANG) -O1 -g -o $@ t_drs_steps.c -lm
 run: $(B)/t_pkp_aspect
 $(B)/t_pkp_aspect: t_pkp_aspect.c ../android/pkp_aspect.c ../hle.h ../dm.h $(GAME_H) | $(B)
 	$(CLANG) -O1 -g -Wno-unused-function -I.. $(GINC) -o $@ t_pkp_aspect.c -lm -pthread

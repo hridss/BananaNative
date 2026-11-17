@@ -17,14 +17,28 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include "vka_driverpath.h"
 
 #define ADRENOTOOLS_DRIVER_CUSTOM 1   // dm/third_party/libadrenotools/include/adrenotools/priv.h
 typedef void *(*open_libvulkan_fn)(int dlopen_mode, int feature_flags, const char *tmp_lib_dir, const char *hook_lib_dir, const char *custom_driver_dir,
                                    const char *custom_driver_name, const char *file_redirect_dir, void **user_mapping_handle);
 
 static char g_tag[96];   // the custom driver in use (file-name safe), empty for the system's
+static char g_dir[1024], g_name[256];   // the folder and library adrenotools was asked for (vka_dev.c checks that it is the one mapped: vka_driverpath.h)
 
 const char *vka_driver_tag(void) { return g_tag[0] ? g_tag : NULL; }
+// The custom driver's folder and library file as loaded (NULL, NULL for the system's)
+void vka_driver_lib(const char **dir, const char **name) { *dir = g_tag[0] ? g_dir : NULL; *name = g_tag[0] ? g_name : NULL; }
+// Whether the custom driver's library is mapped in the process once the loader has loaded a driver (after vkCreateInstance): 1 yes, 0 no (adrenotools' hook fell
+// back to the system's driver: it does so when the custom library does not load, logging only to logcat), -1 not known (no custom driver, maps not readable)
+int vka_driver_mapped(void) {
+    if (!g_tag[0]) return -1;
+    char folder[256]; vkdp_last(g_dir, folder, sizeof folder);
+    FILE *f = fopen("/proc/self/maps", "re"); if (!f) return -1;
+    char ln[1024]; int m = 0;
+    while (!m && fgets(ln, sizeof ln, f)) { size_t n = strlen(ln); if (n && ln[n - 1] == '\n') ln[--n] = 0; m = vkdp_line_maps(ln, n, folder, g_name); }
+    fclose(f); return m;
+}
 
 // "libraryName" from a driver folder's meta.json: the one string value the loader needs (a small JSON file; no parser for one key)
 static int meta_library(const char *dir, char *out, size_t cap) {
@@ -116,6 +130,7 @@ static void *driver_open(void) {
     const char *base = dir + strlen(dir) - 1; while (base > dir && base[-1] != '/') base--;   // the folder's name, else the library's
     char b[128]; snprintf(b, sizeof b, "%.*s", (int)(dir + strlen(dir) - 1 - base), base);
     set_tag(b[0] ? b : name);
+    snprintf(g_dir, sizeof g_dir, "%s", dir); snprintf(g_name, sizeof g_name, "%s", name);
     VLOG("custom GPU driver: %s%s (hooks in %s), pipeline cache vk_pipelines-%s" VKA_PCACHE_GEN ".bin", dir, name, hook, g_tag);
     return lib;
 }

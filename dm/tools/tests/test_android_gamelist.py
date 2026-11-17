@@ -20,6 +20,8 @@ FIX_TID = '0100000000AB0000'
 FIX2 = '0100000000AC0000'   # a game whose supported build is its base, display version 1.8.0 (as Mario Kart World)
 FIX3 = '0100000000AD0000'   # a game with a romfs_check row, as Donkey Kong Bananza's
 CHECK = 'System/RegionLangMask.txt|4|main'   # build.gradle romfsChecksOf of dm/games/040074A01BF12000's romfs_check row
+FIX4 = '0100000000AE0000'   # a game with a key:<name> romfs_check row, as Fire Emblem Fortune's Weave's
+KEYCHECK = 'Fs.bin.zst|key:ReleaseName|002'   # dm/games/04007EF01F8AE000's row
 DKB = ('040074A01BF12000', '458752', 'main=e25c90c1c136638885659fd55bf8a03b', 'sdk=18265daea2105b31f25346adfbbd09b5')
 
 
@@ -31,11 +33,12 @@ STUB = '''package dev.nxnative.android;
 public final class BuildConfig {
     public static final String NX_PROFILES = "%s\\tFixture\\t0\\tunknown\\t65536 main=%s sdk=%s\\n%s\\tDonkey Kong Bananza\\t0\\tunknown\\t%s %s %s\\t\\t\\t\\t\\t\\t%s"
             + "\\n%s\\tFixture Two\\t0\\tunknown\\t0 @1.8.0 main=%s sdk=%s"
-            + "\\n%s\\tFixture Three\\t0\\tunknown\\t65536 main=%s sdk=%s\\t\\t\\t\\t\\t\\t%s";
+            + "\\n%s\\tFixture Three\\t0\\tunknown\\t65536 main=%s sdk=%s\\t\\t\\t\\t\\t\\t%s"
+            + "\\n%s\\tFixture Four\\t0\\tunknown\\t131072 main=%s sdk=%s\\t\\t\\t\\t\\t\\t%s";
     public static final String NX_DMSH_VK_CHAIN = "c0ffee000001", NX_DMSH_VK_ABI = "abc123abc123", NX_DMSH_VK_ABI_COMPAT = "";
     public static final String NX_DMSH_VK_ABI_SAME = "";
 }
-''' % (FIX_TID, nso_id(2), nso_id(3), *DKB, CHECK, FIX2, nso_id(11), nso_id(3), FIX3, nso_id(2), nso_id(3), CHECK)
+''' % (FIX_TID, nso_id(2), nso_id(3), *DKB, CHECK, FIX2, nso_id(11), nso_id(3), FIX3, nso_id(2), nso_id(3), CHECK, FIX4, nso_id(2), nso_id(3), KEYCHECK)
 
 
 @unittest.skipUnless(shutil.which('javac') and shutil.which('java'), 'no JDK')
@@ -131,6 +134,7 @@ class ProfileRows(unittest.TestCase):
     def test_rows(self):
         self.assertEqual(self.rows('040074A01BF12000'), [CHECK])
         self.assertEqual(self.rows('0400C3F00006E000'), [CHECK])
+        self.assertEqual(self.rows('04007EF01F8AE000'), [KEYCHECK])   # GameListJvmTest romfsKeyChecks reads this form
 
     @unittest.skipUnless(os.environ.get('NX_TEST_MKW_ROMFS'), 'NX_TEST_MKW_ROMFS not set')
     def test_mkw_dump(self):

@@ -79,6 +79,7 @@ No `pad_layout` key: the iPhone gamepad starts in the 2D layout ([README](../../
 
 General host changes first needed here; each applies to every game (or every Unreal game):
 
+- **The AAudio feeder ring** (`hle_audio.c` `aa_feeder`, `DM_AUDIO_FEED`): [Underruns on an output whose burst is longer than the game's queue (Android)](../../../docs/reference/audio.md#underruns-on-an-output-whose-burst-is-longer-than-the-games-queue-android).
 - **Unreal's allocator replaced by the host's** (`hle_uemalloc.c`, a rewriter cut of the constructor), explained in [Memory](#memory) above; the later Unreal builds and their vtable layouts: [Unreal's FMallocBinned3 replaced by the host allocator](../../../docs/reference/memory.md#unreals-fmallocbinned3-replaced-by-the-host-allocator).
 - **Unreal's frame limits written in game memory** (`hle_fpslock.c`, `fps_target`), explained in [Frame rate](#frame-rate) above.
 - **Game arguments set before `nninitStartup`** (`main.c`, profile key `game_args`), and **the engine region given what the alias region has room for** (`dm/tools/ue_region.py`, `hle_svc.c`): [Unreal's engine address region and its options](../../../docs/reference/memory.md#unreals-engine-address-region-and-its-options).

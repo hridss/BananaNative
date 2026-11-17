@@ -9,6 +9,9 @@ OBS = {
         (0x08cc128, 28, '398dc273', 'scene camera enters render view; x20 camera'),
         (0x1f12130, 29, 'aa0003f3', 'projection builder entry; x0 camera'),
         (0x1f12354, 30, '6d4123e9', 'perspective projection exit; x19 camera'),
+        (0x1f1230c, 30 | 1 << 8, '6d4123e9', 'orthographic projection exit (the UI 2D cameras); x19 camera'),
+        (0x17b9804, 30 | 2 << 8, '52800028', '2D batch constants just stored (text in screen pixels); x8 the four words'),
+        (0x1f72270, 30 | 3 << 8, 'f9401e68', 'ScreenLayout pane transform update, global matrix final, children next; x19 pane, x20 what changed'),
     ],
 }
 BINDING = [

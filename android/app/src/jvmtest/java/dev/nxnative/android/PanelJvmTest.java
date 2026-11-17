@@ -52,6 +52,39 @@ public final class PanelJvmTest {
         check(DlssTune.lines(2, 0, 0, 0, -1f).equals(java.util.List.of("DM_VK_DLSS=1", "DM_VK_GSR2_CLARITY=0", "DM_VK_DLSS_SHARP=0", "DM_VK_FSR3_SHARP=0.00", "DM_VK_FSR=0", "DM_VK_FSR_SHARP=-1.0", "DM_VK_PRESENT_NEAREST=1")), "bilinear, present nearest");
         check(DlssTune.lines(9, 9, 9, 9, 0.25f).equals(DlssTune.lines(0, 2, 3, 4, 0.25f)), "out of range: the defaults");
         for (int c = -1; c < 7; c++) for (String l : DlssTune.lines(0, 2, 3, c, 0.25f)) check(!l.startsWith("DM_VK_NDSR"), "no NDSR line");
+        // Screen scaling (screen_scale) unset (null) or out of range: SGSR 1 at the present for a stored or default SGSR 1 (4, and unknown choices), as if picked; the other
+        // stored choices keep exactly their old lines (no DM_VK_PRESENT_SCALE), and the live control then clears the key
+        for (int c = -1; c < 7; c++) for (Integer s : new Integer[] {null, -1, 6, 99}) {
+            java.util.List<String> l = DlssTune.lines(0, 2, 3, c, 0.25f, s), ctl = DlssTune.ctlLines(0, 2, 3, c, 0.25f, s);
+            if (c >= 0 && c <= 3) {
+                check(l.equals(DlssTune.lines(0, 2, 3, c, 0.25f)), "screen unset " + s + ", stored choice " + c + ": as before: " + l);
+                check(ctl.subList(0, ctl.size() - 1).equals(l) && ctl.get(ctl.size() - 1).equals("DM_VK_PRESENT_SCALE="), "live control, unset: clears the key: " + ctl);
+            } else {
+                check(l.equals(java.util.List.of("DM_VK_DLSS=3", "DM_VK_GSR2_CLARITY=2", "DM_VK_DLSS_SHARP=15", "DM_VK_FSR3_SHARP=0.50", "DM_VK_FSR=0", "DM_VK_FSR_SHARP=0.25", "DM_VK_PRESENT_NEAREST=0", "DM_VK_PRESENT_SCALE=sgsr1"))
+                      && l.equals(DlssTune.lines(0, 2, 3, c, 0.25f, DlssTune.SCREEN_SGSR1)) && ctl.equals(l), "screen unset " + s + ", stored choice " + c + " (SGSR 1 or unknown): SGSR 1: " + l);
+            }
+        }
+        check(DlssTune.screenOf(0) == DlssTune.SCREEN_NEAREST && DlssTune.screenOf(1) == DlssTune.SCREEN_BILINEAR && DlssTune.screenOf(3) == DlssTune.SCREEN_BILINEAR
+                && DlssTune.screenOf(2) == DlssTune.SCREEN_FSR1 && DlssTune.screenOf(4) == DlssTune.SCREEN_SGSR1 && DlssTune.screenOf(9) == DlssTune.SCREEN_SGSR1 && DlssTune.screenOf(-1) == DlssTune.SCREEN_SGSR1
+                && DlssTune.screenOf(DlssTune.UPSCALER_DEFAULT) == DlssTune.SCREEN_SGSR1, "unset: the row's default from the stored Upscaler choice (SGSR 1 the default)");
+        for (int c = 0; c < 4; c++) {   // Nearest, Bilinear, FSR 1, Native: the shown default's lines are the present's old lines; picking it adds only the key
+            java.util.List<String> a = DlssTune.lines(0, 2, 3, c, 0.25f), b = DlssTune.lines(0, 2, 3, c, 0.25f, DlssTune.screenOf(c));
+            check(b.subList(0, a.size()).equals(a) && b.size() == a.size() + 1, "stored choice " + c + " picked as Screen scaling: " + b);
+        }
+        check(DlssTune.lines(0, 2, 3, 2, -1f, null).equals(java.util.List.of("DM_VK_DLSS=3", "DM_VK_GSR2_CLARITY=2", "DM_VK_DLSS_SHARP=15", "DM_VK_FSR3_SHARP=0.50", "DM_VK_FSR=1", "DM_VK_FSR_SHARP=-1.0", "DM_VK_PRESENT_NEAREST=0")),
+              "a stored FSR 1 keeps FSR 1 at its sharpness, no new key");
+        check(DlssTune.screen(null, 4) == DlssTune.SCREEN_SGSR1 && DlssTune.screen(null, 2) == DlssTune.SCREEN_FSR1 && DlssTune.screen(2, 4) == DlssTune.SCREEN_BICUBIC && DlssTune.screen(7, 0) == DlssTune.SCREEN_NEAREST, "screen: stored, else the counterpart");
+        check(DlssTune.SCREEN_NAMES.length == 6 && DlssTune.SCREEN_KEYS.length == 6 && DlssTune.SCREEN_NAMES[DlssTune.SCREEN_DEVICE].equals("Device (power saving)")
+                && DlssTune.SCREEN_NAMES[DlssTune.SCREEN_BICUBIC].equals("Bicubic") && DlssTune.SCREEN_NAMES[DlssTune.SCREEN_SGSR1].equals("SGSR 1"), "screen names, in order");
+        String[][] screen = {{"DM_VK_FSR=0", "DM_VK_PRESENT_NEAREST=1", "nearest"}, {"DM_VK_FSR=0", "DM_VK_PRESENT_NEAREST=0", "bilinear"}, {"DM_VK_FSR=0", "DM_VK_PRESENT_NEAREST=0", "bicubic"},
+                             {"DM_VK_FSR=1", "DM_VK_PRESENT_NEAREST=0", "fsr1"}, {"DM_VK_FSR=0", "DM_VK_PRESENT_NEAREST=0", "sgsr1"}, {"DM_VK_FSR=0", "DM_VK_PRESENT_NEAREST=0", "device"}};
+        for (int s = 0; s < 6; s++) for (int c : new int[] {0, 1, 4}) {   // set: the stored Upscaler choice no longer matters
+            java.util.List<String> l = DlssTune.lines(3, 2, 3, c, 0.5f, s);
+            check(l.equals(java.util.List.of("DM_VK_DLSS=4", "DM_VK_GSR2_CLARITY=2", "DM_VK_DLSS_SHARP=15", "DM_VK_FSR3_SHARP=0.50", screen[s][0], "DM_VK_FSR_SHARP=0.5", screen[s][1], "DM_VK_PRESENT_SCALE=" + screen[s][2]))
+                  && DlssTune.ctlLines(3, 2, 3, c, 0.5f, s).equals(l), "screen " + s + ", stored choice " + c + ": " + l);
+        }
+        check(DlssTune.showsScreenSharp(DlssTune.SCREEN_FSR1) && !DlssTune.showsScreenSharp(DlssTune.SCREEN_SGSR1) && !DlssTune.showsScreenSharp(DlssTune.SCREEN_BICUBIC)
+                && !DlssTune.showsScreenSharp(DlssTune.SCREEN_DEVICE), "Screen sharpness only under FSR 1");
         // The panel's presets: Normal is the panel as it was (420 dp, at most 55 % of the width), each larger one wider, taller rows and larger text
         check(PanelLook.widthPx(1, 3f, 2400) == 1260, "normal: 420 dp: " + PanelLook.widthPx(1, 3f, 2400));
         check(PanelLook.widthPx(1, 3f, 1600) == 880, "normal: 55 % of a narrow screen: " + PanelLook.widthPx(1, 3f, 1600));

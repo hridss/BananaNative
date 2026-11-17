@@ -15,7 +15,11 @@ STUBS = {
     'android/content/Context.java': 'package android.content;\npublic class Context {}\n',
     'android/content/SharedPreferences.java': 'package android.content;\npublic interface SharedPreferences {\n  String getString(String k, String d);\n  int getInt(String k, int d);\n'
                                               '  Editor edit();\n  interface Editor { Editor putString(String k, String v); Editor putInt(String k, int v); void apply(); }\n}\n',
-    'dev/nxnative/android/Prefs.java': 'package dev.nxnative.android;\nfinal class Prefs {\n  static android.content.SharedPreferences of(android.content.Context c) { return null; }\n}\n',
+    'dev/nxnative/android/Prefs.java': 'package dev.nxnative.android;\nfinal class Prefs {\n  static final java.util.Map<String, String> M = new java.util.HashMap<>();\n'
+                                      '  static android.content.SharedPreferences of(android.content.Context c) { return new android.content.SharedPreferences() {\n'
+                                      '    public String getString(String k, String d) { return M.getOrDefault(k, d); }\n    public int getInt(String k, int d) { return d; }\n'
+                                      '    public Editor edit() { return new Editor() {\n      public Editor putString(String k, String v) { M.put(k, v); return this; }\n'
+                                      '      public Editor putInt(String k, int v) { return this; }\n      public void apply() {}\n    }; } }; }\n}\n',
 }
 
 
@@ -32,6 +36,16 @@ class UsersJvm(unittest.TestCase):
             r = subprocess.run(['java', '-cp', str(t / 'classes'), 'dev.nxnative.android.UsersJvmTest'], capture_output=True, text=True, encoding='utf-8')
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
             self.assertEqual(r.stdout.strip(), 'ok')
+
+
+class UsersSaves(unittest.TestCase):
+    def test_saves_tab_acts_on_the_selected_users_save(self):   # #388: Back up / Restore / Import used the first user's save whoever the games start with
+        d = SRC.parent
+        ui = (d / 'SaveUi.java').read_text(encoding='utf-8')
+        body = ui[ui.index('static void backup('):]
+        self.assertNotIn('Folders.save(a, g)', body)   # only ready() and gameRunning (the game's own lock) keep the game's save folder
+        self.assertEqual(body.count('Folders.userSave(a, g)'), 3)   # backup, exportTo, confirm (Restore and Import both end in confirm)
+        self.assertIn('Users.activeSave', (d / 'Folders.java').read_text(encoding='utf-8'))
 
 
 class UsersScreen(unittest.TestCase):

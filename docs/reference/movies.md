@@ -4,6 +4,30 @@ The SDK's movie library (`movie::Decoder`, `movie::Extractor`), which the host t
 
 ## Decoder lifecycle
 
+### Audio decoder history survives a movie seek
+
+- **Symptom:** AAC samples after a seek or loop differ from a fresh decode of the same packets; the old position's overlap can contaminate the beginning of the new position.
+- **Cause:** `md_reset` cleared packet/output queues but kept AudioToolbox's AAC converter history. `AudioConverterReset` is required at a source discontinuity. Vorbis was reopened separately after releasing the decode lock, leaving a window in which a new packet could decode with old history before the reopen.
+- **Fix:** reset the AAC converter and clear its input pointer while `dmu` excludes packet decoding. If the converter cannot reset, dispose it and reopen from the configuration on the next packet. Close Vorbis in the same locked reset, rather than after it. Stop/destruction still close the codecs normally; packet times and playback buffering are unchanged.
+- **Check:** `t_movie_vpx.c` generates stereo and six-channel AAC with the system encoder. Replaying packet zero without a reset produces different PCM (negative control); after Flush, including repeated Flush, the original PCM and 1,024-sample frame count return exactly. Passed with AddressSanitizer and UBSan, alongside the Vorbis flush/window and VP8/VP9 checks. The encoder requires access to macOS's codec service.
+- **Found on:** focused regression during Mortal Kombat 11's movie audio investigation (`0100F2200C984000`). The saved game run had no audio-device underruns; the owner subsequently reported working playback. No quantitative steady-playback lip-sync or stutter benchmark was recorded.
+
+### Native texture buffers with zero capacity
+
+- **Symptom:** `[RED] movie: client buffer in native-texture mode is 0 bytes, needs 8 (a texture object)` and `movieStatus_ErrorBadValue`; opening logos or movies do not display.
+- **Cause:** the host required a byte capacity of at least eight even though native-texture output describes an opaque NVN object. The SDK's native consumer uses the buffer's pointer without checking its capacity. Mortal Kombat 11's `NX64Render_AsyncTexture::Internal_CreateRHI` (`main+0x1320df0`) explicitly calls `Buffer::SetDataAndCapacity(texture, 0)`; `InternalVideoDecode_ProcessOutput` passes a copy of that buffer to the decoder.
+- **Fix:** `md_out_tex` validates the data pointer and the NVN texture object through `nvn_host_write_texture`, without imposing a byte-buffer capacity. CPU byte-buffer output retains its capacity checks.
+- **Check:** `t_movie_avc` accepts native texture buffers of capacity zero (MK11) and eight (Dread), writes the decoded frame, and rejects null or invalid objects.
+- **Found on:** Mortal Kombat 11 (`0100F2200C984000`, v1703936, main build `4f7ab1a3eefc7eb20413936e8e37c2e9`), SDK 9, Apple M2 Mac.
+
+### Movie extractor allocations need the SDK graphics allocator
+
+- **Symptom:** `CRASH sig=11 addr=0 pc=sdk+0x40ca1c lr=subsdk0+0x32455c` after `StoryEndOfMovieCallback`, while opening another MP4.
+- **Cause:** the host took over `nv::SetGraphicsAllocator` and `nv::SetGraphicsDevtoolsAllocator` and only recorded the callbacks, which nothing in the host read. The SDK's setter is what installs the dispatch behind `NvOsAlloc`, `NvOsAllocAlign`, `NvOsRealloc` and `NvOsFree`, and the movie extractor still allocates through them: `MPEG4Extractor::parseChunk` allocates a 224-byte `SampleTable` through `android::HeapObject::operator new` → `NvOsAlloc`. With no allocator installed it used the SDK's 32 KB bootstrap heap and tried to grow it through `nn::os::AllocateMemoryBlock`, instead of the allocator the game supplied. That allocation returned null; `android::RefBase`'s constructor then stored its vtable through null.
+- **Fix:** [`dm/gfx/hle_nv.c`](../../dm/gfx/hle_nv.c) no longer takes over either setter: the game's call reaches the SDK's own, as on the console. In the sdk modules checked (3.7.0, 11.4.0, 14.3.0, and the Switch 2 SDKs 20.5.13, 20.5.29 and 21.4.3) it checks its arguments, aborts when called twice or after `nv::InitializeGraphics` (whose flag the host's take-over of that function never sets), and installs the NvOs dispatch; on Switch 2 it also calls `nn::gs::sdk::InitializeGraphicsAllocator`. Driver initialization and heap sizes are unchanged.
+- **Check:** Mega Man Legacy Collection (SDK 3.7.0) and Fast Fusion (Switch 2, SDK 20.5.13), whose `main` calls the setter, reach their frame loops through the SDK's own setter with the same log as before (Mac, 2026-11-16). Mario Golf: Super Rush, which never calls it, plays its VP9 opening movie as on main. Mortal Kombat 11's story transition was not rerun on this exact change; its contributor reported it working with the SDK setter called (2026-11-15).
+- **Found on:** Mortal Kombat 11 (`0100F2200C984000`), 1.0.26, SDK 9 (`sdk` build `d145f1048fc57e03685da0441d823ce4`).
+
 ### The SDK's hardware decoder opens nvdrv
 
 - **Symptom:** abort in NVIDIA's video path (`NvRmChannelOpen` → `NvOsDrvOpen`).
@@ -39,6 +63,13 @@ The SDK's movie library (`movie::Decoder`, `movie::Extractor`), which the host t
 - **Fix:** the two-argument constructor is taken over as a CPU-mode decoder (mode 1) with format 3 as NV12 and 2 as ABGR (`h_movie_Decoder3` in `hle_movie.c`), and its decoders report 0x20 as `GetOutputBufferSize`'s second output (`out_align`). The host's NV12 already has the SDK 3 layout (`md_nv12`).
 - **Found on:** [Hyrule Warriors: Definitive Edition](../../dm/games/0100AE00096EA000/README.md) (SDK 3.5.1, H.264 MP4 movies through its own player): the title's background and the opening movie play.
 
+### The base-object constructors of `movie::Decoder`
+
+- **Symptom:** `CRASH sig=11 addr=0 pc=0` with `lr=h_movie_Configure+…`, as the first movie starts.
+- **Cause:** the host took over only `movie::Decoder`'s complete-object constructors (`C1`). A game that reaches the base-object constructor (`C2`) ran the SDK's: Mario Tennis Aces' SDK 4.5.0 has a `C1` of two instructions (`mov w4,#0; b C2`). The object then held a guest `DecoderImpl`, whose vtable pointer `Configure` read as the host's decoder.
+- **Fix:** `hle_movie.c` takes over the three `C2` forms as well. The class has no virtual bases, so both constructors do the same.
+- **Found on:** Mario Tennis Aces (`0100BDE00862A000`, no profile; [issue #1131](https://github.com/seedds/nxnative/issues/1131), found and tested by its reporter).
+
 ### The complete-object destructor
 
 - **Cause:** the game calls the complete-object destructor `movie::Decoder::~Decoder` (`D1`); the SDK's own one destroyed the host object as a `DecoderImpl`.
@@ -70,6 +101,21 @@ The SDK's movie library (`movie::Decoder`, `movie::Extractor`), which the host t
 - **Cause:** DRAGON QUEST XI S's movie player sends an end-of-stream packet (length 0, time 0) for every input it gets once its extractor is done, until the game stops the movie. Each one became an end-of-stream output that the player turned into an audio sample.
 - **Fix:** also as with MediaCodec, an input marked end-of-stream is the last until `Flush` / `Stop`: no input index is handed out or announced after it (`in_eos` in `hle_movie.c`).
 - **Found on:** [Metroid Dread](../../dm/games/010093801237C000/README.md) (movie sub-list); [DRAGON QUEST XI S](../../dm/games/01006C300E9F0000/README.md).
+
+### Inputs sent after an end-of-stream packet
+
+- **Symptom:** a Unity game crashes when a movie ends: a use after free of the decoder's event list during its completion callbacks.
+- **Cause:** inputs the player acquired before the end-of-stream packet can still arrive after it, with or without the flag. Tied Together's Unity player submits all four held indices as end-of-stream: each was decoded and signalled, four completion callbacks, and the first freed the event list the others were still walking. MediaCodec takes such a buffer back but decodes nothing once its input has reached end of stream.
+- **Fix:** `SendInputBufferForDecode` after end of stream returns the client's buffer, once, without another decode or signal (`hle_movie.c`); the duplicate and full-queue checks come before any state change, and `in_eos` is set only for an accepted packet.
+- **Found on:** Tied Together (Unity).
+
+### A player torn down while its worker is inside a decode call
+
+- **Symptom:** a movie player crashes on a null pointer at the opening movie's first skip or at a menu change (Mario Strikers: Battle League, `main+0xab4e18`, address 0).
+- **Cause:** the SDK queues a video packet and returns; its codec thread decodes it and signals each result. The host decoded inside the call (3-8 ms a packet). The game's worker (`MoviePlayerWorker`) was still inside `SendInputBufferForDecode` / `ReleaseOutputBufferIndex` while the owner thread stopped the movie, destroyed the player and cleared its pointer (`main+0xab55a4`); the worker then read the cleared player.
+- **Fix:** a video decoder decodes on a thread of its own (`hle_movie.c` `md_pump_thread`, `md_pump_async`): the send and release calls queue the work and return, so the teardown lands between the worker's iterations. Its results are signalled through the deferred queue, due at once (the pump thread is not a guest thread); Stop, Flush and the destructor drop one still pending, and the destructor joins the pump thread first. Audio decoders still decode on the caller and signal at once.
+- **Found on:** Mario Strikers: Battle League.
+- **Open:** 2 runs in 12 still crashed on one Mac (none in 30 on another), both after `GetOutputBuffer`, which in texture mode still writes the whole frame on the caller (`md_out_tex`) where the SDK starts a GPU copy and returns.
 
 ### End-of-stream packets with no data, and deleted decoders
 

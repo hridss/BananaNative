@@ -45,15 +45,17 @@ class PsoGPU(unittest.TestCase):
 
 class RomfsCheck(unittest.TestCase):
     def test_valid_rows(self):
-        for rows in ('romfs_check\tSystem/RegionLangMask.txt\t4\tmain\n', 'romfs_check\tSystem/RegionLangMask.txt\t2\tNormal\nromfs_check\ta/b.txt\t1\tJPja USen\n'):
+        for rows in ('romfs_check\tSystem/RegionLangMask.txt\t4\tmain\n', 'romfs_check\tSystem/RegionLangMask.txt\t2\tNormal\nromfs_check\ta/b.txt\t1\tJPja USen\n',
+                     'romfs_check\tFs.bin.zst\tkey:ReleaseName\t002\n'):
             self.assertEqual(header(rows), (0, ''), rows)
 
     def test_rejected_rows(self):
         for rows in ('romfs_check\tSystem/RegionLangMask.txt\t4\n', 'romfs_check\t/abs.txt\t1\tmain\n', 'romfs_check\ta/../b.txt\t1\tmain\n',
-                     'romfs_check\ta.txt\t0\tmain\n', 'romfs_check\ta.txt\tx\tmain\n', 'romfs_check\ta.txt\t1\ta|b\n', 'romfs_check\ta.txt\t1\t \n'):
+                     'romfs_check\ta.txt\t0\tmain\n', 'romfs_check\ta.txt\tx\tmain\n', 'romfs_check\ta.txt\t1\ta|b\n', 'romfs_check\ta.txt\t1\t \n',
+                     'romfs_check\ta.bin\tkey:\t002\n', 'romfs_check\ta.bin\tkey:a-b\t002\n'):
             rc, out = header(rows)
             self.assertNotEqual(rc, 0, rows)
-            self.assertIn(': romfs_check takes <path in the RomFS> <line, from 1>', out, rows)
+            self.assertIn(': romfs_check takes <path in the RomFS> <line, from 1, or key:<name> of a MessagePack map>', out, rows)
 
 
 

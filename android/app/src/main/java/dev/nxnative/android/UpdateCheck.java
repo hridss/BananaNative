@@ -183,12 +183,18 @@ final class UpdateCheck {
         return HEX.matcher(hex).matches() ? hex.toLowerCase(Locale.ROOT) : BAD_DIGEST;
     }
 
-    /** A release's APK: the first asset whose name ends in .apk with an https download link on its source's asset hosts and a usable digest; null when it has none */
+    /** The experimental Android 12 build (BuildConfig.NX_MIN_SDK below 33, set by NxApp): it takes only the release's asset named ...android12....apk, every other app never that one */
+    static boolean android12 = false;
+    static final String ANDROID12_MARK = "android12";
+
+    /** A release's APK: the first asset whose name ends in .apk with an https download link on its source's asset hosts and a usable digest; null when it has none.
+     *  An asset with "android12" in its name is the experimental Android 12 build's (a minSdk 31 APK): only that build takes it, and it takes no other */
     static Asset apk(Release r) {
         if (r.assets == null) return null;
         for (Asset a : r.assets) {
             if (a == null || a.name == null || a.url == null) continue;
             if (!a.name.toLowerCase(Locale.ROOT).endsWith(".apk") || !allowedAsset(a.url, r.source)) continue;
+            if (a.name.toLowerCase(Locale.ROOT).contains(ANDROID12_MARK) != android12) continue;
             if (BAD_DIGEST.equals(sha256(a.digest))) continue;
             return a;
         }
@@ -200,7 +206,24 @@ final class UpdateCheck {
      * vX.Y.Z are skipped, and so is a release without an APK. The highest version wins whatever the list's order; on a tie the first in the list (Updater lists
      * the sources in SOURCES order).
      */
-    static Update pick(List<Release> releases, int[] current) {
+    static Update pick(List<Release> releases, int[] current) { return pick(releases, current, false); }
+
+    private static final Pattern KIND = Pattern.compile("(?im)^[ \\t*_>#-]*update[ -]type[ \\t]*:[ \\t*_]*(hotfix|critical|major)\\b");
+
+    /**
+     * What kind of update a release is, from a line of its notes, "Update type: hotfix" (a small fix, optional), "Update type: critical" (a hotfix that
+     * everyone should take: always offered) or "Update type: major" (the default, also for every older release without the line)
+     */
+    static String kind(Release r) {
+        Matcher m = r == null || r.body == null ? null : KIND.matcher(r.body);
+        return m != null && m.find() ? m.group(1).toLowerCase(Locale.ROOT) : "major";
+    }
+
+    /**
+     * pick, and with skipHotfix (the player turned "small fix updates" off) a release that is a hotfix is passed over: the newest major or critical one above
+     * the app's version is offered instead, and a hotfix alone is never offered. The next major release carries every hotfix before it (an APK is the whole app)
+     */
+    static Update pick(List<Release> releases, int[] current, boolean skipHotfix) {
         if (releases == null || current == null) return null;
         Update best = null;
         for (Release r : releases) {
@@ -208,6 +231,7 @@ final class UpdateCheck {
             int[] v = tagVersion(r.tag);
             if (v == null || compare(v, current) <= 0) continue;
             if (best != null && compare(v, best.version) <= 0) continue;
+            if (skipHotfix && kind(r).equals("hotfix")) continue;
             Asset a = apk(r);
             if (a == null) continue;
             best = new Update(r, v, a, sha256(a.digest));
@@ -216,11 +240,13 @@ final class UpdateCheck {
     }
 
     /** The newest release across the sources' lists (null for a source that failed): pick on them all, in order, so a tie goes to the earlier source */
-    static Update pickAll(List<List<Release>> perSource, int[] current) {
+    static Update pickAll(List<List<Release>> perSource, int[] current) { return pickAll(perSource, current, false); }
+
+    static Update pickAll(List<List<Release>> perSource, int[] current, boolean skipHotfix) {
         if (perSource == null) return null;
         List<Release> all = new ArrayList<>();
         for (List<Release> l : perSource) if (l != null) all.addAll(l);
-        return pick(all, current);
+        return pick(all, current, skipHotfix);
     }
 
     /** "12.3 MB" */

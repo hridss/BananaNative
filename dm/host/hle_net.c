@@ -21,18 +21,39 @@ HLE_FORCE("_ZN2nn4nifm10InitializeEv", "connects to the nifm network management 
 // queries, 2,000 IPCs on the Switch but 0.1 ms here, so it cancelled and submitted again forever (1.17 billion queries a minute, a host core). Its stamp, now_ns() | 1, also read
 // as settled at once whenever the next query came within the same 42 ns clock tick (30% of Hades' submissions)
 static _Atomic int g_nifm_hold;   // queries the pending request still answers "on hold" (0 = none, or settled)
-HLE_FORCE("_ZN2nn4nifm20SubmitNetworkRequestEv", "offline: the request is on hold for the first query, then settles as unavailable", void, h_nifm_Submit, void) { atomic_store(&g_nifm_hold, 1); }
-HLE_FORCE("_ZN2nn4nifm20CancelNetworkRequestEv", "offline: drops the pending request", void, h_nifm_Cancel, void) { atomic_store(&g_nifm_hold, 0); }
+HLE_FORCE("_ZN2nn4nifm20SubmitNetworkRequestEv", "offline: the request is on hold for the first query, then settles as unavailable", void, h_nifm_Submit, void) { atomic_store(&g_nifm_hold, 1); NET_TRACE("nifm::SubmitNetworkRequest"); }
+HLE_FORCE("_ZN2nn4nifm20CancelNetworkRequestEv", "offline: drops the pending request", void, h_nifm_Cancel, void) { atomic_store(&g_nifm_hold, 0); NET_TRACE("nifm::CancelNetworkRequest"); }
 HLE_FORCE("_ZN2nn4nifm22IsNetworkRequestOnHoldEv", "offline: on hold for the first query after the submission", int, h_nifm_OnHold, void) {
     int h = atomic_load(&g_nifm_hold);
     while (h > 0 && !atomic_compare_exchange_weak(&g_nifm_hold, &h, h - 1)) {}
+    NET_TRACE("nifm::IsNetworkRequestOnHold -> %d", h > 0);
     return h > 0;
 }
-HLE_FORCE("_ZN2nn4nifm18IsNetworkAvailableEv", "offline: the network is always unavailable", int, h_nifm_Available, void) { return 0; }
+// DM_ONLINE=1 (hle.h dm_online): the network is available and has a private address; no socket works, so nothing leaves the host
+HLE_FORCE("_ZN2nn4nifm18IsNetworkAvailableEv", "offline: the network is unavailable (online with DM_ONLINE=1)", int, h_nifm_Available, void) { NET_TRACE("nifm::IsNetworkAvailable -> %d", dm_online()); return dm_online(); }
 // Returns bool (`and w0, w0, #1`, Metroid Dread's sdk+0x336210): whether the system's network screen resolved the error
 HLE_FORCE("_ZN2nn4nifm31HandleNetworkRequestErrorResultEv", "offline: not resolved, shows no system network screen", unsigned, h_nifm_HandleErr, void) { return 0; }
-HLE_FORCE("_ZN2nn4nifm26GetCurrentPrimaryIpAddressEPNS_6socket6InAddrE", "offline: no IP", Result, h_nifm_GetIp, uint32_t *a) { if (a) *a = 0; return RES_FAIL; }
-HLE_FORCE("_ZN2nn4nifm22GetCurrentProxySettingEPNS0_12ProxySettingE", "offline: no proxy setting", Result, h_nifm_GetProxy, void *p) { (void)p; return RES_FAIL; }
+HLE_FORCE("_ZN2nn4nifm26GetCurrentPrimaryIpAddressEPNS_6socket6InAddrE", "offline: no IP (192.168.1.2 with DM_ONLINE=1)", Result, h_nifm_GetIp, uint32_t *a) {
+    if (a) { static const uint8_t ip[4] = {192, 168, 1, 2}; if (dm_online()) memcpy(a, ip, 4); else *a = 0; }
+    NET_TRACE("nifm::GetCurrentPrimaryIpAddress -> %s", dm_online() ? "192.168.1.2" : "fail");
+    return dm_online() ? RES_OK : RES_FAIL;
+}
+HLE_FORCE("_ZN2nn4nifm22GetCurrentProxySettingEPNS0_12ProxySettingE", "offline: fails (no proxy setting; DM_ONLINE=1: succeeds, proxy disabled)", Result, h_nifm_GetProxy, void *p) {
+    // nn::nifm::ProxySetting (0xaa bytes): byte 0 = enabled. The game's HTTP layer (libcurl, main+0x1566948 / +0x1769210) reads a failure and a disabled proxy alike as no proxy; online, the call a console with a connection answers
+    if (dm_online() && p) memset(p, 0, 0xaa);
+    NET_TRACE("nifm::GetCurrentProxySetting -> %s", dm_online() ? "ok, disabled" : "fail");
+    return dm_online() ? RES_OK : RES_FAIL;
+}
+// ---------- nsd server name resolution / pctl free communication: networking, out of scope ----------
+// Offline, cut: fails. DM_ONLINE=1: succeeds with the name unchanged (nn::nsd::Fqdn: 256 bytes of text), as the service does for a name its setting file does not rename; the socket calls that follow still fail (hle_offline.c)
+static Result nsd_resolve(const char *fn, void *out, const void *in) {
+    NET_TRACE("nsd::%s \"%.80s\" -> %s", fn, in ? (const char *)in : "?", dm_online() ? "same name" : "fail");
+    if (!dm_online() || !out || !in) return RES_FAIL;
+    if (out != in) memcpy(out, in, 256);
+    return RES_OK;
+}
+HLE_FORCE("_ZN2nn3nsd7ResolveEPNS0_4FqdnERKS1_", "server name resolution, networking out of scope; cut", Result, h_nsd_Resolve, void *out, const void *in) { return nsd_resolve("Resolve", out, in); }
+HLE_FORCE("_ZN2nn3nsd9ResolveExEPNS0_4FqdnERKS1_", "server name resolution, networking out of scope; cut", Result, h_nsd_ResolveEx, void *out, const void *in) { return nsd_resolve("ResolveEx", out, in); }
 HLE_FORCE("nnsslInitialize", "connects to the ssl service; the network library's global init needs it to succeed, offline creates no session (cut)", Result, h_ssl_Initialize, void) { return RES_OK; }
 HLE_FORCE("nnsslFinalize", "pairs with nnsslInitialize (cut)", Result, h_ssl_Finalize, void) { return RES_OK; }
 

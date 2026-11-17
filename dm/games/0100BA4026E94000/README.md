@@ -8,6 +8,7 @@ Update 1.1.0 (v65536) over the base game, SDK 19.3.16. Unity 2022.3.62f2 IL2CPP 
 |---|---|---|
 | `sys_resource 0x1000000` | [`game.tsv`](game.tsv) | the NPDM's 16 MB of system resource: virtual address memory |
 | 5 GB guest layout: `mem_reserve 0x140000000`, `mem_alias 0x118000000`, `mem_stack 0x10000000`, `app_pool 0x40000000` | `game.tsv` | [Cult of the Lamb](../01002E7016C46000/README.md#memory)'s layout, the same Unity generation; see [Memory](#memory) |
+| `mem_map_limit off` | `game.tsv` | Unity maps past the 1 GB pool (at most 1.76 GB mapped, see [Memory](#memory)); with the map limit on, its 64 MB map at 0.91 GB was refused and the game crashed 3 s after boot (`main+0xca23c0`, Android) |
 | `depth_mode zero` | `game.tsv` | the game calls `nvnDeviceSetDepthMode` with near = 0 (log: `depth mode near=0`), so the pipeline bases made before it runs take the `main0_z` vertex entries |
 | `shader_groups /Data/=data` | `game.tsv` | everything with shaders is under `Data/`: the player's serialized files and the `StreamingAssets` bundles |
 | No `pad_layout` (the 2D default) | `game.tsv` | B jumps, Y attacks, A dashes in play and confirms in menus, a held L heals |
@@ -24,6 +25,7 @@ Update 1.1.0 (v65536) over the base game, SDK 19.3.16. Unity 2022.3.62f2 IL2CPP 
 - `nninitStartup` hands application pool − used memory to `StandardAllocator::Initialize(nullptr, size)` as one address region (0.93 GB at alias +0.06 GB, returning to `main+0xca8c0c`) and never calls `SetMemoryHeapSize`.
 - The hardware pool would not leave Unity room: the heap check reached alias +4.25 GB of 4.38 GB within two seconds, before the game's own regions. It was not played with that pool; the NSP script's heap check chose 1 GB and every run below used it.
 - The node area takes the SDK-wide function-matched cut (`sdk+0x1423fc` / `+0x142468`, [implementation 5](../../../dm/tools/sdk_patches.py)). The SDK-wide alignment rule reports no match, correctly: this `sdk` aligns regions to 64 KB or 2 MB only (`sdk+0x142544`), as [Cult of the Lamb](../01002E7016C46000/README.md#memory)'s does.
+- **Resolved: crash 3 s after boot with the map limit (Android).** Since the limit came on for every game (`MapPhysicalMemory` fails past the application pool, [`mem_map_limit`](../README.md)), the game's 64 MB map at 0.91 GB mapped was refused and it crashed at `main+0xca23c0`. The 1 GB pool is the NSP script's heap check's choice, not the game's need: in the runs below it mapped up to 1.76 GB. The profile sets `mem_map_limit off`, the case the key documents for a profile whose pool is smaller than what the game maps.
 - **Current:** alias region high-water mark +3.50 to +3.51 GB of 4.38 GB with at most 1.76 GB mapped, the same at the end of every run that reached play. Resident about 2.5 GB (peak 2.62 GB) and at most 0.78 GB of GPU memory over a 15-minute windowless run through the first areas, a death and a respawn; 2.95 GB resident at most in a windowed run from a fresh save. Later areas are not measured: with about 0.87 GB of the alias region left, they are the first place to look if a later area fails.
 
 ## Files and shaders

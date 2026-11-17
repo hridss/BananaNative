@@ -126,6 +126,7 @@ NVN(nvnDeviceInitialize, NVNboolean, NVNdevice *d, const NVNdeviceBuilder *b) {
     dev_t_ *o = (dev_t_ *)d; memset(o, 0, sizeof *o);
     o->magic = MAGIC('D', 'E', 'V', 0); o->flags = ((const dev_builder_t *)b)->flags;
     nvn_gob_switch2 = dm_sdk_ounce();   // the Switch 2's order inside a GOB, for the textures the game tiled itself (nvn_deswizzle.h)
+    nvn_timestamp_ns = dm_sdk_ounce();   // NVN2's counter reports record nanoseconds (nvn_timestamp.h)
     o->origin = NVN_WINDOW_ORIGIN_MODE_LOWER_LEFT; mtl_set_origin_lower_left(1);   // NVN's default; every game so far switched to upper-left right away, Link's Awakening keeps it
     mtl_set_depth_zero(0);   // NVN's default depth mode: near = -w (GL)
     OLOG("DeviceInitialize %p flags=%#x", (void *)d, o->flags);
@@ -139,7 +140,12 @@ NVN(nvnDeviceGetProcAddress, PFNNVNGENERICFUNCPTRPROC, const NVNdevice *d, const
 static void nvn_api(int api[2]);
 static int g_api[2]; static pthread_once_t g_api_once = PTHREAD_ONCE_INIT;
 static void api_find(void) { int api[2] = {-1, -1}; nvn_api(api); const char *e = getenv("DM_NVN_API"); if (e) sscanf(e, "%d.%d", &api[0], &api[1]); g_api[0] = api[0]; g_api[1] = api[1]; }
-// Device properties: values measured on Tegra X1 (nnheaders nvn_DeviceConstantsNX.h, obtained by calling nvnDeviceGetInteger item by item on SMO)
+// Device properties: values measured on Tegra X1 (nnheaders nvn_DeviceConstantsNX.h, obtained by calling nvnDeviceGetInteger item by item on SMO), through 0x5E. 0x5F to 0x68, newer
+// than SMO's SDK, are the Switch's own driver's: the NVN linked into a game's sdk answers the items it does not read from the device from a table of constants (SDK 19.3: Metroid Prime 4
+// sdk+0x4a3cb0, Pokemon Legends: Z-A sdk+0x4a3820, read statically; items 2 to 0x68, and 0 past them), which agrees with the measured items. 0x5F, separate sampler bindings per stage, is 32:
+// Frostpunk sizes its renderer's 32-slot binding table per stage to min(0x5E, 0x5F) and clears that many slots each frame, so a larger answer runs past the table into a crash.
+// 0x62 is read from the device (+0xbc, copied at nvnDeviceInitialize from the GPU description the system gives, +0x228: sdk+0x4b7f30, sdk+0x4b34e4), and the table answers 32 for it.
+// The table's answer is the X1's: where it and the device both answer (0x2B, 0x2D, 0x38), the table holds the measured values
 static const int g_devinfo[] = {
     // API version: 55.15 here, 53.313 for SDK 10 and older (nvn_api below; the profile's device_api overrides): SMBW (SDK 16) requires major == 55 and minor >= 15 (main 0x5a7b48); Super Mario 3D World + Bowser's Fury (SDK 10) requires major == 53 and minor >= 313 (main+0x711c88),
     // and on a mismatch it creates no device and leaves the device pointer null, which crashes in nnMain right after. DM_NVN_API=major.minor overrides
@@ -155,7 +161,8 @@ static const int g_devinfo[] = {
     [0x45] = 1, [0x46] = 5, [0x47] = 1, [0x48] = 1, [0x49] = 1, [0x4A] = 1, [0x4B] = 1, [0x4C] = 1, [0x4D] = 16,
     [0x4E] = 1024, [0x4F] = 32, [0x50] = 4096, [0x51] = 65536, [0x52] = 65536, [0x53] = 256, [0x54] = 16384,
     [0x55] = 262144, [0x56] = 4096, [0x57] = 1, [0x58] = 4, [0x59] = 2, [0x5A] = 0, [0x5B] = 4096, [0x5C] = 16384,
-    [0x5D] = 4096, [0x5E] = 128, [0x5F] = 4096,
+    [0x5D] = 4096, [0x5E] = 128, [0x5F] = 32, [0x60] = 65535, [0x61] = 1, [0x62] = 32, [0x63] = 256, [0x64] = 16,
+    [0x65] = 65535, [0x66] = 65535, [0x67] = 256, [0x68] = 16383,
 };
 // The Switch 2's values: NVN2 compiled into the game's own sdk answers from constants (Donkey Kong Bananza, sdk 20.5.19: the switch at sdk+0x5d9960 and its table lookup
 // sdk+0x5c0a20, read statically; the switch's own constants, among them the versions, are read from the game's sdk at run time, dm_sdk_nvn2_item, and this table has the newest seen, SDK 21.4.4's).
@@ -205,15 +212,17 @@ static void nvn_api(int api[2]) {
 NVN(nvnDeviceGetInteger, void, const NVNdevice *d, NVNdeviceInfo what, int *out) {
     (void)d;
     unsigned w = (unsigned)what;
-    // 0x5F separate sampler binding count and 0x60/0x61 are not in the table measured on SMO: 0x5F is given 4096 per the sampler pool limit, unverified; 0x60/0x61 report a failure and return 0
-    // 0x67 (SDK 19): FINAL FANTASY TACTICS - The Ivalice Chronicles reads it before every program it loads and passes it as the alignment of its copies of the shader's control section and code
-    // (main+0x49800; its allocator raises anything below 8 to 8). Not measured on hardware: 256, the alignment of shader code in a memory pool; the host reads shaders by key, so any value works
-    if (dm_sdk_ounce() && w < sizeof g_devinfo2 / sizeof *g_devinfo2 && (g_devinfo2[w] != DEVINFO_RT || w >= sizeof g_devinfo / sizeof *g_devinfo)) {
-        if (g_devinfo2[w] == DEVINFO_RT) { LOG("[RED] nvnDeviceGetInteger item %#x: NVN2 reads it from the GPU at run time, not known here; returning 0", w); *out = 0; return; }
-        *out = w <= 1 ? 0 : g_devinfo2[w];
-        if (w > 1) { dm_sdk_nvn2_item(w, out); OLOG("DeviceGetInteger %#x -> %d (NVN2)", w, *out); return; }   // the sdk's own constant where its switch has one: the GPU code versions move with the SDK
-    } else if (w == 0x67) { *out = 256; return; }
-    if (w >= sizeof g_devinfo / sizeof *g_devinfo) { LOG("[RED] nvnDeviceGetInteger unknown item %#x, returning 0", w); *out = 0; return; }
+    // The versions (0 / 1) are answered below for both consoles. 0x67, the alignment of shader code in a memory pool (256 on both): FINAL FANTASY TACTICS - The Ivalice Chronicles (SDK 19)
+    // reads it before every program it loads and aligns its copies of the shader's control section and code to it (main+0x49800); the host reads shaders by key, so the value only has to be valid
+    const unsigned n1 = sizeof g_devinfo / sizeof *g_devinfo, n2 = sizeof g_devinfo2 / sizeof *g_devinfo2;
+    if (dm_sdk_ounce() && w > 1 && w < n2 && g_devinfo2[w] != DEVINFO_RT) {   // the sdk's own constant where its switch has one: the GPU code versions move with the SDK
+        *out = g_devinfo2[w]; dm_sdk_nvn2_item(w, out); OLOG("DeviceGetInteger %#x -> %d (NVN2)", w, *out); return;
+    }
+    if (w >= n1) {   // past the X1's items: one NVN2 reads from the GPU at run time, or unknown
+        int rt = dm_sdk_ounce() && w < n2 && g_devinfo2[w] == DEVINFO_RT;
+        LOG("[RED] nvnDeviceGetInteger item %#x: %s; returning 0", w, rt ? "NVN2 reads it from the GPU at run time, not known here" : "unknown item");
+        *out = 0; return;
+    }
     *out = g_devinfo[w];
     // 0x2E / 0x30 describe the GPU code the host can translate, not the linked SDK's driver. Precompiled shaders can come from a newer compiler: ASTRAL CHAIN links SDK 6.4 but its
     // hwfillcolor.vso is 1.15; main+0x9e97d0 rejects the old SDK-based answer 1.14 and initialization unwinds into a null read at main+0x9c0d1c. Our chain translates through 1.16
@@ -634,13 +643,24 @@ NVN(nvnTexturePoolInitialize, NVNboolean, NVNtexturePool *tp, const NVNmemoryPoo
     return 1;
 }
 NVN(nvnTexturePoolFinalize, void, NVNtexturePool *tp) { dpool_release(&g_tpt, tp); }   // its range is free for a later pool (nvn_dpool.h)
+// A texture object that is not a live texture (never initialized, or finalized: no 'TEX' magic) registered into a pool: on the console that writes a descriptor of whatever the
+// object holds, which the game must not sample. Logged only (diagnostic): whether such registrations are where the replay's invalid NVN formats come from (Nintendo Switch 2
+// Welcome Tour: `NVN format 0xba27ba00 has no Vulkan format`, open in its note); the registration goes on as before
+static const tex_t *treg_live(int id, const NVNtexture *t, const char *what) {
+    const tex_t *o = (const tex_t *)t;
+    if (!o || o->magic == MAGIC('T', 'E', 'X', 0)) return o;
+    static _Atomic int n; int k = atomic_fetch_add(&n, 1);
+    if (k < 4 || !(k & 1023)) LOG("[RED] [nvn] %s: texture ID %d registered with a texture object that is not a live texture (magic %#x, format %#x, %ux%u; %d so far)",
+                                  what, id, o->magic, o->d.format, o->d.width, o->d.height, k + 1);
+    return o;
+}
 NVN(nvnTexturePoolRegisterTexture, void, const NVNtexturePool *tp, int id, const NVNtexture *t, const NVNtextureView *v) {
-    mtl_reg_tex(dpool_base(&g_tpt, tp) + id, (const tex_t *)t, (const view_t *)v);
+    mtl_reg_tex(dpool_base(&g_tpt, tp) + id, treg_live(id, t, "RegisterTexture"), (const view_t *)v);
 }
 // Image descriptors live in the same pool index space as texture descriptors, and image handles are pool indices (nvnDeviceGetImageHandle; BindImages below), so an image
 // registers into the same table. Hyrule Warriors: Age of Calamity registers the images its compute shaders write in the first battle (earlier games registered only textures)
 NVN(nvnTexturePoolRegisterImage, void, const NVNtexturePool *tp, int id, const NVNtexture *t, const NVNtextureView *v) {
-    mtl_reg_image(dpool_base(&g_tpt, tp) + id, (const tex_t *)t, (const view_t *)v);
+    mtl_reg_image(dpool_base(&g_tpt, tp) + id, treg_live(id, t, "RegisterImage"), (const view_t *)v);
 }
 NVN(nvnSamplerPoolInitialize, NVNboolean, NVNsamplerPool *sp, const NVNmemoryPool *p, ptrdiff_t off, int n) {
     *(dpool_t *)sp = (dpool_t){(const pool_t *)p, off, n}; OLOG("SamplerPool n=%d", n); dpool_add(&g_spt, sp, n, "sampler"); return 1;
@@ -677,15 +697,15 @@ NVN(nvnTextureBuilderSetStride, void, NVNtextureBuilder *b, ptrdiff_t s) { TB(b)
 NVN(nvnTextureBuilderSetStorage, void, NVNtextureBuilder *b, NVNmemoryPool *p, ptrdiff_t off) { TB(b)->pool = (pool_t *)p; TB(b)->off = off; }
 NVN(nvnTextureBuilderSetPackagedTextureLayout, void, NVNtextureBuilder *b, const NVNpackagedTextureLayout *l) {
     TB(b)->has_layout = l != NULL; if (l) memcpy(TB(b)->layout, l->layout, 8);
-    TB(b)->d.pkg_block_h = l ? l->layout[0] + 1 : 0;
+    TB(b)->d.pkg_layout = l ? (l->layout[0] | (l->layout[1] & 0xf) << 8) + 1 : 0;
 }
 NVN(nvnTextureBuilderGetFlags, NVNtextureFlags, const NVNtextureBuilder *b) { return (NVNtextureFlags)((const tex_builder_t *)b)->d.flags; }
 static uint64_t g_layout_logged;
 static void log_layout(const tex_builder_t *b, const nvn_texlayout *L) {
     if (b->has_layout && g_layout_logged++ < 16)
-        LOG("[nvn] packaged texture %ux%ux%u levels %u format %#x target %d layout bytes %02x%02x%02x%02x%02x%02x%02x%02x → block height log2=%u (from layout byte 0) size %#llx",
+        LOG("[nvn] packaged texture %ux%ux%u levels %u format %#x target %d layout bytes %02x%02x%02x%02x%02x%02x%02x%02x → block height log2=%u width alignment log2=%u size %#llx",
             b->d.width, b->d.height, b->d.depth, b->d.levels, b->d.format, b->d.target, b->layout[0], b->layout[1], b->layout[2],
-            b->layout[3], b->layout[4], b->layout[5], b->layout[6], b->layout[7], L->tileH, L->size);
+            b->layout[3], b->layout[4], b->layout[5], b->layout[6], b->layout[7], L->tileH, b->layout[1] & 0xf, L->size);
 }
 NVN(nvnTextureBuilderGetStorageSize, size_t, const NVNtextureBuilder *b) {
     nvn_texlayout L; nvn_tex_layout(&((const tex_builder_t *)b)->d, &L);
@@ -843,6 +863,14 @@ NVN(nvnTextureInitialize, NVNboolean, NVNtexture *t, const NVNtextureBuilder *b)
     o->has_layout = s->has_layout; memcpy(o->layout, s->layout, 8); o->set_swz = s->set_swz; o->stencil = s->stencil; o->swz = s->swz;
     nvn_tex_layout(&o->d, &o->L);
     o->mem = s->pool && s->pool->mem ? s->pool->mem + s->off : NULL;
+    {   // A texture whose format is no NVN format (Nintendo Switch 2 Welcome Tour, a cold first run: 0xba27ba00 and 0x50001, open): what it is and the game's call stack, to find who set it
+        int fbw, fbh; static _Atomic int nbad;
+        if (!nvn_fmt_bpb((int)o->d.format, &fbw, &fbh) && atomic_fetch_add(&nbad, 1) < 6) {
+            LOG("[RED] [nvn] TextureInitialize: format %#x is no NVN format (target %d, %ux%ux%u, levels %d, flags %#x, pool %p+%#llx, builder %p)", (unsigned)o->d.format, (int)o->d.target,
+                o->d.width, o->d.height, o->d.depth, (int)o->d.levels, (unsigned)o->d.flags, (const void *)o->pool, (unsigned long long)o->off, (const void *)b);
+            void dm_backtrace(uint64_t fp); dm_backtrace((uint64_t)__builtin_frame_address(0));
+        }
+    }
     uint32_t vstride = 0;
     if (o->mem && !(o->d.flags & (NVN_TEXTURE_FLAGS_LINEAR | NVN_TEXTURE_FLAGS_LINEAR_RENDER_TARGET)) &&
         dm_codec_is_video_mem(o->mem, o->L.size, &vstride)) {
@@ -976,8 +1004,15 @@ NVN(nvnSamplerBuilderGetWrapMode, void, const NVNsamplerBuilder *b, NVNwrapMode 
 NVN(nvnSamplerBuilderGetLodClamp, void, const NVNsamplerBuilder *b, float *lo, float *hi) {   // Bayonetta 3 reads it back while building its samplers
     const samp_par *o = &((const samp_builder_t *)b)->p; *lo = o->lod_min; *hi = o->lod_max;
 }
+NVN(nvnSamplerBuilderGetLodBias, float, const NVNsamplerBuilder *b) { return ((const samp_builder_t *)b)->p.lod_bias; }
+NVN(nvnSamplerBuilderGetCompare, void, const NVNsamplerBuilder *b, NVNcompareMode *mode, NVNcompareFunc *func) {
+    const samp_par *o = &((const samp_builder_t *)b)->p; *mode = (NVNcompareMode)o->cmp_mode; *func = (NVNcompareFunc)o->cmp_func;
+}
+NVN(nvnSamplerBuilderGetBorderColor, void, const NVNsamplerBuilder *b, float *c) { memcpy(c, ((const samp_builder_t *)b)->p.border, 16); }
+NVN(nvnSamplerBuilderGetMaxAnisotropy, float, const NVNsamplerBuilder *b) { return ((const samp_builder_t *)b)->p.aniso; }
+NVN(nvnSamplerBuilderGetReductionFilter, NVNsamplerReduction, const NVNsamplerBuilder *b) { return (NVNsamplerReduction)((const samp_builder_t *)b)->p.reduction; }
 NVN(nvnSamplerInitialize, NVNboolean, NVNsampler *s, const NVNsamplerBuilder *b) {
-    samp_t *o = (samp_t *)s; o->magic = MAGIC('S', 'M', 'P', 0); o->p = ((const samp_builder_t *)b)->p; return 1;
+    samp_t *o = (samp_t *)s; memset(o, 0, sizeof *o); o->magic = MAGIC('S', 'M', 'P', 0); o->p = ((const samp_builder_t *)b)->p; return 1;   // nvn_obj.h samp_t: games hash the bytes
 }
 NVN(nvnSamplerFinalize, void, NVNsampler *s) { ((samp_t *)s)->magic = 0; }
 
@@ -2130,6 +2165,7 @@ static _Atomic uint64_t g_itv2_since;   // start of the game's current run of in
 // Frame step (patch_nso.py FRAME_STEP: Tears of the Kingdom 1.4.3, Breath of the Wild 1.9.0): the game no longer picks an interval. The host hands it each frame's step in whole vsyncs
 // (fstep_tick, nvn_fstep.h) and presents follow the hold k it decides with it
 __attribute__((weak)) uint8_t *dm_fps_state;   // loader.c; graphics unit tests have no loader
+__attribute__((weak)) int dm_fps_step_max;   // loader.c: the largest step the stubs give the game (0 = FSTEP_MAX)
 __attribute__((weak)) void dm_fps_lock_tick(void) {}   // hle_fpslock.c: engine frame limits in game memory (Monster Hunter Rise); graphics unit tests have no host
 static int g_engine_stub = 1;   // the weak dm_fps_lock_engine's answer, for graphics unit tests (t_nvn sets it)
 __attribute__((weak)) int dm_fps_lock_engine(void) { return g_engine_stub; }   // hle_fpslock.c: the host writes fps_target into an engine limiter of this main
@@ -2321,6 +2357,7 @@ static void fstep_tick(const win_t *o, int c) {
         slow_bits = (uint16_t)(slow_bits << 1 | (shown > k + FSTEP_LATE));
         if (__builtin_popcount(slow_bits) >= 12) g_fs.screen = 2;
     }
+    g_fs.smax = dm_fps_step_max;   // the stub's largest step (STEP_MAX): frames held longer than the game steps would play in slow motion
     int n = nvn_fstep_next(&g_fs, shown, cost, kmin, kmax, fixed, cslow || gslow);
     __atomic_store_n((uint32_t *)(dm_fps_state + 0x20), (uint32_t)n, __ATOMIC_RELAXED); atomic_store(&g_fs_k, g_fs.k);
     held[g_fs.k]++; if (fixed) fixed_sum += (uint64_t)n;   // the stubs count only the host's steps
@@ -2876,6 +2913,7 @@ NVN(nvnTextureViewGetSwizzle, NVNboolean, const NVNtextureView *v, NVNtextureSwi
     return w->set_swizzle;
 }
 NVN(nvnTextureGetDepthStencilMode, NVNtextureDepthStencilMode, const NVNtexture *t) { return ((const tex_t *)t)->stencil ? NVN_TEXTURE_DEPTH_STENCIL_MODE_STENCIL : NVN_TEXTURE_DEPTH_STENCIL_MODE_DEPTH; }
+NVN(nvnTextureBuilderGetDepthStencilMode, NVNtextureDepthStencilMode, const NVNtextureBuilder *b) { return ((const tex_builder_t *)b)->stencil ? NVN_TEXTURE_DEPTH_STENCIL_MODE_STENCIL : NVN_TEXTURE_DEPTH_STENCIL_MODE_DEPTH; }
 // Queue priority: the host has one Metal queue
 NVN_NOPROTO(nvnQueueBuilderSetQueuePriority, void, NVNqueueBuilder *b, int prio) { (void)b; (void)prio; }
 // The driver's external graphics debugger switch (Nsight / NVN debugger attach): Super Smash Bros. Ultimate fetches it with nvnDeviceGetProcAddress(NULL, …) before creating its device and calls
@@ -2901,10 +2939,22 @@ NVN(nvnCommandBufferDrawTransformFeedback, void, NVNcommandBuffer *c, NVNdrawPri
 NVN(nvnDeviceGetTextureHandle, NVNtextureHandle, const NVNdevice *d, int tex, int samp) { (void)d; return (NVNtextureHandle)((uint64_t)(uint32_t)tex | (uint64_t)(uint32_t)samp << 20); }
 // Handle for texel fetches only (Monster Hunter Rise): a fetch reads the texture descriptor and no sampler, so the handle is the texture ID with sampler ID 0
 NVN(nvnDeviceGetTexelFetchHandle, NVNtextureHandle, const NVNdevice *d, int tex) { (void)d; return (NVNtextureHandle)(uint64_t)(uint32_t)tex; }
-// Convert the raw 614.4 MHz report to ns on the same guest clock as GetCurrentTimestampInNanoseconds.
+// Convert the raw report (614.4 MHz ticks, nanoseconds on NVN2: nvn_timestamp.h) to ns on the same guest clock as GetCurrentTimestampInNanoseconds.
 NVN(nvnDeviceGetTimestampInNanoseconds, uint64_t, const NVNdevice *d, const NVNcounterData *c) { (void)d; return nvn_timestamp_to_ns(c->timestamp); }
 // Current GPU time (ns): the same clock as the counter timestamps -- the guest clock (guest_ns, nvn_mtl.m gpu_ticks)
 NVN(nvnDeviceGetCurrentTimestampInNanoseconds, uint64_t, const NVNdevice *d) { (void)d; return guest_ns(); }
+// Ray tracing (NVN2): the memory an acceleration structure needs, and the scratch memory to build and to update it, written to three 64-bit outputs (Nintendo Switch 2 Welcome Tour's
+// nn::gfx wrapper, main+0x6130cc in v262144, passes its result struct at +0, +8 and +0x10 and does not clear it first). Unhooked, the call was a red stub that wrote nothing, and the game
+// sized its ray tracing heap from what was on the stack: a 4 GiB + 4 KiB pool at boot (0x100001000, round_up(0xffffffff) + a page), which took the application pool past 9 GB
+// with its first textures (MapPhysicalMemory refused, abort at CoreSystem::Allocate's null check). The replay has no ray tracing (its programs are not translated and nothing builds
+// or traces a structure), so each size is a small aligned 256 bytes, never 0, for an allocator that checks it
+NVN_NOPROTO(nvnDeviceCalculateAccelerationStructureMemoryRequirements, void, const NVNdevice *d, const void *info, uint64_t *size, uint64_t *build_scratch, uint64_t *update_scratch) {
+    (void)d; (void)info;
+    if (size) *size = 256;
+    if (build_scratch) *build_scratch = 256;
+    if (update_scratch) *update_scratch = 256;
+    ONCE_LOG("nvnDeviceCalculateAccelerationStructureMemoryRequirements: 256 bytes each (no ray tracing on the host)");
+}
 NVN(nvnDeviceRegisterFastClearColor, NVNboolean, NVNdevice *d, const float *c, NVNformat f) { (void)d; (void)c; (void)f; return 1; }
 // Same as the color one: a fast clear value is only a hint to the Tegra hardware (Tears of the Kingdom registers its depth clear at startup)
 NVN(nvnDeviceRegisterFastClearDepth, NVNboolean, NVNdevice *d, float v) { (void)d; (void)v; return 1; }
@@ -2930,7 +2980,11 @@ NVN(nvnCommandBufferGetControlMemorySize, size_t, const NVNcommandBuffer *c) { r
 // Size and free bytes of the command memory the game last added (DRAGON QUEST XI S, Unreal Engine 4.18): as in NVN, size = used + free; free is what is left in the current segment
 NVN(nvnCommandBufferGetCommandMemoryFree, size_t, const NVNcommandBuffer *c) { const cmd_t *m = (const cmd_t *)c; return m->cur && m->end > m->cur ? (size_t)(m->end - m->cur) : 0; }
 NVN(nvnCommandBufferGetCommandMemorySize, size_t, const NVNcommandBuffer *c) { return h_nvnCommandBufferGetCommandMemoryUsed(c) + h_nvnCommandBufferGetCommandMemoryFree(c); }
+// Whether the driver calls the out-of-memory callback (command or control memory). On hardware a game that turns it off gives enough memory up front and the callback never runs;
+// the host records more than the driver, so when the game's memory runs out it still calls the callback the game set (cmd_alloc, ctl_put) rather than lending memory of its own,
+// which for control memory is never reclaimed. Trails in the Sky 2nd Chapter turns the control memory callback off
 NVN_NOPROTO(nvnCommandBufferSetCommandMemoryCallbackEnabled, void, NVNcommandBuffer *c, uint32_t on) { (void)c; (void)on; }
+NVN_NOPROTO(nvnCommandBufferSetControlMemoryCallbackEnabled, void, NVNcommandBuffer *c, uint32_t on) { (void)c; (void)on; }
 
 // nvnProgramSetShadersExt (NVN 55): each stage is 0x18 bytes = NVNshaderData{data, control} + one 8-byte extension field (filled from SMBW main 0x1074ff0).
 // The host identifies stages by the control section and does not use the extension field: convert to plain NVNshaderData and hand it to SetShaders.
@@ -3303,6 +3357,11 @@ NVN(nvnCommandBufferDownsample, void, NVNcommandBuffer *c, const NVNtexture *s, 
 NVN(nvnCommandBufferDownsampleTextureView, void, NVNcommandBuffer *c, const NVNtexture *s, const NVNtextureView *sv, const NVNtexture *d, const NVNtextureView *dv) {
     rec_downsample(c, s, sv, d, dv, (uint64_t)__builtin_return_address(0));
 }
+// Tiled resolves differ in Tegra cache scheduling, not the destination pixels. The host already treats the tiled-cache actions as hints; both forms keep the ordinary resolve ordering and snapshots.
+NVN(nvnCommandBufferTiledDownsample, void, NVNcommandBuffer *c, const NVNtexture *s, const NVNtexture *d) { rec_downsample(c, s, NULL, d, NULL, (uint64_t)__builtin_return_address(0)); }
+NVN(nvnCommandBufferTiledDownsampleTextureView, void, NVNcommandBuffer *c, const NVNtexture *s, const NVNtextureView *sv, const NVNtexture *d, const NVNtextureView *dv) {
+    rec_downsample(c, s, sv, d, dv, (uint64_t)__builtin_return_address(0));
+}
 
 // CPU texture write (NVN WriteTexels): texture storage lives in pool memory in Tegra block-linear layout; decode the whole level → patch the region → re-encode.
 // Write protection is lifted and the range marked dirty first, so the replay layer re-uploads it the next time it is used
@@ -3314,7 +3373,7 @@ static int write_region_bl(const tex_t *t, unsigned level, unsigned layer, const
     uint32_t x0 = (uint32_t)(r->xoffset / bw) * (uint32_t)bpb, y0 = (uint32_t)(r->yoffset / bh);
     size_t wb = (size_t)((r->width + bw - 1) / bw) * (size_t)bpb, hb = (size_t)((r->height + bh - 1) / bh);
     if (x0 + wb > row_bytes || y0 + hb > rows) return -1;
-    uint32_t lb = nvn_tex_level_gobs(&t->d, level) * 64; if (lb < row_bytes) lb = row_bytes;   // the row as laid out (padded in a sparse texture's tiled levels)
+    uint32_t lb = nvn_tex_level_gobs(&t->d, level) * 64; if (lb < row_bytes) lb = row_bytes;   // the row as laid out (padded in the tiled levels of a sparse texture or a packaged layout with width alignment)
     for (size_t y = 0; y < hb; y++)
         for (size_t x = 0; x < wb;) {   // 16-byte runs are contiguous within a GOB
             uint32_t bx = x0 + (uint32_t)x; size_t n = 16 - bx % 16; if (n > wb - x) n = wb - x;

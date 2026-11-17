@@ -43,8 +43,8 @@ typedef struct {
 enum { VKTL_PSI_STEP = 8 };          // give back at most an eighth of what is not the working set in one update
 
 // The switches: DM_VK_IMG_RESERVE_MB picks the RAM reserve's rule, DM_VK_IMG_PSI the pressure policy, and the three marks the policy's thresholds
-typedef struct { int mb; int psi; double hold, ease, shrink; } vktl_cfg;
-static inline vktl_cfg vktl_cfg_default(void) { vktl_cfg c = {0, 1, VKTL_PSI_HOLD, VKTL_PSI_EASE, VKTL_PSI_SHRINK}; return c; }
+typedef struct { int mb; int psi; double hold, ease, shrink; int saver; } vktl_cfg;   // saver: DM_VK_RAM_SAVER (Game settings > RAM saver: 1; Strong: 2), below
+static inline vktl_cfg vktl_cfg_default(void) { vktl_cfg c = {0, 1, VKTL_PSI_HOLD, VKTL_PSI_EASE, VKTL_PSI_SHRINK, 0}; return c; }
 // The values an env switch gave, made safe: a mark that is not a finite positive percent, or an ease mark at or above the hold mark, would press and ease on the same
 // reading and flap the cache at every update, so the default fills in for it (the thrashed cache is worse than the mark the player asked for). DM_VK_IMG_PSI has two
 // policies, 0 and 1, and anything else is the default's
@@ -71,6 +71,9 @@ static inline uint64_t vktl_sub(uint64_t a, uint64_t b) { return a > b ? a - b :
 static inline uint64_t vktl_reserve(uint64_t mem_total, const vktl_cfg *c, int pressed) {
     uint64_t small = mem_total / 32; if (small < 512 * VKTL_MIB) small = 512 * VKTL_MIB;
     if (c->mb > 0) return (uint64_t)c->mb << 20;
+    // RAM saver (DM_VK_RAM_SAVER) does NOT change the reserve: a permanent eighth took the cache's headroom on a phone whose MemAvailable is low by design (Android keeps cached apps
+    // and zram: 2 GiB of 15 on the test phone), so the limit fell to the images the cache already held and the scene thrashed (OoT castle, 0.1-0.4 fps). The saver's protection
+    // is the ceiling (vktl_saver_cap), soft textures and the pressure rule above, which raises the eighth while the system really stalls
     // With the pressure term off, the rule that was there before this one, verbatim: the eighth on the class with no floor on it (a 3 GiB device kept 384 MiB)
     if (!c->psi) return mem_total && mem_total <= VKTL_12GB ? mem_total / 8 : small;
     // What keeps lmkd away where the game itself needs nearly all the RAM the system leaves (Ocarina of Time on an Odin 2 Portal, 11 GiB: the images grew to 3.2 GiB
@@ -99,6 +102,14 @@ static inline uint64_t vktl_pressure_limit(uint64_t lim, const vktl_in *in, cons
     if (l < lim) lim = l;
     return lim < VKTL_FLOOR ? VKTL_FLOOR : lim;
 }
+// RAM saver's ceiling on the limit (DM_VK_RAM_SAVER): a quarter of MemTotal (2.7 GiB on 11 GiB, 6 GiB on 24 GiB), a sixth with Strong (DM_VK_RAM_SAVER=2: 1.8 GiB on 11 GiB),
+// never under the working set (evicting that only uploads it again) or the floor. 0 = no ceiling (switch off, or MemTotal not known)
+static inline uint64_t vktl_saver_cap(const vktl_cfg *c, uint64_t mem_total, uint64_t ws_bytes) {
+    if (!c->saver || !mem_total) return 0;
+    uint64_t cap = mem_total / (c->saver >= 2 ? 6 : 4);
+    if (cap < ws_bytes) cap = ws_bytes;
+    return cap < VKTL_FLOOR ? VKTL_FLOOR : cap;
+}
 // The limit in bytes; floor when nothing is known
 static inline uint64_t vktl_limit(const vktl_in *in, const vktl_cfg *c, int pressed) {
     uint64_t lim = UINT64_MAX;
@@ -108,6 +119,7 @@ static inline uint64_t vktl_limit(const vktl_in *in, const vktl_cfg *c, int pres
         uint64_t l = vktl_sub(in->heap_budget - in->heap_budget / 16, other); if (l < lim) lim = l;
     } else if (in->heap_size) { uint64_t l = in->heap_size / 2; if (l < lim) lim = l; }   // (no budget: half the heap, which on a unified-memory phone is the RAM)
     if (lim == UINT64_MAX || lim < VKTL_FLOOR) lim = VKTL_FLOOR;
+    { uint64_t cap = vktl_saver_cap(c, in->mem_total, in->ws_bytes); if (cap && lim > cap) lim = cap; }
     if (c->psi) lim = vktl_pressure_limit(lim, in, c, pressed);
     return lim;
 }

@@ -10,6 +10,7 @@ import android.content.IntentFilter;
 import android.content.pm.PackageInstaller;
 import android.graphics.Typeface;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
@@ -174,7 +175,7 @@ final class Updater {
         HttpsURLConnection c = open(UpdateCheck.busted(s.api, Long.toString(System.currentTimeMillis())), s.accept, s.name, API_CONNECT_MS, API_READ_MS, true);
         String body;
         try (InputStream in = c.getInputStream()) {
-            byte[] b = in.readNBytes(MAX_LIST + 1);
+            byte[] b = Streams.readUpTo(in, MAX_LIST + 1);
             if (b.length > MAX_LIST) throw new Failure(s.name + Tx.s(R.string.settings_s_answer_is_too_large));
             body = new String(b, StandardCharsets.UTF_8);
         } finally { c.disconnect(); }
@@ -238,7 +239,7 @@ final class Updater {
             int[] cur = UpdateCheck.appVersion(version(app));
             if (cur == null) { Log.i(TAG, "check skipped: version " + version(app) + " is not X.Y.Z"); return; }
             UpdateCheck.Update u;
-            try { u = UpdateCheck.pickAll(releases(app), cur); }
+            try { u = UpdateCheck.pickAll(releases(app), cur, !Prefs.hotfixUpdates(app)); }   // the start's offer follows Settings > Updates > small fix updates; Check for updates (checkNow) shows the newest of any kind
             catch (Throwable e) {   // silent: a log line only
                 Log.w(TAG, "update check failed: " + why(e, "the release sources"));
                 return;
@@ -463,13 +464,14 @@ final class Updater {
     private static synchronized void receiver(Context app) {
         if (receiverOn) return;
         receiverOn = true;
-        app.registerReceiver(new BroadcastReceiver() {
+        BroadcastReceiver rx = new BroadcastReceiver() {
             @Override public void onReceive(Context c, Intent i) {
                 int st = i.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE);
                 String msg = i.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE);
                 Activity a = front.get();
                 if (st == PackageInstaller.STATUS_PENDING_USER_ACTION) {
-                    Intent confirm = i.getParcelableExtra(Intent.EXTRA_INTENT, Intent.class);
+                    @SuppressWarnings("deprecation")   // the typed overload is API 33; Android 12 has only the untyped one
+                    Intent confirm = Build.VERSION.SDK_INT >= 33 ? i.getParcelableExtra(Intent.EXTRA_INTENT, Intent.class) : (Intent) i.getParcelableExtra(Intent.EXTRA_INTENT);
                     if (confirm == null) return;
                     if (a != null && !gone(a)) a.startActivity(confirm);
                     else c.startActivity(confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
@@ -481,6 +483,9 @@ final class Updater {
                         msg(a, Tx.s(R.string.settings_update_not_installed), msg != null ? msg : Tx.s(R.string.settings_the_installer_answered_status) + st + ".");
                 }
             }
-        }, new IntentFilter(app.getPackageName() + ACTION), Context.RECEIVER_NOT_EXPORTED);
+        };
+        IntentFilter f = new IntentFilter(app.getPackageName() + ACTION);
+        if (Build.VERSION.SDK_INT >= 33) app.registerReceiver(rx, f, Context.RECEIVER_NOT_EXPORTED);
+        else app.registerReceiver(rx, f);   // before Android 13 a receiver is never exported unless its filter says so by a permission: this one is only sent to by this app's own PendingIntent
     }
 }

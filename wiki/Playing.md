@@ -11,7 +11,12 @@ How to start a game, stop it, start it from a launcher or frontend, and where it
 
 ## Settings
 
-- **Order of the games**: press and hold a game on Home (on a controller, press Y on it) and choose **Move left** or **Move right**. The order is kept.
+- **Options for a game**: press and hold a game on Home (on a controller, hold **X** on it). The menu has **Move**, **Set cover image** and **Remove game…**. A strip at the bottom of Home reminds you ("Hold a game for options", with the button on a controller).
+- **Move** lifts the game: move it with the arrows (a grid also moves up and down) or drag it, **A** or a tap puts it down, **B** cancels. The order is kept.
+- **Set cover image** picks a picture from your phone and lets you pan and zoom it under a frame (touch, or D-pad to move and the triggers to zoom, **A** confirms). The game's own picture comes back with **Reset cover**. The picture is kept inside the app only.
+- **Remove game…** takes the game off your list and deletes what the app made for it inside its own storage (the pack and shaders, Prepare's work files, logs, a copy made with Copy into the app, your cover). It first lists every folder with its size and asks. It never deletes your dump folder or a `.nup`, and never a save.
+- **Home layout**: Settings > Appearance > **Home layout** picks a row of tiles (the default), a **grid with the game's name under each tile**, or a **list**.
+- With no game added, Home shows "Add a game to start" and the round **+** button stays at the bottom right.
 - **App language**: Settings > Appearance > Language (the app's own text; the game's language is set per game).
 - **Settings** (the gear at the top of Home) holds the defaults for every game: overlay, on-screen controls, resolution, frame rate cap, frame generation, button mapping and more.
 - A game's own settings (its ... button: **Performance** and **Game** tabs) override them. See [Settings overview](Settings-Overview).

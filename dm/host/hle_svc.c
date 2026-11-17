@@ -296,6 +296,19 @@ static int guest_release(uintptr_t lo, uintptr_t hi) {
     if (mprotect((void *)lo, hi - lo, PROT_NONE)) { err = errno; maps_red("guest_release mprotect", lo, hi - lo, err); die("guest_release mprotect %#lx+%#lx errno=%d", (unsigned long)lo, (unsigned long)(hi - lo), err); }
     return 0;
 }
+// UnmapMemory moves a MapMemory's contents back to the source and leaves the destination (a thread's stack in the stack region) mapped, readable and resident: a game that
+// starts and ends threads kept every ended thread's stack in RAM (docs/reference/memory.md "Unmapped guest memory stays resident"). The whole host pages inside the range
+// go back to the kernel and read zero (Horizon makes the range inaccessible and a later MapMemory copies the source over the whole of it). The pages at its edges are left:
+// a host page may hold a neighbour's 4 KiB pages too, and the map table keeps ranges apart only to 4 KiB. Linux only: Apple's MADV_DONTNEED is a hint that keeps the
+// contents. The range stays readable and writable, so nothing faults. Call with g_map_lock held, after the copy
+static void guest_drop_pages(uint64_t base, uint64_t size) {
+#ifdef __linux__
+    uint64_t pg = (uint64_t)getpagesize(), lo = (base + pg - 1) & ~(pg - 1), hi = (base + size) & ~(pg - 1);
+    if (hi > lo) (void)madvise((void *)lo, hi - lo, MADV_DONTNEED);
+#else
+    (void)base; (void)size;
+#endif
+}
 // Initialize holes using the OLD commit bitmap. Fresh anonymous host pages stay
 // lazy; after any exposure, even an untouched 4 KiB sibling may hold stale bytes.
 static void alias_initialize(uint64_t off, size_t size) {
@@ -642,6 +655,7 @@ uint64_t svc_dispatch(int num, uint64_t *regs, uint64_t orig_addr) {
         dm_guest_write_prepare((void *)src, size);
         memcpy((void *)src, (void *)dst, size);
         map_del(k - 1);
+        guest_drop_pages(dst, size);
         pthread_mutex_unlock(&g_map_lock);
         { static _Atomic int nl; if (g_flag.svc || atomic_fetch_add(&nl, 1) < 256) LOG("UnmapMemory %#llx -> %#llx +%#llx (contents copied back)", dst, src, size); }
         regs[0] = 0; return 0;

@@ -27,30 +27,36 @@ static void auto_log(const vka_auto_in *in, const char *name) {
 
 // One placed map of a 64 KiB host-visible allocation at an address reserved for it (vka_dev.c, unadvertised placed maps): 1 when the driver maps it exactly there and
 // the memory reads back what was written through it
-static int vka_placed_probe(void) {
+// n: the allocation's size; adv: the driver advertises placed maps, so this is a diagnostic of what its map does (the real placements are pools of megabytes, issue #92: a Mali-G77's
+// PanVK refuses them with VK_ERROR_MEMORY_MAP_FAILED while the extension is advertised), at an address aligned as the driver asks (V.placed_align)
+static int vka_placed_probe_n(VkDeviceSize n, int adv) {
     VkPhysicalDeviceMemoryProperties mp; vk.vkGetPhysicalDeviceMemoryProperties(V.pd, &mp);
     uint32_t type = ~0u;
     for (uint32_t i = 0; i < mp.memoryTypeCount && type == ~0u; i++)
         if ((mp.memoryTypes[i].propertyFlags & (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) == (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) type = i;
+    if (adv && V.guest_type < mp.memoryTypeCount) type = V.guest_type;   // (the type the pools use)
     if (type == ~0u) return 0;
-    const VkDeviceSize n = 64 << 10;
     VkMemoryAllocateInfo mai = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, .allocationSize = n, .memoryTypeIndex = type};
     VkDeviceMemory mem; if (vk.vkAllocateMemory(V.dev, &mai, NULL, &mem)) return 0;
-    void *at = mmap(NULL, n, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+    uintptr_t al = adv && V.placed_align > 4096 ? (uintptr_t)V.placed_align : 4096;
+    void *base = mmap(NULL, n + al, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0), *at = base == MAP_FAILED ? base : (void *)(((uintptr_t)base + al - 1) & ~(al - 1));
     int ok = 0; void *q = NULL; VkResult r = VK_ERROR_UNKNOWN;
-    if (at != MAP_FAILED) {
+    if (base != MAP_FAILED) {
         VkMemoryMapPlacedInfoEXT pi = {VK_STRUCTURE_TYPE_MEMORY_MAP_PLACED_INFO_EXT, .pPlacedAddress = at};
         VkMemoryMapInfoKHR mi = {VK_STRUCTURE_TYPE_MEMORY_MAP_INFO_KHR, .pNext = &pi, .flags = VK_MEMORY_MAP_PLACED_BIT_EXT, .memory = mem, .offset = 0, .size = VK_WHOLE_SIZE};
         r = vk.vkMapMemory2KHR(V.dev, &mi, &q);
         if (!r && q == at) { volatile uint32_t *w = q; w[0] = 0x5eed1234u; w[n / 4 - 1] = 0xc0ffee00u; ok = w[0] == 0x5eed1234u && w[n / 4 - 1] == 0xc0ffee00u; }
         if (!r) { VkMemoryUnmapInfoKHR ui = {VK_STRUCTURE_TYPE_MEMORY_UNMAP_INFO_KHR, .memory = mem}; vk.vkUnmapMemory2KHR(V.dev, &ui); }
-        munmap(at, n);
+        munmap(base, n + al);
     }
     vk.vkFreeMemory(V.dev, mem, NULL);
-    VLOG("placed maps: not advertised by the driver; a placed map %s (vkMapMemory2 %d, asked %p, got %p)%s", ok ? "works" : "does not work", r, at, q,
+    if (adv) { if (ok) VLOG("placed maps: advertised by the driver; a test map of %llu KiB works (vkMapMemory2 %d, asked %p, got %p)", (unsigned long long)(n >> 10), r, at, q);
+               else VRED("placed maps: advertised by the driver, but a test map of %llu KiB does not work (vkMapMemory2 %d, asked %p, got %p): the game's memory pools will probably not be placed", (unsigned long long)(n >> 10), r, at, q); }
+    else VLOG("placed maps: not advertised by the driver; a placed map %s (vkMapMemory2 %d, asked %p, got %p)%s", ok ? "works" : "does not work", r, at, q,
          ok ? ": used without the extension (DM_VK_PLACED_PROBE=0: off)" : "");
     return ok;
 }
+static int vka_placed_probe(void) { return vka_placed_probe_n(64 << 10, 0); }
 
 vka_fns vk;
 vka_dev V = {.qmu = PTHREAD_MUTEX_INITIALIZER};
@@ -304,6 +310,13 @@ static int init_once(void) {
     VLOG("driver: %s (%s), driver ID %d, conformance %u.%u.%u.%u, driver version %#x; %s", pdr.driverName, pdr.driverInfo, pdr.driverID, pdr.conformanceVersion.major,
          pdr.conformanceVersion.minor, pdr.conformanceVersion.subminor, pdr.conformanceVersion.patch, V.props.driverVersion, vka_driver_tag() ? "custom (DM_VK_DRIVER)" : "the system's");
     V.driver_id = (int)pdr.driverID;
+    if (vka_driver_tag()) {   // adrenotools hands back the system's driver when the custom one does not load (vka_driverpath.h): say so where the player's log shows it
+        void vka_driver_lib(const char **dir, const char **name); int vka_driver_mapped(void); const char *dir, *name; vka_driver_lib(&dir, &name);
+        int m = vka_driver_mapped();
+        if (!m) VRED("custom GPU driver %s did not take: %s%s is not mapped in the process, so the driver line above is the phone's own driver (adrenotools fell back; logcat tags adrenotools / hook_impl say why)",
+                     vka_driver_tag(), dir, name);
+        else VLOG("custom GPU driver %s: %s%s %s", vka_driver_tag(), dir, name, m > 0 ? "is mapped in the process" : "(/proc/self/maps not read: not checked)");
+    }
     { const char *e = getenv("DM_VK_GPL"); int want = !(e && !strcmp(e, "0"));   // restart only: the libraries are made with the device's pipelines
       V.gpl = want && x_gpl && fgpl.graphicsPipelineLibrary && pgpl.graphicsPipelineLibraryFastLinking;
       VLOG("graphics pipeline libraries: %s", V.gpl ? "on (a pipeline the cache lacks is linked from stage libraries, the optimized one is made in the background; DM_VK_GPL=0 off)"
@@ -368,9 +381,11 @@ static int init_once(void) {
          V.placed ? "yes" : "no", V.placed_range ? "yes" : "no", (unsigned long long)V.placed_align, V.bda ? "yes" : "no", V.uab ? "yes" : "no", V.display_timing ? "yes" : "no",
          V.guest_type, V.guest_type < 32 ? V.memp.memoryTypes[V.guest_type].propertyFlags : 0, (unsigned long long)(V.max_alloc >> 20), V.props.limits.maxMemoryAllocationCount);   // (images take one allocation each: Mario Kart World ran out of them)
     VLOG("draw path: push descriptors %s (%u), vertex input dynamic state %s, null descriptors %s, 8-bit indices %s, instance divisors %s, logic op %s, dual source %s, geometry %s, tessellation %s; "
-         "uniform alignment %llu (range %llu), storage alignment %llu, subgroups %u (%u-%u)",
+         "uniform alignment %llu (range %llu), storage alignment %llu, subgroups %u (%u-%u), vertex input attributes %u bindings %u",
          V.push_desc ? "yes" : "no", V.max_push, V.vin_dyn ? "yes" : "no", V.null_desc ? "yes" : "no", V.idx8 ? "yes" : "no", V.divisor ? "yes" : "no", V.logic_op ? "yes" : "no",
-         V.dual_src ? "yes" : "no", V.geom ? "yes" : "no", V.tess ? "yes" : "no", (unsigned long long)V.ub_align, (unsigned long long)V.ub_range, (unsigned long long)V.sb_align, V.subgroup_size, V.subgroup_min, V.subgroup_max);
+         V.dual_src ? "yes" : "no", V.geom ? "yes" : "no", V.tess ? "yes" : "no", (unsigned long long)V.ub_align, (unsigned long long)V.ub_range, (unsigned long long)V.sb_align, V.subgroup_size, V.subgroup_min, V.subgroup_max,
+         V.props.limits.maxVertexInputAttributes, V.max_vin_bindings);
+    if (placed && V.placed && VKA_ENV("DM_VK_PLACED_PROBE", 1)) { vka_placed_probe_n(64 << 10, 1); vka_placed_probe_n(32 << 20, 1); }   // (diagnostic only: V.placed stays as advertised)
     void vka_driver_notes(void); vka_driver_notes();   // what driver_open did before the log was open (the Turnip UBWC hint)
     if (!V.placed && !V.fd_alias) VRED("no placed maps or exported guest memory alias: guest memory stays anonymous and the GPU sees no memory pool");
     if (!swap) VRED("no VK_KHR_swapchain: nothing is presented");

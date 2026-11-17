@@ -254,10 +254,12 @@ static inline void im_unhold_locked(vka_img *im) {
 // again (g_tver / g_sver, per ID) and no texture mapping was dropped or image let go since (g_tgen). It saves the table lock and the lookups 3-4 times a texture binding
 static vka_img *g_big[64]; static int g_nbig;   // large images (DM_VK_BIGIMG_MB), for the storage overlap check (big_note)
 static vka_img *g_linger[32]; static int g_nlinger;   // GPU-drawn images kept past their last texture object (linger_keep below), under g_tmu
+static vka_img *g_lrz_prev;   // the depth image of the last pass that had one (vka_lrz_touch), under g_tmu
 static void linger_prune_locked(void); static void linger_take(vka_img *im);
 static void unref_locked(vka_img *im) {
     atomic_fetch_add_explicit(&g_tgen, 1, memory_order_release);
     if (--im->refs) return;
+    if (g_lrz_prev == im) g_lrz_prev = NULL;   // (vka_lrz_touch)
     if (im->linger) { for (int i = 0; i < g_nlinger; i++) if (g_linger[i] == im) { g_linger[i] = g_linger[--g_nlinger]; break; } im->linger = 0; }   // (a lingering image that goes otherwise)
     map_del_im(im);
     if (im->par) {   // a level child: destroyed after its last use, then its reference on the parent let go (the parent's image outlives the child's views' use)
@@ -1455,11 +1457,33 @@ void vka_tex_own(vka_img *im, VkCommandBuffer cb) {
     pthread_mutex_lock(&g_tmu); img_own(im, cb); pthread_mutex_unlock(&g_tmu);
 }
 
+// Adreno's low-resolution depth (LRZ) across depth buffers, after nx2android's Vulkan backend: its driver applied the LRZ of the depth buffer used before in the binning of
+// later passes on other depth images and culled whole triangles (Xenoblade Chronicles 3's cloud dome, 13 Sentinels' checkerboard of stale bins there). A transfer write into
+// the image a pass switches away from drops it; a one-texel read before a pass that loads its depth drops a stale one of its own. vka_draw.c rp_begin calls this before a
+// pass with a depth image when DM_VK_LRZ_TOUCH=1 (experimental, live, default 0: no game here is shown to need it yet). The image switched away from is kept to this
+// submission (its last fence), so the copy never meets a freed image
+static void lrz_copy(VkCommandBuffer cb, vka_img *im, int write) {
+    if (!im || !im->img || !(im->aspect & VK_IMAGE_ASPECT_DEPTH_BIT) || im->samples > 1) return;   // (a multisampled image cannot be copied to a buffer)
+    vka_span s; if (!vka_scratch(16, 16, &s)) return;
+    VkBufferImageCopy c = {s.off, 0, 0, {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1}, {0, 0, 0}, {1, 1, 1}};
+    vka_barrier(cb); vk.vkCmdCopyImageToBuffer(cb, im->img, VK_IMAGE_LAYOUT_GENERAL, s.buf, 1, &c); vka_barrier(cb);
+    if (write) { vk.vkCmdCopyBufferToImage(cb, s.buf, im->img, VK_IMAGE_LAYOUT_GENERAL, 1, &c); vka_barrier(cb); }   // the same texel back: unchanged
+}
+void vka_lrz_touch(VkCommandBuffer cb, vka_img *cur, int loads) {
+    vka_img *prev = NULL;
+    pthread_mutex_lock(&g_tmu);
+    if (g_lrz_prev && g_lrz_prev != cur) { prev = g_lrz_prev; uint64_t f = vka_fence_last() + 1; if (prev->last_fence < f) prev->last_fence = f; }
+    g_lrz_prev = cur;
+    pthread_mutex_unlock(&g_tmu);
+    if (prev) lrz_copy(cb, prev, 1);
+    if (loads) lrz_copy(cb, cur, 0);
+}
+
 // ---------- Soft textures (vka_soft.h; profile tex_soft) ----------
-// How many of the finest levels a soft texture leaves out: DM_VK_TEX_SOFT_LEVELS (live, 1 by default, 1 to 3), leaving at least two levels. Each level out quarters what
+// How many of the finest levels a soft texture leaves out: DM_VK_TEX_SOFT_LEVELS (live, 1 by default, 2 with RAM saver Strong, DM_VK_RAM_SAVER=2; 1 to 3), leaving at least two levels. Each level out quarters what
 // is left: 1 keeps a quarter of the texture, 2 a sixteenth. For a game whose textures in use alone overrun memory (Mario Kart World on a 12 GB device: 3.9 GB of images in use)
 static uint32_t soft_levels(uint32_t levels) {
-    uint32_t n = (uint32_t)VKA_ENV("DM_VK_TEX_SOFT_LEVELS", 1); if (n < 1) n = 1; if (n > 3) n = 3;
+    uint32_t n = (uint32_t)VKA_ENV("DM_VK_TEX_SOFT_LEVELS", VKA_ENV("DM_VK_RAM_SAVER", 0) >= 2 ? 2 : 1); if (n < 1) n = 1; if (n > 3) n = 3;
     return levels > 2 && n > levels - 2 ? levels - 2 : n;
 }
 static uint32_t d_levels_of(const tex_t *t) { return t->d.levels ? (uint32_t)t->d.levels : 1; }
@@ -1473,7 +1497,8 @@ static uint32_t d_levels_of(const tex_t *t) { return t->d.levels ? (uint32_t)t->
 // a texture's pool is placed Vulkan memory once the GPU has an address in it (vka_mem.c): one VkDeviceMemory, committed when allocated, mapped at the pool's address, so
 // dropping those pages (madvise) frees nothing; releasing them would take splitting the pool's allocation (open). DM_VK_TEX_SOFT=0 / 1 overrides the profile (live: images made from then on)
 static int soft_on(void) {
-    int on = VKA_ENV("DM_VK_TEX_SOFT", DM_GAME_TEX_SOFT) != 0;
+    // RAM saver (DM_VK_RAM_SAVER) turns it on for a game whose profile does not forbid it (ram_saver_soft off); DM_VK_TEX_SOFT=0 / 1 still wins
+    int on = VKA_ENV("DM_VK_TEX_SOFT", DM_GAME_TEX_SOFT || (DM_GAME_RAM_SAVER_SOFT && VKA_ENV("DM_VK_RAM_SAVER", 0))) != 0;
     static _Atomic int logged; if (on && !atomic_exchange(&logged, 1)) VLOG("soft textures: large block-compressed textures from the game's files kept without their finest level (profile tex_soft; DM_VK_TEX_SOFT=0 turns it off)");
     return on;
 }
@@ -1512,6 +1537,7 @@ static vktl_cfg img_cfg(void) {
     c.hold = VKA_ENVF("DM_VK_IMG_PSI_HOLD", VKTL_PSI_HOLD);
     c.ease = VKA_ENVF("DM_VK_IMG_PSI_EASE", VKTL_PSI_EASE);
     c.shrink = VKA_ENVF("DM_VK_IMG_PSI_SHRINK", VKTL_PSI_SHRINK);
+    c.saver = VKA_ENV("DM_VK_RAM_SAVER", 0) != 0;
     return vktl_cfg_check(c);   // (vktl_cfg_check: a hold mark at or under the ease mark flaps, so the defaults fill in for it)
 }
 enum { IK_GPU, IK_ZERO_SHARED, IK_BC, IK_RAW, IK_SPARSE, IK_CLEARED, IK_N };
@@ -2599,8 +2625,19 @@ static void pfb_hit(int id, uint64_t frame, uint64_t fence) {
     if (!(g_pfb_st[id] & PFB_WANT)) { g_pfb_st[id] |= PFB_WANT; g_pfb_wants++; }
     dirty(&g_tdirty, &g_ntd, &g_tdcap, &g_tdflag, 1 << 20, id);
 }
+// DM_VK_POOL_EAGER=1 (experimental, live, default 0). A texture read only through the pool reads black from the submission whose shader set its bit until the prepare that
+// finds that submission's fence done: however many submissions the CPU recorded past it before the GPU caught up, up to the readback ring's depth (PFB_RING) on a loading
+// spike. With it on, the prepare waits (at most the hang time) for the oldest readback still out instead of only taking those already done, so the image is made about one
+// submission after its first pool read. Off by default: the wait stalls the recording thread, on frames that are already long, and it has not been measured on a device
+// (after nx2android's Vulkan backend)
 static void pfb_consume_locked(void) {
     if (atomic_load(&g_pfb) <= 0) return;
+    if (VKA_ENV("DM_VK_POOL_EAGER", 0)) {
+        uint64_t oldest = UINT64_MAX;
+        for (int k = 0; k < PFB_RING; k++) if (g_pfb_r[k].busy && g_pfb_r[k].fence < oldest) oldest = g_pfb_r[k].fence;
+        if (oldest != UINT64_MAX && oldest > vka_done() && oldest <= vka_fence_queued()) {   // (only a submission already queued)
+            pthread_mutex_unlock(&g_tmu); vka_wait_done(oldest, vka_hang_ns()); pthread_mutex_lock(&g_tmu); }
+    }
     uint64_t done = vka_done(), frame = vka_frame(), fence = vka_fence_last();
     for (int k = 0; k < PFB_RING; k++) {
         if (!g_pfb_r[k].busy || g_pfb_r[k].fence > done) continue;

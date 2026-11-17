@@ -52,6 +52,7 @@ class OptionTsv(unittest.TestCase):
     def test_live_option_reaches_the_panel_and_ctl(self):
         panel = (REPO / 'android/app/src/main/java/dev/nxnative/android/SidePanel.java').read_text(encoding='utf-8')
         self.assertIn('if (!opt.live) continue;', panel)            # only a live option gets a panel row
+        self.assertIn('if (opt.live || opt.settingsOnly) continue;', panel)   # a settings-only option has no Next start row either
         self.assertIn('pushLiveOption(opt.env, on);', panel)        # the switch is sent to the running game ...
         self.assertIn('Prefs.gameOption(act, game(), opt.env, on);', panel)   # ... and stored per game for every start
         self.assertIn('w.write("env " + env + "=" + value', panel)  # as an env line in ctl.txt

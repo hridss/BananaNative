@@ -2,7 +2,7 @@
 // spvValidateWithOptions in the Vulkan 1.3 environment, the check spirv-val --target-env vulkan1.3 makes) and validates SPIR-V files from several threads of one process,
 // then prints the wall time, the bytes checked, the failures and the peak memory of the process.
 // Usage: spv_val_run <libSPIRV-Tools-shared.so> <threads> <file.spv>...   or   spv_val_run <lib> <threads> @<list file>   (one path a line)
-// Build: <NDK clang> --target=aarch64-linux-android33 -O2 -o spv_val_run spv_val_run.c -ldl   (build.sh run)
+// Build: <NDK clang> --target=aarch64-linux-android31 -O2 -o spv_val_run spv_val_run.c -ldl   (build.sh run)
 #include <dlfcn.h>
 #include <pthread.h>
 #include <stdatomic.h>

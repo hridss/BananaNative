@@ -209,8 +209,8 @@ void dm_thread_native_wait(int entering) {
 // left both workers in this loop for good, and the game stopped presenting as New Story loaded
 int dm_yield_to_core_peers(int all) {
     thr_t *self = pthread_getspecific(g_keythr); if (!self) return 0;
-    uint64_t bit = 1ull << (self->core & 63); int waited = 0;
-    if (self->mask & ~bit) return 0;
+    uint64_t bit = 1ull << (__atomic_load_n(&self->core, __ATOMIC_RELAXED) & 63); int waited = 0;   // read without G, as GetCurrentProcessorNumber does
+    if (__atomic_load_n(&self->mask, __ATOMIC_RELAXED) & ~bit) return 0;
     for (;;) {
         int busy = 0;
         pthread_mutex_lock(&G);
@@ -706,11 +706,13 @@ static void thr_bt(thr_t *t) {
     }
     plat_thread_resume(t->mport);
 }
+__attribute__((weak)) void dm_audren_dump(void);   // hle_audren.c (a unit that links this file without it has none)
 void svc_thread_dump(void) {
     static const char *kinds[] = {"running/not waiting", "mutex", "condvar", "address", "sync object"};
     int nh = 0; for (int i = 1; i < MAX_H; i++) nh += g_h[i].type != O_FREE;
     fprintf(stderr, "[dm] handle table use %d / %d, threads created so far %llu\n", nh, MAX_H, g_next_id - 0x51);
     fprintf(stderr, "[dm] same-core handoffs %llu, total %.1f ms\n", (unsigned long long)g_preempt_n, g_preempt_ns / 1e6);
+    if (dm_audren_dump) dm_audren_dump();   // the audio renderer's state; its render thread (host-created, listed below) is what a stalled audio clock hangs on
     for (thr_t *t = g_all; t; t = t->all) {
         module_t *m = module_of((void *)t->last_lr);
         // Thread name: SDK ThreadType+0x1a0 is the name pointer (ThreadManager::SetInitialThreadNameUnsafe 0x34a2a4); x2 of CreateThread = ThreadType*
@@ -726,7 +728,7 @@ void svc_thread_dump(void) {
         int have_raw = (t->wkind == 1 || t->wkind == 2 || t->wkind == 3) && t->waddr && !plat_mem_read(t->waddr & ~0xfull, raw, 64);
         char life[96]; uint64_t nowns = now_ns();
         if (t->exited) snprintf(life, sizeof life, " created at tick %u, exited at tick %u (%.1f s ago)", t->born_tick, t->exit_tick, (nowns - t->exit_ns) / 1e9); else if (!t->born_ns) snprintf(life, sizeof life, " present since process start"); else snprintf(life, sizeof life, " created at tick %u (%.1f s ago)", t->born_tick, (nowns - t->born_ns) / 1e9);
-        fprintf(stderr, "[dm] thread %#x '%s' priority %d core %d mask %#llx CPU %.2fs svc %llu %s%s%s waits:%s addr=%#llx%s last svc %#x lr=%s+%#llx\n", t->handle, nm, t->prio, t->core, (unsigned long long)t->mask,
+        fprintf(stderr, "[dm] thread %#x '%s'%s priority %d core %d mask %#llx CPU %.2fs svc %llu %s%s%s waits:%s addr=%#llx%s last svc %#x lr=%s+%#llx\n", t->handle, nm, t->host_owned ? " (host-created)" : "", t->prio, t->core, (unsigned long long)t->mask,
                 cpu, t->nsvc, t->exited ? "exited" : "", t->started ? "" : "not started", life, kinds[t->wkind & 7], t->waddr, own, t->last_svc,
                 m ? m->name : "?", m ? t->last_lr - (uint64_t)m->base : t->last_lr);
         if (have_raw) { char hx[200]; int q = 0; for (int i = 0; i < 64; i += 4) q += snprintf(hx + q, sizeof hx - q, "%08x ", *(uint32_t *)(raw + i));
@@ -1009,18 +1011,25 @@ static int svc_thread_impl(int num, uint64_t *regs) {
     case 0x0D: { pthread_mutex_lock(&G); thr_t *t = h_get((uint32_t)regs[0], O_THREAD);   // SetThreadPriority; under DM_QOS_MAP the class follows (now on the calling thread, else at the target's next SVC)
         if (t) { t->prio = (int)regs[1]; if (g_qos_map) { if (t == cur()) qos_apply(t); else atomic_store(&t->qos_pending, 1); } }
         regs[0] = t ? 0 : R_BAD_HANDLE; pthread_mutex_unlock(&G); return 1; }
-    case 0x0E: { thr_t *t = h_get((uint32_t)regs[2], O_THREAD);
-                 regs[0] = t ? 0 : R_BAD_HANDLE; regs[1] = t ? (uint64_t)(uint32_t)t->core : 0; regs[2] = t ? t->mask : 0; return 1; }
+    // The handle queries below hold G across lookup and read, as every other thread SVC does: CloseHandle frees an exited thread under G, and a lookup without it could read a freed object
+    case 0x0E: { pthread_mutex_lock(&G); thr_t *t = h_get((uint32_t)regs[2], O_THREAD);
+                 regs[0] = t ? 0 : R_BAD_HANDLE; regs[1] = t ? (uint64_t)(uint32_t)t->core : 0; regs[2] = t ? t->mask : 0; pthread_mutex_unlock(&G); return 1; }
     case 0x0F: {  // SetThreadCoreMask(w0, w1 ideal core, x2 mask): -2 = use the process default (ideal core 0, mask of just that core), -1 = don't care, -3 = leave the ideal core unchanged (as in the Horizon kernel); the host only keeps the bookkeeping
+        pthread_mutex_lock(&G);
         thr_t *t = h_get((uint32_t)regs[0], O_THREAD);
-        if (t) { int c = (int)regs[1]; if (c >= 0) t->core = c; if (c == -2) { t->core = 0; t->mask = 1; } else if (regs[2]) t->mask = regs[2];
+        if (t) { int c = (int)regs[1], core = t->core; uint64_t mask = t->mask;
+            if (c >= 0) core = c; if (c == -2) { core = 0; mask = 1; } else if (regs[2]) mask = regs[2];
             // The ideal core is not in the new mask (-2/-3 keep the ideal core but pin the thread to other cores): as in Horizon, move the ideal core to the lowest core in the mask.
             // Otherwise GetCurrentProcessorNumber reports core 0 even for threads pinned to cores 1 / 2, and a job system with per-core queues (SMBW's BaseProcExecutor) takes core 0's work while nobody drains the queues of cores 1 / 2
-            if (t->mask && (t->core < 0 || !(t->mask >> t->core & 1))) t->core = __builtin_ctzll(t->mask); }
+            if (mask && (core < 0 || !(mask >> core & 1))) core = __builtin_ctzll(mask);
+            // The final values only, each in one store: GetCurrentProcessorNumber on the target reads them without G
+            __atomic_store_n(&t->mask, mask, __ATOMIC_RELAXED); __atomic_store_n(&t->core, core, __ATOMIC_RELAXED); }
+        pthread_mutex_unlock(&G);
         regs[0] = t ? 0 : R_BAD_HANDLE; return 1;
     }
-    case 0x10: { thr_t *t = cur(); int c = t->core;   // The current core number is always 0..2 (never negative); a thread with no ideal core reports the lowest core its mask allows, not core 0 outside it
-                 regs[0] = (uint64_t)(uint32_t)(c >= 0 ? c : t->mask ? __builtin_ctzll(t->mask) : 0); return 1; }
+    case 0x10: { thr_t *t = cur(); int c = __atomic_load_n(&t->core, __ATOMIC_RELAXED); uint64_t m = __atomic_load_n(&t->mask, __ATOMIC_RELAXED);   // The current core number is always 0..2 (never negative); a thread with no ideal core reports the lowest core its mask allows, not core 0 outside it
+                 // Without G: games ask often (Pokémon Scarlet ~7,400 times a second), and SetThreadCoreMask from another thread stores each field once (relaxed atomics, no torn or intermediate value)
+                 regs[0] = (uint64_t)(uint32_t)(c >= 0 ? c : m ? __builtin_ctzll(m) : 0); return 1; }
     case 0x32: {  // SetThreadActivity(w0 thread, w1 0 runnable / 1 paused): see "Pausing threads" above
         thr_t *me = cur(); int act = (int)regs[1];
         pthread_mutex_lock(&G);
@@ -1053,7 +1062,7 @@ static int svc_thread_impl(int num, uint64_t *regs) {
         pthread_mutex_unlock(&G);
         regs[0] = (uint64_t)r; return 1;
     }
-    case 0x25: { thr_t *t = h_get((uint32_t)regs[1], O_THREAD); regs[0] = t ? 0 : R_BAD_HANDLE; regs[1] = t ? t->id : 0; return 1; }
+    case 0x25: { pthread_mutex_lock(&G); thr_t *t = h_get((uint32_t)regs[1], O_THREAD); regs[0] = t ? 0 : R_BAD_HANDLE; regs[1] = t ? t->id : 0; pthread_mutex_unlock(&G); return 1; }   // under G: see 0x0E
 
     case 0x1A: {  // ArbitrateLock(w0 owner handle, x1 address, w2 this thread's tag)
         thr_t *t = cur(); uint64_t addr = regs[1];

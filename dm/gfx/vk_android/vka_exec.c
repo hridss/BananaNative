@@ -108,9 +108,11 @@ static void skipwarn_frame(uint64_t f) {
     // the largest cause, named first: this device has no mesh shading, or the pack lacks shaders (an incomplete dump, an older split), which no driver choice here changes
     int mesh = !strncmp(g_skipw.causes, vks_name[VKS_MESH], strlen(vks_name[VKS_MESH]));
     int missing = !strncmp(g_skipw.causes, vks_name[VKS_MISSING], strlen(vks_name[VKS_MISSING]));
+    int unseen = !strncmp(g_skipw.causes, vks_name[VKS_GUESTMEM], strlen(vks_name[VKS_GUESTMEM]));   // (a driver whose placed maps fail: vka_mem.c "placed maps do not work")
     VRED("%d %% of draws skipped over the last %d frames (causes: %s): %s", g_skipw.pct, VKS_WINDOW, g_skipw.causes,
          mesh ? "this GPU has no mesh shading, so some models are missing"
-              : missing ? "the pack's shader library lacks shaders the game uses: prepare the game again from a complete dump" : "the GPU driver may not suit this game");
+              : missing ? "the pack's shader library lacks shaders the game uses: prepare the game again from a complete dump"
+              : unseen ? "the GPU cannot see the game's memory (its placed memory maps failed, vka_mem.c): another GPU driver (Settings > GPU driver) may map it" : "the GPU driver may not suit this game");
     atomic_store_explicit(&g_skipw_pct, g_skipw.pct, memory_order_release);
 }
 // The launcher's notice (Native.skipStatus): "<percent> <causes>" once the warning fired, "" before; the buffer ends with a NUL

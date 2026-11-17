@@ -676,6 +676,17 @@ final class ShaderLibs {
         return keys;
     }
 
+    /** A table's rows without its comment lines ("#"): the header prose is the tool's wording at the time, not the dump's (shader_split.py's changed to "no PC shader
+     *  pairing supplied", and the profiles split before still carry the older line), so two maps of the same shaders differ only there */
+    static List<String> tableRows(File f) throws IOException {
+        List<String> out = new ArrayList<>();
+        for (String l : Files.readAllLines(f.toPath(), StandardCharsets.UTF_8)) if (!l.startsWith("#")) out.add(l);
+        return out;
+    }
+
+    /** Whether a split's shader_map.tsv lists the shaders of the profile's: the same rows in the same order, comment lines left out ({@link #tableRows}) */
+    static boolean sameMap(File profileMap, File splitMap) throws IOException { return tableRows(profileMap).equals(tableRows(splitMap)); }
+
     /**
      * The keys of the profile's shader_map.tsv that a split's map (splitMap) lacks, sorted, when the split is the profile's but for keys its {@link #OPTIONAL} names
      * (a registered build of the game without a few of its shaders: Mario Kart World's 1.8.0 as an update, docs/reference/packing.md "A game with several registered

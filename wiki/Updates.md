@@ -8,6 +8,10 @@ Since v0.1.4 the app offers a newer release at start (**Update** or **Later**), 
 
 An update keeps the app's storage, so your saves, packs and copied games stay.
 
+### Big updates and small fixes (0.3.42)
+
+Every release says what kind it is in its notes: **major** (new things, the default), **hotfix** (a small fix, optional) or **critical** (a small fix everyone should take). Settings > **Updates** > **Small fix updates** decides what the app offers when it starts. Turn it off and the app offers only major and critical releases; the next major release always carries every small fix before it, so nothing is lost by skipping them. **Check for updates** always shows the newest release of any kind.
+
 ## After an app update
 
 A new version may come with new shaders. What you see depends on what changed:
@@ -23,6 +27,14 @@ Shader updates can take a long time on a phone for games with many shaders (for 
 ## Shaders built while you play (0.3.40)
 
 A game that asks for a shader your pack lacks gets it built on the phone while you play, with a **Building shaders (N)** label. See [Live shader building](Live-Shader-Building).
+
+## What is new in 0.3.41
+
+- **Fix:** Prepare stopped at "Finding the shaders" with `No module named 'pack_dump'` for games with add-ons (Ocarina of Time, Donkey Kong Bananza, others). Prepare again; nothing else needs doing.
+- **Fix:** button prompts show pictures again instead of "?".
+- **Fix:** with no game added, the **+** (Add game) button now stays on Home.
+- **Home:** a layout choice (row, grid with names, list), an options menu for each game (hold it, or **X** on a controller: Move, Set cover image, Remove game), your own cover pictures with a crop screen, a hint strip at the bottom ([Playing](Playing)).
+- **Pokopia (experimental):** Online events, Mods, Host a world ([Pokopia](Game-Pokemon-Pokopia)).
 
 ## What is new in 0.3.40
 

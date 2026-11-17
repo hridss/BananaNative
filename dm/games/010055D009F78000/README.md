@@ -13,6 +13,7 @@ Update 1.2.0 (v327680) over the base game, SDK 6.5.0. Koei Tecmo's older KTGL en
 | GLSLC capture (`/glslc_capture/=runtime` in `shader_groups`) | [`game.tsv`](game.tsv), NSP script | 9 built-in shaders exist only as compiles of the game's own GLSLC at boot; see [Files and shaders](#files-and-shaders) |
 | 4 GB layout: `mem_reserve 0x100000000`, `mem_alias 0x10000000`, `mem_stack 0x10000000`, `app_pool 0xCD500000` | `game.tsv` | the NPDM declares no system resource (META +0x14 = 0): the game uses `SetHeapSize`. Link's Awakening's partition, not measured for this game |
 | `pad_layout full` | `game.tsv` | the 3D gamepad layout: the camera is on the right stick in the monastery and in battle |
+| `op_mode handheld` | `game.tsv` | a performance choice: handheld, the game renders at 1280x720 instead of 1920x1080; on an Adreno 740 phone its 1080p frame took about 17.4 ms of GPU time (47 to 54 fps), handheld holds close to 60 |
 
 ## Frame rate
 
@@ -70,6 +71,7 @@ Game-specific findings. The general host changes they led to are listed under [F
 
 General host changes first needed here; each applies to every game:
 
+- **The audio render thread paced by the clock, one render lock, catch-up frames that wait** (`hle_audren.c`, `DM_AUDREN_WAIT`): [Sound that drags and crackles: frames rendered in the output's bursts (Android)](../../../docs/reference/audio.md#sound-that-drags-and-crackles-frames-rendered-in-the-outputs-bursts-android).
 - **Resolved in the sanitizer audit:** [Unaligned command headers during layout probing](../../../docs/reference/audio.md#unaligned-command-headers-during-layout-probing), reproduced with the SDK 6 command-list fixture.
 - **Submissions serialized across queues** (`g_sub_mu`) and **`GetCommandMemoryUsed` counted from the last `AddCommandMemory`**: [Submissions from two queues on two threads](../../../docs/reference/nvn-objects.md#submissions-from-two-queues-on-two-threads), [What `GetCommandMemoryUsed` counts](../../../docs/reference/nvn-objects.md#what-getcommandmemoryused-counts).
 - **SDK 6:** `account::OpenPreselectedUser` returning a Result, SDK 6's DSP command header (`capture` in `hle_audren.c`) and **run-time GLSLC capture** (`DM_GLSLC_CAPTURE`, `hle_glslc.c`): [SDK 6's `account::OpenPreselectedUser` returns a Result](../../../docs/reference/services.md#sdk-6s-accountopenpreselecteduser-returns-a-result), [SDK 6: the DSP command header layout](../../../docs/reference/audio.md#sdk-6-the-dsp-command-header-layout), [Built-in shaders compiled with the game's own GLSLC](../../../docs/reference/shaders.md#built-in-shaders-compiled-with-the-games-own-glslc); the NSP script's capture stage: [development.md](../../../docs/development.md#the-packing-script-in-detail).

@@ -18,3 +18,5 @@ uint64_t guest_ns(void) { return now_ns(); }
 int dm_detclock_enabled(void) { return 0; }
 __thread _Atomic int dm_host_work;   // referenced by hle_thread.c; in the host it is defined in hle_nvn.c
 pthread_key_t g_key18;   // read by hle_thread.c's SVC entry and pause signal; in the host it is defined in loader.c (never created here: those paths do not run)
+
+void dm_audren_dump(void) {}   // hle_thread.c declares it weak (hle_audren.c has it); Apple's linker needs a definition for a unit without hle_audren.c

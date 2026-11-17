@@ -47,6 +47,48 @@ static uint8_t *frostbite(uint8_t *base, uint8_t *inst) {
     return inst;
 }
 
+// The limiters the rewriter finds in any build (upstream nxnative's UE_FIXED_RATE_*, UNITY_* and MONOLITH_INTERVAL rows), after the first present; with caps set while the game runs
+// and back to the game's own, as the Android launcher's in-game panel sets them
+static void found_check(int which, uint8_t *base, uint8_t *object, float *f, int32_t *sync) {
+    if (which == 22) {   // 60: the fixed rate and the interval; the frame pace setting 30 again (a mode change) is raised again; back to the game's own: its 30 and 2
+        assert(*f == 60 && sync[0] == 1 && sync[1] == 1 && writes == 3);
+        *f = 30; dm_fps_lock_tick(); assert(*f == 60 && writes == 4);
+        dm_fps_target_set(0, "test"); dm_fps_lock_tick(); assert(*f == 30 && sync[0] == 2 && sync[1] == 2);
+    } else if (which == 23) assert(*f == 30 && sync[0] == 1 && sync[1] == 1 && writes == 2);   // flag off: the rate is left, the interval written
+    else if (which >= 24 && which <= 27) {
+        int32_t *t = (int32_t *)(base + 0x8d33de8);
+        assert(sync[-0x40] == 3);
+        if (which == 24) {   // 60: one vsync; targetFrameRate unset (-1) stays; the game setting 2 again (a scene change) is undone; caps while running; back to the game's 2
+            assert(*sync == 1 && *t == -1 && writes == 1);
+            dm_fps_lock_tick(); assert(writes == 1);
+            *sync = 2; dm_fps_lock_tick(); assert(*sync == 1 && writes == 2);
+            assert(dm_fps_lock_rates() == 63);   // targetFrameRate takes any cap (the count only whole vsyncs)
+            dm_fps_target_set(20, "test"); dm_fps_lock_tick(); assert(*sync == 3);
+            dm_fps_target_set(45, "test"); dm_fps_lock_tick(); assert(*sync == 3);   // no whole vsyncs: the count stays
+            dm_fps_target_set(0, "test"); dm_fps_lock_tick(); assert(*sync == 2 && *t == -1);
+            assert(sync[-0x40] == 3);
+        } else if (which == 25) assert(*sync == 2 && *t == -1 && writes == 0);   // no cap: left as the game sets them, though the engine limit is there
+        else if (which == 26) assert(*sync == 0 && *t == 60 && writes == 1);   // a count of 0 is the game's choice to pace by targetFrameRate, which is raised
+        else assert(*sync == 1 && *(int32_t *)(base + 0x4afc868) == 60 && writes == 2);   // 27: the count and the target, each written once
+    } else {   // Monolith
+        assert(sync[1] == 17);   // the engine's own word after the interval is never touched
+        if (which == 28 || which == 32) {
+            assert(sync[0] == 1 && writes == 1);
+            dm_fps_lock_tick(); assert(writes == 1);
+            sync[0] = 2; dm_fps_lock_tick(); assert(sync[0] == 1 && writes == 2);
+            if (which == 28) { dm_fps_target_set(30, "test"); dm_fps_lock_tick(); assert(sync[0] == 2); dm_fps_target_set(0, "test"); dm_fps_lock_tick(); assert(sync[0] == 2); }
+        } else if (which == 29) assert(sync[0] == 2 && writes == 1);
+        else if (which == 30) assert(sync[0] == 2 && writes == 0);   // no cap: the game's own setting
+        else if (which == 31) assert(sync[0] == 0 && writes == 0);   // 30 fps: a zero interval already means two vsyncs
+        else if (which == 33) {
+            assert(sync[0] == -1 && writes == 0);   // not set yet
+            sync[0] = 2; dm_fps_lock_tick(); assert(sync[0] == 1 && writes == 1);
+        } else assert(sync[0] == 5 && writes == 0);   // 34: an unexpected value is left alone
+        assert(dm_fps_lock_rates() == (1 | 2 | 4 | 32));   // whole vsyncs: 15, 20, 30, 60
+    }
+    (void)object;
+}
+
 static void check(int which) {
     size_t len = 0x27000000;   // up to the floor row's global (main+0x26cc208)
     uint8_t *base = mmap(NULL, len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
@@ -87,6 +129,34 @@ static void check(int which) {
         uint8_t *app = object + 0x100, *fw = object + 0x200, *ctl = object + 0x400;
         *(uintptr_t *)(base + 0x26cc208) = (uintptr_t)app; *(uintptr_t *)app = (uintptr_t)fw; *(uintptr_t *)(fw + 0x218) = which == 19 ? 0 : (uintptr_t)ctl;   // 19: the controller made later
         sync = (int32_t *)ctl; sync[0] = 1; sync[1] = 3;
+    } else if (which == 22 || which == 23) {   // Unreal's fixed frame rate (Pikmin 4, DRAGON BALL: Sparking! ZERO): GEngine->FixedFrameRate (+0x9c8), which the Switch frame pace sets to 30, and
+        // the present interval; bUseFixedFrameRate (bit 0x40 of +0x9c4) set, except in 23 (an engine stepping by the time that passed, Princess Peach: Showtime!)
+        strcpy(g_mod[0].build_id, "0123456789abcdef0123456789abcdef");
+        cvar(DM_GAME_UE_FPS_CVAR, 0x7c738d0); cvar("rhi.SyncInterval", 0x7b32690);   // t.MaxFPS registered but never set: 0 stays
+        *(uintptr_t *)(base + 0x7b32690 + 0x10) = (uintptr_t)(object + 16);
+        sync = (int32_t *)(object + 16); sync[0] = sync[1] = 2;
+        g_mod[0].ue_fixed_ptr = 0x9aefa30; g_mod[0].ue_fixed_field = 0x9c8; g_mod[0].ue_fixed_flag = 0x9c4 << 8 | 0x40;
+        *(uintptr_t *)(base + 0x9aefa30) = (uintptr_t)(object + 0x100) - 0x9c8;   // the engine object, placed so its field at +0x9c8 lands inside object
+        f = (float *)(object + 0x100); *f = 30;
+        object[0x100 - 4] = which == 22 ? 0x47 : 0x07;   // the flag byte at +0x9c4: bit 0x40 set among others (Pikmin 4: 0x47), or not
+    } else if (which >= 24 && which <= 27) {   // Unity, at the places the rewriter found through the internal-call table (The Rogue Prince of Persia 1.1.0): vSyncCount in quality level 1
+        // of 0x100-byte levels, set to 2 (0 in 26, where the game paces by targetFrameRate), and targetFrameRate (-1; 30 in 26); 27: Pokémon Brilliant Diamond's targetFrameRate field
+        // (found from code registration, Unity 2019.4), which its build row writes too: written once
+        if (which != 27) strcpy(g_mod[0].build_id, "0123456789abcdef0123456789abcdef");
+        g_mod[0].unity_target_fps = which == 27 ? 0x4afc868 : 0x8d33de8;
+        g_mod[0].unity_qs_ptr = 0x90957d8; g_mod[0].unity_qs_idx = 0x64; g_mod[0].unity_qs_arr = 0x20; g_mod[0].unity_qs_size = 0x100; g_mod[0].unity_qs_vsync = 0x88;
+        *(uintptr_t *)(base + 0x90957d8) = (uintptr_t)object;
+        *(int32_t *)(object + 0x64) = 1; *(uintptr_t *)(object + 0x20) = (uintptr_t)(object + 0x100);   // two levels from object + 0x100: level 1's count at +0x288
+        sync = (int32_t *)(object + 0x100 + 0x100 + 0x88); *sync = which == 26 ? 0 : 2; sync[-0x40] = 3;   // and level 0's, which the host must not touch
+        if (which != 27) { int32_t *t = (int32_t *)(base + 0x8d33de8); *t = which == 26 ? 30 : -1; }
+    } else if (which >= 28) {   // Monolith's interval found by monolith_fps.py in any build (Xenoblade Chronicles 2 and 3, X DE): 2 vsyncs (1 in 29, 0 = the native 2 in 31 and 32, not
+        // set yet in 33, unexpected in 34); the int32 after it belongs to the engine. 35: a required timing correction did not match (NATIVE_FPS_BLOCKED)
+        strcpy(g_mod[0].build_id, "0123456789abcdef0123456789abcdef");
+        g_mod[0].monolith_interval = 0x6000;
+        sync = (int32_t *)(base + 0x6000);
+        sync[0] = which == 29 ? 1 : which == 31 || which == 32 ? 0 : which == 33 ? -1 : which == 34 ? 5 : 2;
+        sync[1] = 17;
+        if (which == 35) g_mod[0].native_fps_blocked = 1;
     } else if (which >= 9) {   // the present interval alone (UE 4.18's nvn.SyncInterval); 12: a main the rewriter found no variable in
         strcpy(g_mod[0].build_id, "0123456789abcdef0123456789abcdef");
         if (which != 12) cvar("nvn.SyncInterval", 0x8adca10);
@@ -95,8 +165,18 @@ static void check(int which) {
     }
     if (which == 17) setenv("DM_FPS_TARGET", "30", 1);
     if (which == 18) setenv("DM_FPS_TARGET", "0", 1);
-    if (which >= 20) { setenv("DM_FPS_TARGET", "0", 1); setenv("DM_FPS_DECOUPLE", "0", 1); setenv("DM_PRESENT_INTERVAL", "display", 1); setenv("DM_FPS_LIMIT", which == 20 ? "60" : "30", 1); g_gate_present = 0; }   // #207's start: Full game speed off, the host's tick, a pack without the gate
+    if (which == 20 || which == 21) { setenv("DM_FPS_TARGET", "0", 1); setenv("DM_FPS_DECOUPLE", "0", 1); setenv("DM_PRESENT_INTERVAL", "display", 1); setenv("DM_FPS_LIMIT", which == 20 ? "60" : "30", 1); g_gate_present = 0; }   // #207's start: Full game speed off, the host's tick, a pack without the gate
     if (which == 19) setenv("DM_FPS_TARGET", "15", 1);   // a saved cap the controller cannot hold (4 vsyncs, its maximum 3)
+    if (which == 25 || which == 30) setenv("DM_FPS_TARGET", "0", 1);
+    if (which == 29 || which == 31) setenv("DM_FPS_TARGET", "30", 1);
+    int found = which >= 22 && which != 35;   // 22-34: limiters the rewriter found in any build; 35: found, but a required timing correction is missing
+    if (found) {
+        if (which & 1) assert(dm_fps_lock_engine());
+        dm_fps_lock_tick(); assert(dm_fps_lock_engine());
+        found_check(which, base, object, f, sync);
+        munmap(base, len); return;
+    }
+    if (which == 35) { assert(!dm_fps_lock_engine()); dm_fps_lock_tick(); assert(sync[0] == 2 && sync[1] == 17 && writes == 0); munmap(base, len); return; }
     int engine = which != 3 && which != 12 && which < 17;   // 17-19: a floor does not fix the rate, so presentation keeps the game's interval   // a limiter the host writes: any but another build's main (3) and a main the rewriter found no Unreal variable in (12)
     if (which & 1) assert(dm_fps_lock_engine() == engine);   // the graphics layer's present cap may ask before the first present (the acquire)
     dm_fps_lock_tick();
@@ -288,10 +368,10 @@ int main(void) {
     sead_rate_check();
     { pid_t p = fork(); assert(p >= 0); if (!p) { step_check(); _exit(0); } int status; assert(waitpid(p, &status, 0) == p); assert(WIFEXITED(status) && WEXITSTATUS(status) == 0); }
     // Each process starts the production one-time initialization with a fresh build and target.
-    for (int i = 0; i < 22; i++) {
+    for (int i = 0; i < 36; i++) {
         pid_t p = fork(); assert(p >= 0);
         if (!p) { check(i); _exit(0); }
         int status; assert(waitpid(p, &status, 0) == p); assert(WIFEXITED(status) && WEXITSTATUS(status) == 0);
     }
-    puts("Frame limits: integer/float FPS, milliseconds, vsync copies, floors behind pointers and under the controller's maximum, caps set while running, build gates and overrides, sead's controller at the measured rate (on and off live), framework step counts passed");
+    puts("Frame limits: integer/float FPS, milliseconds, vsync copies, floors behind pointers and under the controller's maximum, caps set while running, build gates and overrides, sead's controller at the measured rate (on and off live), framework step counts, Unreal's fixed frame rate, Unity's frame rate and Monolith's interval found in any build passed");
 }

@@ -1,12 +1,12 @@
 # Multiplayer
 
-Pokémon Pokopia (`0400A3A01EE4C000`) has multiplayer: you can visit another player's world. On Banana Native this is **Link Play**, an experimental way to join a game hosted on a PC. It does not use Nintendo online services, and the phone can join only; it cannot host yet.
+Pokémon Pokopia (`0400A3A01EE4C000`) has multiplayer: you can visit another player's world. On Banana Native this is **Link Play**, an experimental way to join a game hosted on a PC. It does not use Nintendo online services, and a phone can join a PC host or host a world itself (experimental; hosting has not been tried with two phones yet).
 
 ## What works
 
 - Your phone joins a compatible PC host (the Recompia PC runtime, native protocol) over the same Wi-Fi or over the Internet.
 - One test on a Samsung Galaxy Z Fold 7 (Turnip driver) had two players in the same world for over 90 seconds, each seeing the other move. The visitor returned home normally.
-- Not tested yet: the phone as host, automatic discovery on the LAN, Story co-op, Interact everywhere, reconnecting, and joining through Tailscale or the Internet in the current build.
+- Not tested yet: the phone as host (**Host a world**, below), automatic discovery on the LAN, Story co-op, Interact everywhere, reconnecting, and joining through Tailscale or the Internet in the current build.
 
 ## What you need
 
@@ -22,7 +22,8 @@ Pokémon Pokopia (`0400A3A01EE4C000`) has multiplayer: you can visit another pla
    - **Off** (default). Keeps the saved address and code for later.
    - **Join PC host, on the same LAN**: enter the PC's IPv4 address and optionally a port (default 47600).
    - **Join PC host, Internet / Tailscale**: enter the reachable address and the host's 16-symbol room code (spaces and hyphens are accepted).
-4. Start the game. In the game: **PC > Link Play > Local connection > Visit**.
+   - **Host a world**: this phone hosts, and another player joins it. The sheet shows this phone's address and port (47600). For play over the Internet or Tailscale, tick **Internet / Tailscale**: it shows a room code (**New code** makes another) that visitors enter, as on a PC host. Keep the game running while they play; traffic is not encrypted.
+4. Start the game. To join: **PC > Link Play > Local connection > Visit**. A phone that hosts opens its world as the game's own host does; a visitor joins it the way it joins a PC host (the address above).
 
 Only IPv4 addresses are accepted, plus `localhost` for a test on one device. A wrong address or code keeps the dialog open.
 

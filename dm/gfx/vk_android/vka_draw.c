@@ -28,6 +28,17 @@ static VkCommandBuffer g_cb; static unsigned g_slot; static int g_prof, g_dyn_fi
 static int g_prof_all, g_prof_every;   // DM_VK_PROF: every draw timed; the pace line's sample (DM_VK_PACE_PROF): one draw in g_prof_every
 static int g_vin_skip = 1;             // DM_VK_VIN_SKIP (vin_build_kept)
 static int g_inst_on;   // DM_VK_INSTANCE (the instanced runs below)
+// The instanced runs' per-instance table is vertex input location INST_LOC at binding INST_BIND (below): valid only on a device whose maxVertexInputAttributes and
+// maxVertexInputBindings are above them (Vulkan guarantees 16; Turnip and Qualcomm's driver report 32). Past a limit the driver's behaviour is undefined: DM_VK_INSTANCE
+// on a Mali (PanVK) and a PowerVR phone stopped the game with SIGSEGV at the first instanced draw (#59, #228, #321: sig=11 addr=0x40c, the same place in each)
+static int inst_device_ok(void) {
+    static int v = -1;
+    if (v < 0) {
+        v = V.props.limits.maxVertexInputAttributes > 30 && V.max_vin_bindings > 31;
+        if (!v && VKA_ENV("DM_VK_INSTANCE", 0)) VRED("instanced draws are off: the device allows %u vertex input attributes and %u bindings, the runs need 31 and 32 (DM_VK_INSTANCE)", V.props.limits.maxVertexInputAttributes, V.max_vin_bindings);
+    }
+    return v;
+}
 static int g_vattr_clear = 1;   // DM_VK_VATTR_CLEAR: a BindVertexAttribState replaces the whole attribute state, as the Metal backend does (S.nattr = b->n);
                                 // 0 = the old merge, where the attributes past its count keep the earlier binds' formats and offsets
 uint64_t vka_n_rp;   // render passes the draws opened (vka_exec.c replay statistics)
@@ -153,7 +164,7 @@ void vka_draw_sub_begin(VkCommandBuffer cb, unsigned slot) {
     rp_miss_reset();
     { void vka_mem_rec_thread(void); vka_mem_rec_thread(); }   // the address lookups' cache outside TLS for the recording thread (vka_mem.c)
     drv_memo_reset();   // the last submission's scratch spans go with its fence
-    g_prof_all = VKA_ENV("DM_VK_PROF", 0) != 0; g_prof = g_prof_all; g_prof_every = VKA_ENV("DM_VK_PACE_LOG", 5000) > 0 ? VKA_ENV("DM_VK_PACE_PROF", 16) : 0; g_dyn_filter = VKA_ENV("DM_VK_DYN_FILTER", 1); g_pass_keep = VKA_ENV("DM_VK_PASS_KEEP", 1); g_vb_filter = VKA_ENV("DM_VK_VB_FILTER", 1); g_inst_on = VKA_ENV("DM_VK_INSTANCE", 0);   // live: from this submission
+    g_prof_all = VKA_ENV("DM_VK_PROF", 0) != 0; g_prof = g_prof_all; g_prof_every = VKA_ENV("DM_VK_PACE_LOG", 5000) > 0 ? VKA_ENV("DM_VK_PACE_PROF", 16) : 0; g_dyn_filter = VKA_ENV("DM_VK_DYN_FILTER", 1); g_pass_keep = VKA_ENV("DM_VK_PASS_KEEP", 1); g_vb_filter = VKA_ENV("DM_VK_VB_FILTER", 1); g_inst_on = VKA_ENV("DM_VK_INSTANCE", 0) && inst_device_ok();   // live: from this submission
     g_vin_skip = VKA_ENV("DM_VK_VIN_SKIP", 1);
     g_vattr_clear = VKA_ENV("DM_VK_VATTR_CLEAR", 1);
     for (int i = 0; i < g_ndp[g_slot]; i++) vk.vkResetDescriptorPool(V.dev, g_dp[g_slot][i], 0);   // the slot's last submission is done (mtl_sub_begin waited for it)
@@ -636,6 +647,7 @@ static int rp_begin(const p_set_rt *rt, int has_rt, const p_scissor *sc, int has
         else vka_clear_outside(c);
     }
     if (sp) sp = &sa;
+    if ((dp || sp) && VKA_ENV("DM_VK_LRZ_TOUCH", 0)) vka_lrz_touch(g_cb, s_im[8], dp && da.loadOp == VK_ATTACHMENT_LOAD_OP_LOAD);   // Adreno LRZ (vka_tex.c), outside the pass
     #undef INAREA
     #undef WHOLE
     vka_tex_feedback(fb_im, fb_lv, nfb);
@@ -1824,6 +1836,7 @@ void vka_dyn_invalidate(void) { DY.valid = 0; VB.valid = 0; VBC.valid = 0; IB.va
 // Variants are rewritten from the library's SPIR-V when a run first asks for them; a pair without both is never instanced. DM_VK_INSTANCE=1 turns the runs on (live; off by default)
 uint64_t vka_enc_total(void); int vka_enc_on(void);
 enum { INST_LOC = 30, INST_BIND = 31, INST_CAP = 256 };
+_Static_assert(INST_LOC == 30 && INST_BIND == 31, "inst_device_ok checks the device limits against these");
 typedef struct { uint32_t binding, type; uint64_t a, b, c; } ikw;   // a write as compared: buffer, offset, range / sampler, view, layout
 typedef struct {
     int valid; VkPipeline p; VkBuffer ib; VkDeviceSize io; VkIndexType it; uint32_t cnt; int32_t bv; uint64_t mark;
@@ -1888,7 +1901,7 @@ static vka_shader *inst_variant_make(vka_shader *s, uint32_t binding);
 // The frame path and the prewarm threads (instanced variants in the prewarm list: vka_inst_variant) share the cache, so one variant is made once
 static pthread_mutex_t g_ivmu = PTHREAD_MUTEX_INITIALIZER;
 static vka_shader *inst_variant(vka_shader *s, uint32_t binding) { pthread_mutex_lock(&g_ivmu); vka_shader *v = inst_variant_make(s, binding); pthread_mutex_unlock(&g_ivmu); return v; }
-vka_shader *vka_inst_variant(vka_shader *s, uint32_t binding) { return VKA_ENV("DM_VK_INSTANCE", 0) ? inst_variant(s, binding) : NULL; }
+vka_shader *vka_inst_variant(vka_shader *s, uint32_t binding) { return VKA_ENV("DM_VK_INSTANCE", 0) && inst_device_ok() ? inst_variant(s, binding) : NULL; }
 static vka_shader *inst_variant_make(vka_shader *s, uint32_t binding) {
     static struct { uint64_t key; uint32_t binding; vka_shader *v; } cache[128]; static int ncache;
     for (int i = 0; i < ncache; i++) if (cache[i].key == s->key && cache[i].binding == binding) return cache[i].v;
@@ -2352,6 +2365,35 @@ static void mdi_cpu(int indexed, uint64_t ind, uint64_t cnt, uint32_t n, uint32_
         if (indexed) vk.vkCmdDrawIndexedIndirect(g_cb, b, o, 1, 20); else vk.vkCmdDrawIndirect(g_cb, b, o, 1, 16);
     }
 }
+// Runs of rasterizer-discard draws (vertex shaders that write memory later draws read) in render passes of their own, and a transfer read of what a run wrote where it ends,
+// after nx2android's Vulkan backend (Xenoblade Chronicles 3's slivers and grass there). NVN's GPU runs a pass's draws in order; Adreno runs the vertex shaders of a pass's draws
+// in its binning pass, so a draw can read vertices an earlier rasterizer-discard draw of the same pass has not written yet; with barriers alone later passes still met
+// unwritten data there, and a 4-byte copy of each written buffer at the run's end settled it. Experimental, default off until a game here is shown to need it:
+// DM_VK_RD_SPLIT=1 (live) gives runs a pass of their own; DM_VK_RD_TOUCH=1 (live) adds the read
+static int g_rd_prev; static uint64_t g_rd_wa[16]; static int g_rd_nwa; static uint64_t g_rd_runs, g_rd_reads;
+static void rd_touch(void) {
+    VkBuffer seen[16]; int ns = 0;
+    for (int i = 0; i < g_rd_nwa; i++) {
+        VkBuffer b; VkDeviceSize o; if (!vka_addr(g_rd_wa[i], 4, &b, &o, NULL)) continue;
+        int dup = 0; for (int j = 0; j < ns; j++) dup |= seen[j] == b;
+        if (dup) continue;
+        seen[ns++] = b;
+        vka_span s; if (!vka_scratch(4, 4, &s)) return;
+        VkBufferCopy r = {o, s.off, 4}; vka_barrier(g_cb); vk.vkCmdCopyBuffer(g_cb, b, s.buf, 1, &r); vka_barrier(g_cb); g_rd_reads++;
+    }
+}
+static void rd_run(const vka_dstate *d) {
+    int rd = d->rast_discard;
+    if (rd != g_rd_prev && VKA_ENV("DM_VK_RD_SPLIT", 0)) {
+        inst_close(); vka_rp_end();
+        if (rd && (++g_rd_runs == 1 || g_rd_runs % 4096 == 0)) VLOG("rasterizer-discard runs in passes of their own: %llu runs, %llu buffer reads at their ends", (unsigned long long)g_rd_runs, (unsigned long long)g_rd_reads);
+    }
+    if (rd) {
+        if (!g_rd_prev) g_rd_nwa = 0;
+        for (int r = 0; r < 16 && g_rd_nwa < 16; r++) { uint64_t x = d->b.ssbo[0][r].addr; int have = 0; for (int i = 0; i < g_rd_nwa; i++) have |= g_rd_wa[i] == x; if (x && !have) g_rd_wa[g_rd_nwa++] = x; }
+    } else if (g_rd_prev && !R.on && VKA_ENV("DM_VK_RD_TOUCH", 0)) rd_touch();
+    g_rd_prev = rd;
+}
 static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_scissor *sc, int has_sc, const p_draw *dw, const p_draw_idx *di) {
     if (!g_cb || !draws_on() || !statics()) { g_skipped++; return; }
     if (RUN.open && RUN.fast && di && !dw && g_inst_on && inst_fast(d, rt, has_rt, sc, has_sc, di)) {   // DM_VK_INSTANCE: the run's next object, no walk
@@ -2434,6 +2476,7 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
     { static char sk[1024]; static int got; if (!got) { const char *e = getenv("DM_VK_DRAW_SKIP_KEY"); snprintf(sk, sizeof sk, "%s", e ? e : ""); got = 1; }
       if (sk[0] && sh[1]) { char hex[17]; snprintf(hex, sizeof hex, "%016llx", (unsigned long long)sh[1]->key); if (strstr(sk, hex)) { g_skipped++; return; } } }
     if (d->poly.cull == NVN_FACE_FRONT_AND_BACK && !d->rast_discard) { vka_rtlog_skip(rt, has_rt, d, "not drawn: both faces culled"); return; }
+    if (!g_pp_side) rd_run(d);   // rasterizer-discard runs (above draw_body)
     int prim = dw ? dw->prim : di->prim, expand = 0;
     VkPrimitiveTopology topo = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;   // (a mesh pipeline's: every translated mesh shader outputs triangles)
     if (memu_e) topo = memu_e->points ? VK_PRIMITIVE_TOPOLOGY_POINT_LIST : VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
@@ -2771,7 +2814,7 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
     } else if (mesh) {   // count workgroups of the task shader, or of the mesh shader without one (the device's limit per dimension: maxTaskWorkGroupCount / maxMeshWorkGroupCount, 65535 on the Adreno 840)
         if (ind) {
             VkBuffer b; VkDeviceSize o;
-            if (!vka_mdx_args(ind, &b, &o)) SKIP("indirect mesh draw record at %#llx not in placed guest RAM, or its {count, 1, 1} copy not made: skipped", (unsigned long long)ind);
+            if (!vka_mdx_args(ind, &b, &o)) SKIPD(VKS_GUESTMEM, "indirect mesh draw record at %#llx not in placed guest RAM, or its {count, 1, 1} copy not made: skipped", (unsigned long long)ind);
             if (vk.vkCmdDrawMeshTasksIndirectEXT) vk.vkCmdDrawMeshTasksIndirectEXT(g_cb, b, o, 1, 12);
             else SKIPD(VKS_FEATURE, "vkCmdDrawMeshTasksIndirectEXT not available: skipped");
         } else {
@@ -2797,7 +2840,7 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
         if (ind) { VkBuffer b, cb; VkDeviceSize o, co; if (ind_peek(sh, ind, mdi, mdi_n, mdi_st, 0)) { g_skipped++; return; }
                    VRED_ONCE("indirect draws: outside vertex shaders, the driver segment's base instance (c0 + 0x644) reads the record's, not the GPU's");
                    if (mdi_n) { if (mdi_ranges(ind, mdi, mdi_n, mdi_st, 16, &b, &o, &cb, &co)) vk.vkCmdDrawIndirectCount(g_cb, b, o, cb, co, mdi_n, mdi_st); else mdi_cpu(0, ind, mdi, mdi_n, mdi_st); }
-                   else { if (!vka_addr(ind, 16, &b, &o, NULL) || (o & 3)) SKIP("indirect draw arguments at %#llx are not in placed guest RAM: skipped", (unsigned long long)ind);
+                   else { if (!vka_addr(ind, 16, &b, &o, NULL) || (o & 3)) SKIPD(VKS_GUESTMEM, "indirect draw arguments at %#llx are not in placed guest RAM: skipped", (unsigned long long)ind);
                           vk.vkCmdDrawIndirect(g_cb, b, o, 1, 16); } }
         else { if (tfc) vka_tf_begin(g_cb); vk.vkCmdDraw(g_cb, (uint32_t)dw->count, inst, (uint32_t)dw->first, binst); if (tfc) vka_tf_end(g_cb); }   // tfc: the capture around it (vka_tf.c)
     } else {
@@ -2817,11 +2860,11 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
             vin_bind(d); VBC.valid = 0;
             if (!sets_push(&lay, VK_PIPELINE_BIND_POINT_GRAPHICS, 0)) { g_skipped++; return; }
             ijoin = 0; ib = i_ib; io = i_io; it = i_it;
-        } else if (!vka_addr(di->ibuf, ind ? isz : isz * (uint64_t)(di->count > 0 ? di->count : 1), &ib, &io, NULL) || io % isz) SKIP("index buffer at %#llx is not in placed guest RAM: skipped", (unsigned long long)di->ibuf);
+        } else if (!vka_addr(di->ibuf, ind ? isz : isz * (uint64_t)(di->count > 0 ? di->count : 1), &ib, &io, NULL) || io % isz) SKIPD(VKS_GUESTMEM, "index buffer at %#llx is not in placed guest RAM: skipped", (unsigned long long)di->ibuf);
         ib_bind(ib, io, it);
         if (ind) { VkBuffer b, cb; VkDeviceSize o, co; if (ind_peek(sh, ind, mdi, mdi_n, mdi_st, 1)) { g_skipped++; return; }
                    if (mdi_n) { if (mdi_ranges(ind, mdi, mdi_n, mdi_st, 20, &b, &o, &cb, &co)) vk.vkCmdDrawIndexedIndirectCount(g_cb, b, o, cb, co, mdi_n, mdi_st); else mdi_cpu(1, ind, mdi, mdi_n, mdi_st); }
-                   else { if (!vka_addr(ind, 20, &b, &o, NULL) || (o & 3)) SKIP("indirect draw arguments at %#llx are not in placed guest RAM: skipped", (unsigned long long)ind);
+                   else { if (!vka_addr(ind, 20, &b, &o, NULL) || (o & 3)) SKIPD(VKS_GUESTMEM, "indirect draw arguments at %#llx are not in placed guest RAM: skipped", (unsigned long long)ind);
                           vk.vkCmdDrawIndexedIndirect(g_cb, b, o, 1, 20); } }
         else if (istart) {   // the run's first draw: indirect, its instance count raised by the draws that join
             RUN.args[0] = (uint32_t)di->count; RUN.args[1] = 1; RUN.args[2] = 0; RUN.args[3] = (uint32_t)di->base_vertex; RUN.args[4] = 0;
@@ -3219,7 +3262,7 @@ void vka_dispatch(vka_dstate *d, const p_dispatch *dp) {
     if (!p) { g_skipped++; if (vks_pipeline_counts(vka_pso_wait)) g_skip_dev[VKS_PIPELINE]++; return; }
     d->b.dispatch[0] = (uint32_t)dp->x; d->b.dispatch[1] = (uint32_t)dp->y; d->b.dispatch[2] = (uint32_t)dp->z; d->b.nvn2 = (uint32_t)vka_nvn2();
     VkBuffer ib = VK_NULL_HANDLE; VkDeviceSize io = 0;
-    if (dp->ind && (!vka_addr(dp->ind, 12, &ib, &io, NULL) || (io & 3))) SKIP("indirect dispatch arguments at %#llx are not in placed guest RAM: skipped", (unsigned long long)dp->ind);
+    if (dp->ind && (!vka_addr(dp->ind, 12, &ib, &io, NULL) || (io & 3))) SKIPD(VKS_GUESTMEM, "indirect dispatch arguments at %#llx are not in placed guest RAM: skipped", (unsigned long long)dp->ind);
     uint32_t sb = spill_bytes(sh[5]); uint64_t ns = 0;   // shared memory in the spill buffer: the slices this dispatch binds (spill_buf)
     if (sb) {
         if (!spill_buf(sb)) SKIP("dispatch of %016llx skipped: no shared memory spill buffer of %u bytes", (unsigned long long)sh[5]->key, sb);

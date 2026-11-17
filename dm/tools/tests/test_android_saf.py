@@ -29,7 +29,7 @@ class SaveZipJvm(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             t = Path(d)
             (t / 'BuildConfig.java').write_text(STUB)
-            srcs = [SRC / f'{n}.java' for n in ('SaveZip', 'SaveStore', 'PackZip', 'CopyPlan', 'GameFile', 'GameList', 'Frontend', 'Pack', 'DumpLayout', 'BuildCheck',
+            srcs = [SRC / f'{n}.java' for n in ('Streams', 'SaveZip', 'SaveStore', 'PackZip', 'CopyPlan', 'GameFile', 'GameList', 'Frontend', 'Pack', 'DumpLayout', 'BuildCheck',
                                                 'RomfsCheck', 'Nup', 'Nsp', 'Zstd', 'Profile', 'ShaderLibs')]
             r = subprocess.run(['javac', '-Xlint:all,-try', '-Werror', '-encoding', 'UTF-8', '-d', str(t / 'classes'), str(WORDS), *map(str, srcs), str(TEST), str(t / 'BuildConfig.java')],
                                capture_output=True, text=True)

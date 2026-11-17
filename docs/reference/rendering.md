@@ -4,12 +4,14 @@ The replay on Metal (`dm/gfx/nvn/nvn_mtl.m`) and the Vulkan and OpenGL layers. E
 
 ## Driver loading
 
-### A Qualcomm custom driver silently falls back on Android 15
+### A Qualcomm custom driver silently falls back on Android 15 and 13
 
 - **Symptom:** the launcher selects Qualcomm 891.14, but Vulkan reports the system driver's version and features. Logcat's `hook_impl` says `cannot locate symbol "AIBinder_Class_setTransactionCodeToFunctionNameMap"` and `falling back`. The custom-driver tag describes the requested loader, not proof that its ICD loaded.
 - **Cause:** Qualcomm's helper imports an API 36 Binder tracing annotation that Android 15 lacks. The existing annotation stub in `libmain_hook.so` is global in the Vulkan loader's namespace, but libadrenotools creates a different namespace for the vendor driver, parented to the vendor namespace. That namespace preloads only `libhook_impl.so`; the stub is not visible there.
 - **Fix:** build `android/host/adreno_binder_compat.c` into `hook_impl` with `DF_1_GLOBAL`. The shim has the API's three arguments and forwards them to `libbinder_ndk.so` when the system supplies the annotation. On older systems only the optional transaction-name annotation is omitted; Binder transactions are not replaced. No vendored file or driver binary changes. The system-driver path does not load the hooks.
 - **Check:** on Odin 3, Adreno 830, Android 15 (2026-11-11), the same unmodified 891.14 driver changes from Vulkan 1.3.284 / `0x80320048` (silent system fallback) to Vulkan 1.3.351 / `0x8037b00e`; the missing-symbol error disappears. `test_android_binder_compat.py` checks both an absent annotation and forwarding all arguments, resolving the function once. This fixes loading only: neither driver advertises `VK_EXT_mesh_shader` on this device, so it does not restore missing mesh geometry.
+- **Also on Android 13 (open):** on an AYN Thor Max (Adreno 740, Android 13, v0.3.41), Qualcomm 842.8, 849 and 891.7 ran the phone's own 12/27/23 driver (Build `69e13475cb`, Vulkan 1.3.128, version `0x802a4035`, the same as the System run) while the log said `custom (DM_VK_DRIVER)`; all four runs ended in the same SIGSEGV of the system driver (`addr=0x140`, pc ending in `3fc`, about 25 s in). 837.6, 840 and 863.1 did load there. Which symbol the three lack on Android 13 is unknown (no logcat); the shim above covers only the Binder annotation.
+- **Detection (all drivers):** after device creation the host checks that the custom driver's library file is mapped in the process (`vka_driver.c` `vka_driver_mapped`, `vka_driverpath.h`; adrenotools' hook falls back with no word to the host). If it is not: `[RED] custom GPU driver <name> did not take: <folder>/<lib> is not mapped in the process, so the driver line above is the phone's own driver`; the readiness facts get `driver.customMapped=0`. A crash inside a library without symbols (a stripped vendor driver) now prints its file and offset instead of a bare address (`crash.c` `crash_off`). Test: `t_android_driverpath`.
 - **Found on:** [The Legend of Zelda: Ocarina of Time](../../dm/games/0400486024DEC000/README.md). Related earlier stub: [Forgejo PR 32](https://git.eden-emu.dev/moceure/BananaNative/pulls/32). API contract: [Android NDK Binder](https://developer.android.com/ndk/reference/group/ndk-binder#aibinder_class_settransactioncodetofunctionnamemap).
 
 ## Textures and formats
@@ -213,6 +215,14 @@ The replay on Metal (`dm/gfx/nvn/nvn_mtl.m`) and the Vulkan and OpenGL layers. E
 - **Fix:** `nvn_tex.c` `level_walk`: a level at least one tile wide, high and deep is laid out with its width padded to whole tiles, the levels from the first smaller one on form the mip tail (packed as usual), and the storage is whole tiles, 64 KB aligned.
 - **Found on:** [Monster Hunter Rise](../../dm/games/0100B04011742000/README.md): laid out unpadded, the 1024×1024 ASTC 6×6 clothes of Hinoa and Minoto (43 GOBs wide instead of 48, level 1 at 0x81000 instead of 0x90000) read 2,183 all-zero blocks in level 0 and 3,043 in level 1, which ASTC decodes as its error colour: their trousers, sleeves and gloves were magenta, worst in Kamura Village.
 
+### Packaged textures carry width alignment as well as height and depth
+
+- **Symptom:** a fixed magenta rectangle over part of a packaged ASTC texture (Bayonetta Origins' tutorial-card background), the same in every frame.
+- **Cause:** `SetPackagedTextureLayout` was kept only as byte 0 (block height and depth) in the texture description. Byte 1's low nibble is log2 of a width alignment in GOBs: the levels at least one tile (that many GOBs wide, one block high and deep) in size are padded to whole tiles, as a sparse texture's are to its 64 KB tiles, the levels from the first smaller one on form the mip tail, and a layered texture's layers align to the whole block times that width. It applies whether or not the texture is `SPARSE`. Without it a texture whose width is not a whole number of tiles was laid out too narrow: its rows from the second block row on, its later levels and layers read from the wrong place, and the padding they read, all-zero ASTC blocks, decodes as magenta.
+- **Fix:** `nvn_tex.c` (`packaged_width_log2`, `level_walk`, `layer_bytes`): `nvn_texdesc.pkg_layout` holds byte 0 and the width nibble, and the width alignment pads the tiled levels and aligns the layers. A layout with a width nibble of 0 is laid out as before; flags and the sparse tile layout the game reads are unchanged. The `[nvn] packaged texture` log line prints the width alignment.
+- **Found on:** Bayonetta Origins: Cereza and the Lost Demon (`0100CF5010FEC000`, 1.0.0, no profile in the repository): the 2052x1026 ASTC 6x6 tutorial-card background (byte 0 3, width 4) is 96 GOBs wide and 0x120000 bytes; laid out 86 GOBs wide (0x102000) its rows from y 384 on read ten GOB columns of padding, the 240-pixel-wide magenta rectangle. Checked on an iPhone (PR #2268). The packaged layouts logged in nine other games' runs all have a width nibble of 0.
+- **Check:** `t_tex_layout` (width 0 and 4, a mip tail, an array and a cube; the width-4 shapes fail without the fix) and `t_nvn` (the builder keeps the nibble, the flags and sparse tile layout are unchanged). The author compared the layout with the SDK's own arithmetic on 37,296 shapes and replayed the game's texture on the GPU; neither is in the repository (they need the game's files).
+
 ### Sparse textures take the block height of their 64 KB tile
 
 - **Symptom:** a CPU-filled texture shuffled into a patchwork of rectangles (OCTOPATH TRAVELER's world map on the traveler selection).
@@ -302,6 +312,13 @@ The replay on Metal (`dm/gfx/nvn/nvn_mtl.m`) and the Vulkan and OpenGL layers. E
   - **Also fixed on the way:** the copy of the bitmap and the fill that clears it had no barrier between them, a write-after-read hazard that Vulkan does not order (ed88322f). It was not the cause.
   - **Checks:** `pfbprobe` with the set-2 layout is to show 20/20 on both drivers, and the phone round is pending (open).
 - **Found on:** [The Legend of Zelda: Ocarina of Time](../../dm/games/0400486024DEC000/README.md), Adreno 840, Qualcomm's driver 0x8034a02c: Link's house walls stayed black there with texture pool reads on (Turnip V39 unaffected).
+
+### Textures read only through the pool stay black while the CPU is ahead (Android, experimental switch)
+
+- **Symptom:** (Android) on a loading spike, textures read only through the texture pool show black for several frames before they appear.
+- **Cause:** such a texture's image is made when the prepare finds the readback of the submission that first read it done ([Textures read only through the pool were never made](#textures-read-only-through-the-pool-were-never-made-android)); `pfb_consume_locked` takes only readbacks already done, so the gap is however many submissions the CPU recorded past that one before the GPU caught up, up to the readback ring's 8.
+- **Fix:** experimental, off by default: `DM_VK_POOL_EAGER=1` (live) makes the prepare wait, at most the hang time, for the oldest readback of a submission already queued, so the image comes about one submission after its first read. The wait stalls recording on frames that are already long, so it may lengthen them; after nx2android's Vulkan backend.
+- **Found on:** not measured here; carried over from nx2android's Vulkan backend for A/B runs (the "texture pool reads" line and long frames with first-use uploads are what to compare).
 
 ### Unreal's texture streaming pool
 
@@ -780,6 +797,14 @@ The replay on Metal (`dm/gfx/nvn/nvn_mtl.m`) and the Vulkan and OpenGL layers. E
 - Instanced array draws (`DrawArraysInstanced`) carry instance count and base instance in the `OP_DRAW` record.
 - **Found on:** [Super Mario Bros. Wonder](../../dm/games/010015100B514000/README.md).
 
+### Instanced runs past the device's vertex input limits (Android)
+
+- **Symptom:** with Game settings › Instanced draws on, the game stops with `CRASH sig=11 addr=0x40c` shortly after `instanced runs: variant of <key> (binding <n>) made`, always at the same code offsets, on a Mali (PanVK) and on a PowerVR (system driver) phone; on Turnip and Qualcomm's driver it runs. With the switch off the game is stable.
+- **Cause:** (not run on a phone, the limits of those two drivers are not in any log yet) the runs bind their per-instance table as vertex input location 30 at binding 31 (`INST_LOC`, `INST_BIND` in `vka_draw.c`). Vulkan guarantees only 16 attributes and 16 bindings; a device below 31 and 32 gets a vertex input state past its limits, which is undefined, and a driver may dereference a null table there. Both phones' drivers are the likely ones with such limits.
+- **Fix:** general, `inst_device_ok` (`vka_draw.c`): the runs, and the prewarm's instanced variants, are off on a device whose `maxVertexInputAttributes` is 30 or less or `maxVertexInputBindings` 31 or less, with a `[RED] vk: instanced draws are off: the device allows <n> vertex input attributes and <m> bindings` line when the switch was on. The `draw path` log line now carries both limits, so a log shows whether the guess holds.
+- **Open:** a log from a Mali or PowerVR phone with the new `draw path` line (`vertex input attributes 16 bindings 16` would confirm the cause; 32 and 32 would mean the crash is something else and the gate does nothing there). The crash's frame in the driver is not known.
+- **Found on:** [Donkey Kong Bananza](../../dm/games/040074A01BF12000/README.md) on a Mali-G1-Ultra (faux123 v1.1.4, v0.2.4 to v0.3.1, [#59](https://git.eden-emu.dev/moceure/BananaNative/issues/59)); the same crash site in Mario Kart World and Ocarina of Time on a Mali-G615 ([#321](https://git.eden-emu.dev/moceure/BananaNative/issues/321)) and with Instanced draws on a PowerVR C-Series ([#228](https://git.eden-emu.dev/moceure/BananaNative/issues/228)).
+
 ### 8-bit index buffers
 
 - **Cause:** Metal has only 16/32-bit indices.
@@ -918,6 +943,13 @@ The replay on Metal (`dm/gfx/nvn/nvn_mtl.m`) and the Vulkan and OpenGL layers. E
 - **Check:** `t_rast_discard` passes 19 checks under Metal validation: array/indexed storage writes despite an empty scissor and both faces culled, two instances, unchanged clear colours, normal rendering between two discard phases, and an ordered storage-write consumer. `test_discard.py` compiles a generated entry with side effects before two different returns for Mac and iOS, and checks which vertex shaders get one.
 - **Found on:** [Xenoblade Chronicles 3](../../dm/games/010074F013262000/README.md#files-and-shaders); its note tracks the gameplay verification.
 - **Also found on:** [Metroid Prime Remastered](../../dm/games/010012101468C000/README.md): image stores only. Its volumetric fog fills a 100×57×64 RGBA16F froxel volume with `1cbc19f806a08166`, 5,700 points with rasterization off that each write the 3D image; a full-screen pass (`1b17e5a457135e3b`) then samples the volume at each pixel's depth and blends it over the scene (colour × alpha + inscatter). Only storage buffer writes counted, so the draw was skipped, the volume stayed zero, and every scene (the Frigate's hull, the gunship in the opening) came out black while the HUD drew over it. Neither the CPU nor any other GPU operation writes the volume (its guest memory stays zero, pool flags `0x22`); `DM_NVN_TEXSNAP` showed the scene intact until the fog pass.
+
+### Rasterizer-discard runs and stale low-resolution depth on Adreno (Android, experimental switches)
+
+- **Symptom:** (Android, Adreno) seen in nx2android's Vulkan backend, not yet here: slivers and grass drawn from vertices a rasterizer-discard draw had not written yet, and whole triangles culled by the low-resolution depth (LRZ) of another depth buffer (Xenoblade Chronicles 3's cloud dome, 13 Sentinels' checkerboard of stale bins).
+- **Cause:** NVN's GPU runs a pass's draws in order; Adreno runs the vertex shaders of a pass's draws in its binning pass, so a draw can read memory an earlier rasterizer-discard draw of the same pass has not written. And its driver may apply the LRZ of the depth buffer used before in the binning of later passes on other depth images.
+- **Fix:** experimental, each off by default until a game here is shown to need it (all live): `DM_VK_RD_SPLIT=1` gives runs of rasterizer-discard draws a render pass of their own, `DM_VK_RD_TOUCH=1` adds a 4-byte transfer read of each storage buffer such a run wrote where it ends (`vka_draw.c` rd_run / rd_touch); `DM_VK_LRZ_TOUCH=1` writes one texel of the depth image a pass switches away from back unchanged, and reads one of a depth image the pass loads, before the pass (`vka_tex.c` vka_lrz_touch, called by `rp_begin`), which drops a stale LRZ. After nx2android's Vulkan backend.
+- **Found on:** nx2android's runs of [Xenoblade Chronicles 3](../../dm/games/010074F013262000/README.md) and [13 Sentinels: Aegis Rim](../../dm/games/01003FC01670C000/README.md); Mario Kart 8 Deluxe has no such draws. Not run here.
 
 ### Primitive barriers order vertex storage writes
 
@@ -1103,6 +1135,13 @@ The replay on Metal (`dm/gfx/nvn/nvn_mtl.m`) and the Vulkan and OpenGL layers. E
 - **Cause:** the host took `nvnCommandBufferDownsample` only as a multisample resolve and skipped the rest.
 - **Fix:** a single-sample source is drawn into the destination as a whole-level scaling copy with bilinear filtering, converting the format (`copy_t2t`, through `copy_t2t_draw`; [Copies a blit cannot do, drawn](#copies-a-blit-cannot-do-drawn)).
 - **Found on:** [Bayonetta 2](../../dm/games/01007960049A0000/README.md): its bloom from a 320x176 target into 80x48 and 48x32 textures, and its 1280x720 BGRA8 frame into an RGBA8 texture of the same size.
+
+### Tiled multisample resolves
+
+- **Symptom:** `[RED] NVN unimplemented function called: nvnCommandBufferTiledDownsample`; menus render but the stage is black or incomplete.
+- **Cause:** the tiled resolve entry points reached the unimplemented-call stub, leaving their destination textures unchanged. Ordinary `Downsample` already recorded a resolve.
+- **Fix:** `TiledDownsample` and `TiledDownsampleTextureView` use the same recorded resolve as their ordinary counterparts. Texture descriptors and the selected views are copied when recorded; the resolve runs in submission order. Tegra tiled-cache scheduling hints remain host no-ops. This adds no new format, size-conversion or sample-count support to the existing resolve path.
+- **Found on:** Ikaruga 1.0.2, reported by [hada0127 in issue #592](https://github.com/seedds/nxnative/issues/592), with a [source-only patch](https://gist.github.com/hada0127/5cf963267ae4e0da47ecf8e150c7bdf6). The report's independent SDK audio-layout failure is separate. No repository game profile or current gameplay validation is provided by this change.
 
 ### Depth-stencil copies carry the stencil
 

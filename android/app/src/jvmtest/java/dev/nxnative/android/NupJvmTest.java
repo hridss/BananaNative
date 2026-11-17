@@ -346,7 +346,11 @@ public final class NupJvmTest {
         other.delete();
         // pack.tsv's base selector
         p = Pack.read(packDir(t, "pack-base", nup.getName() + ":base/romfs", null));
-        check(p.romfsPath(nup).equals(abs + ":base/romfs") && p.aocLinks(nup).isEmpty(), tag + "base selector");
+        check(p.romfsPath(nup).equals(abs + ":base/romfs"), tag + "base selector");
+        // a pack with no aoc row (Prepare ran before the DLC was there, Forgejo #410): the add-on the .nup holds is linked all the same, as a row's would be
+        check(p.aocLinks(nup).size() == 1 && abs.equals(p.aocLinks(nup).get("1.nup")), tag + "an add-on without an aoc row is linked: " + p.aocLinks(nup));
+        // a row for the index keeps its row: no second link for it
+        check(Pack.read(packDir(t, "pack-row-once", nup.getName() + ":base/romfs", "1\t" + nup.getName() + ":addon/" + AOC + "/romfs")).aocLinks(nup).size() == 1, tag + "one link for a row and its add-on");
         // a pack made from a folder, used with the .nup: the pack's version's package
         p = Pack.read(packDir(t, "pack-folder", "updates/458752/romfs", "1\tdlc/" + AOC + "/0/romfs"));
         check(p.romfsPath(nup).equals(abs + ":update/458752/romfs"), tag + "folder pack's version: " + p.romfsPath(nup));

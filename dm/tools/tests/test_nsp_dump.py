@@ -137,6 +137,13 @@ class Scan(Base):
             self.assertEqual(shader_split.dump_addons(str(self.dump)), [])
         self.assertEqual(shader_split.dump_addons(''), [])
 
+    def test_split_finds_pack_dump_on_its_own(self):   # BananaNative #400/#403: the phone's split has only its own folder's relatives on sys.path; 'No module named pack_dump'
+        with mock.patch.dict('os.environ', DM_GAME=f'{TID:016X}'): import shader_split
+        keep = [p for p in sys.path if Path(p or '.').resolve() != REPO / 'scripts']
+        mods = {k: v for k, v in sys.modules.items() if k != 'pack_dump'}
+        with mock.patch.object(sys, 'path', keep), mock.patch.dict(sys.modules, mods, clear=True), mock.patch('builtins.print'):
+            self.assertEqual(shader_split.dump_addons(str(self.dump)), [])
+
     def test_yoink_data_patch(self):   # Yoink files an add-on's data patch as its own dlc/<data patch ID>/<version>/ (ID + 0x800): its RomFS, the patched tree, is the add-on's
         (self.dump / 'dlc/040074a01bf13801/131072/romfs').mkdir(parents=True)
         (self.dump / 'addons/040074a01bf13002/0/romfs').mkdir(parents=True)   # add-ons under addons/ too

@@ -268,3 +268,4 @@ that diagnostic launch did not yet have a shader map configured.
 - [Logic operations through a library of its own](../../../docs/reference/rendering.md#logic-operations-through-a-library-of-its-own): the light probe lists; see [Rendering](#rendering).
 - [Ordering barriers before a draw that writes](../../../docs/reference/rendering.md#ordering-barriers-before-a-draw-that-writes): the skinning draws; see [Rendering](#rendering).
 - [Present thread rescues a silent display link](../../../docs/reference/frame-rate.md#present-thread-rescues-a-silent-display-link): the motion review's windowed timing comparison is confounded by repeated stalls; see [Controller motion review](#controller-motion-review).
+- [Monolith's native frame interval](../../../docs/reference/frame-rate.md#monoliths-native-frame-interval) (the same engine implementation; no cap set here until the game is tested at one).

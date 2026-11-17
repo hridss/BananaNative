@@ -98,6 +98,29 @@
 - **Check:** `dm/host/tests/t_fs.c` (a copy with the zstd extent zeroed mounts, the file does not open, the line says "all zeros"), `dm/tools/tests/test_nup.py` `test_verify_names_every_damaged_file`, `CopyPlanJvmTest` (`shortBy`; `GameCopy`'s own loop is not run in a test, not compiled here without the Android SDK).
 - **Found on:** [Mario Kart World](../../dm/games/0400C3F00006E000/README.md) (#291, update 917504), [The Legend of Zelda: Ocarina of Time](../../dm/games/0400486024DEC000/README.md) (#342, 122 `Tex` files from `Ice_Base_ColorMask_00_Fi` to `MaterialCmb`; #290 earlier was a cut copy too).
 
+### A damaged `.zs` in a RomFS folder: the game's own load fails with no host line (Forgejo #352)
+
+- **Symptom:** a game played from a dump folder (not a `.nup`) stops at the same place every run and with every driver: the game's own log says a resource did not load, then a null read. Donkey Kong Bananza: `[dm] [game] Product Log : Model/TemplateVoxelKeyMoveParts.TemplateVoxelKeyMoveParts.bfresの読み込みに失敗.LoadResult = 5`, then `CRASH sig=11 addr=0 pc=main+0x27c830` (458752: the loader's result is null and the next function reads its type, `ldr x8, [x0]`). The host logs nothing about the file.
+- **Cause:** a RomFS image or `.nup` checks each `*.zs` for a zstd frame at its first open and answers a damaged one "not found" (or its `romfs_substitute`) with a `[RED] … is not a zstd stream` line ([Texture files read as zeros](#texture-files-read-as-zeros-or-a-zs-that-cannot-decompress-from-a-nup-forgejo-291-342)); a folder served the file as it was, so a file that a cut or sparse copy left as zeros reached only the game's decompressor. Whether #352's file is such a file is not proven: the same file in the `.nup` here is a good 4,026-byte zstd frame in both the base and update 458752, and that player's log names no read error.
+- **Fix:** `hle_fs.c` `folder_zcheck`: a `*.zs` opened from a read-only folder mount (the RomFS folder, an overlay) whose first 4 bytes are neither a zstd frame nor a skippable frame gets the image's treatment and line, which adds "it begins with zeros: a copy that stopped or was cut, copy the game files again" when they are zeros; `DM_ROMFS_ZSTD_CHECK=0` turns it off. One 4-byte read per open of a `*.zs`. A file cut short after a good first block is still not found (the frame is not walked).
+- **Check:** `dm/host/tests/t_fs.c` (a good frame, a skippable frame and a 2-byte file open as they are; zeros answer "not found"; a named substitute is served).
+- **Found on:** [Donkey Kong Bananza](../../dm/games/040074A01BF12000/README.md#found-on-this-game) (#352, update 458752 from a folder; open: the player's next log, with this line or without it, tells whether the file is damaged).
+
+### An update's code beside another release's RomFS: a null read at the first game frame (Forgejo #417)
+
+- **Symptom:** Fire Emblem Fortune's Weave stops at its first game frame, right after `[dm] [nvn] DLSS network …: the Vulkan stand-in draws it`, with `CRASH sig=11 addr=0 pc=main+0x13e5d8` (`lr` the same: the return of a virtual call that gave a null data pointer, `ldr w8, [x0]`), on every driver. The log's header says `version 0`, `game build ID: DB93B0125F485060` (update 131072's code) and `DM_ROMFS …/base/romfs`. Players whose `DM_ROMFS` is `updates/131072/romfs` get past that frame.
+- **Cause:** the pack was made on a PC from a folder whose `base/` held 131072's code (no `updates/`): `pack_android.py` packed version 0 with 131072's build IDs and `base/romfs`, the launcher found that build in `base/` (the same build under another version, as `DumpLayout` allows) and mounted `base/romfs`. The game's `Fs.bin.zst` (its own index of its files: per-file content and release, a zstd-compressed MessagePack map) names the release its RomFS is; 131072's says `ReleaseName` `"002"`, `ReleaseVersions` `[2, 0]`. The profile had only `romfs_marker Fs.bin.zst`, which every release has, so no check told 131072's data from another's. That #417's `base/romfs` holds another release is likely but not proven: no base RomFS here to read its `ReleaseName`, and the player sent none.
+- **Fix:** a `romfs_check` row may read a MessagePack key, `<path> key:<name> <expected>` (`RomfsCheck.key`, zstd-decoded first; `dm/games/game.py` accepts the form), and the profile has `romfs_check Fs.bin.zst key:ReleaseName 002`. Prepare (`DumpLayout.find`), the card and Play (`BuildCheck.build`) now refuse a RomFS that does not name release 002 before the game starts, and the message names the version of the build's own profile row (131072), not the folder the code was found in (`base/`, version 0).
+- **Check:** `GameListJvmTest` `romfsKeyChecks` (through `test_android_gamelist.py`): the key read through a zstd frame and from a plain file, release 000 and a missing file refused, and #417's shape (131072's code in `base/` with release 000's RomFS refused by Prepare and the card, with 002's passing). Checked by hand on the real 131072 `.nup` and on its `Fs.bin.zst` as a folder file: `002`.
+- **Found on:** [Fire Emblem Fortune's Weave](../../dm/games/04007EF01F8AE000/README.md#found-on-this-game) (#417, Galaxy Z Fold 8; open: the player's `Fs.bin.zst` or a run with this check).
+
+### A dump tool's `.listing` files in the game's folders
+
+- **Symptom:** a game built from a dump folder crashes in its own code while it loads, where builds from other dumps of the same version play: Nintendo Switch Sports Resort at `main+0x9d7c60`, listing its `Parameter` folders.
+- **Cause:** an FTP dump keeps the server's directory listing as `.listing` in every folder, which the NUP spec (§6.3) allows a producer to keep. The RomFS image packed it as a game file, so a game that lists a folder saw one more entry. Switch Sports Resort cuts each name at its first `.`, got an empty name, loaded `Parameter/<folder>/` and found no resource.
+- **Fix:** `ARTIFACTS` in `dm/tools/romfs_image.py`, the dump-tool files that are not game files (`.listing`), is left out of the image, out of a NUP's RomFS (`scripts/pack_nup.py`) and out of the survey's file list (`dm/games/profile_guess.py`). Other dot files stay game files. Test: `test_romfs_image.py` (`test_dump_tool_listings_are_left_out`).
+- **Found on:** [Nintendo Switch Sports Resort](../../dm/games/04008E001F098000/README.md#found-on-this-game) (v65536, from a dump folder).
+
 ## Add-on content
 
 ### DLC in Documents is ignored or removed DLC remains installed
@@ -152,6 +175,13 @@
 - **Cause:** the same AppleDouble files as above, beside the shader build's outputs. `c1_guard.py` took every name ending in `.metal` for a shader's MSL and read the binary `._` file as text. `cb_extent.py` (every `_b.json`) skipped it only because it ignores what it cannot parse, and `dmsh_mtlcache.py` (every `_b.metal`) took `._<key>_b` for a shader, found no readable reflection for it and so filled the Metal cache from none of that folder's libraries.
 - **Fix:** the three take only the names the shader build writes, `<16 hex key>_b….metal` / `.json` as `dmsh_build.py` (`OUT_KEY`) and `regress.py` already did: `c1_guard.py` `outputs` (which `cb_extent.py` uses too) and `dmsh_mtlcache.py` `OUTPUT`. None of them is part of the chain version. `dm/tools/tests/test_nsp_chain.py` runs both table tools on a folder with `._` files; the old `c1_guard.py` stops on it. On 13 Sentinels' 751 shaders both tables are unchanged.
 - **Found on:** a user's iOS shader build on an external drive ([PR #555](https://github.com/seedds/nxnative/pull/555)). Applies to every NVN game.
+
+### The Android pack stops moving its files on an exFAT drive (Android)
+
+- **Symptom:** on a Mac, with the dump's work folder on an exFAT or FAT drive, `scripts/pack_android.py` stops with `FileNotFoundError` on a `._<name>` path while it moves the split's files into the package folder (`split_shaders`) or a module's rewritten files out of its staging folder (`swap_in`).
+- **Cause:** the same AppleDouble files as above. Both functions list a folder and then move each entry by rename; macOS moves a file's `._<name>` with it, so the listing's `._` entry is gone by its turn.
+- **Fix:** both skip a listed entry that no longer exists (`split_shaders` also takes the listing before the first move).
+- **Found on:** [The Legend of Zelda: Link's Awakening](../../dm/games/01006BB00C6F0000/README.md#found-on-this-game), packed from a `.nup` on an exFAT drive. Applies to every game packed on a Mac.
 
 ## Compressed inputs
 
@@ -349,6 +379,19 @@
 - **Fix:** `vk_android_win.py` `install()` sets `os.O_BINARY` on `os.open` calls that do not ask for `os.O_TEXT`, and supplies `os.pread` as a locked `os.lseek` + `os.read` loop (as `dm/tools/nup.py` does). `vk_android_build.py` is unchanged, so `DMSH_VK_CHAIN` does not move. Test: `dm/tools/tests/test_vk_android_locate.py` `test_real_package_files_and_windows_wrapper`; checked on Windows with a three-shader Donkey Kong Bananza key-list build (`delta check: 3 of 3 shaders as the manifest has them`).
 - **Found on:** [Donkey Kong Bananza](../../dm/games/040074A01BF12000/README.md#found-on-this-game) update 458752 on Windows. Applies to every game packed on Windows when any shader is translated.
 
+### An Unreal pak's AES decryption works only on the Mac
+
+- **Symptom:** off the Mac, any step that opens an Unreal pak or container with an encrypted index or entries (the shader split's `ue_legacy_jobs`, `uepak.py`'s key search) stops with `OSError` loading `/usr/lib/libSystem.B.dylib`.
+- **Cause:** `uepak.py` `aes_decrypt` called CommonCrypto's `CCCrypt` through ctypes, which only the Mac has; the packer's environment (`android/environment.yml`) has no crypto package.
+- **Fix:** `aes_decrypt` uses the system's cipher where there is one, CommonCrypto on the Mac and CNG (`bcrypt.dll`) on Windows, and elsewhere `aes_decrypt_py`, an AES-256 ECB decryption in Python (under 1 MB a second: enough for an index and the key search, slow for a pak whose every entry is encrypted). `dm/tools/tests/test_uepak_aes.py` checks both on FIPS-197's AES-256 example and against each other.
+- **Found on:** the Windows and Linux packers; applies to every Unreal game with an encrypted pak index, such as [OCTOPATH TRAVELER 0](../../dm/games/01005270232F2000/README.md). Not yet run on a dump off the Mac.
+### The shader build on Linux stops at the translator: "Exec format error" (Android)
+
+- **Symptom:** on Linux, `scripts/pack_android.py` splits the shaders and then stops in `vk_android_build.py` when it starts the translator, with `OSError: [Errno 8] Exec format error` on `dm/gfx/tools/dmsh_xlate_bin/dmsh_xlate`, or the tool check reports that the translator does not run.
+- **Cause:** the apphost `dmsh_xlate` in the repository is the Mac's (a Mach-O file). Windows already started the portable `dmsh_xlate.dll` beside it with `dotnet` (`tool_lock.py` `xlate_command`, through `vk_android_win.py`), but on Linux the packer ran `vk_android_build.py` directly and `xlate_command` returned the apphost.
+- **Fix:** on Linux `xlate_command` returns `dotnet <path>.dll` when the `.dll` is there (`DOTNET_ROOT`'s `dotnet`, else the one on `PATH`), `no_run_message` names the .NET 10 runtime without the Mac's or Windows's install hints, and `pack_android.py` starts the build through `vk_android_win.py` on Linux too, whose `install()` there only wraps the translator's start (the `os.pread` and file adaptations stay Windows's). `vk_android_build.py` is unchanged, so `DMSH_VK_CHAIN` does not move.
+- **Found on:** a pack made on Linux. Applies to every game packed on Linux.
+
 ### The Mac's pack translates every shader of a selected profile at a new library version
 
 - **Symptom:** after an update with a new Android library version and no shader change (the release notes' stamp rows), `scripts/pack_android.py` on a Mac packs most games in seconds, but for a profile with a selected set it translates the whole shader map into `android-shaders/lib/v-<V>/results`: Pokopia's 131,426 shaders at about 6 hours, mostly on one core, though its older library plays fine. The same happened at the version before.
@@ -388,6 +431,14 @@
 - **Check:** `dm/tools/tests/test_android_prepare_code_only.py` (`--optional-shaders` without a library; the pack step's argument, the delta's folders, no chain check for a code-only job), `test_android_packzip.py` (a zip with no library stages). Not run on a phone.
 - **Found on:** every Switch 2 title, first [Donkey Kong Bananza](../../dm/games/040074A01BF12000/README.md#found-on-this-game) (its 22,852 shaders).
 
+### Prepare ends with `PermissionError: [Errno 1]` on a dump on an SD card or USB drive (Android)
+
+- **Symptom:** a dump under `/mnt/media_rw/...` (exFAT or FAT through Android's FUSE layer): Prepare fails at the end with `Finishing the pack: exit code 1` and `PermissionError: [Errno 1] Operation not permitted` in `shutil.py` `copystat`, while `dmsh_vk.lib.partial` is finished.
+- **Cause:** `copy_counted` ended with `shutil.copystat` and the stamp copy used `shutil.copy2`; exFAT refuses `chmod` and `utime`, so a complete copy raised. The "is the copy current" test compared modification times, which exFAT cannot keep, so every Prepare would have copied the 700 MB library again.
+- **Fix:** `scripts/pack_android.py` `keep_times` / `copy_file` copy the data and take the metadata best effort (`OSError` ignored); `same_copy` judges a copy current by size (and by bytes for a file up to 1 MiB, the stamp), never by time. `scripts/pack_dump.py` `clone` has the same fallback. The partial file goes in place with `os.replace`, which needs no metadata.
+- **Check:** `CopyOnExfat` in `dm/tools/tests/test_pack_android.py` makes `shutil.copystat`, `os.utime` and `os.chmod` raise `PermissionError`. Not run on a phone or on real exFAT.
+- **Found on:** Forgejo issue 360 (`/mnt/media_rw`, exFAT). Applies to every game.
+
 ## In-app updates (Android)
 
 ### The app says up to date though a newer release is on git.eden-emu.dev
@@ -414,3 +465,12 @@
 - **Second path (nx-list-merge):** after that fix the app still closed at every start with `FATAL EXCEPTION: nx-list-merge` and `Failed to allocate a 62196220 byte allocation` (`Game.collapse` from `MainActivity.refresh`, which tells a `.nup`'s build with `BuildCheck.gameKey` and `Game.ready`). Cause: both read the first 0x60 bytes of `exefs/main` through `Nup.read(node, 0x60)`, which decoded only the first zstd block but first read the whole stored extent (62 MB of the module, at once per entry) into a `byte[]`. Fix: for a head `Nup.read` takes the first 256 KiB of the extent and four times more only while the frame's blocks reach past it (`HEAD_EXTENT`), so a build ID costs a few hundred KiB, not the module; the other whole-file read at start, `RomfsCheck.line` (a text line of a RomFS file), takes at most its first MiB. `Game.collapse`, `Game.ready` and `BuildCheck.gameKey` treat an `OutOfMemoryError` as "cannot tell" (the list stays, the next start tries again), so no merge can end the app. The merge runs on one thread, one entry at a time. `hashTo` still reads the stored extent of one module at a time (the decoder indexes it); that is the pack check's, serialised by `CODE_LOCK`.
 - **Check:** `dm/tools/tests/test_android_packcheck.py`: two copies of a `.nup` whose newest main stores about 30 MB collapse to one entry under `-Xmx24m` (the old head read runs out of memory there); a generated 105 MiB module in a `.nup` is hashed under `-Xmx40m` with a peak around 20 MiB (an upper bound: the sum of the heap pools' peaks) and the old whole-buffer read runs out of memory at that heap; `hashTo` equals the digest of `Nup.read` for every file of a `.nup`; `Zstd.decodeTo` equals `Zstd.decode` on frames with windows from 1 KiB at several levels; a damaged extent is refused with the file's name; the verdict is read back and is invalid after another size, time, APK version or install time. Not run on a phone: the multi-card start on a 512 MB heap and the second start without a check.
 - **Found on:** Forgejo issue 214 and its hotfix round (an AYN Thor Max, Android 13, v0.3.14, Turnip); the log names no game, the module is a `.nup` file of about 105 MB. Applies to every game from a `.nup`.
+
+## Diagnostic reports
+
+### A large log can retain key material after redaction
+
+- **Symptom:** `scripts/bug_report.py` can include key material from a log larger than 4 MB in the report zip, despite removing the same key line from a smaller log.
+- **Cause:** `read_text` kept fixed byte windows before `redact` matched key lines. The first window could end partway through a value, below the matcher’s 32-hex-digit threshold; the last could start after the key name. Neither fragment was recognized as a key line. Whitespace before a detached value can also keep it inside the bundle’s final byte cap.
+- **Fix:** keep only complete lines at the two read boundaries before redaction, using the byte before the tail to distinguish a complete first line from a fragment. The omitted-byte count includes the discarded fragments; reading stays bounded. Files within the limit and a complete final line without a newline are unchanged.
+- **Found on:** synthetic logs in `dm/tools/tests/test_bug_report.py`, including a key value surviving in the final zip on the old code. No game files or real keys are needed; this is a diagnostic collector finding, not a game-runtime failure.

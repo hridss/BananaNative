@@ -37,7 +37,9 @@
 #include <time.h>
 #include <fcntl.h>
 #include "vka_mapbudget.h"
+#include "vka_rsslog.h"
 #include "vka_fd_alias.h"
+#include "vka_placefail.h"
 #include "vka_fileback.h"
 #include "../../host/plat/plat_guestmap.h"
 #include "vka_holes.h"   // ranges given back inside a placed segment ("Ranges given back inside placed memory" below)
@@ -60,6 +62,7 @@ void vka_mem_waits(uint64_t *place_ns, uint64_t *place_bytes, uint64_t *place_n,
     *wait_rec_ns = atomic_load(&g_lkw_rec_ns); *wait_other_ns = atomic_load(&g_lkw_oth_ns);
 }
 static uint64_t g_placed_bytes, g_placed_peak, g_placed_logged;
+static vkplace g_pfail;   // placements made and failed (vka_placefail.h; under g_pl: place() runs with it held)
 static _Atomic int g_maps_n = -1, g_maps_max;   // the process's memory maps at the last count (maps_tick, below) and vm.max_map_count
 
 static int placed_on(void) { static int v = -1; if (v < 0) { const char *e = getenv("DM_VK_PLACED"); v = !(e && !strcmp(e, "0")); if (!v) VLOG("DM_VK_PLACED=0: memory pools stay anonymous memory (the GPU sees none)"); } return v; }
@@ -525,7 +528,7 @@ static int place(uintptr_t lo, uintptr_t hi, VkDeviceSize *grow) {
     nvn_dirty_hold((const void *)lo, n);   // (see the note above prot_known; released after swap_end)
     prun pr[MAXRUN]; int npr = prot_runs(lo, hi, pr, MAXRUN), exact = prot_known(pr, &npr, lo, hi);
     p2 = mono_ns(); g_ph[1] += p2 - p1; p1 = p2;
-    void *p = NULL; int ok = 0, replaced = 0;
+    void *p = NULL, *q_placed = NULL; int ok = 0, replaced = 0;   // (q_placed: where the driver says it mapped, for the log: p is the plain map taken down before it)
     swap_begin(lo, hi);
     prot_readonly(pr, npr);   // writers wait in the fault hook from here
     if ((s.fd_alias ? (p = exported.mapped, 0) : vk.vkMapMemory(V.dev, s.mem, 0, VK_WHOLE_SIZE, 0, &p)) == 0 && p) {
@@ -541,7 +544,8 @@ static int place(uintptr_t lo, uintptr_t hi, VkDeviceSize *grow) {
             VkMemoryMapPlacedInfoEXT pi = {VK_STRUCTURE_TYPE_MEMORY_MAP_PLACED_INFO_EXT, .pPlacedAddress = (void *)lo};
             VkMemoryMapInfoKHR mi = {VK_STRUCTURE_TYPE_MEMORY_MAP_INFO_KHR, .pNext = &pi, .flags = VK_MEMORY_MAP_PLACED_BIT_EXT, .memory = s.mem, .offset = 0, .size = V.placed_range ? n : VK_WHOLE_SIZE};
             void *q = NULL;
-            if (!(r = vk.vkMapMemory2KHR(V.dev, &mi, &q)) && q == (void *)lo) ok = 1;   // (the driver's own mmap: not marked, see swap_end_ok below)
+            r = vk.vkMapMemory2KHR(V.dev, &mi, &q); q_placed = q;
+            if (!r && q == (void *)lo) ok = 1;   // (the driver's own mmap: not marked, see swap_end_ok below)
             else {   // the range may be gone now: put anonymous pages back with the bytes, which the memory still holds
                 if (!r) unmap_placed(s.mem);
                 sw_hole_check(lo, n, 0, "pool memory");
@@ -566,7 +570,10 @@ static int place(uintptr_t lo, uintptr_t hi, VkDeviceSize *grow) {
     g_ph[3] += p3 - p2; g_ph[4] += p4 - p3; g_ph[5] += p5 - p4;
     if (!(++g_ph_n & 255)) VLOG("placed memory: %llu placements: allocation %.0f ms, protections read %.0f ms (%.0f lines of /proc/self/maps a read), copy %.0f ms, maps %.0f ms, prefault %.0f ms, protections back %.0f ms; %d memory maps of %d at the last count",
                                (unsigned long long)g_ph_n, g_ph[0] / 1e6, g_ph[1] / 1e6, (double)g_maps_lines / g_ph_n, g_ph[2] / 1e6, g_ph[3] / 1e6, g_ph[4] / 1e6, g_ph[5] / 1e6, atomic_load(&g_maps_n), atomic_load(&g_maps_max));
-    if (!ok) { VRED("pool memory %#lx+%#llx: placed map %d at %p", (unsigned long)lo, (unsigned long long)n, r, p); if (s.fd_alias) vk.vkUnmapMemory(V.dev, s.mem); vk.vkDestroyBuffer(V.dev, s.buf, NULL); vk.vkFreeMemory(V.dev, s.mem, NULL); return 0; }
+    if (vkplace_note(&g_pfail, ok, ok ? 0 : r))
+        VRED("placed maps do not work on this driver: %u placements failed in a row (the last: %d%s), none has worked, so the GPU sees none of the game's memory and nothing is drawn; the extension is advertised, a map is refused. Another GPU driver (Settings > GPU driver) may map it (docs/reference/memory.md \"A driver that advertises placed maps and refuses them\")",
+             g_pfail.row, g_pfail.result, g_pfail.result == VK_ERROR_MEMORY_MAP_FAILED ? ", VK_ERROR_MEMORY_MAP_FAILED" : "");
+    if (!ok) { VRED("pool memory %#lx+%#llx: placed map %d, the driver mapped it at %p", (unsigned long)lo, (unsigned long long)n, r, s.fd_alias ? p : q_placed); if (s.fd_alias) vk.vkUnmapMemory(V.dev, s.mem); vk.vkDestroyBuffer(V.dev, s.buf, NULL); vk.vkFreeMemory(V.dev, s.mem, NULL); return 0; }
     if (V.bda) { VkBufferDeviceAddressInfo bai = {VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO, .buffer = s.buf}; s.bda = vk.vkGetBufferDeviceAddress(V.dev, &bai); }
     if (!lock_whole()) pthread_rwlock_wrlock(&g_rw);
     sg_insert(&s);
@@ -1018,8 +1025,9 @@ static void placed_line(uint64_t tot) {
     VLOG("%.2f GiB of memory pools is placed Vulkan memory (%d pools whole, %d by parts; %d pools, %.2f GiB not placed: no GPU address taken in them yet)", tot / 1073741824.0, n - nl, np, nl, lb / 1073741824.0);
 }
 static void maps_start(void);
+static void rss_start(void);
 void mtl_pool_add(const void *mem, uint64_t size) {
-    vka_init(); swap_hooks(); maps_start();
+    vka_init(); swap_hooks(); maps_start(); rss_start();
     int placed = 0, lg = 0, lazy = 0, part = 0; uint64_t t0 = mono_ns(), tot = 0; seglist l = {0};
     if (can_place(size) && lazy_on()) { lazy = 1; part = vkp_by_parts(size, part_min(), part_gran()); }
     else if (can_place(size)) { pthread_mutex_lock(&g_pl); placed = place_pool((uintptr_t)mem, size, &l, &lg, &tot, NULL); pthread_mutex_unlock(&g_pl); }
@@ -1128,6 +1136,8 @@ void mtl_pool_need(const void *addr, uint64_t len, const char *why) {
         int whole = !(pe.part && vkp_part(pe.mem, pe.size, a, e, part_gran(), &plo, &phi));
         seglist l = pe.segs; int lg = 0, span = 0, joinq = 0; uint64_t tot = 0, t0 = mono_ns(), mine = 0;   // (l: the parts it holds already)
         uintptr_t sa = a > pe.mem ? a : pe.mem, se = e < pe.mem + pe.size ? e : pe.mem + pe.size;   // the ask in the pool
+        if (whole && pe.part) VLOG("memory pool %#lx+%#llx (placed by parts): placing the rest of it whole (%.0f MiB) for %#lx+%#lx (%s)", (unsigned long)pe.mem, (unsigned long long)pe.size,
+                                   (pe.size - pe.pbytes) / 1048576.0, (unsigned long)a, (unsigned long)(e - a), why);   // (before: it takes seconds for a pool of GiB)
         pthread_mutex_lock(&g_pl);
         int placed = place_pool(plo, phi - plo, &l, &lg, &tot, &mine);
         if (placed && !whole) span = !vka_addr(sa, se - sa, NULL, NULL, NULL);
@@ -1148,7 +1158,7 @@ void mtl_pool_need(const void *addr, uint64_t len, const char *why) {
         }
         if ((!whole || pe.part) && ndone < NDONE) done[ndone++] = pe.id;
         pthread_cond_broadcast(&g_lzcv);
-        static int nlog; int first = nlog++ < 8 || (whole && pe.pbytes);
+        static int nlog; int first = nlog++ < 8 || (whole && (pe.pbytes || pe.part));   // (a pool placed by parts placed whole: always said, with the ask that did it)
         pthread_mutex_unlock(&g_pmu);
         if (!placed) { static _Atomic int nred; if (atomic_fetch_add(&nred, 1) < 8) VRED("memory pool %#lx+%#llx is not in placed memory: the GPU does not see it", (unsigned long)pe.mem, (unsigned long long)pe.size); }
         else if (whole && pe.pbytes) VLOG("memory pool %#lx+%#llx placed whole after %u parts (%.0f MiB) when the GPU was given %#lx+%#lx (%s; %.1f ms): ranges across the parts' ends lie in two segments",
@@ -1661,6 +1671,49 @@ static void maps_start_once(void) {
     pthread_detach(th);
 }
 static void maps_start(void) { static pthread_once_t o = PTHREAD_ONCE_INIT; pthread_once(&o, maps_start_once); }
+
+// The `[mem] rss:` line (vka_rsslog.h; docs/reference/memory.md "A per-category RSS line"): where the process's RAM is, by category, every DM_MEM_RSSLOG seconds (60; 0 off)
+// and at the first frame the game presents. Its own thread, never the render thread: /proc/self/smaps costs tens of ms with tens of thousands of maps and holds the
+// address space's lock for each read, so it is read once a minute, in one pass of 128 KiB reads with no allocation
+static void rss_slurp(const char *path, char *b, size_t n) {
+    b[0] = 0; int fd = open(path, O_RDONLY | O_CLOEXEC); if (fd < 0) return;
+    size_t have = 0; ssize_t k; while (have + 1 < n && (k = read(fd, b + have, n - 1 - have)) > 0) have += (size_t)k;
+    close(fd); b[have] = 0;
+}
+static void rss_log(const char *why) {
+    uint8_t *gb; size_t gs; void svc_guest_range(uint8_t **base, size_t *size); svc_guest_range(&gb, &gs);
+    static char buf[131072], roll[2048], mi[4096], line[1536];
+    vkrs_t st; vkrs_init(&st);
+    int fd = open("/proc/self/smaps", O_RDONLY | O_CLOEXEC); if (fd < 0) return;
+    size_t have = 0; ssize_t k; uint64_t t0 = mono_ns();
+    for (;;) {
+        if (have == sizeof buf) have = 0;   // a line longer than the buffer is not smaps' text: dropped
+        if ((k = read(fd, buf + have, sizeof buf - have)) <= 0) break;
+        have += (size_t)k; size_t s = 0;
+        for (size_t i = 0; i < have; i++) if (buf[i] == '\n') { vkrs_line(&st, (uint64_t)(uintptr_t)gb, (uint64_t)(uintptr_t)gb + gs, buf + s, i - s); s = i + 1; }
+        memmove(buf, buf + s, have - s); have -= s;
+    }
+    close(fd);
+    double ms = (mono_ns() - t0) / 1e6;
+    rss_slurp("/proc/self/smaps_rollup", roll, sizeof roll); rss_slurp("/proc/meminfo", mi, sizeof mi);
+    vkrs_format(line, sizeof line, &st, roll, mi);
+    LOG("[mem] rss: %s; read in %.0f ms (%s, DM_MEM_RSSLOG)", line, ms, why);
+}
+static void *rss_main(void *arg) {
+    (void)arg; pthread_setname_np(pthread_self(), "vk-rss");
+    const char *e = getenv("DM_MEM_RSSLOG"); int period = e && *e ? atoi(e) : 60;
+    if (period <= 0) return NULL;
+    uint64_t vka_frame(void); int first = 0; uint64_t last = mono_ns();
+    for (;;) {
+        sleep(1);
+        uint64_t now = mono_ns();
+        if (!first && vka_frame() > 0) { first = 1; last = now; rss_log("first frame"); }
+        else if (now - last >= (uint64_t)period * 1000000000ull) { last = now; rss_log("periodic"); }
+    }
+    return NULL;
+}
+static void rss_start_once(void) { pthread_t th; if (!pthread_create(&th, NULL, rss_main, NULL)) pthread_detach(th); }
+static void rss_start(void) { static pthread_once_t o = PTHREAD_ONCE_INIT; pthread_once(&o, rss_start_once); }
 
 // The hook hle_svc.c calls when it gives guest memory back (weak no-op there for the Apple builds; its region hook stays the weak no-op, its open hook is below)
 int dm_gfx_guest_release(uintptr_t lo, uintptr_t hi) { return vka_mem_release(lo, hi); }

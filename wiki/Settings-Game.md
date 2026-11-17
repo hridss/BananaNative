@@ -46,12 +46,26 @@ Default for all: off. See the game's page in [Games](Games) for the current stat
 Ocarina of Time and Fire Emblem: Fortune's Weave have a **Cheats** switch (Experimental, off by default) and a **Cheat files** sheet. See [Cheats](Cheats).
 
 ### Link Play
-- Pokémon Pokopia (`0400A3A01EE4C000`) has a **Link Play** row: an opt-in way for the phone to join a world hosted on a PC (in Recompia). You enter the host's IPv4 address, and for Internet / Tailscale its room code. It applies at the next start; the choices are **Off** and **Join PC host** (shown as **Join PC host - same Wi-Fi** or **Join PC host - Internet / Tailscale**). In the game you then use PC > Link Play > Local connection > Visit.
+- Pokémon Pokopia (`0400A3A01EE4C000`) has a **Link Play** row: an opt-in way for the phone to join a world hosted on a PC (in Recompia). You enter the host's IPv4 address, and for Internet / Tailscale its room code. It applies at the next start; the choices are **Off**, **Join PC host** (shown as **Join PC host - same Wi-Fi** or **Join PC host - Internet / Tailscale**) and, experimental, **Host a world**, where this phone hosts and shows its address (see [Multiplayer](Multiplayer)). In the game you then use PC > Link Play > Local connection > Visit.
+
+### Online events (Pokopia, experimental)
+- **What it does:** Pokémon Pokopia (`0400A3A01EE4C000`) only. Tells the game it is online (the network clock too), so events that need a connection the first time, such as Apples to Applin (2026-11-16 to 2026-12-01), can start. Nothing is sent: no network is used.
+- **What to expect:** some events start, not all (the game checks more than we answer). It shows only on the game's page, not in the in-game panel. Applies at the next start.
+- **Default:** off.
+
+### Mods (Pokopia, experimental)
+- **What it does:** imports a mod (a .zip of replacement files) and lays it over the game's data at the start. See [Mods](Mods).
+- **Default:** none installed.
 
 ### Game language
 - **What it does:** the language the game starts in. **Phone's language · …** (the default) follows the phone when the game offers that language, else English (US); or pick one of the game's own languages. The list is the game's own.
 - **When to toggle:** if the game shows the wrong language, or you want it in another one.
 - **Default:** the phone's language.
+
+### Cover image
+- **What it does:** **Set cover image** lets you use your own picture as the game's tile on Home and on its page. Pick a picture, then move it under the square frame (drag, pinch to zoom; with a controller the D-pad or left stick moves, L1 / R1 zooms, A confirms, B cancels) and tap **Use this**. **Reset cover** goes back to the game's own picture.
+- **Where it is kept:** a small copy (at most 1024 px) inside the app. Your picture file and the game's files are not changed.
+- **Default:** the game's own picture.
 
 ### Time of day
 - **What it does:** for a game whose day and night cycle follows its clock (Pokopia), **Pick a date and time…** gives the game that time at its next start, or **The phone's clock** (default). The phone's own clock is never changed. It is one setting for the app, in Settings > System as well as on the game's page.

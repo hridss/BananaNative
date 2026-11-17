@@ -343,6 +343,7 @@ extern int vka_pso_redrawn;   // the open pass's targets were all drawn in the t
 // Before a write is recorded into im (an attachment, a clear, a copy destination, a storage image): a zero-shared image gets memory of its own, cleared (vka_tex.c img_own).
 // Call it before taking a view of im for the write. Any thread that records (takes the table lock); no render pass may be open in cb unless upload batches are on
 void vka_tex_own(vka_img *im, VkCommandBuffer cb);
+void vka_lrz_touch(VkCommandBuffer cb, vka_img *cur, int loads);   // Adreno LRZ across depth buffers, before a pass with depth image cur (vka_tex.c, DM_VK_LRZ_TOUCH; no pass open in cb)
 // Before a copy out of im, or into its texture level dst_level (-1: a copy out of it): a soft texture (vka_soft.h) the game copies from, or into at its finest level, is made
 // whole again from its storage and stays whole (vka_tex.c soft_harden). Any thread that records; no render pass may be open in cb unless upload batches are on
 void vka_tex_soft_copy(vka_img *im, int dst_level, VkCommandBuffer cb);

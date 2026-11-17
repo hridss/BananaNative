@@ -213,11 +213,29 @@ int main(void) {
     snprintf(rom, sizeof rom, "%s/rom", root); snprintf(overlay, sizeof overlay, "%s/overlay", root); snprintf(rdata, sizeof rdata, "%s/data", rom); snprintf(odata, sizeof odata, "%s/data", overlay);
     mkdir(rom, 0755); mkdir(overlay, 0755); mkdir(rdata, 0755); mkdir(odata, 0755);
     snprintf(fn, sizeof fn, "%s/same", rdata); put(fn, "base"); snprintf(fn, sizeof fn, "%s/same", odata); put(fn, "overlay"); snprintf(fn, sizeof fn, "%s/base", rdata); put(fn, "only-base"); snprintf(fn, sizeof fn, "%s/over", odata); put(fn, "only-overlay");
+    {   // *.zs game files for the zstd head check below (written before the mount, which lists the folders once)
+        FILE *f; snprintf(fn, sizeof fn, "%s/good.zs", rdata); f = fopen(fn, "wb"); fwrite("\x28\xb5\x2f\xfd" "rest", 1, 8, f); fclose(f);
+        snprintf(fn, sizeof fn, "%s/skip.zs", rdata); f = fopen(fn, "wb"); fwrite("\x53\x2a\x4d\x18" "rest", 1, 8, f); fclose(f);
+        snprintf(fn, sizeof fn, "%s/zero.zs", rdata); f = fopen(fn, "wb"); fwrite("\0\0\0\0\0\0\0\0", 1, 8, f); fclose(f);
+        snprintf(fn, sizeof fn, "%s/sub.zs", rdata); f = fopen(fn, "wb"); fwrite("\0\0\0\0\0\0\0\0", 1, 8, f); fclose(f);
+        snprintf(fn, sizeof fn, "%s/tiny.zs", rdata); put(fn, "ab");
+    }
     setenv("DM_ROMFS", rom, 1); setenv("DM_ROMFS_OVERLAY", overlay, 1); CHECK(h_fs_MountRom("rom", NULL, 0) == RES_OK, "mount RomFS with two layers (base + overlay)");
     CHECK(read_fs("rom:/data/same", got, sizeof got) && !strcmp(got, "overlay"), "the overlay file wins"); CHECK(read_fs("rom:/data/base", got, sizeof got) && !strcmp(got, "only-base"), "falls back to the base when the overlay lacks the file");
     uint64_t rh; CHECK(h_fs_OpenFile(&rh, "rom:/data/same", MODE_WRITE) == RES_FAIL, "the two-layer mount refuses writes");
     CHECK(read_fs("rom:\\data\\over", got, sizeof got) && !strcmp(got, "only-overlay") && read_fs("rom:\\data\\base", got, sizeof got) && !strcmp(got, "only-base"), "backslashes separate as slashes do, in both layers");
     CHECK(h_fs_OpenFile(&rh, "rom:/data/base", MODE_READ) == RES_OK && rh && !(rh & 15), "a folder file's handle is 16-byte aligned, as a Horizon FileAccessor pointer is (%#llx)", (unsigned long long)rh); h_fs_CloseFile(rh);
+    {   // a damaged *.zs in a RomFS folder (its first bytes zeros: a copy that stopped or was cut) is answered as a damaged image entry is: "not found", or the substitute
+        // romfs_substitute names; a good one (zstd magic 28 b5 2f fd, or a skippable frame) and a short one open as they are
+        CHECK(read_fs("rom:/data/good.zs", got, sizeof got) && !memcmp(got, "\x28\xb5\x2f\xfd" "rest", 8), "a zstd file in a folder opens as it is");
+        CHECK(read_fs("rom:/data/skip.zs", got, sizeof got) && !memcmp(got + 4, "rest", 4), "so does one that begins with a skippable frame");
+        CHECK(read_fs("rom:/data/tiny.zs", got, sizeof got) && !strcmp(got, "ab"), "a file shorter than a magic is not judged");
+        CHECK(h_fs_OpenFile(&rh, "rom:/data/zero.zs", MODE_READ) == RES_PATH_NOT_FOUND, "a *.zs in a folder that begins with zeros is answered \"not found\"");
+        setenv("DM_ROMFS_SUBST", "data/sub.zs=data/good.zs", 1);
+        CHECK(read_fs("rom:/data/sub.zs", got, sizeof got) && !memcmp(got, "\x28\xb5\x2f\xfd" "rest", 8), "and served as its substitute when romfs_substitute names one");
+        CHECK(h_fs_OpenFile(&rh, "rom:/data/zero.zs", MODE_READ) == RES_PATH_NOT_FOUND, "a damaged file with no substitute named stays \"not found\"");
+        unsetenv("DM_ROMFS_SUBST");
+    }
     g_nmnt = 0;
     unsetenv("DM_ROMFS_OVERLAY");
     {   // game files that are neither a folder nor a file (a stale path, a fifo) stop the rom mount with a FATAL line, in a child so the abort does not end this test

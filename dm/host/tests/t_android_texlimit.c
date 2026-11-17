@@ -320,6 +320,30 @@ int main(void) {
             "a prune is due over the limit, or while a spread one is above its target"); }
       CHECK(!vktl_budget_spent(0, 8, ~0ull) && !vktl_budget_spent(5, 0, 9) && !vktl_budget_spent(5, 7, 9) && vktl_budget_spent(5, 8, 5) && !vktl_budget_spent(5, 8, 4),
             "the budget: none at 0, the first eviction always, the clock every 8"); }
+    // ---- RAM saver (DM_VK_RAM_SAVER): the reserve is NOT raised (a permanent eighth starved the cache on low-MemAvailable phones); a ceiling of a quarter of MemTotal, never under the working set or the floor ----
+    { vktl_cfg sv = vktl_cfg_default(); sv.saver = 1;
+      CHECK(vktl_reserve(11 * GIB, &sv, 0) == vktl_reserve(11 * GIB, &fix, 0) && vktl_reserve(24 * GIB, &sv, 0) == vktl_reserve(24 * GIB, &fix, 0), "the saver leaves the reserve as it is, at rest");
+      CHECK(vktl_reserve(11 * GIB, &sv, 1) == 11 * GIB / 8, "and the pressure rule still raises it to an eighth while the system stalls");
+      CHECK(vktl_reserve(2 * GIB, &sv, 0) == 512 * MIB && vktl_reserve(11 * GIB, &pin, 0) == 800 * MIB, "never under the 32nd's floor; DM_VK_IMG_RESERVE_MB still wins");
+      sv.mb = 800; CHECK(vktl_reserve(11 * GIB, &sv, 0) == 800 * MIB, "a pinned reserve wins over the saver"); sv.mb = 0;
+      vktl_in big = {.mem_total = 11 * GIB, .mem_avail = 6 * GIB, .img_bytes = 1 * GIB, .ws_bytes = 1 * GIB};
+      CHECK(vktl_limit(&big, &fix, 0) == 1 * GIB + 6 * GIB - 512 * MIB, "without the saver the RAM rule gives %llu MiB", (unsigned long long)(vktl_limit(&big, &fix, 0) >> 20));
+      CHECK(vktl_limit(&big, &sv, 0) == 11 * GIB / 4, "the saver caps it at a quarter of MemTotal (%llu MiB)", (unsigned long long)(vktl_limit(&big, &sv, 0) >> 20));
+      vktl_in w = big; w.ws_bytes = 4 * GIB; w.img_bytes = 4 * GIB; w.mem_avail = 8 * GIB;
+      CHECK(vktl_limit(&w, &sv, 0) == 4 * GIB, "a working set over the quarter is the ceiling (%llu MiB)", (unsigned long long)(vktl_limit(&w, &sv, 0) >> 20));
+      vktl_in sm = {.mem_total = 1 * GIB, .mem_avail = 900 * MIB, .img_bytes = 600 * MIB}; CHECK(vktl_limit(&sm, &sv, 0) >= VKTL_FLOOR, "never under the floor");
+      vktl_in nk = {.heap_size = 12 * GIB}; CHECK(vktl_limit(&nk, &sv, 0) == 6 * GIB && vktl_saver_cap(&sv, 0, 0) == 0 && vktl_saver_cap(&fix, 11 * GIB, 0) == 0, "no cap without MemTotal or without the switch");
+      vktl_in tight = {.mem_total = 11 * GIB, .mem_avail = 2 * GIB, .img_bytes = 1 * GIB, .ws_bytes = 1 * GIB};
+      CHECK(vktl_limit(&tight, &sv, 0) == 1 * GIB + 2 * GIB - 512 * MIB, "when RAM is the smaller figure it still decides (%llu MiB)", (unsigned long long)(vktl_limit(&tight, &sv, 0) >> 20));
+      // Strong (DM_VK_RAM_SAVER=2): a sixth of MemTotal, the same floors
+      vktl_cfg st = sv; st.saver = 2;
+      CHECK(vktl_limit(&big, &st, 0) == 11 * GIB / 6, "strong caps it at a sixth of MemTotal (%llu MiB)", (unsigned long long)(vktl_limit(&big, &st, 0) >> 20));
+      CHECK(vktl_limit(&w, &st, 0) == 4 * GIB, "strong: a working set over the sixth is still the ceiling (%llu MiB)", (unsigned long long)(vktl_limit(&w, &st, 0) >> 20));
+      CHECK(vktl_limit(&sm, &st, 0) >= VKTL_FLOOR && vktl_saver_cap(&st, 2 * GIB, 0) == 512 * MIB, "strong: never under the floor");
+      CHECK(vktl_reserve(11 * GIB, &st, 0) == vktl_reserve(11 * GIB, &fix, 0), "strong leaves the reserve as it is too");
+      // The case that failed on the phone: 15 GiB, 2 GiB available, 966 MiB of images: the limit must not fall to images + 196 MiB (the old permanent eighth)
+      vktl_in lowavail = {.mem_total = 15 * GIB, .mem_avail = 2 * GIB, .img_bytes = 966 * MIB, .ws_bytes = 900 * MIB};
+      CHECK(vktl_limit(&lowavail, &sv, 0) == 966 * MIB + 2 * GIB - 512 * MIB, "low MemAvailable: the saver's limit grows as without it (%llu MiB)", (unsigned long long)(vktl_limit(&lowavail, &sv, 0) >> 20)); }
     if (!fails) printf("t_android_texlimit: ok\n");
     return fails != 0;
 }

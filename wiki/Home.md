@@ -21,7 +21,7 @@ New? Follow the [Quick start](Quick-Start). New words are explained in the [Glos
 |---|---|
 | Setup | [Quick start](Quick-Start), [Glossary](Glossary), [Installation](Installation), [First start and Prepare](First-Start-and-Prepare), [Updates](Updates), [Live shader building](Live-Shader-Building) |
 | Playing | [Playing](Playing), [Saves and storage](Saves-and-Storage), [GPU drivers](GPU-Drivers) |
-| Settings and speed | [Settings overview](Settings-Overview), [Getting higher FPS](Getting-Higher-FPS), [Heat and battery](Heat-and-Battery), [Cheats](Cheats) |
+| Settings and speed | [Settings overview](Settings-Overview), [Getting higher FPS](Getting-Higher-FPS), [Heat and battery](Heat-and-Battery), [Cheats](Cheats), [Mods](Mods) |
 | Games | [Games](Games) |
 | Devices | [Device reports](Device-Reports), [Tested devices](Tested-Devices) |
 | Problems | [Troubleshooting](Troubleshooting), [FAQ](FAQ) |

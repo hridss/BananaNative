@@ -81,6 +81,7 @@ shape_table	db93b0125f4850601d61c3edde012f8e	43	0xb52094	0x55f5b8	0x560328	0x560
 # ---- Files ----
 modules	main subsdk2 sdk
 romfs_marker	Fs.bin.zst
+romfs_check	Fs.bin.zst	key:ReleaseName	002
 zip_store	.zst:.mp4:.webm:.metallib
 
 # ---- Cheats ----

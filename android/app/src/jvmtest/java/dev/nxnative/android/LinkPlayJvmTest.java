@@ -55,6 +55,18 @@ public final class LinkPlayJvmTest {
             ok(LinkPlayConfig.addressError(outside, false) != null);
             equal(null, LinkPlayConfig.addressError(outside, true));
         }
+        // hosting: host:<port>, the room code only over the internet
+        equal(Arrays.asList("DM_COOP=host:47600", "DM_COOP_INTERNET=0", "DM_COOP_ROOM="), LinkPlayConfig.hostEnv(false, ""));
+        equal(Arrays.asList("DM_COOP=host:47600", "DM_COOP_INTERNET=0", "DM_COOP_ROOM="), LinkPlayConfig.hostEnv(false, code));
+        equal(Arrays.asList("DM_COOP=host:47600", "DM_COOP_INTERNET=1", "DM_COOP_ROOM=" + code), LinkPlayConfig.hostEnv(true, "0123-4567-89ab-cdef"));
+        equal(off, LinkPlayConfig.hostEnv(true, ""));
+        equal(off, LinkPlayConfig.hostEnv(true, "0123456789ABCDE"));
+        String fresh = LinkPlayConfig.newRoom(new java.util.Random(7));
+        equal(16, fresh.length());
+        equal(fresh, LinkPlayConfig.room(fresh));   // a made code is a valid one
+        ok(!fresh.equals(LinkPlayConfig.newRoom(new java.util.Random(8))));
+        equal("0123-4567-89AB-CDEF", LinkPlayConfig.group("0123456789abcdef"));
+        equal("short", LinkPlayConfig.group("short"));
         equal(off, LinkPlayConfig.env(true, "203.0.113.8", true, ""));
         equal(off, LinkPlayConfig.env(true, "203.0.113.8", false, code));
         for (String invalid : new String[] {"", "0123456789ABCDE", "0123456789ABCDEFG", "0123456789ABCDEU", "0123456789ABCDE\n", "0123456789ABCDE\0"})

@@ -165,9 +165,10 @@ def header(g):
     if aba not in ('on', 'off'): sys.exit(f'{g.id}: alloc_big_align must be on or off: {aba}')
     sf = g.get('shared_font', 'bfttf')   # what the shared-font address points at (hle_sdk16.c): bfttf = 8-byte header + TTF, ttf = the TTF alone
     if sf not in ('bfttf', 'ttf'): sys.exit(f'{g.id}: shared_font must be bfttf or ttf: {sf}')
-    for rc in g.values('romfs_check'):   # a RomFS file line that tells the version's own data from another version's (the Android launcher's RomfsCheck: Prepare and the card): <path> <line> <expected | main>
-        if len(rc) != 3 or not rc[0] or rc[0].startswith('/') or '..' in rc[0].split('/') or not rc[1].isdigit() or int(rc[1]) < 1 or not rc[2].strip() or any(c in ''.join(rc) for c in '|;'):
-            sys.exit(f"{g.id}: romfs_check takes <path in the RomFS> <line, from 1> <expected line (no | or ;), or main for the version's main build ID>: {rc}")
+    for rc in g.values('romfs_check'):   # a RomFS file line that tells the version's own data from another version's (the Android launcher's RomfsCheck: Prepare and the card): <path> <line | key:name> <expected | main>
+        line_ok = len(rc) == 3 and (rc[1].isdigit() and int(rc[1]) >= 1 or re.fullmatch(r'key:[A-Za-z0-9_]+', rc[1]) is not None)
+        if len(rc) != 3 or not rc[0] or rc[0].startswith('/') or '..' in rc[0].split('/') or not line_ok or not rc[2].strip() or any(c in ''.join(rc) for c in '|;'):
+            sys.exit(f"{g.id}: romfs_check takes <path in the RomFS> <line, from 1, or key:<name> of a MessagePack map> <expected text (no | or ;), or main for the version's main build ID>: {rc}")
     try: scene_args(g)   # the launcher's 3D scene choices passed as game arguments (build.gradle sceneOf, SceneRes)
     except ValueError as e: sys.exit(f'{g.id}: {e}')
     aw = g.get('android_window', '')   # the Android launcher's default Game resolution for this game when the player chose none (Prefs.gameWindow): one of Prefs.WINDOWS
@@ -189,6 +190,8 @@ def header(g):
     if tds not in ('on', 'off'): sys.exit(f'{g.id}: tex_dyn_slots must be on or off: {tds}')
     tsf = g.get('tex_soft', 'off')   # large block-compressed packaged textures kept without their finest level (Android: vka_tex.c "Soft textures", vka_soft.h; from plumber-racer-2's nvn_mtl.m tex_soft): on / off
     if tsf not in ('on', 'off'): sys.exit(f'{g.id}: tex_soft must be on or off: {tsf}')
+    rss = g.get('ram_saver_soft', 'on')   # Android: Game settings > RAM saver also turns tex_soft on for this game (DM_VK_RAM_SAVER; vka_tex.c soft_on): on / off (off for a game whose textures must stay whole)
+    if rss not in ('on', 'off'): sys.exit(f'{g.id}: ram_saver_soft must be on or off: {rss}')
     evw = g.get('event_wait', 'on')   # Android: GPU event and sync waits across NVN queues honoured by the Vulkan replay (vka_worker.c qs_on; DM_VK_EVENT_WAIT overrides): on / off
     if evw not in ('on', 'off'): sys.exit(f'{g.id}: event_wait must be on or off: {evw}')
     oqs = g.get('occlusion_split_pass', 'off')
@@ -366,10 +369,10 @@ def header(g):
         sys.exit(f'{g.id}: mesh_vegetation_cut: at most 64 pairs, with unique keys')
     for r in g.values('option'):
         if len(r) < 3 or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', r[0]) or not r[1].strip() or not r[2].strip():
-            sys.exit(f'{g.id}: option takes <ENV name> <label> <one-line description> [restart|live] [implies=<ENV>] [needs=<marker>]: {r}')
+            sys.exit(f'{g.id}: option takes <ENV name> <label> <one-line description> [restart|live|settings] [implies=<ENV>] [needs=<marker>]: {r}')
         for col in r[3:]:
             for tok in col.split():
-                if tok in ('restart', 'live'):
+                if tok in ('restart', 'live', 'settings'):
                     pass
                 elif tok.startswith('implies='):
                     imp = tok.split('=', 1)[1]
@@ -380,7 +383,7 @@ def header(g):
                     if not re.fullmatch(r'[A-Za-z0-9_]+', mk):
                         sys.exit(f'{g.id}: option needs takes a fixup marker: {tok}')
                 else:
-                    sys.exit(f'{g.id}: option unknown attribute (expected restart|live, implies=<ENV>, needs=<marker>): {tok}')
+                    sys.exit(f'{g.id}: option unknown attribute (expected restart|live|settings, implies=<ENV>, needs=<marker>): {tok}')
     # Shaders whose subgroup operations run as subgroups of one invocation on Qualcomm's own driver even where the device has them (vka_shader.c single_lane, one_lane_forced;
     # a workaround, Android): one key per row
     sol = []
@@ -434,6 +437,7 @@ def header(g):
          f'#define DM_GAME_TEX_DIRTY_UPLOAD {int(tdu == "on")}',
          f'#define DM_GAME_TEX_DYN_SLOTS {int(tds == "on")}',
          f'#define DM_GAME_TEX_SOFT {int(tsf == "on")}',
+         f'#define DM_GAME_RAM_SAVER_SOFT {int(rss == "on")}',
          f'#define DM_GAME_OCCLUSION_SPLIT_PASS {int(oqs == "on")}',
          f'#define DM_GAME_EVENT_WAIT {int(evw == "on")}',
          f'#define DM_GAME_GPU_TS_SEGMENT {int(gts == "segment")}',

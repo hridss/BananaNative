@@ -30,6 +30,10 @@ Not every game shows every row. A row appears only when the game's profile has t
 - **Default:** SGSR 1.
 - **FSR sharpness** (shown only with FSR 1): Off, Softer, Soft, Default, Max. Default: Default.
 - **A game on the DLSS stand-in** (Fire Emblem: Fortune's Weave, Star Fox) has its own Upscaler list instead: **GSR 2 (smooth images)**, **FSR 1 (sharp, fast)**, **Bilinear (fastest, softest)**, **FSR 3.1 (sharp, steady)**, with **Motion clarity** and a sharpness row where the mode has them. Fire Emblem: Fortune's Weave recommends FSR 3.1 on any phone.
+- **Screen scaling** (a game on the DLSS stand-in, under its Upscaler): how the finished picture is scaled to the screen.
+  - **Nearest neighbor**, **Bilinear**, **Bicubic** (sharper than Bilinear, one cheap pass), **FSR 1** (with **Screen sharpness**: Off, Softer, Soft, Default, Max), **SGSR 1** (Qualcomm's, one pass), **Device (power saving)** (the phone's display hardware scales the picture: the least GPU work).
+  - **Default:** follows the Upscaler choice in Settings, so **SGSR 1** unless you changed it (FSR 1 stays FSR 1, Bilinear and Native give Bilinear, Nearest neighbor gives Nearest neighbor). SGSR 1 and Device each use a few watts less than FSR 1 on a tablet.
+  - **What to expect:** changes apply from the next frame in the in-game panel (Display tab). Bicubic, SGSR 1 and FSR 1 only act when the picture is enlarged; on a screen smaller than the game's picture they look like Bilinear. With Device, the overlay's text is drawn by the app instead of the game's picture; switching to or from Device rebuilds the picture's buffer (a short pause).
 
 ### Display
 - **What it does:** how the picture sits on the screen: **Fit (keep aspect)** or **Stretch to screen**. The in-game panel adds a size slider and a position; see [The in-game panel](Side-Panel-In-Game).
@@ -77,8 +81,10 @@ Folded on a phone; tap **Show**. These are for testers; the defaults are the tes
 | **GPU timing** | What the game's GPU timestamps measure. **Per segment** lets a game's dynamic resolution and frame pacing see the real GPU time; **Per submission** is the older behaviour. | Game default (from the profile) |
 | **Instanced draws** | Repeated meshes drawn as one. | Off. A tester lost the GPU on Adreno 830 with Turnip in 1 to 2 of 5 starts with it or Classic render passes on (open). |
 | **Classic render passes** | Less CPU for each pass on Qualcomm's driver. | Off (same open report) |
+| **Fast FP16 shader math** | 16-bit half-precision arithmetic in shaders on the Turnip driver (community change #83 by MOHAMM3DX): faster shader math and less heat. Not run by us; the author checked it on a device. | Off |
 | **Background pipelines** | A pipeline the cache does not have is made on background threads: "A short pop-in, not a stutter". Off: "Made when first drawn: may stutter". | On |
 | **RAM saver** | Keeps texture data in a file instead of compressed RAM. Needs gigabytes of free storage and writes to storage at each area load. For phones short of RAM. | Off |
+| **RAM saver: Strong** | Everything RAM saver does, and more: the two finest texture levels of large textures are left out (close-up textures get visibly softer), the texture cache is held to a sixth of the phone's RAM, and background pipelines compile one at a time (more stutter while new effects appear for the first time). Frame generation is not touched, so turn it off yourself to save more. For a game that is still ended by Android on a phone with 12 GB. | Off |
 | **Use fast cores** | Keeps busy threads off the small cores. Also in **Settings**. | Off: "not measured yet", and it may work against the app's own performance hints |
 | **Pause on return** | Returning from the background shows the game paused until a tap. | On |
 | **Extra environment** | One `KEY=VALUE` line per setting, for testers. | None |

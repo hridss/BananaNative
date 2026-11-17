@@ -51,6 +51,7 @@ You do not need to read the log. These lines help us, and an issue is easier to 
 | A game sees no DLC | Reported on Android with a `dlc/` folder in the dump; update the app and report with the log. |
 | A `.nup` game shows white or missing textures, or the log has `all zeros there` | The package file is damaged or was copied incompletely. Copy it again and compare its size or hash with the original. The app's **Copy into the app** now refuses a copy whose size differs from what the file provider reported |
 | Ocarina of Time crashes at the opening and your phone is set to a language the game lacks (for example Thai) | Fixed in 0.3.40: the game now gets the nearest language it has. Not yet confirmed on a phone ([#290](https://git.eden-emu.dev/moceure/BananaNative/issues/290)) |
+| The game's card says **Ready · game code update waits** (or **stopped, tap to retry**) | After an app update the app rewrites a game's code in the background, from your dump, and keeps the shaders. The game still plays. In 0.3.42 a tap on the card runs **Prepare again** (it asks first). If it does nothing, open the game's page > Storage > Prepare again. See [Updates](Updates). |
 | A frontend starts the game but Home opens instead | Something needs you (no pack, Prepare, shaders, All files access); fix it, start again ([Playing](Playing)). |
 
 These entries come from the project's symptom index; a fix may already be in your version, so update first.

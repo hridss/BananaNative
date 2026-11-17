@@ -43,6 +43,7 @@ General host changes first needed here; each applies to every game:
 - **Combined texture slots past 31** (the combined table up to 0x168, 41 slots, sharing words with the image table; a bound texture written there when the image slot is unbound): [04, Find the binding layout by census](../../../docs/agents/04-graphics.md#3-find-the-binding-layout-by-census).
 - **The SDK 19 `nn::ro::LoadModule` form** and `ro::Finalize` hooked (`hle_ro.c`): [`nn::ro` and its port](../../../docs/reference/services.md#nnro-and-its-port).
 - **Fullscreen startup from another fullscreen app (resolved):** the NX2Apple reporter reproduced the rollback on four of four launches and confirmed the deferred request succeeds: [A game opened from a fullscreen app stays a window](../../../docs/reference/frame-rate.md#a-game-opened-from-a-fullscreen-app-stays-a-window).
+- **Save times shown in UTC (fixed, retest open):** the load screen dated saves by UTC, not the host's zone (GitHub issue #2784); the host had taken over the C library's `mktime` with local time, while the SDK's is UTC: [The C library's local time is UTC, as on a Switch](../../../docs/reference/services.md#the-c-librarys-local-time-is-utc-as-on-a-switch).
 
 ## Open
 

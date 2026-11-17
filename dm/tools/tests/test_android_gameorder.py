@@ -33,9 +33,27 @@ class GameOrderSource(unittest.TestCase):
     def test_long_press_opens_the_menu(self):
         card = self.main[self.main.index('private View gameCard(Game g)'):]
         card = card[:card.index('private View emptyCard') if 'private View emptyCard' in card else 3000]
-        self.assertRegex(card, r'setOnLongClickListener\(v -> \{ reorderMenu\(g\)')
-        self.assertIn('Tx.s(R.string.home_move_left)', self.main)
-        self.assertIn('Tx.s(R.string.home_move_right)', self.main)
+        self.assertRegex(card, r'setOnLongClickListener\(v -> \{ optionsMenu\(g\)')
+        menu = self.main[self.main.index('private void optionsMenu(Game g)'):]
+        menu = menu[:menu.index('// ---- Move')]
+        for key in ('home_move_game', 'game_cover_set', 'home_delete_game_menu'):
+            self.assertIn('R.string.' + key, menu)
+
+    def test_move_mode_keys(self):
+        move = self.main[self.main.index('private boolean moveKey'):]
+        move = move[:move.index('// ---- The hint bar')]
+        for key in ('KEYCODE_DPAD_LEFT', 'KEYCODE_DPAD_UP', 'KEYCODE_BUTTON_A', 'KEYCODE_BUTTON_B' if False else 'isBack'):
+            self.assertIn(key, move)
+        self.assertIn('KEYCODE_BUTTON_X', self.main[self.main.index('public boolean dispatchKeyEvent'):])
+
+    def test_add_game_button_is_always_there(self):
+        # #381: with no game the round Add game button was hidden and the welcome card had no button of its own
+        refresh = self.main[self.main.index('void refresh() {'):]
+        refresh = refresh[:refresh.index('Reorder games') if 'Reorder games' in refresh else 4000]
+        self.assertNotIn('View.GONE', refresh[:refresh.index('workTiles.clear()')])
+        self.assertIn('addFab.setVisibility(View.VISIBLE)', refresh)
+        self.assertIn('addFab.requestFocus()', refresh)
+        self.assertNotIn('emptyCard', self.main)
 
     def test_preparing_tile_keeps_its_sheet(self):
         work = self.main[self.main.index('private void workTile(View c)'):]

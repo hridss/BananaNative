@@ -25,6 +25,12 @@ static int g_fail, g_n;
 #define P(name) ((NVNT_##name)proc(#name))
 static PFNNVNDEVICEGETPROCADDRESSPROC gpa; static NVNdevice dev;
 static void *proc(const char *n) { void *p = (void *)gpa(&dev, n); if (!p) { printf("address lookup failed %s\n", n); exit(1); } return p; }
+// CRC-16 with the reflected polynomial 0xA001, from 0: the hash Super Mario Odyssey's sampler cache takes of a sampler's bytes 8 on (main+0x96e400)
+static uint16_t crc16_a001(const uint8_t *p, size_t n) {
+    uint16_t c = 0;
+    while (n--) { c ^= *p++; for (int k = 0; k < 8; k++) c = c & 1 ? (uint16_t)((c >> 1) ^ 0xA001) : (uint16_t)(c >> 1); }
+    return c;
+}
 
 // Command memory callback: hands out a new 256-byte memory segment each time (forces a multi-segment JUMP chain)
 static uint8_t g_cmdmem[64 * 1024]; static size_t g_cmdoff; static int g_cb_calls; static NVNmemoryPool g_cmdpool;
@@ -112,13 +118,52 @@ int main(void) {
     P(nvnDeviceGetInteger)(&dev, (NVNdeviceInfo)0x30, &v); EXPECT("newest GPU code minor", 16, v);
     P(nvnDeviceGetInteger)(&dev, (NVNdeviceInfo)0x2F, &v); EXPECT("oldest GPU code major", 1, v);
     P(nvnDeviceGetInteger)(&dev, (NVNdeviceInfo)0x31, &v); EXPECT("oldest GPU code minor", 5, v);
-    // The Switch 2 table (NVN2's own constants, read from Donkey Kong Bananza's sdk): its GPU code range and Ampere's limits, the host's 16 vertex slots, and the run-time items
-    EXPECT("NVN2: API 231.30", 231 * 100 + 30, g_devinfo2[0] * 100 + g_devinfo2[1]);
-    EXPECT("NVN2: GPU code 201.0 to 201.17", 1, g_devinfo2[0x2E] == 201 && g_devinfo2[0x30] == 17 && g_devinfo2[0x2F] == 201 && g_devinfo2[0x31] == 0);
+    // The X1 driver's own constants past the measured table (SDK 19.3's sdk): Frostpunk sizes a 32-slot binding table per stage to min(separate textures, separate samplers) and clears that
+    // many slots every frame, so 4096 samplers ran it past its end; the rest answered 0 with a red line before
+    P(nvnDeviceGetInteger)(&dev, NVN_DEVICE_INFO_SEPARATE_TEXTURE_BINDINGS_PER_STAGE, &v); EXPECT("separate texture bindings per stage (128 measured on X1)", 128, v);
+    P(nvnDeviceGetInteger)(&dev, NVN_DEVICE_INFO_SEPARATE_SAMPLER_BINDINGS_PER_STAGE, &v); EXPECT("separate sampler bindings per stage (32, the driver's)", 32, v);
+    P(nvnDeviceGetInteger)(&dev, (NVNdeviceInfo)0x60, &v); EXPECT("X1 item 0x60 (65535, the driver's)", 65535, v);
+    P(nvnDeviceGetInteger)(&dev, (NVNdeviceInfo)0x67, &v); EXPECT("X1 item 0x67, shader code alignment (256)", 256, v);
+    P(nvnDeviceGetInteger)(&dev, (NVNdeviceInfo)0x68, &v); EXPECT("X1 item 0x68 (16383, the driver's last)", 16383, v);
+    P(nvnDeviceGetInteger)(&dev, (NVNdeviceInfo)0x62, &v); EXPECT("X1 item 0x62 (32: the driver's table, the device's value read at init)", 32, v);
+    v = -1; P(nvnDeviceGetInteger)(&dev, (NVNdeviceInfo)0x69, &v); EXPECT("X1 items past 0x68 answer 0", 0, v);
+    // The Switch 2 table (NVN2's own constants: the newest seen, SDK 21.4.4's, as an older sdk's own switch answers its older versions through dm_sdk_nvn2_item): its GPU code range and Ampere's limits, the host's 16 vertex slots, and the run-time items
+    EXPECT("NVN2: API 231.39", 231 * 100 + 39, g_devinfo2[0] * 100 + g_devinfo2[1]);
+    EXPECT("NVN2: GPU code 201.0 to 201.20", 1, g_devinfo2[0x2E] == 201 && g_devinfo2[0x30] == 20 && g_devinfo2[0x2F] == 201 && g_devinfo2[0x31] == 0);
     EXPECT("NVN2: 1,024 compute threads, an unbounded dispatch width", 1, g_devinfo2[0x1F] == 1024 && g_devinfo2[0x20] == 2147483647);
     EXPECT("NVN2: the host's 16 vertex bindings, not Ampere's 32, and its 32 attributes", 1, g_devinfo2[0x06] == 16 && g_devinfo2[0x0E] == 32);
     EXPECT("NVN2: the memory pool page size is read at run time", DEVINFO_RT, g_devinfo2[NVN_DEVICE_INFO_MEMORY_POOL_PAGE_SIZE]);
     EXPECT("NVN2: items up to 0xA9", 0xAA, (int)(sizeof g_devinfo2 / sizeof *g_devinfo2));
+
+    {   // #872: renderer setup reads its builder back through the exported NVN ABI.
+        NVNsamplerBuilder builders[2] = {0};
+        for (int i = 0; i < 2; i++) P(nvnSamplerBuilderSetDefaults)(&builders[i]);
+        const float border[4] = {-0.25f, 0.5f, 0.75f, 1.f};
+        P(nvnSamplerBuilderSetLodBias)(&builders[0], -2.25f);
+        P(nvnSamplerBuilderSetCompare)(&builders[0], NVN_COMPARE_MODE_COMPARE_R_TO_TEXTURE, NVN_COMPARE_FUNC_GEQUAL);
+        P(nvnSamplerBuilderSetBorderColor)(&builders[0], border);
+        P(nvnSamplerBuilderSetMaxAnisotropy)(&builders[0], 8.f);
+        P(nvnSamplerBuilderSetReductionFilter)(&builders[0], NVN_SAMPLER_REDUCTION_MAX);
+        // Query a changed builder, an independent default builder, then the
+        // changed one after SetDefaults. Expected values do not read host state.
+        for (int i = 0; i < 3; i++) {
+            if (i == 2) P(nvnSamplerBuilderSetDefaults)(&builders[0]);
+            const NVNsamplerBuilder *b = &builders[i == 1];
+            NVNcompareMode mode = NVN_COMPARE_MODE_LARGE;
+            NVNcompareFunc func = NVN_COMPARE_FUNC_LARGE;
+            float color[6] = {13.f, 17.f, 19.f, 23.f, 29.f, 31.f};
+            const float want[6] = {13.f, i ? 0.f : -0.25f, i ? 0.f : 0.5f, i ? 0.f : 0.75f, i ? 0.f : 1.f, 31.f};
+            EXPECT("builder LOD bias returned in float register", 1, P(nvnSamplerBuilderGetLodBias)(b) == (i ? 0.f : -2.25f));
+            P(nvnSamplerBuilderGetCompare)(b, &mode, &func);
+            EXPECT("builder compare mode written to caller", i ? NVN_COMPARE_MODE_NONE : NVN_COMPARE_MODE_COMPARE_R_TO_TEXTURE, mode);
+            EXPECT("builder compare function written to caller", i ? NVN_COMPARE_FUNC_LESS : NVN_COMPARE_FUNC_GEQUAL, func);
+            P(nvnSamplerBuilderGetBorderColor)(b, color + 1);
+            int equal = 1; for (int j = 0; j < 6; j++) if (color[j] != want[j]) equal = 0;
+            EXPECT("builder border writes exactly four floats", 1, equal);
+            EXPECT("builder anisotropy returned in float register", 1, P(nvnSamplerBuilderGetMaxAnisotropy)(b) == (i ? 1.f : 8.f));
+            EXPECT("builder reduction returned as enum", i ? NVN_SAMPLER_REDUCTION_AVERAGE : NVN_SAMPLER_REDUCTION_MAX, P(nvnSamplerBuilderGetReductionFilter)(b));
+        }
+    }
 
     NVNsamplerBuilder sb; NVNsampler sampler;
     P(nvnSamplerBuilderSetDefaults)(&sb);
@@ -132,6 +177,22 @@ int main(void) {
     P(nvnSamplerInitialize)(&sampler, &sb);
     EXPECT("signed integer border RGB is numeric", 1, ((samp_t *)&sampler)->p.border[0] == 1.f && ((samp_t *)&sampler)->p.border[2] == 1.f);
     P(nvnSamplerFinalize)(&sampler);
+    {   // Games tell samplers apart by their bytes from 8 on: Super Mario Odyssey's sampler cache keys entries by a CRC-16 (polynomial 0xA001) of them alone (nvn_obj.h samp_t)
+        NVNsampler s2;
+        #define SAMP_CRC(s) crc16_a001((const uint8_t *)&(s) + 8, sizeof(NVNsampler) - 8)
+        P(nvnSamplerBuilderSetDefaults)(&sb);
+        memset(&sampler, 0xA5, sizeof sampler); memset(&s2, 0x5A, sizeof s2);   // object memory with different old bytes
+        P(nvnSamplerInitialize)(&sampler, &sb); P(nvnSamplerInitialize)(&s2, &sb);
+        EXPECT("equal samplers: equal bytes from 8 on", 1, !memcmp((const uint8_t *)&sampler + 8, (const uint8_t *)&s2 + 8, sizeof sampler - 8));
+        uint16_t base = SAMP_CRC(s2);   // the same object for the base and the changes, so only the state differs
+        P(nvnSamplerBuilderSetMinMagFilter)(&sb, NVN_MIN_FILTER_NEAREST, NVN_MAG_FILTER_NEAREST); P(nvnSamplerInitialize)(&s2, &sb);
+        EXPECT("filter alone changes the bytes from 8 on", 1, SAMP_CRC(s2) != base);
+        P(nvnSamplerBuilderSetDefaults)(&sb); P(nvnSamplerBuilderSetWrapMode)(&sb, NVN_WRAP_MODE_CLAMP_TO_EDGE, NVN_WRAP_MODE_MIRRORED_REPEAT, NVN_WRAP_MODE_REPEAT);
+        P(nvnSamplerInitialize)(&s2, &sb);
+        EXPECT("wrap alone changes the bytes from 8 on", 1, SAMP_CRC(s2) != base);
+        #undef SAMP_CRC
+        P(nvnSamplerFinalize)(&sampler); P(nvnSamplerFinalize)(&s2);
+    }
 
     // 3. Memory pool: GPU address = the storage address given by the game
     static uint8_t poolmem[1 << 20] __attribute__((aligned(4096)));
@@ -698,6 +759,24 @@ int main(void) {
             EXPECT("MINIMAL_LAYOUT texels read back as written", 0, memcmp(px, back, bytes));
         }
         P(nvnTextureFinalize)(&mt[0]); P(nvnTextureFinalize)(&mt[1]); P(nvnMemoryPoolFinalize)(&mp);
+    }
+
+    // Packaged H/D/W nibbles describe physical pitch independently of API SPARSE.
+    {
+        NVNtextureBuilder b = {0}; NVNpackagedTextureLayout layout={{3,4,0,0,0,0,0,0}};
+        P(nvnTextureBuilderSetDevice)(&b,&dev);
+        P(nvnTextureBuilderSetDefaults)(&b); P(nvnTextureBuilderSetSize2D)(&b,2052,1026);
+        P(nvnTextureBuilderSetFormat)(&b,NVN_FORMAT_RGBA_ASTC_6x6); P(nvnTextureBuilderSetFlags)(&b,NVN_TEXTURE_FLAGS_IMAGE);
+        P(nvnTextureBuilderSetPackagedTextureLayout)(&b,&layout);
+        EXPECT("packaged width nibble reaches description",0x404,((tex_builder_t*)&b)->d.pkg_layout);
+        EXPECT("packaged full tiles use padded pitch",0x120000,P(nvnTextureBuilderGetStorageSize)(&b));
+        EXPECT("packaged pitch leaves public flags unchanged",NVN_TEXTURE_FLAGS_IMAGE,P(nvnTextureBuilderGetFlags)(&b));
+        NVNtextureSparseTileLayout sparse; P(nvnTextureBuilderGetSparseTileLayout)(&b,&sparse);
+        EXPECT("packaged pitch does not advertise sparse tiles",0,sparse.numTiledLevels);
+        layout.layout[1]=0; P(nvnTextureBuilderSetPackagedTextureLayout)(&b,&layout);
+        EXPECT("ordinary packaged pitch remains unpadded",0x102000,P(nvnTextureBuilderGetStorageSize)(&b));
+        P(nvnTextureBuilderSetPackagedTextureLayout)(&b,NULL);
+        EXPECT("clearing packaged layout clears width too",0,((tex_builder_t*)&b)->d.pkg_layout);
     }
 
     // 6c. Write-protected dirty pages: after a packaged texture is uploaded its pool pages are read-only; game write → page fault → mark dirty → re-upload on next use; a direct host read() write needs prepare first

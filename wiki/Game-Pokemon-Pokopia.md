@@ -12,7 +12,7 @@ Supported. It plays at about 60 fps on both the system driver and Turnip in the 
 | Version | update 655360 (title screen says Ver. 2.0.1) |
 | Frame rate | About 60 fps in the opening and first area (system driver and Turnip) |
 | Driver | Turnip is the safer pick; see below |
-| Game-specific settings | Link Play, Time of day |
+| Game-specific settings | Link Play (join or host), Time of day, Online events, Mods |
 
 ## Settings that matter for this game
 
@@ -24,6 +24,13 @@ Supported. It plays at about 60 fps on both the system driver and Turnip in the 
 
 <!-- TODO screenshot: Game settings page of Pokopia (Game tab, Link Play and Time of day) -->
 
+## More options (experimental, not run on a phone by us unless noted)
+
+- **Online events** (Game settings > Game options): reports the game as online so events that need a first connection (Apples to Applin, 2026-11-16 to 2026-12-01) can start. A first test showed some events starting and not all; nothing is sent. Details: [Game settings](Settings-Game#online-events-pokopia-experimental).
+- **Mods** (Game settings > Game options > Mods): import a .zip of replacement files. See [Mods](Mods).
+- **Host a world** (Game settings > Link Play): this phone hosts a world, and another player joins (same Wi-Fi, or Internet / Tailscale with a room code). Needs the optional co-op module; not tried with two phones yet. See [Multiplayer](Multiplayer).
+- **Your own save**: Pokopia's save zip (Settings > Saves, Import save) restores a save; the zip's `main` folder is the save itself.
+
 ## Drivers
 
 - **Turnip:** gets past the Poké Ball and plays the first area. A Samsung S25 Ultra with Turnip ran about 23 fps at the game's own render size and 31 fps at Phone 720p (before the newer fixes).
@@ -33,6 +40,7 @@ See [GPU drivers](GPU-Drivers).
 
 ## Known issues
 
+- **Add-on content (DLC)** is found by the launcher (Storage lists it) but one report says it did not register in the game. Not understood yet. If you have it, send a log taken with the add-on file beside the game ([Troubleshooting](Troubleshooting)).
 - **Frame rate falling over a long session** (players' logs): one log went from 59.7 fps at the start to 30 at 55 minutes. It is not heat and not memory. The cause is the number of small compute dispatches a frame growing (from about 11 to over 1,000), which come from particle effects. One host fix (fewer barriers) shipped and the notes say it was not enough; a second change (compute-to-compute barriers between the particle dispatches) is in the code, and the notes still list its phone check as pending, so whether long sessions now hold their frame rate is not measured yet. A game restart returns to the fast start. See [Getting higher FPS](Getting-Higher-FPS).
 - **First visit stutter:** the first run through an area builds shaders; later visits are smoother.
 - **Missing Pokémon textures:** a bug where a Pokémon had missing textures in one report was fixed in the code and not yet run on a phone, per the notes.
