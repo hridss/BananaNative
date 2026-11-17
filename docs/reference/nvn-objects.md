@@ -710,7 +710,7 @@ Games read this count as a position in their own command memory and size their h
 
 - **Symptom:** `[RED] NVN unimplemented function called: nvnTextureBuilderGetMemoryOffset`, then `nvnTextureBuilderGetRawStorageClass`.
 - **Cause:** the renderer reads a texture builder's storage back before it initializes the texture; the host had the texture's getters (`nvnTextureGetMemoryPool` / `Offset` / `RawStorageClass`) but not the builders'.
-- **Fix:** the texture, buffer and event builders return the pool and offset `SetStorage` stored (the pool getters return its address, as `nvnTextureGetMemoryPool` does; the header the prototypes come from declares the builders' by value, so they are `NVN_NOPROTO`), and the texture builder's raw storage class is the texture's (1): it only names the page kind a virtual pool maps (`NVNmappingRequest.storageClass`), which the host's virtual pools do not distinguish.
+- **Fix:** the texture, buffer and event builders return the pool and offset `SetStorage` stored (the pool getters return its address, as `nvnTextureGetMemoryPool` does; the [buffer and texture query declarations are now corrected](#builder-queries-return-pointers-and-retained-state); the event queries still use `NVN_NOPROTO`), and the texture builder's raw storage class is the texture's (1): it only names the page kind a virtual pool maps (`NVNmappingRequest.storageClass`), which the host's virtual pools do not distinguish.
 - **Found on:** [EA SPORTS FC 27](../../dm/games/0100C49025D3E000/README.md) (SDK 22, Frostbite's NVN renderer NRO).
 
 ### `Map` of a pool without CPU access returns NULL
@@ -719,6 +719,37 @@ Games read this count as a position in their own command memory and size their h
 - **Cause:** NVN maps a buffer or pool created with `NVN_MEMORY_POOL_FLAGS_CPU_NO_ACCESS` to NULL, and the game depends on it: Frostbite's renderer (`OpcodeCopySubresource` in `Engine.Render.Core2.PlatformNvn.nro`) takes a buffer's GPU address as `nvnBufferGetAddress + (its data pointer − nvnBufferMap)`, with a null data pointer for a GPU-only buffer. The host's storage is CPU memory, and its `Map` returned the same pointer `GetAddress` does, so the sum came to 0 (traced to a `BufferMap` of a pool with flags `0x21`, CPU_NO_ACCESS | GPU_CACHED, right before the copy).
 - **Fix:** `nvnBufferMap` and `nvnMemoryPoolMap` return NULL when the pool has no CPU access, as in NVN (`hle_nvn.c`). The host's own accesses to the storage go through the pool, not through `Map`.
 - **Found on:** [EA SPORTS FC 27](../../dm/games/0100C49025D3E000/README.md) (SDK 22): the first match load.
+
+### CPU mappings and physical backing pools
+
+- **Symptom:** `MemoryPoolMap` or `BufferMap` returns a writable pointer for a virtual GPU range; a buffer initializes directly on a physical backing pool.
+- **Cause:** the host uses one address for CPU access, GPU storage and virtual aliases. The [`CPU_NO_ACCESS` check](#map-of-a-pool-without-cpu-access-returns-null) did not also exclude virtual ranges, and buffer initialization accepted physical backing pools. A virtual pool has a GPU address but no CPU mapping; its physical backing can have a CPU mapping of its own.
+- **Fix** (`hle_nvn.c`): `pool_cpu_map` excludes `CPU_NO_ACCESS` and `VIRTUAL` pools, and `BufferMap` adds the buffer's offset only to a non-null mapping. `BufferInitialize` rejects a `PHYSICAL` pool and clears the object on failure, as the driver does. The host's own accesses to the storage keep going through the pool.
+- **Found on:** synthetic mapping and initialization tests (upstream PR #1285); no game-specific crash is claimed.
+- **Check:** `t_nvn.c` (`pool_access`): both mapping entry points with a nonzero buffer offset, the GPU address of CPU-inaccessible storage, the physical backing's mapping, and a virtual pool before and after it maps physical pages.
+
+### Buffer flushes publish the corresponding pool range
+
+- **Symptom:** a CPU-cached buffer holds texture pixels, but a texture sharing its storage reads back as zeros after `nvnBufferFlushMappedRange`.
+- **Cause:** the host treated the buffer flush as a no-op because memory is unified. The host's textures can be separate copies of that memory (Metal textures, Vulkan images), and the no-op bypassed both the first-use flush tracking (`nvn_flushed`) and the texture-upload tracking of flushed ranges. A buffer flush names a range relative to its buffer, so the buffer's offset in its pool is added before it reaches the pool.
+- **Fix** (`hle_nvn.c`): `nvnBufferFlushMappedRange` forwards to `nvnMemoryPoolFlushMappedRange` with the buffer's pool offset plus the requested offset, and the same size, under the pool flush's lifetime, virtual-pool and upload rules.
+- **Found on:** upstream's ABI audit, a synthetic Metal readback with nonzero buffer and flush offsets (PR #1285): before the fix the pool-flush control uploaded the pixels and the buffer flush returned zeros.
+
+### Native NVN defaults
+
+- **Symptom:** a default sampler selects mipmaps unexpectedly; a builder reset loses the assigned device or reports another initial state than NVN's.
+- **Cause:** `SamplerBuilderSetDefaults` used OpenGL's minification filter and minimum LOD. Pool defaults cleared the device and left the flags zero; texture dimensions started at one; alpha-to-coverage dithering started off.
+- **Fix** (`hle_nvn.c`): NVN's defaults. Linear minification and magnification without mip filtering, LOD clamp `[0, 1000]`; pool flags `CPU_NO_ACCESS | GPU_CACHED` (`0x21`) with storage and size cleared and the device kept; texture dimensions unset (`0`; the layout and the Vulkan image read a zero as 1) with one level; alpha-to-coverage dither on. The dither changes what the state reads back, not how the host draws.
+- **Found on:** synthetic tests through the public entry points (upstream PR #1285); no game-specific visual result is claimed.
+- **Check:** `t_nvn.c` (`native_defaults`).
+
+### Builder queries return pointers and retained state
+
+- **Symptom:** querying a configured builder logs `[RED] NVN unimplemented function called`, or returns a null storage or device pointer.
+- **Cause:** nine pure queries were still stubs. The header also declared `MemoryPoolBuilderGetMemory` as returning `void`, and the buffer and texture builders' `GetMemoryPool` as returning a whole `NVNmemoryPool`, not the pointer native NVN returns in one register.
+- **Fix:** the declarations are corrected in `include/nvn.h` and `nvn_protos.h` regenerated (`gen_protos.py`). Implemented: the device builder's flags; the memory-pool builder's device, memory, size and flags; the buffer, texture and sampler builders' device; the texture builder's packaged-data pointer. Each reads the builder's state, including the device kept and the storage cleared by `SetDefaults`.
+- **Found on:** synthetic tests through the public entry points (upstream PR #1285).
+- **Check:** `t_nvn.c` (`builder_queries`), through the signature-checked types and the public procedure lookup.
 
 ### NVN calls that were red stubs
 
