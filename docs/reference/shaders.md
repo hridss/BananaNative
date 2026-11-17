@@ -1014,6 +1014,14 @@ Finding, keying and translating shaders (`dm/gfx/tools/shader_split.py`, `dmsh_b
 - **Found on:** [Pokémon Pokopia](../../dm/games/0400A3A01EE4C000/README.md): 10,177 instructions in 7,590 programs. The fix made no visible difference in its tutorial area.
 - **Check:** `DMSH_TEST_XLATE=<translator> python3 dm/gfx/tests/test_dmsh_ampere_mem.py`.
 
+### Half-pair .FTZ flushes f16 subnormals
+
+- **Symptom:** HADD2.FTZ, HMUL2.FTZ and HFMA2.FTZ keep half subnormals instead of flushing them, so a subnormal times infinity gives infinity instead of NaN; HMNMX2.FTZ keeps a subnormal operand. Nothing traced to a picture.
+- **Cause:** the translator dropped bit 80 of the half-pair arithmetic, as it does for f32 arithmetic, but Metal keeps f16 subnormals, and the Vulkan library sets no float-controls execution mode (`DenormFlushToZero`), so on the phone it is the driver's choice. Upstream's Jetson Orin reference shows that both the inputs and the rounded half result flush to a zero of their own sign.
+- **Fix:** `AHalfFlush` in `InstEmitAmpereAlu.cs` flushes unpacked inputs below 2^-14 to a zero of their sign, and `AHalfResult` keeps only the sign of a packed result lane whose exponent is zero, after rounding to half; a `.F32` result is a float and is left alone. HSETP2 / HSET2 (whose flush moved here from `InstEmitAmpereTensor.cs`, now keeping the sign too) and HMNMX2 share the source flush. Non-FTZ forms translate as before (upstream seedds/nxnative 0bd40f9f, PR #2048).
+- **Found on:** no game; upstream's comparison of the translated instructions with a Jetson Orin's results (HMUL2.FTZ: 449 differing halves before, 234 after, all of them NaN bit patterns). PR #2048 counts about 7,700 FTZ half instructions in Ocarina of Time.
+- **Check:** upstream's `test_dmsh_ampere_orin.py` (`AMPERE_ORIN_ONLY=f16x2`), a Metal test with its Orin fixture, not in this tree.
+
 ### TXD through a uniform register kept no handle
 
 - **Symptom:** `Failed to find handle source for bindless access` in the build's translator notes, for a shader with TXD through a uniform register (0xf6c). The MSL has no gradient sample, and what it read comes back 0.
