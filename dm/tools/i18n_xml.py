@@ -20,7 +20,7 @@ EN = RES / 'values/strings.xml'
 
 # the plural forms each language needs (CLDR), in the order Android lists them
 QUANTITIES = {'en': ['one', 'other'], 'es': ['one', 'many', 'other'], 'fr': ['one', 'many', 'other'], 'pl': ['one', 'few', 'many', 'other'],
-              'tr': ['one', 'other'], 'zh-rCN': ['other'], 'ar': ['zero', 'one', 'two', 'few', 'many', 'other']}
+              'uk': ['one', 'few', 'many', 'other'], 'tr': ['one', 'other'], 'zh-rCN': ['other'], 'ar': ['zero', 'one', 'two', 'few', 'many', 'other']}
 HEADER = '<!-- machine translated, unreviewed: the English res/values/strings.xml is the source; see android/README.md, Languages -->'
 
 

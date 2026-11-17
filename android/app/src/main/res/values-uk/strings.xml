@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- machine translated, unreviewed: the English res/values/strings.xml is the source; see android/README.md, Languages -->
 <resources>
     <!-- Resolution, Upscaling quality and Graphics quality (a game whose profile has a render_cfg row: Game settings and the in-game panel; Profile.renderOutLabel,
          Profile.renderPctLabel, Profile.renderRestartNote) -->
@@ -975,7 +976,7 @@
     <string name="home_on_multiplier">Увімкнено · %1$sx</string>
     <string name="game_kept_for_game_resolution">Збережено для цієї гри (той самий параметр, що й Налаштування гри › Роздільна здатність).</string>
     <string name="game_applies_now_resizes_picture">Застосовується зараз: гра змінює розмір зображення за кілька кадрів. Збережено для цієї гри (той самий параметр, що й Налаштування гри › Роздільна здатність гри).</string>
-    <string name="game_fit_keeps_shape_note">«Вписати» зберігає пропорції гри, «Розтягнути» заповнює весь екран; нижче 100 %% зображення зменшується з чорними полями навколо. Застосовується зараз і зберігається для цієї гри.</string>
+    <string name="game_fit_keeps_shape_note">«Вписати» зберігає пропорції гри, «Розтягнути» заповнює весь екран; нижче 100 % зображення зменшується з чорними полями навколо. Застосовується зараз і зберігається для цієї гри.</string>
     <string name="home_game_details">Title ID: %1$s\nГра: %2$s\nПак: %3$s\nШейдери: %4$s\nЗбереження: %5$s</string>
     <string name="home_nup_in_place">%1$s (.nup використовується з місця зберігання, обрано через системний провідник)</string>
     <string name="home_shaders_present">наявні (%1$s)</string>
