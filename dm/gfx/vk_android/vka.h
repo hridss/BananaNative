@@ -141,6 +141,9 @@ typedef struct {
     int tl_host;                                    // the GPU signals no timeline: submissions get fences and the host signals their values (vka_dev.c "Host-signalled timelines")
 } vka_dev;
 extern vka_dev V;
+#ifndef DM_GAME_VRS_PASSES
+#define DM_GAME_VRS_PASSES ""   // the game profile's vrs_passes (vka_draw.c vrs_pass): none in a header made before the key
+#endif
 // Custom GPU drivers (vka_driver.c): DM_VK_DRIVER=<folder with meta.json, or a .so> loads that driver through libadrenotools (restart only); unset, empty or "system" = the
 // system libvulkan.so. vka_driver_open returns the libvulkan handle (NULL = use the system one); vka_driver_tag is a file-name-safe name of the custom driver in use, NULL for the system's
 void *vka_driver_open(void);

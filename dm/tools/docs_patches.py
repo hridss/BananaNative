@@ -135,6 +135,8 @@ DEFAULT_SOON = 'a default for every game after `regress.py check` on the games'
 SWITCH_BINDING = [
     ('render_cond', '', {'what': 'NVN conditional rendering', 'now': 'game', 'goal': 'host', 'purpose': 'rendering',
      'why': f'what the GPU does; off by default only because other games drew everything before: {DEFAULT_SOON}'}),
+    ('vrs_passes', '', {'what': 'the passes a coarser fragment shading rate may take (the Lighter shading option)', 'now': 'game', 'goal': 'game', 'purpose': 'frame rate',
+     'why': "which passes vary slowly enough to shade per 2x2 pixels is a look the player chooses, per game: the profile names them, the option turns the rate on"}),
     ('turnip_env', '', {'what': "Mesa's own variables for Turnip (TU_DEBUG=sysmem)", 'now': 'game', 'goal': 'game', 'purpose': 'frame rate',
      'why': "a driver limit measured per game: Turnip picks GMEM or sysmem per pass by memory traffic alone, and Vulkan gives the host no say in it; a driver that weighed the binning pass's vertex work would make it unneeded"}),
     ('gpu_timestamps', '', {'what': 'timestamp reports per segment', 'now': 'game', 'goal': 'host', 'purpose': 'rendering', 'why': f'what hardware records: {DEFAULT_SOON}'}),

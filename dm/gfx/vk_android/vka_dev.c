@@ -212,8 +212,10 @@ static int init_once(void) {
     int x_fault = has_ext(de, nde, VK_EXT_DEVICE_FAULT_EXTENSION_NAME) && !(fault_env && !strcmp(fault_env, "0"));
     if (x_fault) dext[ndext++] = VK_EXT_DEVICE_FAULT_EXTENSION_NAME;
     // VK_KHR_fragment_shading_rate, only for DM_VK_VRS (restart): its pipeline rate (vka_draw.c vrs_pass). Off by default: the dynamic state changes every game pipeline
-    int x_vrs = VKA_ENV("DM_VK_VRS", 0) && has_ext(de, nde, VK_KHR_FRAGMENT_SHADING_RATE_EXTENSION_NAME);
-    if (VKA_ENV("DM_VK_VRS", 0) && !x_vrs) VRED("DM_VK_VRS: the device has no VK_KHR_fragment_shading_rate: every pass shades each pixel");
+    // On by default for a game whose profile names its passes (vrs_passes): its pipelines then take the rate from the start, and the coarse rate switches live
+    int want_vrs = VKA_ENV("DM_VK_VRS", DM_GAME_VRS_PASSES[0] != 0);
+    int x_vrs = want_vrs && has_ext(de, nde, VK_KHR_FRAGMENT_SHADING_RATE_EXTENSION_NAME);
+    if (want_vrs && !x_vrs) VRED("DM_VK_VRS: the device has no VK_KHR_fragment_shading_rate: every pass shades each pixel");
     if (x_vrs) dext[ndext++] = VK_KHR_FRAGMENT_SHADING_RATE_EXTENSION_NAME;
     V.mem_budget = has_ext(de, nde, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);   // the image heap's budget, for the texture cache's limit (vka_tex.c img_limit_update)
     if (V.mem_budget) dext[ndext++] = VK_EXT_MEMORY_BUDGET_EXTENSION_NAME;

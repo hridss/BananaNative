@@ -576,10 +576,11 @@ static void pass_redrawn(vka_img *const *im, int n) {
     vka_pso_redrawn = ok;
 }
 // ---------- Fragment shading rate by pass (DM_VK_VRS) ----------
-// With DM_VK_VRS=1 (restart; vka_dev.c) the game's pipelines take the fragment shading rate as dynamic state, and each pass sets it as it begins: DM_VK_VRS_RATE (live,
-// default 2) pixels a side for a pass whose shape is one of DM_VK_VRS_PASSES (live; ',' or ';' between shapes written as the GPU profile prints them without the clears: "c0:97 d:130"
+// With DM_VK_VRS=1 (restart; vka_dev.c; the default for a game whose profile has vrs_passes) the game's pipelines take the fragment shading rate as dynamic state, and each
+// pass sets it as it begins: with DM_VK_VRS_COARSE=1 (live, off; the launcher's Lighter shading), DM_VK_VRS_RATE (live, default 2) pixels a side for a pass whose shape is one of
+// DM_VK_VRS_PASSES (live, default the profile's vrs_passes; ',' or ';' between shapes written as the GPU profile prints them without the clears: "c0:97 d:130"
 // is colour slot 0 of VkFormat 97 with a depth target of VkFormat 130), one pixel for every other pass. A fragment of 2x2 pixels runs the fragment shader once for the four:
-// for passes whose picture varies slowly (lighting, translucency, blurs) at a quarter of their shading work. No shape by default
+// for passes whose picture varies slowly (lighting, translucency, blurs) at a quarter of their shading work
 typedef struct { VkCommandBuffer cb; uint32_t s; } vrs_arg;
 static void vrs_cmd(const void *a) {
     vrs_arg w; memcpy(&w, a, sizeof w);
@@ -601,9 +602,9 @@ static int vrs_listed(const char *list, const char *shape) {   // shape is one o
 static void vrs_pass(const VkRenderingAttachmentInfo *ca, int n, int depth) {
     static uint32_t gen; static char list[512]; static int have;
     uint32_t g = atomic_load_explicit(&vka_env_gen, memory_order_relaxed);
-    if (g != gen) { gen = g; have = vka_env_str("DM_VK_VRS_PASSES", list, sizeof list) && list[0]; }
+    if (g != gen) { gen = g; if (!vka_env_str("DM_VK_VRS_PASSES", list, sizeof list)) snprintf(list, sizeof list, "%s", DM_GAME_VRS_PASSES); have = list[0] != 0; }
     uint32_t s = 1;
-    if (have) {
+    if (have && VKA_ENV("DM_VK_VRS_COARSE", 0)) {
         char shape[128]; size_t bn = 0; shape[0] = 0;
         for (int i = 0; i < n && bn < sizeof shape; i++) if (ca[i].imageView) bn += (size_t)snprintf(shape + bn, sizeof shape - bn, "%sc%d:%d", bn ? " " : "", i, R.cf[i]);
         if (depth && bn < sizeof shape) snprintf(shape + bn, sizeof shape - bn, "%sd:%d", bn ? " " : "", R.df ? R.df : R.sf);

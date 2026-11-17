@@ -68,6 +68,10 @@ gpu_timestamps	segment
 # The static meshes' coarser LODs nearer (r.StaticMeshLODDistanceScale, raised to 2, 2026-11-15): the frame is bound by its geometry (7.06 M primitives,
 # the shader launch block busy 97 %); at 2, 5.54 M primitives, GPU 71.8 -> 68.7 ms, 13.8 -> 14.4 fps, screenshots within the noise of two at the game's own scale
 ue_lod_scale	2
+# Coarser fragment shading on the soft passes (vka_draw.c vrs_pass; the Lighter shading option, DM_VK_VRS_COARSE): the lighting and translucency over the scene colour
+# (VkFormat 97) with the depth target (130), 9.8 ms of 42 at the 67 % floor, and the post-processing pass over the scene colour alone, 4.8 ms. At 2x2 on the AYN Thor (Mesa
+# main, split screen, cameras turning, 2026-11-17): 22.6 -> 25.0 fps, GPU 43.1 -> 38.7 ms; the lighting alone 23.2 -> 24.7, the post-processing pass alone 22.9 -> 23.9
+vrs_passes	c0:97 d:130,c0:97
 # The translucent lighting volume at 16 cells a side, always (ue_set without a toggle; r.TranslucencyLightingVolumeDim, the game's 32): its pass 2.4 -> 0.7 ms a frame
 # in handheld with both cameras turning, the hall alike by eye
 ue_set	r.TranslucencyLightingVolumeDim	16
@@ -97,6 +101,7 @@ ue_set	r.AntiAliasingMethod	2	DM_UE_TAAU
 option	DM_UE_TRANSLUCENT_VOLUME_OFF	Particle light volume off	Faster (about 4 ms a frame): smoke, particles and light shafts lose some of their lighting and look slightly duller	restart
 option	DM_UE_LIGHT_DISTANCE	Shorter light distance	Distant lights turn off at half the distance: about 3 ms a frame faster, far lamps appear later	restart
 option	DM_UE_COARSER_MESHES	Coarser distant objects	Simpler versions of objects come nearer: fewer triangles, a little less detail at a distance	restart
+option	DM_VK_VRS_COARSE	Lighter shading	Lighting, translucency and a post-processing pass shaded once per 2x2 pixels: about 2.5 fps faster in split screen, outlines a little more stepped	live
 option	DM_UE_SKEL_LOD	Simpler characters	Characters drawn with their next, lighter level of detail: about 1 fps faster in split screen, hardly visible	live
 option	DM_UE_RES_FLOOR_83	Resolution floor 83 %	The sharpest floor: in split screen the game lets its resolution drop as far as 5 % for 30 fps, this keeps it at 83 % or more (slower)	live
 option	DM_UE_RES_FLOOR_67	Resolution floor 67 %	The dynamic resolution stays at 67 % or more: faster than 83 %, softer picture (wins over 83 %)	live

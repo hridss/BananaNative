@@ -349,6 +349,27 @@ class PlaceCoalescePct(unittest.TestCase):   # place_coalesce_pct (vka_mem.c coa
             self.assertIn('place_coalesce_pct must be', out, rows)
 
 
+class VrsPasses(unittest.TestCase):   # vrs_passes (vka_draw.c vrs_pass): pass shapes, the header's string
+    def macro(self, rows):
+        with tempfile.TemporaryDirectory() as d:
+            Path(d, ID).mkdir()
+            (Path(d, ID) / 'game.tsv').write_text(TSV + rows)
+            r = subprocess.run([sys.executable, str(GAME), 'header', ID, str(Path(d, ID) / 'game.h')], env={**os.environ, 'DM_GAMES_DIR': d}, capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            return [ln for ln in (Path(d, ID) / 'game.h').read_text().splitlines() if 'VRS_PASSES' in ln]
+
+    def test_rows(self):
+        self.assertEqual(self.macro(''), ['#define DM_GAME_VRS_PASSES ""'])
+        self.assertEqual(self.macro('vrs_passes\tc0:97 d:130, c0:97\n'), ['#define DM_GAME_VRS_PASSES "c0:97 d:130,c0:97"'])
+        self.assertEqual(self.macro('vrs_passes\tc0:97 c1:64 c2:44 d:130\n'), ['#define DM_GAME_VRS_PASSES "c0:97 c1:64 c2:44 d:130"'])
+
+    def test_rejected(self):
+        for rows in ('vrs_passes\tc0:97;d:130\n', 'vrs_passes\tc9:97\n', 'vrs_passes\td:130 c0:97\n', 'vrs_passes\tc0:97C\n', 'vrs_passes\tlight\n'):
+            rc, out = header(rows)
+            self.assertNotEqual(rc, 0, rows)
+            self.assertIn('vrs_passes takes', out, rows)
+
+
 class TurnipEnv(unittest.TestCase):   # turnip_env (vka_driver.c turnip_env): Mesa variables as NAME=value words, the header's string
     def macro(self, rows):
         with tempfile.TemporaryDirectory() as d:
