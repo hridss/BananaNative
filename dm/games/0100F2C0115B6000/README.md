@@ -81,6 +81,7 @@ Game-specific findings. The general host changes they led to are listed under [F
 
 ## Found on this game
 
+- [Main's copies of a shader taken last, unchecked](../../../docs/reference/packing.md#mains-copies-of-a-shader-taken-last-unchecked): the map's `main` rows refreshed for the first-copy selection, 2026-11-17 (upstream nxnative e99583c9); every registered key, stage and package kept.
 - [Benchmark captures perturb the measured frame pacing](../../../docs/reference/frame-rate.md#benchmark-captures-perturb-the-measured-frame-pacing).
 - [Unmapped guest memory stays resident](../../../docs/reference/memory.md#unmapped-guest-memory-stays-resident).
 - **Resolved in the host (#613): `nn::diag` abort at `sdk+0x13ce58` after about 15 minutes**, the amiibo poll waiting on an event the game never attached: [The amiibo library's state before Initialize](../../../docs/reference/services.md#the-amiibo-librarys-state-before-initialize). Found by disassembly; the abort itself was not reproduced here.

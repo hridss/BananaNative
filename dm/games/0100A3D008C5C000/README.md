@@ -252,6 +252,7 @@ existing [per-depth-mode entry-point mechanism](../../../docs/reference/shaders.
 
 ## Found on this game
 
+- [Main's copies of a shader taken last, unchecked](../../../docs/reference/packing.md#mains-copies-of-a-shader-taken-last-unchecked): the map's `main` rows refreshed for the first-copy selection, 2026-11-17 (upstream nxnative e99583c9); every registered key, stage and package kept.
 - [StandardAllocators over 12 to 62 GB of address space](../../../docs/reference/memory.md#standardallocators-over-12-to-62-gb-of-address-space).
 - [1 GB alignment of regions of 1 GB and more](../../../docs/reference/memory.md#1-gb-alignment-of-regions-of-1-gb-and-more).
 - [Maps past the application pool fail as on Horizon](../../../docs/reference/memory.md#maps-past-the-application-pool-fail-as-on-horizon).
