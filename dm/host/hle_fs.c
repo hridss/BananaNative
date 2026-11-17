@@ -1313,18 +1313,25 @@ static int rm_entry(const char *c) {
     struct stat st; if (lstat(c, &st)) return -1;
     return S_ISDIR(st.st_mode) ? rm_tree(c) : unlink(c);
 }
+// The next entry of a directory, without . and ..: NULL at its end with errno 0, NULL with errno set when reading failed (readdir answers both with NULL; only errno tells them apart)
+static struct dirent *dir_next(DIR *d) {
+    struct dirent *e;
+    do { errno = 0; e = readdir(d); } while (e && (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")));
+    return e;
+}
+// Stops at the first child that fails and returns -1 with its errno (or the directory read's); rmdir only once every child is gone
 static int rm_tree(const char *p) {
     struct stat st; if (lstat(p, &st)) return -1;
     if (!S_ISDIR(st.st_mode)) { errno = ENOTDIR; return -1; }   // a symlink to a directory is not entered: opendir would follow it and empty its target
     DIR *d = opendir(p); if (!d) return -1;
     struct dirent *e; char c[1024]; int rc = 0;
-    while ((e = readdir(d))) {
-        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
+    while ((e = dir_next(d))) {
         snprintf(c, sizeof c, "%s/%s", p, e->d_name);
-        rc |= rm_entry(c);
+        if ((rc = rm_entry(c))) break;   // keep the first failure, before readdir can clear errno
     }
-    closedir(d);
-    return rc | rmdir(p);
+    int err = errno; closedir(d);
+    if (rc || err) { errno = err; return -1; }
+    return rmdir(p);
 }
 HLE_FORCE("_ZN2nn2fs26DeleteDirectoryRecursivelyEPKc", "fsp-srv → recursive delete (only inside writable mounts)", Result, h_fs_DeleteDirRec, const char *path) { dm_thread_service_request();
     HP(path); RW(); return rm_tree(hp) ? err_res("rmtree", hp) : RES_OK;
@@ -1334,13 +1341,13 @@ HLE_FORCE("_ZN2nn2fs25CleanDirectoryRecursivelyEPKc", "fsp-srv → recursively d
     HP(path); RW();
     DIR *d = opendir(hp); if (!d) return err_res("cleandir", hp);
     struct dirent *e; char c[1024]; int rc = 0;
-    while ((e = readdir(d))) {
-        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
+    while ((e = dir_next(d))) {
         snprintf(c, sizeof c, "%s/%s", hp, e->d_name);
-        rc |= rm_entry(c);
+        if ((rc = rm_entry(c))) break;
     }
-    closedir(d);
-    return rc ? err_res("cleandir", hp) : RES_OK;
+    int err = errno; closedir(d);
+    if (rc || err) { errno = err; return err_res("cleandir", hp); }
+    return RES_OK;
 }
 // file data cache (a global read cache in the fs process): the host reads through the page cache and leaves the buffer unused
 HLE_FORCE("_ZN2nn2fs25EnableGlobalFileDataCacheEPvm", "fsp-srv global read cache; unused by the host", void, h_fs_EnableGlobalCache, void *buf, size_t sz) { (void)buf; (void)sz; }
