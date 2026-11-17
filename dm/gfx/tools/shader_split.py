@@ -3601,14 +3601,27 @@ def pooled(ex, jobs, total, start=0, chunk=1, cache=None):
     return [r for first, _ in batches for r in kept[first]]
 
 
+# A list argument (RomFS, main, DLC) whose paths may hold a comma. The lists were parted at every ',', so one game file named with a comma ("Yoru, Tomosu
+# [0100C2901153C000].nup", or a folder above it) became two paths that do not exist and the split stopped with FileNotFoundError.
+LIST_SEP = '\x1f'   # ASCII unit separator: not a character of a Windows file name, and not one anybody types into a POSIX one
+
+def path_list(arg):
+    """The paths of a list argument: parted at LIST_SEP when it has one; else the argument whole when it names something that is there (a file, a folder, a
+    node of a .nup: what the phone's split and pack_android.py pass, one path each); else parted at ',' as before (scripts/build_ipa_from_nsp.py's lists)"""
+    if LIST_SEP in arg: return arg.split(LIST_SEP)
+    try: there = os.path.exists(arg)
+    except ValueError: there = False   # a list whose first part names a file that is no .nup
+    return [arg] if there else arg.split(',')
+
+
 def main():
     romfs_l, main_l, pkg, mapout, factsout = sys.argv[1:6]
     pairsout = sys.argv[6] if len(sys.argv) > 6 else None
     psopairsout = sys.argv[7] if len(sys.argv) > 7 else None   # pso_pairs.tsv: supplemental BAHS program variations and legacy Unity pass-input covers
-    dlc_v = sys.argv[8].split(',') if len(sys.argv) > 8 and sys.argv[8] else []   # extra content has no ExeFS; each root is the extracted DLC index
-    # Several versions (base game + update): the RomFS and main arguments are comma-separated and paired one to one; the output is their union (keys are content hashes, shaders shared by versions appear once).
+    dlc_v = path_list(sys.argv[8]) if len(sys.argv) > 8 and sys.argv[8] else []   # extra content has no ExeFS; each root is the extracted DLC index
+    # Several versions (base game + update): the RomFS and main arguments are lists (path_list: LIST_SEP, or ',' when the argument names nothing that is there) paired one to one; the output is their union (keys are content hashes, shaders shared by versions appear once).
     # The first version's source column is unchanged; later versions are prefixed with their workspace directory name (e.g. v327680): /v327680/Shader/…, main@v327680. They sort after the first version, so existing rows keep their package indices.
-    romfs_v, main_v = [nup.default_romfs(r) for r in romfs_l.split(',')], main_l.split(',')
+    romfs_v, main_v = [nup.default_romfs(r) for r in path_list(romfs_l)], path_list(main_l)
     dump_aoc = [] if dlc_v else dump_addons(os.environ.get('DM_SPLIT_DUMP'))
     dlc_v = [nup.default_romfs(r) for r in dlc_v] + dump_aoc
     if len(romfs_v) != len(main_v): red(f'{len(romfs_v)} RomFS and {len(main_v)} main: they must pair one to one')
