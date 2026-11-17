@@ -56,6 +56,10 @@ res_levels	76a489f3bd3642fa5e18bd83d32c98ba	0x2849658	34	0x2804ff0:8	0x2805160:8
 # A non-ratio row: GameSettings lists no fixed shapes, only Screen shape (fixed ones only showed a phone's own shape anyway)
 aspect	screen
 
+# ---- Variants (patches.py VARIANT_CUTS; Game settings > Aspect ratio) ----
+# 43: native 4:3 (1280x960 / 4:3 world camera via OBS 28-30 + kg175 ScreenLayout UI via 3 cuts and OBS 30|3..5): main only.
+variant	43	main	4:3
+
 # ---- Shader split (shader_split.py) ----
 shader_groups	/motor_asset_re/=rdb
 shader_note	Pokemon Pokopia shaders
