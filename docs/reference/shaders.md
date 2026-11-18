@@ -1041,6 +1041,14 @@ Finding, keying and translating shaders (`dm/gfx/tools/shader_split.py`, `dmsh_b
 - **Found on:** no game symptom; upstream's Jetson Orin sm_87 probes (70 numeric differences in 9,140 lanes before, none after on an M4 Pro; NaN encodings still differ).
 - **Check:** `DMSH_TEST_XLATE=<translator> python3 dm/gfx/tests/test_dmsh_ampere_alu.py` (`HalfFmaAlias`) and `test_dmsh_ampere_mem.py` (`Pokopia`'s HFMA2 lane tests read the half FMA).
 
+### FMNMX and HMNMX2 signed-zero ordering
+
+- **Symptom:** a minimum or maximum of two zeros has the wrong sign: NVIDIA's `max(+0, -0)` is +0, the translation could give -0. A reciprocal or sign test after it tells them apart.
+- **Cause:** NVIDIA orders -0 below +0 in either operand order. Metal's `fmin` / `fmax` and SPIR-V's `FMin` / `FMax` may return either zero.
+- **Fix:** `FPMinMax` in `InstEmitAluHelper.cs` tests the operands' bits for two zeros and then takes their OR for the minimum and their AND for the maximum; Ampere FMNMX and HMNMX2 and Maxwell FMNMX use it after the operand modifiers and the half `.FTZ`. DMNMX keeps the plain path. Four integer operations a lane for a minimum, five for a maximum, with the usual constant predicate (upstream seedds/nxnative 50bdfe87, PR #2047).
+- **Found on:** no game symptom; upstream's Jetson Orin sm_87 probes. Upstream's Fast Fusion menu runs measured a higher p99 frame time with it on the Mac (17.5 → 18.9-19.4 ms over two runs each); not measured on a phone.
+- **Check:** upstream's `test_dmsh_ampere_orin.py`, a Metal test with its Orin fixture, not in this tree.
+
 ### I2F from a 64-bit integer rounds once
 
 - **Symptom:** `I2F` from a signed or unsigned 64-bit register pair to f32 can give the wrong float; a negative integer close to zero can lose its whole value to cancellation.
