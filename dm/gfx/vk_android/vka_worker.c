@@ -353,7 +353,7 @@ static int up(void) {
     if (!vka_worker_on()) return 0;
     if (g_up) return g_up > 0;
     pthread_t th;
-    if (pthread_create(&th, NULL, worker_main, NULL)) { VRED("cannot start the replay worker: submissions are replayed inline"); g_up = -1; g_on = 0; return 0; }
+    if (vka_compiler_thread(&th, worker_main, NULL)) { VRED("cannot start the replay worker: submissions are replayed inline"); g_up = -1; g_on = 0; return 0; }
     pthread_detach(th); g_up = 1;
     VLOG("replay worker: submissions and presents are replayed on their own thread, at most %d frame%s behind the game (DM_VK_WORKER=0: inline)", g_frames, g_frames == 1 ? "" : "s");
     return 1;

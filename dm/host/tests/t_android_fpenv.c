@@ -72,6 +72,10 @@ int main(void) {
     vka_pcache_name(b, sizeof b, "/t", "Turnip_v32", VKA_PCACHE_GEN); CHECK(!strcmp(b, "/t/vk_pipelines-Turnip_v32-fp0.bin"), "custom driver: %s", b);
     vka_pcache_name(b, sizeof b, "/t", NULL, ""); CHECK(!strcmp(b, "/t/vk_pipelines.bin"), "the generation before (system): %s", b);
     vka_pcache_name(b, sizeof b, "/t", "Turnip_v32", ""); CHECK(!strcmp(b, "/t/vk_pipelines-Turnip_v32.bin"), "the generation before (custom): %s", b);
+    // The prewarm lists: one per driver, the phone's own driver named, none of them the name every driver shared before
+    vka_pwlist_name(b, sizeof b, "/t", NULL); CHECK(!strcmp(b, "/t/vk_pipelines-system.keys"), "prewarm list, system driver: %s", b);
+    CHECK(strcmp(b + 3, VKA_PWLIST_SHARED) != 0, "the system driver's list is not the shared one");
+    vka_pwlist_name(b, sizeof b, "/t", "Turnip_v32"); CHECK(!strcmp(b, "/t/vk_pipelines-Turnip_v32.keys"), "prewarm list, custom driver: %s", b);
 
     printf("t_android_fpenv: %s\n", fails ? "FAILED" : "ok");
     return fails != 0;

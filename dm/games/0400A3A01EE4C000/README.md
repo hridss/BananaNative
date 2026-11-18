@@ -132,6 +132,10 @@ The first boot shows the language list: `A`, `LUp`, `A` picks English. The chara
 
 ## Found on this game
 
+- [A compute pipeline with retyped images was made twice, the second time on the frame path](../../../docs/reference/rendering.md#a-compute-pipeline-with-retyped-images-was-made-twice-the-second-time-on-the-frame-path-android): two freezes of about 5 s in the first minutes of a Turnip run (`6bef3d23a8ddeafd`, `4fb03a033366f0b2`, then `af8f64d9f5542ef2`, `28de7319d1c4417b`, `00d2cc376b83dedc`), each pipeline made in the background first and then again on the frame path for the integer textures bound to it; the same in the run before (a 6.2 s freeze). With the fix, a run of about 9 minutes on Turnip v26.3.0-R6 had no compute freeze (2026-11-18).
+- [Every GPU driver shared one prewarm list](../../../docs/reference/rendering.md#every-gpu-driver-shared-one-prewarm-list-android): runs on the system driver, Turnip and Qualcomm v863.1 wrote one list of 471 keys (429 vertex, 42 compute, 14 of those with retype masks); each driver now keeps its own, so a seed for this profile can be made from one driver's runs (2026-11-18).
+- [A driver's shader compiler overflowed a compile thread's stack](../../../docs/reference/rendering.md#a-drivers-shader-compiler-overflowed-a-compile-threads-stack-android): the first run on a Qualcomm driver here (v863.1, Adreno 740) crashed about 25 s in while prewarm made compute pipelines, in `notllvm-qgl.so`, on a 1 MiB thread stack; with 8 MiB the game starts on that driver. Which shader it was is open (2026-11-18).
+
 - [A game asked for a shader its library lacks](../../../docs/reference/shaders.md#a-game-asked-for-a-shader-its-library-lacks-android): the run-time shader layer builds the missing shader while the game runs (`DM_VK_LAYER`, default on); tested here with faked misses (`DM_VK_LAYER_DROP`), a real miss (Carkol) not yet run (2026-11-16).
 
 - [Opt-in LDN sessions and virtual UDP sockets](../../../docs/reference/services.md#opt-in-ldn-sessions-and-virtual-udp-sockets): experimental Android-to-PC Link Play; current verification limits are in [Link Play on Android](#link-play-on-android).

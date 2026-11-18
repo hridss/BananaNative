@@ -49,4 +49,12 @@ static inline void vka_fp_leave(uint64_t was) { if (vka_fpcr_get() != was) vka_f
 static inline int vka_pcache_name(char *out, size_t n, const char *dir, const char *tag, const char *gen) {
     return snprintf(out, n, "%s/vk_pipelines%s%s%s.bin", dir, tag ? "-" : "", tag ? tag : "", gen ? gen : "");
 }
+// The default prewarm list in dir, one per driver as the cache: vk_pipelines-<driver tag>.keys, vk_pipelines-system.keys for the phone's own driver (no tag). No
+// generation: a key names shaders and state, which a change of how pipelines are compiled leaves as they are. Until 2026-11-18 every driver shared vk_pipelines.keys
+// (VKA_PWLIST_SHARED), so one driver's run made the keys of another's ahead, and a profile's seed could not be made from one driver's runs; a driver without a list of its
+// own takes that file once (vka_pso.c pw_load). Returns snprintf's length
+#define VKA_PWLIST_SHARED "vk_pipelines.keys"
+static inline int vka_pwlist_name(char *out, size_t n, const char *dir, const char *tag) {
+    return snprintf(out, n, "%s/vk_pipelines-%s.keys", dir, tag ? tag : "system");
+}
 #endif

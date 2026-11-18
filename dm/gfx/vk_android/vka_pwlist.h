@@ -2,7 +2,8 @@
 // A list is the pipeline keys a run made, each naming its shaders by library key and its state as vka_gkey bytes, so one list serves every driver:
 //   pwhdr2 (magic NXVKPW2, sizeof(vka_gkey), record count, vka_pw_layout()), then the records: a pwrec, then klen bytes of vka_gkey padded to 8.
 // Kinds: VKA_PW_GFX a vertex pipeline (key[i] = the shader of stage slot i: vertex, fragment, geometry, tess control, tess evaluation), VKA_PW_CS a compute pipeline
-// (key[0], klen 0), VKA_PW_MESH a mesh pipeline (key[0] mesh, key[1] fragment, key[2] task or 0; 2026-11-08: before, mesh pipelines were left out, and Ocarina of Time's,
+// (key[0]; klen 0, or VKA_PW_CS_MASKS: two uint64 masks, the bindings whose float images and textures are retyped uint / int for the integer textures its dispatches bind
+// there (vka_shader_img_module; 2026-11-18: before, such a pipeline was left out and made on the frame path every run, Pokopia's 1-2.5 s each)), VKA_PW_MESH a mesh pipeline (key[0] mesh, key[1] fragment, key[2] task or 0; 2026-11-08: before, mesh pipelines were left out, and Ocarina of Time's,
 // 2.5-9 s each on Qualcomm's compiler, were never made ahead). A host that does not know a kind skips its records (vka_pw_rec_ok) and drops them at its next save.
 // Sources: <cache>.keys, the device's own (written by every run), and the profile's seed (dm/games/<id>/vk_prewarm.bin, compiled into the host as vk_prewarm_seed.h by
 // dm/games/game.py seed), which a first start makes ahead before the game reaches its first 3D frame (docs/reference/rendering.md "Pipelines made on the frame path")
@@ -14,6 +15,7 @@
 #include "vka_gkey.h"
 
 enum { VKA_PW_GFX = 0, VKA_PW_CS = 1, VKA_PW_MESH = 2 };
+enum { VKA_PW_CS_MASKS = 16 };   // a compute record's key bytes when its images are retyped: uint64 umask, uint64 smask
 typedef struct { uint8_t kind, bad, inst[2]; uint32_t klen; uint64_t key[5]; } pwrec;   // then klen bytes of vka_gkey, padded to 8; bad: in memory only (written 0)
 typedef struct { char magic[8]; uint32_t gkey_size, n; } pwhdr;      // NXVKPW1 (read only)
 typedef struct { char magic[8]; uint32_t gkey_size, n, layout, pad; } pwhdr2;   // NXVKPW2: layout = vka_pw_layout(), the key's field offsets (a size that stays the same hides a reordering)
@@ -43,7 +45,12 @@ enum { VKA_PW_TOPO_MAX = 10 /* PATCH_LIST */, VKA_PW_POLY_MAX = 2 /* POINT */, V
 // A record of a file before it is used: a file from another build, a truncated or damaged one must not reach pstate_fill (an ncolor of 200 indexes past cf[8]). 0 = skipped
 static inline int vka_pw_rec_ok(const pwrec *r, const uint8_t *kb) {
     if (r->kind > VKA_PW_MESH || !r->key[0] || r->klen > sizeof(vka_gkey)) return 0;
-    if (r->kind == VKA_PW_CS) return r->klen == 0;
+    if (r->kind == VKA_PW_CS) {   // no key bytes, or the retype masks: some binding retyped, none both uint and int
+        if (r->klen == 0) return 1;
+        if (r->klen != VKA_PW_CS_MASKS) return 0;
+        uint64_t m[2]; memcpy(m, kb, sizeof m);
+        return (m[0] | m[1]) && !(m[0] & m[1]);
+    }
     if (r->kind == VKA_PW_MESH && (!r->key[1] || r->key[3] || r->key[4] || r->inst[0] || r->inst[1])) return 0;   // a mesh pipeline: mesh, fragment, task; never instanced
     if (r->klen < offsetof(vka_gkey, va)) return 0;
     vka_gkey k; memset(&k, 0, sizeof k); memcpy(&k, kb, r->klen);

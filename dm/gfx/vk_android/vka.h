@@ -70,6 +70,19 @@ static inline double vka_env_c(vka_envc *c, const char *key, double def) {
 #define VKA_ENVF(key, def) ({ static vka_envc c_; vka_env_c(&c_, key, def); })
 #define VKA_ENV(key, def) ((int)VKA_ENVF(key, def))
 int vka_env_str(const char *key, char *out, size_t n);   // a string switch as live control sees it (1 = set); not cached: for switches read rarely
+// A thread that calls the driver's shader compiler (vkCreate*Pipelines: prewarm, the asynchronous and optimizer threads, the replay worker) is started with the stack of a
+// process's main thread, VKA_COMPILER_STACK: Android's default for a pthread is about 1 MiB, and a compiler that recurses over a long chain of dependent instructions can
+// need more. Qualcomm's compiler (driver v863.1, Adreno 740) overflowed a prewarm thread's 1 MiB stack in notllvm-qgl.so while making Pokémon Pokopia's compute pipelines
+// (SIGSEGV on the guard page under the stack, 2026-11-18). The pages are only used as far as the stack grows. A stack the system refuses: the default one, as before
+enum { VKA_COMPILER_STACK = 8 << 20 };
+static inline int vka_compiler_thread(pthread_t *th, void *(*fn)(void *), void *arg) {
+    pthread_attr_t a; int r = -1;
+    if (!pthread_attr_init(&a)) {
+        if (!pthread_attr_setstacksize(&a, VKA_COMPILER_STACK)) r = pthread_create(th, &a, fn, arg);
+        pthread_attr_destroy(&a);
+    }
+    return r ? pthread_create(th, NULL, fn, arg) : 0;
+}
 void vka_floor_span(uint64_t frame, uint64_t ns);   // vka_exec.c: a submission of frame ended ns after the frame began (the adaptive floor)
 void vka_floor_stats(char *b, size_t n);
 void vka_floor_commit(int counted);   // DM_VK_GPU_FLOOR_AUTO=2: a submission counted by vka_floor_tail_add handed to the queue / done

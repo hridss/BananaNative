@@ -38,7 +38,15 @@ static void test_records(void) {
     bad = m; bad.key[3] = 7; CHECK(!vka_pw_rec_ok(&bad, (const uint8_t *)&k), "a mesh record has three slots");
     bad = m; bad.inst[0] = 1; CHECK(!vka_pw_rec_ok(&bad, (const uint8_t *)&k), "a mesh record is never instanced");
     bad = g; bad.kind = 3; CHECK(!vka_pw_rec_ok(&bad, (const uint8_t *)&k), "an unknown kind is skipped (a newer host's)");
-    bad = c; bad.klen = 8; CHECK(!vka_pw_rec_ok(&bad, (const uint8_t *)&k), "a compute record has no key bytes");
+    bad = c; bad.klen = 8; CHECK(!vka_pw_rec_ok(&bad, (const uint8_t *)&k), "a compute record has no key bytes or its two masks");
+    // A compute pipeline with retyped images (vka_pso.c pw_note_cs): its uint / int masks as 16 key bytes; some binding retyped, none both
+    pwrec cm = c; cm.klen = VKA_PW_CS_MASKS; uint64_t mk[2] = {0x4, 0x10};
+    CHECK(vka_pw_rec_ok(&cm, (const uint8_t *)mk), "compute record with retype masks");
+    uint64_t mz[2] = {0, 0}, mb[2] = {0x4, 0x4};
+    CHECK(!vka_pw_rec_ok(&cm, (const uint8_t *)mz), "retype masks that retype nothing");
+    CHECK(!vka_pw_rec_ok(&cm, (const uint8_t *)mb), "a binding retyped both uint and int");
+    CHECK(vka_pw_hash(&c, "") != vka_pw_hash(&cm, mk), "a retyped compute pipeline is another record than the base one");
+    uint64_t mk2[2] = {0x4, 0x20}; CHECK(vka_pw_hash(&cm, mk) != vka_pw_hash(&cm, mk2), "the masks are part of the identity");
     bad = g; bad.klen = 8; CHECK(!vka_pw_rec_ok(&bad, (const uint8_t *)&k), "a key cut short");
     vka_gkey kk = k; kk.ncolor = 200; CHECK(!vka_pw_rec_ok(&g, (const uint8_t *)&kk), "an impossible colour count");
     kk = k; kk.samples = 3; CHECK(!vka_pw_rec_ok(&g, (const uint8_t *)&kk), "an impossible sample count");
@@ -51,13 +59,18 @@ static void test_records(void) {
 
 static void test_file(void) {
     static uint8_t buf[1 << 16]; vka_gkey k = key_tri(); uint32_t kl = (uint32_t)offsetof(vka_gkey, va);
-    pwrec r[4] = {{.kind = VKA_PW_GFX, .klen = kl, .key = {1, 2}}, {.kind = VKA_PW_CS, .key = {3}}, {.kind = VKA_PW_MESH, .klen = kl, .key = {4, 5, 6}}, {.kind = 9, .klen = kl, .key = {7}}};
-    vka_gkey ks[4] = {k, k, k, k};
-    size_t len = build(buf, r, ks, 4), o; uint32_t n;
-    CHECK(vka_pw_header(buf, len, &o, &n) == VKA_PW_OK && o == sizeof(pwhdr2) && n == 4, "header");
-    pwrec x; const uint8_t *kb; int ok, got = 0, oks = 0, kinds = 0;
-    while (got < (int)n && vka_pw_next(buf, len, &o, &x, &kb, &ok)) { got++; oks += ok; if (ok) kinds |= 1 << x.kind; }
-    CHECK(got == 4 && oks == 3 && kinds == 7, "records read %d, %d usable, kinds %#x (the unknown kind skipped)", got, oks, kinds);
+    pwrec r[5] = {{.kind = VKA_PW_GFX, .klen = kl, .key = {1, 2}}, {.kind = VKA_PW_CS, .key = {3}}, {.kind = VKA_PW_MESH, .klen = kl, .key = {4, 5, 6}}, {.kind = 9, .klen = kl, .key = {7}},
+                  {.kind = VKA_PW_CS, .klen = VKA_PW_CS_MASKS, .key = {8}}};
+    vka_gkey ks[5] = {k, k, k, k, k}; uint64_t mk[2] = {0x2, 0x20}; memset(&ks[4], 0, sizeof ks[4]); memcpy(&ks[4], mk, sizeof mk);
+    size_t len = build(buf, r, ks, 5), o; uint32_t n;
+    CHECK(vka_pw_header(buf, len, &o, &n) == VKA_PW_OK && o == sizeof(pwhdr2) && n == 5, "header");
+    pwrec x; const uint8_t *kb; int ok, got = 0, oks = 0, kinds = 0, masks = 0;
+    while (got < (int)n && vka_pw_next(buf, len, &o, &x, &kb, &ok)) {
+        got++; oks += ok; if (ok) kinds |= 1 << x.kind;
+        if (ok && x.kind == VKA_PW_CS && x.klen == VKA_PW_CS_MASKS) { uint64_t m[2]; memcpy(m, kb, sizeof m); masks = m[0] == 0x2 && m[1] == 0x20; }
+    }
+    CHECK(got == 5 && oks == 4 && kinds == 7, "records read %d, %d usable, kinds %#x (the unknown kind skipped)", got, oks, kinds);
+    CHECK(masks, "a compute record's retype masks read back");
     // Damage: another layout, another format, a record running past the end
     pwhdr2 h; memcpy(&h, buf, sizeof h); h.layout ^= 1; memcpy(buf, &h, sizeof h);
     CHECK(vka_pw_header(buf, len, &o, &n) == VKA_PW_LAYOUT, "another key layout");
@@ -67,7 +80,7 @@ static void test_file(void) {
     CHECK(vka_pw_header(buf, 4, &o, &n) == VKA_PW_SHORT, "too short");
     CHECK(vka_pw_header(buf, len, &o, &n) == VKA_PW_OK, "restored");
     got = 0; while (vka_pw_next(buf, len - 9, &o, &x, &kb, &ok)) got++;
-    CHECK(got == 3, "a truncated last record is not read (%d)", got);
+    CHECK(got == 4, "a truncated last record is not read (%d)", got);
 }
 
 // Every profile's seed list: this host's layout, every record usable, no record twice
