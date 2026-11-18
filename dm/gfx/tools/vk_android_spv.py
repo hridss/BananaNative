@@ -1126,6 +1126,7 @@ def loop_pool_search(m):
 
 OP_VECTOR_INSERT_DYNAMIC, OP_IEQUAL_, OP_ULESS_THAN, OP_ULESS_THAN_EQUAL, OP_LOGICAL_OR, OP_LOGICAL_AND, OP_LOGICAL_NOT = 78, 170, 176, 178, 166, 167, 168
 SC_PHYSICAL_STORAGE_BUFFER = 5349
+MA_ALIGNED = 0x2   # the memory operand Aligned (a physical pointer's load must have it)
 GMEM_RUN_WORDS = 4   # the most words of one run cache_raw_loads reads at once (the translator splits a 128-bit global load into four 32-bit raw loads)
 GMEM_CACHE_MIN_CALLS = 4   # a module with fewer raw load calls is left as it is: its few inlined helpers cost little, and its library entry stays the same
                            # (agl's compute shaders with one or two raw loads, which several games ship: their libraries need no update for this pass)
@@ -1138,10 +1139,31 @@ def _store_class(m, defs, p):   # the storage class of the variable a pointer is
     return m.vars[p][1] if p in m.vars else None
 
 
+def _table_chains(m, body, tables):   # the access chains of body into one of tables, as [table, 0, word]: the list, or None when another shape or two tables
+    chains = [x for x in body if x[0] & 0xffff == OP_ACCESS_CHAIN and x[3] in tables]
+    if len({x[3] for x in chains}) > 1 or any(len(x) != 6 or m.consts.get(x[4], (0, [1]))[1] != [0] for x in chains): return None
+    return chains
+
+
+def _raw_find_fn(m, g, tables):
+    """g's pool table access chains when g only reads the pool table (the translator's dmsh_raw_find since upstream 8d62601f: the hint, else the search; an entry
+    index returned): nothing written but Function variables, nothing called, no instruction of _RUN_BREAKERS. Else None"""
+    a, e = m.function_range(g)
+    body = m.ins[a:e + 1]
+    defs = {x[2]: x for x in body if len(x) > 2 and (x[0] & 0xffff) not in NO_RESULT_OPS and x[0] & 0xffff != OP_LABEL}
+    for x in body:
+        op = x[0] & 0xffff
+        if op in _RUN_BREAKERS or op in (OP_FUNCTION_CALL, OP_CONVERT_U_TO_PTR) or (op == OP_STORE and _store_class(m, defs, x[1]) != SC_FUNCTION): return None
+    chains = _table_chains(m, body, tables)
+    return chains or None
+
+
 def _raw_load_helper(m, f, tables):
     """f's facts when it is a GlobalToStorage raw load helper of one of the pool tables (the variables in tables): two 32-bit integer parameters (the address's low
-    and high words), one physical pointer read once, its value (bits unchanged) or 0 returned, nothing written but Function or Private variables, nothing called;
-    the table read as [table, 0, word] (a uint pointer of the table's storage class). Else None"""
+    and high words), one physical pointer read once, its value (bits unchanged) or 0 returned, nothing written but Function or Private variables, nothing called but
+    a function that only reads the table (_raw_find_fn: the translator's dmsh_raw_find since upstream 8d62601f); the table read as [table, 0, word] (a uint pointer
+    of the table's storage class). The pointer may be to a vector of n = 2..4 32-bit words (the translator's RawV<n> helpers since 8d62601f: one vector load for a
+    64- or 128-bit guest load): word 0 is returned and words 1..n-1 are stored to one Private array (gmem_vec), each at a constant index. Else None"""
     a, e = m.function_range(f)
     body = m.ins[a:e + 1]
     rty = body[0][1]
@@ -1152,31 +1174,54 @@ def _raw_load_helper(m, f, tables):
     if len(cu) != 1: return None
     sc, pt = m.pointee(cu[0][1])
     if sc != SC_PHYSICAL_STORAGE_BUFFER: return None
-    ptr, member = cu[0][2], None
+    ptr, member, vec = cu[0][2], None, 0
     if m.op(pt) == OP_TYPE_STRUCT:   # a block of one word (GLSL's buffer_reference): its member 0
         uses = [x for x in body if ptr in x[1:] and x is not cu[0]]
         if len(uses) != 1 or uses[0][0] & 0xffff != OP_ACCESS_CHAIN or len(uses[0]) != 5 or uses[0][3] != ptr or m.consts.get(uses[0][4], (0, [1]))[1] != [0]: return None
         member = (uses[0][1], uses[0][4]); ptr = uses[0][2]; pt = m.pointee(uses[0][1])[1]
-    if (m.int_type(pt) or (0,))[0] != 32: return None
+    word = pt
+    if m.op(pt) == OP_TYPE_VECTOR:
+        vec, word = m.types[pt][3], m.types[pt][2]
+        if not 2 <= vec <= GMEM_RUN_WORDS: return None
+    if (m.int_type(word) or (0,))[0] != 32: return None
     uses = [x for x in body if ptr in x[1:] and x[2:3] != [ptr]]
     if len(uses) != 1 or uses[0][0] & 0xffff != OP_LOAD or uses[0][3] != ptr: return None
     load = uses[0]
     defs = {x[2]: x for x in body if len(x) > 2 and (x[0] & 0xffff) not in NO_RESULT_OPS and x[0] & 0xffff != OP_LABEL}
+    called = [x for x in body if x[0] & 0xffff == OP_FUNCTION_CALL]
+    if len({x[3] for x in called}) > 1: return None
+    find_chains = _raw_find_fn(m, called[0][3], tables) if called else []
+    if find_chains is None: return None
     for x in body:
         op = x[0] & 0xffff
-        if op in _RUN_BREAKERS or op == OP_FUNCTION_CALL or (op == OP_STORE and _store_class(m, defs, x[1]) not in (SC_FUNCTION, SC_PRIVATE)): return None
-    chains = [x for x in body if x[0] & 0xffff == OP_ACCESS_CHAIN and x[3] in tables]
-    if not chains or len({x[3] for x in chains}) != 1 or any(len(x) != 6 or m.consts.get(x[4], (0, [1]))[1] != [0] for x in chains): return None
+        if op in _RUN_BREAKERS or (op == OP_STORE and _store_class(m, defs, x[1]) not in (SC_FUNCTION, SC_PRIVATE)): return None
+    chains = _table_chains(m, body, tables)
+    if not chains or len({x[3] for x in chains + find_chains}) != 1: return None
     tptr = chains[0][1]
     if m.pointee(tptr)[0] not in (SC_UNIFORM, SC_STORAGE_BUFFER) or (m.int_type(m.pointee(tptr)[1]) or (0,))[0] != 32: return None
     def bits_of(v):   # the value through bit-preserving casts
         while v in defs and defs[v][0] & 0xffff in (OP_BITCAST, OP_COPY_OBJECT): v = defs[v][3]
         return v
     zero = lambda v: v in m.consts and m.consts[v][1] == [0] or any(y[0] & 0xffff == OP_CONSTANT_NULL and y[2] == v for y in m.ins[:a])
+    got, vst = load[2], []
+    if vec:   # the load's words: word 0 returned, words 1..n-1 stored to gmem_vec[k - 1] (each once), nothing else made of the vector
+        ex = [x for x in body if load[2] in x[1:] and x is not load]
+        if any(x[0] & 0xffff != OP_COMPOSITE_EXTRACT or len(x) != 5 or x[3] != load[2] for x in ex) or sorted(x[4] for x in ex) != list(range(vec)): return None
+        comp = {x[4]: x[2] for x in ex}
+        got = comp[0]
+        for k in range(1, vec):
+            st = [x for x in body if x[0] & 0xffff == OP_STORE and bits_of(x[2]) == comp[k]]
+            if len(st) != 1 or st[0][1] not in defs: return None
+            ch = defs[st[0][1]]
+            if ch[0] & 0xffff != OP_ACCESS_CHAIN or len(ch) != 5 or ch[3] not in m.vars or m.vars[ch[3]][1] != SC_PRIVATE or ch[4] not in m.consts: return None
+            if (m.int_type(m.pointee(ch[1])[1]) or (0,))[0] != 32: return None
+            vst.append((ch[1], ch[3], ch[4]))
+            if any(bits_of(v) == comp[k] for x in body for v in x[3:] if x is not st[0] and (x[0] & 0xffff) not in (OP_BITCAST, OP_COPY_OBJECT)): return None
+        if len({v for _, v, _ in vst}) != 1 or len({m.consts[i][1][0] for _, _, i in vst}) != vec - 1: return None
     rets = [x[1] for x in body if x[0] & 0xffff == OP_RETURN_VALUE]
-    if not rets or any(bits_of(v) != load[2] and not zero(v) for v in rets) or not any(bits_of(v) == load[2] for v in rets): return None
-    return {'ret': rty, 'lo': params[0][1], 'hi': params[1][1], 'table': chains[0][3], 'tptr': tptr, 'ity': m.consts[chains[0][4]][0], 'word': pt,
-            'pptr': cu[0][1], 'member': member, 'mem': load[4:]}
+    if not rets or any(bits_of(v) != got and not zero(v) for v in rets) or not any(bits_of(v) == got for v in rets): return None
+    return {'ret': rty, 'lo': params[0][1], 'hi': params[1][1], 'table': chains[0][3], 'tptr': tptr, 'ity': m.consts[chains[0][4]][0], 'word': word,
+            'pptr': cu[0][1], 'vty': pt if vec else None, 'member': member, 'mem': load[4:], 'vec': vec, 'vst': vst, 'find': called[0][3] if called else None}
 
 
 def cache_raw_loads(m, tables):
@@ -1190,7 +1235,10 @@ def cache_raw_loads(m, tables):
     Why: the driver inlines every call, each with the helper's branches and search loop, so a vertex shader of 253 calls became ~1,000 small blocks; Turnip's ir3
     then spilled heavily (Ocarina of Time b1f06157308e3b22: 48 registers, 1,859 + 3,832 spill instructions, 2 us a vertex against 0.03 on Qualcomm's driver). With one
     likely-taken branch a run: 77 lookups instead of 253, 2.8x faster on Turnip, 2x on Qualcomm's driver (docs/reference/shaders.md, Raw global memory loads one block
-    each on Turnip). tables: the pool table variables (reflection kind GMEM_MAP). → the number of calls replaced"""
+    each on Turnip). Since the translator's update to upstream 8d62601f the helpers call one lookup function (dmsh_raw_find) and a 64- or 128-bit load is one call of
+    a vector helper (RawV<n>, words 1..n-1 left in gmem_vec): such a call is a run of its own, its words read in one load when the kept entry holds them all, and
+    stored to gmem_vec after the call as the helper stores them; the lookup function goes with the last helper that calls it. tables: the pool table variables
+    (reflection kind GMEM_MAP). → the number of calls replaced"""
     if not tables: return 0
     ent = m.entry_function()
     fns = [x[2] for x in m.ins if x[0] & 0xffff == OP_FUNCTION]
@@ -1225,6 +1273,9 @@ def cache_raw_loads(m, tables):
         cur = []
         for k, x in enumerate(body):
             op = x[0] & 0xffff
+            if op == OP_FUNCTION_CALL and x[3] in helpers and len(x) == 6 and helpers[x[3]]['vec']:   # a vector load: a run of its own
+                if cur: runs.append((f, cur))
+                runs.append((f, [(k, x, None)])); cur = []; continue
             if op == OP_FUNCTION_CALL and x[3] in helpers and len(x) == 6:
                 ad = addr(x[4], x[5])
                 if (cur and ad is not None and cur[-1][2] is not None and x[3] == cur[-1][1][3] and ad[:2] == cur[-1][2][:2] and ad[2] == cur[-1][2][2] + 4
@@ -1258,7 +1309,7 @@ def cache_raw_loads(m, tables):
         m.entry = m.entry + new_globals; m.entry[0] = len(m.entry) << 16 | OP_ENTRY_POINT
         m.ins[next(k for k, x in enumerate(m.ins) if x[0] & 0xffff == OP_ENTRY_POINT)] = m.entry
     for f, h in helpers.items():
-        for n in sorted({len(c) for g, c in runs if c[0][1][3] == f}):
+        for n in sorted({h['vec'] or len(c) for g, c in runs if c[0][1][3] == f}):
             gfns[f, n] = _cached_load_fn(m, h, n, caches[h['table']], f, dict(bool=bty, u32=u32, v2=v2, v4=v4, u64=u64, z4=z4, U=U))
     # the call sites
     done = 0
@@ -1270,25 +1321,33 @@ def cache_raw_loads(m, tables):
         body = m.ins[a:e + 1]
         rep = {}
         for c in mine:
-            k0, x0, _ = c[0]; n = len(c); r = m.new_id()
+            k0, x0, _ = c[0]; h = helpers[x0[3]]; n = h['vec'] or len(c); r = m.new_id()
             new = [[6 << 16 | OP_FUNCTION_CALL, v4, r, gfns[x0[3], n], x0[4], x0[5]]]
             for j, (_, x, _) in enumerate(c):
                 w = m.new_id()
                 new += [[5 << 16 | OP_COMPOSITE_EXTRACT, u32, w, r, j], [4 << 16 | (OP_COPY_OBJECT if x[1] == u32 else OP_BITCAST), x[1], x[2], w]]
+            for j, (cty, var, idx) in enumerate(h['vst'], 1):   # a vector load's words 1..n-1 to gmem_vec, as the helper stores them
+                w, p, ety = m.new_id(), m.new_id(), m.pointee(cty)[1]
+                new += [[5 << 16 | OP_COMPOSITE_EXTRACT, u32, w, r, j], [5 << 16 | OP_ACCESS_CHAIN, cty, p, var, idx]]
+                if ety != u32:
+                    w2 = m.new_id(); new.append([4 << 16 | OP_BITCAST, ety, w2, w]); w = w2
+                new.append([3 << 16 | OP_STORE, p, w])
             rep[k0] = new
             for k, _, _ in c[1:]: rep[k] = []
-            done += n
+            done += len(c)
         out = []
         for k, x in enumerate(body): out += rep.get(k, [x])
         m.ins[a:e + 1] = out
-    # helpers no call is left to
-    called = {x[3] for x in m.ins if x[0] & 0xffff == OP_FUNCTION_CALL}
-    for f in helpers:
-        if f in called: continue
-        a, e = m.function_range(f)
-        gone = {x[1] if x[0] & 0xffff == OP_LABEL else x[2] for x in m.ins[a:e + 1] if (x[0] & 0xffff) not in NO_RESULT_OPS and len(x) > 2 or x[0] & 0xffff == OP_LABEL}
-        del m.ins[a:e + 1]
-        m.ins = [y for y in m.ins if not ((y[0] & 0xffff) in (OP_NAME, OP_DECORATE) and y[1] in gone)]
+    # helpers no call is left to, then the lookup functions they called (dmsh_raw_find) when no call is left to those
+    for group in (list(helpers), list({h['find'] for h in helpers.values() if h['find']})):
+        called = {x[3] for x in m.ins if x[0] & 0xffff == OP_FUNCTION_CALL}
+        for f in group:
+            if f in called: continue
+            a, e = m.function_range(f)
+            gone = {x[1] if x[0] & 0xffff == OP_LABEL else x[2] for x in m.ins[a:e + 1] if (x[0] & 0xffff) not in NO_RESULT_OPS and len(x) > 2 or x[0] & 0xffff == OP_LABEL}
+            gone.add(f)
+            del m.ins[a:e + 1]
+            m.ins = [y for y in m.ins if not ((y[0] & 0xffff) in (OP_NAME, OP_DECORATE) and y[1] in gone)]
     m.index()
     return done
 
@@ -1312,10 +1371,16 @@ def _cached_load_fn(m, h, n, cache, helper, T):
     def add64(alo, ahi, blo, bhi):
         lo = val(OP_IADD, u32, alo, blo)
         return lo, val(OP_IADD, u32, val(OP_IADD, u32, ahi, bhi), val(OP_SELECT, u32, val(OP_ULESS_THAN, bty, lo, alo), U[1], U[0]))
+    wptr = m.add_type(OP_TYPE_POINTER, SC_PHYSICAL_STORAGE_BUFFER, h['word']) if h['vec'] else h['pptr']   # a vector helper's words read one at a time
     def access(alo, ahi):   # the word at a physical address
+        p = val(OP_CONVERT_U_TO_PTR, wptr, val(OP_BITCAST, u64, val(OP_COMPOSITE_CONSTRUCT, v2, alo, ahi)))
+        if h['member'] and not h['vec']: p = val(OP_ACCESS_CHAIN, h['member'][0], p, h['member'][1])
+        return cast(val(OP_LOAD, h['word'], p, *(h['mem'] if not h['vec'] else (MA_ALIGNED, 4))), h['word'], u32)
+    def access_vec(alo, ahi):   # a vector helper's n words at a physical address in one load, as the helper reads them
         p = val(OP_CONVERT_U_TO_PTR, h['pptr'], val(OP_BITCAST, u64, val(OP_COMPOSITE_CONSTRUCT, v2, alo, ahi)))
         if h['member']: p = val(OP_ACCESS_CHAIN, h['member'][0], p, h['member'][1])
-        return cast(val(OP_LOAD, h['word'], p, *h['mem']), h['word'], u32)
+        v = val(OP_LOAD, h['vty'], p, *h['mem'])
+        return [cast(val(OP_COMPOSITE_EXTRACT, h['word'], v, k), h['word'], u32) for k in range(n)]
     fid, plo, phi = m.new_id(), m.new_id(), m.new_id()
     fty = m.add_type(OP_TYPE_FUNCTION_, v4, h['lo'], h['hi'])
     E, HOT, COLD, M = m.new_id(), m.new_id(), m.new_id(), m.new_id()
@@ -1330,7 +1395,7 @@ def _cached_load_fn(m, h, n, cache, helper, T):
     op(OP_SELECTION_MERGE, M, 0); op(OP_BRANCH_CONDITIONAL, hit, HOT, COLD)
     # every word in the kept entry
     op(OP_LABEL, HOT)
-    hv = [access(*add64(al[k], ah[k], c[4], c[5])) for k in range(n)]
+    hv = access_vec(*add64(al[0], ah[0], c[4], c[5])) if h['vec'] else [access(*add64(al[k], ah[k], c[4], c[5])) for k in range(n)]
     hr = val(OP_COMPOSITE_CONSTRUCT, v4, *hv, *[U[0]] * (4 - n))
     op(OP_BRANCH, M)
     # each word looked up: hint, else search; its entry kept when it holds the word

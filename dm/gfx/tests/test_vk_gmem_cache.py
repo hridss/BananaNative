@@ -8,7 +8,9 @@ of two at another address. cache_raw_loads makes the 4-word run one call, the 2-
 A small SPIR-V interpreter runs main before and after over a table of 300 pools (test_vk_gmem_helpers.pool_table: entries past 64, hints for the 2 MiB chunks a pool
 covers whole) for addresses at a pool's start, middle and end, runs that leave their pool after 1, 2 or 3 words (the rest in no pool, or in the next pool when two
 pools touch), addresses in no pool (0 and the sink), a chunk a pool covers only partly (no hint: the search), and the same pool again (the kept entry): every word
-read and written is the same."""
+read and written is the same.
+
+GmemCacheFind: the helpers as the translator writes them since upstream 8d62601f (a shared lookup function, a vector helper for a 128-bit load: SHADER_V)."""
 from pathlib import Path
 import shutil
 import subprocess
@@ -20,7 +22,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parents[0] / 'tools'))
 sys.path.insert(0, str(HERE))
 import vk_android_spv as spv  # noqa: E402
-from test_vk_gmem_helpers import ADDR, FIND_NEW, LOG, pool_table, word_at  # noqa: E402
+from test_vk_gmem_helpers import ADDR, AT, BELOW, FIND_NEW, LOG, XSEARCH, XSTEPS, pool_table, word_at  # noqa: E402
 
 SHADER = '''#version 450
 #extension GL_EXT_buffer_reference : require
@@ -70,6 +72,76 @@ void main()
     gstore(io.w[4], io.w[5], 7u);
 }
 '''.replace('@STORE@', FIND_NEW.replace('@RET@', '')).replace('@LOAD@', FIND_NEW.replace('@RET@', ' 0u')).replace('@LOG@', LOG).replace('@ADDR@', ADDR)
+
+# The helpers since upstream 8d62601f (GlobalToStorage.cs TryGenerateRawStorageOp, GetRawFindFunction): the entry chosen last stays in each helper, the hint and the
+# 13-step search are one function every helper calls (dmsh_raw_find, an entry index), and a 128-bit load is one call of a vector helper (RawV4) that reads the four
+# words in one load, returns word 0 and leaves words 1-3 in a private array (gmem_vec) the caller reads after the call; a miss gives 0 in every word
+LAST_FIND = '''    uint sel = @LAST@;
+    int le = int(sel) * 8;
+    if (!all(bvec2(@AT_LE@, @BELOW_LE@))) {
+        sel = uint(raw_find(lo, hi));
+        @LAST@ = sel;
+        int fs = int(sel) * 8;
+        if (!@BELOW_FS@) { @MISS@ }
+    }
+    int f = int(sel) * 8;'''.replace('@AT_LE@', AT.format(e='le')).replace('@BELOW_LE@', BELOW.format(e='le')).replace('@BELOW_FS@', BELOW.format(e='fs'))
+
+SHADER_V = '''#version 450
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+layout(local_size_x = 1) in;
+layout(set = 0, binding = 0, std430) readonly buffer Map { uint w[]; } map;
+layout(set = 0, binding = 1, std430) buffer Log { uint w[]; } glog;
+layout(set = 0, binding = 2, std430) buffer Io { uint w[]; } io;
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer Word { uint v; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer Vec4 { uvec4 v; };
+uint g_last = 0u;
+uint g_lastv = 0u;
+uint g_vec[3];
+
+int raw_find(uint lo, uint hi)
+{
+    uint chunk = (hi << 11) | (lo >> 21);
+    uint hint = map.w[(chunk & 8191u) * 8u + 6u];
+    uint hidx = hint & 8191u;
+    if (all(bvec3(hidx != 0u, (hint >> 13) == chunk, hi < 256u))) return int(hidx);
+    int i0 = 0;
+@SEARCH@
+    return i@STEPS@;
+}
+
+uint gload(uint lo, uint hi)
+{
+@FIND@
+@ADDR@
+    return Word(packUint2x32(uvec2(hl, hh))).v;
+}
+
+uint gloadv(uint lo, uint hi)
+{
+@FINDV@
+@ADDR@
+    uvec4 v = Vec4(packUint2x32(uvec2(hl, hh))).v;
+    g_vec[0] = v.y; g_vec[1] = v.z; g_vec[2] = v.w;
+    return v.x;
+}
+
+void main()
+{
+    uint lo = io.w[0], hi = io.w[1];
+    uint a0 = gloadv(lo, hi);
+    io.w[8] = a0; io.w[9] = g_vec[0]; io.w[10] = g_vec[1]; io.w[11] = g_vec[2];
+    uint blo = io.w[2], bhi = io.w[3];
+    uint blo1 = blo + 4u, bhi1 = bhi + (blo1 < blo ? 1u : 0u);
+    uint blo2 = blo + 8u, bhi2 = bhi + (blo2 < blo ? 1u : 0u);
+    uint b0 = gload(blo, bhi), b1 = gload(blo1, bhi1), b2 = gload(blo2, bhi2);
+    io.w[12] = b0; io.w[13] = b1; io.w[14] = b2;
+    io.w[15] = gloadv(blo, bhi) ^ g_vec[2];
+    io.w[16] = gload(lo, hi);
+}
+'''.replace('@SEARCH@', XSEARCH).replace('@STEPS@', str(XSTEPS)).replace('@ADDR@', ADDR) \
+   .replace('@FIND@', LAST_FIND.replace('@LAST@', 'g_last').replace('@MISS@', 'return 0u;')) \
+   .replace('@FINDV@', LAST_FIND.replace('@LAST@', 'g_lastv').replace('@MISS@', 'g_vec[0] = 0u; g_vec[1] = 0u; g_vec[2] = 0u; return 0u;'))
 
 M = 0xffffffff
 
@@ -134,10 +206,12 @@ def run(m, table, io):
             r = x[2]
             if op == spv.OP_LOAD:
                 p = val[x[3]]
-                val[r] = (table[p[1]] if p[0] == 'map' else io.get(p[1], 0) if p[0] == 'io' else word_at(p[1]) if p[0] == 'phys' else 0 if p[0] == 'log' else mem[p])
+                if p[0] == 'phys' and m.op(x[1]) == spv.OP_TYPE_VECTOR: val[r] = tuple(word_at(p[1] + 4 * k) for k in range(m.types[x[1]][3]))   # Vec4(p).v
+                else: val[r] = (table[p[1]] if p[0] == 'map' else io.get(p[1], 0) if p[0] == 'io' else word_at(p[1]) if p[0] == 'phys' else 0 if p[0] == 'log' else mem.get(p, 0))
             elif op == spv.OP_ACCESS_CHAIN:
                 b = val.get(x[3])
                 if isinstance(b, tuple) and b[0] == 'phys': val[r] = b   # Word(p).v
+                elif isinstance(b, tuple) and b[0] == 'v' and len(x) == 5: val[r] = ('v', (b[1], val[x[4]]))   # an element of a private array (gmem_vec)
                 elif x[3] == mapvar: val[r] = ('map', val[x[5]])
                 elif x[3] == iovar: val[r] = ('io', val[x[5]])
                 elif x[3] == logvar: val[r] = ('log', val[x[5]])
@@ -254,6 +328,94 @@ class GmemCache(unittest.TestCase):
                     self.assertEqual(got[0][8 + k], w, f'word {k} of {a:#x}: the pool\'s, or 0 in no pool')
         self.assertGreater(n, 150)
         self.assertEqual(kinds, {'in', 'none', 'two pools', 'leaves'}, 'runs inside a pool, in none, across two touching pools, leaving a pool')
+
+
+def vector_locals(m):
+    """A vector Function variable stored once and read only by component (glslang's uvec4 v = Vec4(p).v; v.x ...) → each component read an OpCompositeExtract of
+    the stored value, as the translator writes a vector load's words. The store and the reads are in one block here (gloadv), so the value dominates them"""
+    for var in [x[2] for x in m.ins if x[0] & 0xffff == spv.OP_VARIABLE and x[3] == spv.SC_FUNCTION and m.op(m.pointee(x[1])[1]) == spv.OP_TYPE_VECTOR]:
+        st = [x for x in m.ins if x[0] & 0xffff == spv.OP_STORE and x[1] == var]
+        ch = {x[2]: x for x in m.ins if x[0] & 0xffff == spv.OP_ACCESS_CHAIN and x[3] == var}
+        if len(st) != 1 or any(len(x) != 5 or x[4] not in m.consts for x in ch.values()): continue
+        out = []
+        for x in m.ins:
+            op = x[0] & 0xffff
+            if op == spv.OP_LOAD and x[3] in ch: out.append([5 << 16 | spv.OP_COMPOSITE_EXTRACT, x[1], x[2], st[0][2], m.consts[ch[x[3]][4]][1][0]])
+            elif not (x is st[0] or x[2:3] == [var] and op == spv.OP_VARIABLE or op == spv.OP_ACCESS_CHAIN and x[2] in ch or op == spv.OP_NAME and x[1] == var): out.append(x)
+        m.ins = out
+    m.index()
+
+
+def build(src):
+    """(module after promote_locals and loop_pool_search, module after cache_raw_loads, replaced calls, spirv-val's result) of a GLSL compute shader, its vector
+    locals made SSA values first (vector_locals)"""
+    with tempfile.TemporaryDirectory() as t:
+        d = Path(t)
+        (d / 's.comp').write_text(src)
+        r = subprocess.run(['glslangValidator', '-V', '--target-env', 'vulkan1.2', str(d / 's.comp'), '-o', str(d / 's.spv')], capture_output=True, text=True)
+        assert r.returncode == 0, r.stdout + r.stderr
+        m = spv.Module((d / 's.spv').read_bytes())
+        vector_locals(m)
+        spv.promote_locals(m)
+        spv.loop_pool_search(m)
+        before = spv.Module(m.data())
+        n = spv.cache_raw_loads(m, {next(v['id'] for v in m.resources() if v['binding'] == 0)})
+        (d / 'r.spv').write_bytes(m.data())
+        val = subprocess.run(['spirv-val', '--target-env', 'vulkan1.3', str(d / 'r.spv')], capture_output=True, text=True)
+        return before, spv.Module(m.data()), n, val
+
+
+@unittest.skipUnless(shutil.which('glslangValidator') and shutil.which('spirv-val'), 'needs glslang and SPIRV-Tools')
+class GmemCacheFind(unittest.TestCase):
+    """The helpers as the translator writes them since upstream 8d62601f (SHADER_V): a helper that calls dmsh_raw_find is a raw load helper, and so is the vector
+    helper (one load of four words, words 1-3 left in gmem_vec). Every call is replaced; the vector call stores words 1-3 to gmem_vec as the helper did; the
+    helpers and raw_find are gone; every word read is the same as before where the four words of the vector load lie in one pool or in none (the translator's
+    vector load reads them all through the first word's entry: a 128-bit load is aligned to 16 bytes and every entry to 4 KiB), and otherwise each word is its
+    pool's, or 0 in no pool"""
+    @classmethod
+    def setUpClass(cls):
+        cls.before, cls.after, cls.n, cls.val = build(SHADER_V)
+
+    def test_valid(self):
+        self.assertEqual(self.val.returncode, 0, self.val.stdout + self.val.stderr)
+
+    def test_runs(self):
+        names = {v: k for k, v in self.before.names.items()}
+        gload, gloadv, find = names['gload(u1;u1;'], names['gloadv(u1;u1;'], names['raw_find(u1;u1;']
+        c0 = calls(self.before)
+        self.assertEqual((c0[gload], c0[gloadv], c0[find]), (4, 2, 2))
+        self.assertEqual(self.n, 6, 'every load call replaced')
+        fns = [x[2] for x in self.after.ins if x[0] & 0xffff == spv.OP_FUNCTION]
+        for f in (gload, gloadv, find): self.assertNotIn(f, fns, 'the helpers and raw_find are gone')
+        new = sorted(calls(self.after).values())
+        self.assertEqual(new, [1, 1, 2], 'one call of the 3-word run, one of the 1-word function, two of the vector function')
+
+    def test_same_words(self):
+        table, pools, sink = pool_table(300)
+        s151, e151, d151 = pools[150]; s152 = pools[151][0]
+        table[151 * 8 + 2:151 * 8 + 4] = [s152 & M, s152 >> 32]; pools[150] = (s151, s152, d151)
+        addrs = [(0, 0), (sink & M, sink >> 32), (0x0f_ffff_fff0 & M, 0x0f)]
+        for p in (1, 2, 63, 64, 65, 100, 151, 200, 299, 300):
+            s_, e_, _ = pools[p - 1]
+            for a in (s_, s_ + 4, (s_ + e_) // 2 & ~15, e_ - 16, e_ - 12, e_ - 8, e_ - 4, e_, s_ - 4):
+                addrs.append((a & M, a >> 32))
+        pool_of = lambda a: next((j for j, (s_, e_, dl) in enumerate(pools) if s_ <= a < e_), None)
+        word = lambda a: next((word_at(a + dl) for s_, e_, dl in pools if s_ <= a < e_), 0)
+        n_same = 0
+        for i, (lo, hi) in enumerate(addrs):
+            blo, bhi = addrs[(i * 7 + 3) % len(addrs)]
+            for second in ((blo, bhi), (lo, hi)):
+                io = {0: lo, 1: hi, 2: second[0], 3: second[1]}
+                want, _ = run(self.before, table, io)
+                got, _ = run(self.after, table, io)
+                a, b = lo | hi << 32, second[0] | second[1] << 32
+                for k in range(4): self.assertEqual(got[8 + k], word(a + 4 * k), f'vector word {k} of {a:#x}')
+                for k in range(3): self.assertEqual(got[12 + k], word(b + 4 * k), f'word {k} of {b:#x}')
+                self.assertEqual(got[15], word(b) ^ word(b + 12), f'{a:#x} {b:#x} {[pool_of(b + 4 * k) for k in range(4)]} want {want[15]:#x}')
+                self.assertEqual(got[16], word(a))
+                if all(len({pool_of(x + 4 * k) for k in range(4)}) == 1 for x in (a, b)):   # where the translator's vector load is defined
+                    self.assertEqual(got, want, f'base {a:#x}, second {b:#x}'); n_same += 1
+        self.assertGreater(n_same, 60, 'cases where both vector loads lie in one pool or in none')
 
 
 if __name__ == '__main__':
