@@ -197,6 +197,14 @@ A game may tell NVN objects apart by their bytes, without an NVN call. A host re
 - **Check:** `make -C dm/host/tests GAME=<id> run` (`t_android_texown`: a copy finalized before and after its original, a re-Initialize of a copy, a moved original, many owners).
 - **Found on:** [The Legend of Zelda: Ocarina of Time](../../dm/games/0400486024DEC000/README.md#found-on-this-game) (upstream on the Mac: about 15,000 first uploads a frame in Kokiri Forest); on the phone pending a check.
 
+### A pool registered over memory an earlier pool held counts older stamps as written
+
+- **Symptom:** content kept by its dirty-page stamp is used again after a load although the game wrote new data over it: the game destroyed a memory pool, wrote the next area's data into the same memory and made a new pool over it, and a copy taken from the old data stays, with no red line. A cold start into the same place is right. Upstream found it in a fork that keeps vertex and index bytes on the GPU by these stamps: Skyward Sword HD drew Skyloft with the opening's meshes after a new game (crates one flat grey shape or missing, large flat green, grey or magenta shapes, flat grey sky).
+- **Cause:** `nvn_dirty_remove_range` makes a destroyed pool's pages writable and retires its range, so the game's next writes there fault nowhere. A pool registered over that memory reuses a slot with every page's generation back at 0, so a stamp taken in the old pool's time, or while no pool held the memory, saw no newer generation, and `nvn_dirty_since` and its variants answered "not written". A caller that keeps a stamp, or a range handle (`nvn_dirty_span`), past the pool's end meets it.
+- **Fix:** each range keeps the clock at its registration (`born`, `nvn_dirty.c`), and `nvn_dirty_since_span` (behind `nvn_dirty_since`) and `nvn_dirty_bounds_since` count a stamp older than it as written (all of the span), through a kept handle too. A stamp taken after the registration is unaffected. Ported from upstream nxnative (b65b9b0f, PR #2356).
+- **Check:** `make -C dm/gfx/tests GAME=<id> t_dirty_slots`: a pool destroyed, a write with no pool registered, and a new pool over the same memory: the older stamp is dirty through `nvn_dirty_since`, a kept handle and `nvn_dirty_bounds_since` (all of it), and a stamp taken after the new registration is clean.
+- **Found on:** The Legend of Zelda: Skyward Sword HD (`01002DA013484000`, no profile here), from a new game into Skyloft, upstream's report; not checked on Android.
+
 ### Dead texture serials kept in a ghost table
 
 - **Symptom:** the serial table grows by about 10 entries a frame (276,000 after 25,000 frames).
