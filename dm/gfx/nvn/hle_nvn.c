@@ -2312,8 +2312,12 @@ static int fstep_on(void) { return fps_step_cap() != 0; }   // the host decides 
 // Engine-native frame limiters have no frame-step state page. Their requested
 // cap still governs presentation, even when the profile uses display pacing.
 // Without a limiter the host writes (dm_fps_lock_engine) nothing makes the game
-// follow the cap, so the game's own present interval stays: a fixed-step game
-// presented at a cap it does not step by runs fast or slow.
+// follow the cap, so in game mode the game's own present interval stays: a fixed-step
+// game presented at a cap it does not step by runs fast or slow. Display mode already
+// declares that the game steps by the time that passed (its present interval is its
+// only limit), so there the cap is applied as the present interval alone (upstream
+// nxnative af33939c): Red Dead Redemption asks for interval 2 once and steps by time,
+// and its 60 needs no limiter.
 // The cap can change while the game runs (hle_fpslock.c dm_fps_target_set: the Android launcher's in-game panel, DM_CTL "fps <n>"): it is read again when its generation moves.
 // Presentation holds whole vsyncs only (60, 30, 20, 15); 40 and 45 are left to an engine limiter that paces itself, and the game's interval stays.
 // An engine floor (sead's dynamic interval controller, hle_fpslock.c MIN_VSYNCS_I32) is not a fixed rate: dm_fps_lock_engine leaves it out and the game's own interval, at or above the floor, stays; so does a framework step count (STEPS_I32, a profile's fps_steps), whose interval the game sets to its steps a frame
@@ -2321,13 +2325,20 @@ __attribute__((weak)) int dm_fps_target(void) { const char *e = getenv("DM_FPS_T
 __attribute__((weak)) int dm_fps_target_gen(void) { return 0; }
 __attribute__((weak)) int dm_fps_lock_floor(void) { return 0; }
 static int g_present_cap = -1, g_present_gen;
+static int display_mode(void) {   // present_cfg's choice, also before its first call (the cap can be asked for before the window's first interval)
+    if (g_hz >= 0) return g_display_mode;
+    const char *m = getenv("DM_PRESENT_INTERVAL"); return m ? !strcmp(m, "display") : DM_GAME_PRESENT_DISPLAY;
+}
 static int fps_present_cap(void) {
     if (dm_fps_state) return fps_step_cap();
     int gen = dm_fps_target_gen();
     if (g_present_cap < 0 || gen != g_present_gen) {
         int t = dm_fps_target(), first = g_present_cap < 0; g_present_gen = gen;
         g_present_cap = t > 0 && t <= 60 && 60 % t == 0 ? t : 0;
-        if (g_present_cap && !dm_fps_lock_engine()) {
+        if (g_present_cap && !dm_fps_lock_engine() && display_mode()) {
+            if (first) LOG("[nvn] present cap %d fps applied by the present interval alone: display mode, and this main has no engine frame limit the host writes", g_present_cap);
+            else LOG("[nvn] present cap now %d fps (by the present interval alone: display mode)", g_present_cap);
+        } else if (g_present_cap && !dm_fps_lock_engine()) {
             if (dm_fps_lock_floor()) LOG("[nvn] present cap %d fps: the game's frame-rate controller holds it (a floor or a step count the host writes, hle_fpslock.c), so presentation follows the interval the game sets", g_present_cap);
             else LOG("[nvn] present cap %d fps not applied: this main has neither a frame step nor an engine frame limit the host writes that fixes the rate, so the game's own present interval stays", g_present_cap);
             g_present_cap = 0;
