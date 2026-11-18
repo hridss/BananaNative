@@ -2027,6 +2027,15 @@ static int skip_fs(uint64_t fs) {
     for (int i = 0; i < nk; i++) if (keys[i] == fs) return 1;
     return 0;
 }
+// DM_VK_BIND_LOG=<hex key>[,…] (live): whether a or b (0: none) is one of its keys. The keys are parsed when a switch changes (vka_env_gen, as skip_fs), not read
+// with getenv at every draw and dispatch: that walk of the environment was 5.6 % of the replay thread's CPU in a game of ~4,000 draws a frame with the switch unset
+static int bind_log_hit(uint64_t a, uint64_t b) {
+    static uint32_t gen = ~0u; static uint64_t keys[64]; static int nk;
+    uint32_t g = atomic_load_explicit(&vka_env_gen, memory_order_relaxed);
+    if (g != gen) { gen = g; nk = 0; for (const char *q = getenv("DM_VK_BIND_LOG"); q && *q && nk < 64;) { char *e; unsigned long long k = strtoull(q, &e, 16); if (e == q) break; keys[nk++] = k; q = *e == ',' ? e + 1 : e; } }
+    for (int i = 0; i < nk; i++) if ((a && keys[i] == a) || (b && keys[i] == b)) return 1;
+    return 0;
+}
 
 // DM_VK_BISECT=<stage>:<mask hex>:<value hex> (live): drops the draws (stages 0-4) or dispatches (stage 5) whose shader of that stage has
 // key & mask == value; a draw without a shader in that stage is kept, and so is one with a geometry shader unless the stage is 2. To find a shader by halving: mask 0 drops every draw that has the stage at all
@@ -2395,8 +2404,7 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
     PT(2);
     walk_all(d, sh);
     {   // DM_VK_BIND_LOG: a draw whose vertex or pixel shader is one of those keys logs its stages' bindings too, as a dispatch does (the first 12 draws in all)
-        const char *bl = getenv("DM_VK_BIND_LOG"); static _Atomic int nb; int hit = 0;
-        for (const char *q = bl; q && *q && !hit;) { char *e; unsigned long long k = strtoull(q, &e, 16); if (e == q) break; hit = (sh[0] && k == sh[0]->key) || (sh[1] && k == sh[1]->key); q = *e == ',' ? e + 1 : e; }
+        static _Atomic int nb; int hit = bind_log_hit(sh[0] ? sh[0]->key : 0, sh[1] ? sh[1]->key : 0);
         if (hit && atomic_fetch_add(&nb, 1) < 12)
             for (int st = 0; st < VKA_NSTAGE; st++) if (sh[st]) for (int i = 0; i < g_wk.n[st]; i++) { const vka_res *x = &g_wk.r[st][i]; char why[320] = "";
                 if ((x->what == VKA_R_TEX || x->what == VKA_R_IMG) && x->tid) vka_tex_id_desc(x->tid, why, sizeof why);
@@ -3133,8 +3141,7 @@ void vka_dispatch(vka_dstate *d, const p_dispatch *dp) {
     if (g_do_nk || g_do_all) dobj_note(sh[5]->key, g_wk.r[5], g_wk.n[5]);   // DM_VK_DISP_OBJ (g_do_nk -1: not read yet)
     p = img_retype(sh[5], &lay, p);
     {   // DM_VK_BIND_LOG=<hex key>[,…]: the binding records of those compute shaders' dispatches (the first 12 in all) (what each binding is bound to), to follow a pass's inputs and outputs
-        const char *bl = getenv("DM_VK_BIND_LOG"); static _Atomic int nb; int hit = 0;
-        for (const char *q = bl; q && *q && !hit;) { char *e; unsigned long long k = strtoull(q, &e, 16); if (e == q) break; hit = k == sh[5]->key; q = *e == ',' ? e + 1 : e; }
+        static _Atomic int nb; int hit = bind_log_hit(sh[5]->key, 0);
         if (hit && atomic_fetch_add(&nb, 1) < 12)
             for (int i = 0; i < g_wk.n[5]; i++) { const vka_res *x = &g_wk.r[5][i]; char why[320] = "";
                 if ((x->what == VKA_R_TEX || x->what == VKA_R_IMG) && x->tid) vka_tex_id_desc(x->tid, why, sizeof why);
