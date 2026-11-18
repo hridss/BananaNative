@@ -111,6 +111,22 @@ int main(void) {
     pl_builtin_font_t bf; memset(&bf, 0xee, sizeof bf);
     unsigned got = h_pl_BuiltInOunce(&bf, 0, 0); font_t f0 = font_get(0);
     CHECK(got == 1 && f0.p && bf.address == f0.p + 8 && bf.size == f0.n - 8 && bf.type == 0, "built-in font record filled");
+    // GetBuiltInFontDataSet: one entry per type asked, in order, each as GetBuiltInFontData fills it; at most 6 (Switch 2 types) or 7 (Switch 1 types)
+    {   type_f[5] = (font_t){extension, sizeof extension}; for (int t = 1; t < 5; t++) type_f[t] = type_f[0];
+        pl_builtin_font_t set[8], one; memset(set, 0xa5, sizeof set);
+        const uint8_t types[8] = {5, 0, 3, 5, 1, 2, 4, 0}; int n = -1;
+        CHECK(h_pl_BuiltInSetOunce(&n, set, types, 3, 0, 0) == 1 && n == 3, "font set: three types, three entries");
+        CHECK(h_pl_BuiltInOunce(&one, 5, 0) == 1 && !memcmp(&one, &set[0], sizeof one) && h_pl_BuiltInOunce(&one, 3, 0) == 1 && !memcmp(&one, &set[2], sizeof one), "font set: entries as GetBuiltInFontData fills them, in order");
+        CHECK(set[3].type == 0xa5, "font set: nothing past the count");
+        memset(set, 0, sizeof set);
+        CHECK(h_pl_BuiltInSetOunce(&n, set, types, 8, 0, 0) == 1 && n == 6 && set[6].address == NULL, "font set: at most 6, as the SDK sends");
+        memset(set, 0, sizeof set);
+        CHECK(h_pl_BuiltInSetNx(&n, set, types, 8, 0, 0) == 1 && n == 7 && set[7].address == NULL, "font set (Switch 1 types): at most 7");
+        font_t keep[6]; memcpy(keep, type_f, sizeof keep); memset(type_f, 0, sizeof type_f);
+        CHECK(h_pl_BuiltInSetOunce(&n, set, types, 3, 0, 0) == 0 && n == 0, "font set: no fonts, no entries");
+        n = -1; CHECK(h_pl_BuiltInSetNx(&n, set, types, 3, 0, 0) == 0 && n == -1, "font set (Switch 1 types): no fonts, the count left as it was");
+        memcpy(type_f, keep, sizeof keep); type_f[5] = type_f[0];
+    }
     // Real selection from here on: forget the planted fonts
     memset(type_f, 0, sizeof type_f); memset(type_done, 0, sizeof type_done);
     char dir[] = "/tmp/t_shared_font_XXXXXX"; CHECK(mkdtemp(dir) != NULL, "temp folder");
