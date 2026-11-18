@@ -5,7 +5,6 @@
 #include <mach-o/getsect.h>
 
 void dm_guest_sleep_ns(int64_t ns) { (void)ns; }   // hle_net.c (socket Poll) links these
-void *guest_sym(const char *n) { (void)n; return NULL; }
 uint64_t guest_ns(void) { return clock_gettime_nsec_np(CLOCK_MONOTONIC); }
 static int checks, fails;
 extern const struct mach_header_64 _mh_execute_header;
@@ -40,6 +39,14 @@ static void check_utc_libc(void) {
     CalendarTime ct; CalendarAdditionalInfo ai;
     CHECK(cal && cal(&ct, &ai, &save) == RES_OK && ct.day == 16 && ct.hour == 1 && ct.minute == 44 && ai.offset == 9 * 3600, "ToCalendarTime converts in the host zone (01:44 KST)");
     setenv("TZ", "UTC", 1); tzset();
+}
+// The SDK's detail:: periodic benefit claim, as guest_sym finds it: records what the host's public entry passed on and answers 7
+static const void *claim_args[5];
+static uint64_t fake_claim(void *ctx, const uint8_t *snap, const int64_t *max_penalty, const int64_t *acceptable, const void *callback) {
+    claim_args[0] = ctx; claim_args[1] = snap; claim_args[2] = max_penalty; claim_args[3] = acceptable; claim_args[4] = callback; return 7;
+}
+void *guest_sym(const char *name) {
+    return !strcmp(name, "_ZN2nn4time6detail39ClaimPeriodicBenefitWithUserSystemClockEPNS0_27PeriodicBenefitClaimContextERKNS0_13ClockSnapshotERKNS_8TimeSpanES9_PKNS0_25CheckCalendarTimeCallbackE") ? (void *)fake_claim : NULL;
 }
 static void put64(uint8_t *s, int off, int64_t v) { memcpy(s + off, &v, 8); }
 static int64_t get64(const uint8_t *s, int off) { int64_t v; memcpy(&v, s + off, 8); return v; }
@@ -144,6 +151,20 @@ int main(void) {
     int64_t tsp[2] = {-1, -1}, tsq[2] = {-1, -1};
     CHECK(net_ts && net_ts(tsp) == 0 && tsp[0] == 1700000000 && tsp[1] == 0 && adj_net_ts && adj_net_ts(tsq) == 0 && tsq[0] == 1700000000 && tsq[1] == 0,
           "the network clocks' real-time getters read the host clock");
+    // The periodic benefit claim skips the SDK's time service session check and hands every argument to its detail:: implementation, whose answer it returns
+    uint64_t (*claim)(void *, const uint8_t *, const int64_t *, const int64_t *, const void *) =
+        hook("_ZN2nn4time39ClaimPeriodicBenefitWithUserSystemClockEPNS0_27PeriodicBenefitClaimContextERKNS0_13ClockSnapshotERKNS_8TimeSpanES8_PKNS0_25CheckCalendarTimeCallbackE");
+    uint8_t ctx[0x100] = {0}; int64_t pen = 1, acc = 2; int cbk = 0;
+    CHECK(claim && claim(ctx, a, &pen, &acc, &cbk) == 7, "periodic benefit claim returns the SDK implementation's answer");
+    CHECK(claim_args[0] == ctx && claim_args[1] == a && claim_args[2] == &pen && claim_args[3] == &acc && claim_args[4] == &cbk, "periodic benefit claim passes every argument on");
+    // Its two service questions: the location the host's snapshots carry, and time points of no clock (a source ID no snapshot has)
+    Result (*auto_upd)(uint8_t *) = hook("_ZN2nn4time6detail56GetStandardUserSystemClockAutomaticCorrectionUpdatedTimeEPNS0_20SteadyClockTimePointE");
+    Result (*loc_upd)(char *, uint8_t *) = hook("_ZN2nn4time6detail35GetDeviceLocationNameAndUpdatedTimeEPNS0_12LocationNameEPNS0_20SteadyClockTimePointE");
+    uint8_t tp[0x18], none[0x18] = {0}; char loc[0x24];
+    memset(tp, 0xaa, sizeof tp); CHECK(auto_upd && auto_upd(tp) == RES_OK && !memcmp(tp, none, sizeof tp), "automatic correction updated time: a cleared time point");
+    memset(tp, 0xaa, sizeof tp); memset(loc, 0xaa, sizeof loc);
+    CHECK(loc_upd && loc_upd(loc, tp) == RES_OK && !memcmp(loc, a + 0xa8, sizeof loc) && !memcmp(tp, none, sizeof tp), "device location: the snapshot's name, a cleared time point");
+    CHECK(memcmp(tp + 8, a + 0x90 + 8, 16), "the cleared time point's source ID is not the snapshots' steady clock");
     printf("time: %d checks, %d failed\n", checks, fails);
     return fails != 0;
 }
