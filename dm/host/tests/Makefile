@@ -40,6 +40,7 @@ run: $(B)/t_language $(B)/t_motion $(B)/t_heap_size $(B)/t_touch $(B)/t_gesture 
 	$(B)/t_oot_fog
 	$(B)/t_dkb_wide
 	$(B)/t_mkw_wide
+	$(B)/t_mtf_glyph
 	$(B)/t_mtf_size
 	$(B)/t_mtf_speed
 	$(B)/t_mtf_wide
@@ -633,6 +634,10 @@ endif
 run: $(B)/t_mkw_wide
 $(B)/t_mkw_wide: t_mkw_wide.c ../android/mkw_wide.c ../android/wide_shape.h ../hle.h ../dm.h $(GAME_H) | $(B)
 	$(CLANG) -O1 -g -Wno-unused-function -I.. $(GINC) -o $@ t_mkw_wide.c -lm -pthread
+
+run: $(B)/t_mtf_glyph
+$(B)/t_mtf_glyph: t_mtf_glyph.c ../android/mtf_glyph.c ../hle.h ../dm.h $(GAME_H) | $(B)
+	$(CLANG) -O1 -g -Wno-unused-function -I.. $(GINC) -o $@ t_mtf_glyph.c -lm -pthread
 
 run: $(B)/t_mtf_size
 $(B)/t_mtf_size: t_mtf_size.c ../android/mtf_size.c ../hle.h ../dm.h $(GAME_H) | $(B)

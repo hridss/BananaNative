@@ -15,9 +15,14 @@ _MTF_SIZE = 34   # OBS_MTF_SIZE in dm/host/dm.h
 # its copy into the draw info; 3 nn::ui2d draw setup and 4 text setup, before their bl to the draw info's projection getter nro0+0x66718). The callback does nothing unless
 # DM_VK_PICTURE_ASPECT is a shape other than 16:9. Every original word is position independent and checked by the rewriter (a bl site moves to the instruction before it)
 _MTF_WIDE = 38   # OBS_MTF_WIDE in dm/host/dm.h
+# 1.1.1 nro0: no glyph lost on frames the game does not draw (the half-rate mode fps_half_draw sets for a 30 fps cap; #302; dm/host/android/mtf_glyph.c). One observation gate on the
+# glyph upload callback's store that marks the dirty-rect ring consumed (nro0+0x11ded2c, str w8,[x26,#4]): with the frame's draw flag at 0 the callback writes the read index into w8,
+# so the rects stay pending for the next drawn frame. The original word is position independent and checked by the rewriter
+_MTF_GLYPH = 40   # OBS_MTF_GLYPH in dm/host/dm.h
 OBS = {
   '250a510a934129cb38e930c9a29082b6': [
     # HELD OUT of 0.3.40 (the skip costs the game's sound; README.md): the two _MTF_SKIP rows (0x11f8624, 0x11f932c) are in commit bd4f23f58
+    (0x11ded2c, _MTF_GLYPH, 'b9000748', "glyph upload callback nro0+0x11deac0: the store marking the dirty-rect ring consumed (str w8,[x26,#4]); x26 the ring's write/read indices, w8 the write index"),
     (0x125eb98, _MTF_SIZE, 'b9410a6a', "scene size after the graphics scale (ldr w10,[x19,#0x108], where the scale paths join); x20 the size record (u16 width +0x1c, height +0x1e), w9 its width"),
     (0x11a2fc8, _MTF_WIDE | 0 << 13, 'bd004280', "display layout setter: camera 0's aspect store (str s0,[x20,#0x40]); x19 the layout (view count +0x24), x20 the camera array, s0 set before the store"),
     (0x932378, _MTF_WIDE | 1 << 13 | 1 << 8, '1e230821', "camera updater, table path: fmul s1,s1,s3 (s1 the fovy ldp s5,s1,[x19,#0x48] loaded at +0x931ef0); x19 the camera, s1 Vert+ in the register"),
@@ -30,6 +35,9 @@ OBS = {
   ],
 }
 BINDING = [
+    {'what': "glyph uploads: the font cache's dirty-rect ring consumed only on drawn frames, so no upload is lost with a command buffer that is never submitted under the 30 fps cap (fps_half_draw)", 'now': 'build', 'goal': 'game', 'purpose': 'rendering',
+     'why': "the upload callback, its ring and the draw flag are the game's own code and data at fixed addresses of this build; the host sees only the submits the game makes",
+     'blocked': 'one build on hand; the callback could be found by function fingerprint (the +0x1c088 ring base, the blr with w1 = 0x33 and the ldr/str of the ring indices before its epilogue)'},
     {'what': 'frame skip: the draw flag of frames behind real time written 0, so the game steps at full speed below 60 fps (Full game speed at low frame rates)', 'now': 'build', 'goal': 'game', 'purpose': 'frame rate',
      'why': "the flag, the job table and the frame function are the game's own, at fixed addresses of this build; the engine counts frames and has no rate or step count the host could write",
      'blocked': "one build on hand; the frame function could be found by fingerprint (cmp w8,#5 and csel ..., lt before the bl to the helper that calls nvnWindowGet/SetPresentInterval, and the flag's ldrb; cbz before it)"},

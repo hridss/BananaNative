@@ -132,7 +132,8 @@ enum { OBS_UE_MALLOC = 21,                                       // Unreal's FMa
        OBS_OOT_FOG = 37,                                                // Ocarina of Time (main v131072): the scene manager about to load its sky (register in the parameter bits 0-4), the fog pulled in to the draw distance (android/oot_fog.c)
        OBS_MTF_WIDE = 38,                                               // Mario Tennis Fever (nro0 1.1.1): the gameplay camera's aspect store at a layout apply (kind in the parameter bits 5 up; android/mtf_wide.c)
        OBS_MTF_SKIP = 39,                                               // Mario Tennis Fever (nro0 1.1.1): the frame function's loads of its draw flag (parameter 0 the frame's start, 1 the submit; android/mtf_speed.c)
-       OBS_MAX = 40 };   // 28-30 are Pokopia's camera gates on its own branch (android/pkp_aspect.c)
+       OBS_MTF_GLYPH = 40,                                              // Mario Tennis Fever (nro0 1.1.1): the glyph upload's store that marks the dirty-rect ring consumed (android/mtf_glyph.c)
+       OBS_MAX = 41 };   // 28-30 are Pokopia's camera gates on its own branch (android/pkp_aspect.c)
 // A gate number's bits from 8 up are a parameter for its callback (OBS_REGION_GOT: the register that holds the address). Callbacks read the registers; a write to x0–x29 takes
 // effect when the gate returns (entry.S restores them from the frame), which OBS_STDALLOC_INIT and OBS_UE_REGION do
 void gate_obs_set(int id, void (*fn)(uint64_t *regs, int param));
