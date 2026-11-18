@@ -256,6 +256,13 @@ def header(g):
         if len(r) != 5 or not re.fullmatch(r'[0-9a-f]{32}', r[0]) or not all(re.fullmatch(r'0x[0-9a-fA-F]+', x) for x in [r[1], r[3], r[4], *offs]) or len(offs) > 3:
             sys.exit(f"{g.id}: fps_steps takes <main build ID (32 hex)> <global offset> <member offsets, comma-separated (at most 3), or -> <mode field> <step count field>: {r}")
         fst.append('{' + q(r[0]) + f', {r[1]}, {r[3]}, {r[4]}, {len(offs)}, ' + '{' + (', '.join(offs) or '0') + '}}')
+    # fps_half_draw: the game's engine has a flag that makes it draw and present every second step while it steps 60 times a second; the frame rate cap of 30 sets it
+    # (hle_fpslock.c half_tick). One row per build of the module that holds the flag: <module name> <build ID> <byte offset in the module> <bit mask in that byte>
+    fhd = []
+    for r in g.values('fps_half_draw') if g.get('fps_half_draw', '') else []:
+        if len(r) != 4 or not re.fullmatch(r'[a-z0-9_]+', r[0]) or not re.fullmatch(r'[0-9a-f]{32}', r[1]) or not re.fullmatch(r'0x[0-9a-fA-F]+', r[2]) or not re.fullmatch(r'0x[0-9a-fA-F]{1,2}', r[3]) or bin(int(r[3], 16)).count('1') != 1:
+            sys.exit(f"{g.id}: fps_half_draw takes <module name> <build ID (32 hex)> <byte offset> <bit mask (one bit of the byte)>: {r}")
+        fhd.append('{' + q(r[0]) + ', ' + q(r[1]) + f', {r[2]}, {r[3]}' + '}')
     drs = []   # the dynamic resolution controller's places, one row per main build: <main build ID> <params probe> <pick> <budget load> <preset flag> (probe.c drs_install)
     for r in g.values('drs_ctl') if g.get('drs_ctl', '') else []:
         if len(r) != 5 or not re.fullmatch(r'[0-9a-f]{32}', r[0]) or not all(re.fullmatch(r'0x[0-9a-fA-F]+', x) for x in r[1:]):
@@ -454,6 +461,7 @@ def header(g):
          '#define DM_GAME_MESH_PREPASS_CUT {' + (', '.join(mpc) or '{0, 0, 0, 0}') + '}', f'#define DM_GAME_NMESH_PREPASS_CUT {len(mpc)}',
 
          '#define DM_GAME_FPS_STEPS {' + (', '.join(fst) or '{"", 0, 0, 0, 0, {0}}') + '}', f'#define DM_GAME_NFPS_STEPS {len(fst)}',
+         '#define DM_GAME_FPS_HALF_DRAW {' + (', '.join(fhd) or '{"", "", 0, 0}') + '}', f'#define DM_GAME_NFPS_HALF_DRAW {len(fhd)}',
          f'#define DM_GAME_DRS_CTL {{{", ".join(drs) or "{\"\", 0, 0, 0, 0}"}}}', f'#define DM_GAME_NDRS_CTL {len(drs)}',
          '#define DM_GAME_RENDER_CFG {' + (', '.join(rcf) or '{"", 0, 0, 0, 0, 0, {{0, 0, 0, 0}}, 0, 0, 0, 0, 0}') + '}', f'#define DM_GAME_NRENDER_CFG {len(rcf)}',
          '#define DM_GAME_RENDER_QUALITY {' + ', '.join(map(str, rq)) + '}', f'#define DM_GAME_RENDER_DEFAULT_OUT {q(aw or "1920x1080")}',

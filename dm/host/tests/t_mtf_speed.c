@@ -17,8 +17,9 @@ static void (*callbacks[OBS_MAX])(uint64_t *, int);
 void gate_obs_set(int id, void (*fn)(uint64_t *, int)) { assert(id > 0 && id < OBS_MAX); callbacks[id] = fn; }
 static uint64_t g_now;
 uint64_t now_ns(void) { return g_now; }
-static int g_on = 1;
+static int g_on = 1, g_half;
 int dm_fps_decouple_on(void) { return g_on; }
+int dm_fps_half_on(void) { return g_half; }
 static int g_writes;
 void dm_guest_write_prepare(void *p, size_t n) { (void)p; assert(n == 1); g_writes++; }
 
@@ -206,6 +207,16 @@ static void gate_stuck_flag(void) {   // a 0 left at a frame's start (a caller w
     callbacks[OBS_MTF_SKIP](r, GATE_FRAME);
     assert(g_img[M_FLAG] == 1);
 }
+static void gate_half_draw(void) {   // cap 30 through flag 15 takes priority: the skip stands down and leaves the engine's 0 on odd steps alone
+    setup(MTF_SPEED_BUILD, 1);
+    g_half = 1;
+    uint64_t r[32] = {0};
+    g_img[M_FLAG] = 0;
+    callbacks[OBS_MTF_SKIP](r, GATE_FRAME);
+    assert(g_img[M_FLAG] == 0 && g_writes == 0);
+    g_img[M_FLAG] = 1;
+    assert(run(400, 25 * MS) == 0 && g_writes == 0);
+}
 
 static void in_child(void (*fn)(void), const char *what) {
     fflush(stdout);
@@ -228,6 +239,7 @@ int main(void) {
     in_child(gate_display, "DM_PRESENT_INTERVAL=display");
     in_child(gate_test, "DM_MTF_SKIP_TEST");
     in_child(gate_stuck_flag, "a 0 left at a frame's start");
+    in_child(gate_half_draw, "cap 30 through flag 15 takes priority");
     printf("t_mtf_speed: ok\n");
     return 0;
 }

@@ -2,6 +2,9 @@
 // A framework step count row of the tests' own (hle_fpslock.c fps_steps rows; the profile's are DM_GAME_FPS_STEPS): the framework at [[main+0x100000]+8], mode +0x210, count +0x214
 #define DM_FPS_STEPS_ROWS {{"5eb5eb5eb5eb5eb5eb5eb5eb5eb5eb5e", 0x100000, 0x210, 0x214, 1, {0x8}}}
 #define DM_FPS_NSTEPS_ROWS 1
+// A draw-every-other-step flag row of the tests' own (hle_fpslock.c fps_half_draw rows; the profile's are DM_GAME_FPS_HALF_DRAW): bit 0 of the byte at nro0+0x1235
+#define DM_FPS_HALF_ROWS {{"nro0", "4a1f4a1f4a1f4a1f4a1f4a1f4a1f4a1f", 0x1235, 0x01}}
+#define DM_FPS_NHALF_ROWS 1
 #define DM_TEST_PIN 1   // sead_pin runs on the Mac here, so the start-up path of the pin is tested, not only sead_pin_wanted
 #include "../hle_fpslock.c"
 #include <assert.h>
@@ -10,11 +13,11 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-static module_t test_modules[1];
+static module_t test_modules[2];
 module_t *g_mod = test_modules;
 int g_nmod;
 static int writes;
-void dm_guest_write_prepare(void *p, size_t n) { (void)p; assert(n == 4 || n == 8); writes++; }
+void dm_guest_write_prepare(void *p, size_t n) { (void)p; assert(n == 1 || n == 4 || n == 8); writes++; }
 static void (*g_sead_gate)(uint64_t *, int);
 void gate_obs_set(int id, void (*fn)(uint64_t *, int)) { if (id == OBS_SEAD_RATE) g_sead_gate = fn; }
 static int g_gate_present;
@@ -363,7 +366,31 @@ static void steps_check(int which) {
     munmap(base, len);
 }
 
+// An engine's draw-every-other-step flag (half_tick): in a module that loads after main, set at a cap of 30 only, the host's own bit cleared again, the game's own kept,
+// a cap it cannot hold given back, presentation left to the game
+static void half_check(int which) {
+    static uint8_t mainimg[0x100], nro[0x2000]; uint8_t *flag = nro + 0x1235;
+    g_nmod = 1; strcpy(g_mod[0].name, "main"); g_mod[0].base = mainimg; strcpy(g_mod[0].build_id, "00000000000000000000000000000001");
+    unsetenv("DM_FPS_LIMIT"); setenv("DM_FPS_TARGET", which == 1 ? "20" : "30", 1); writes = 0;
+    dm_fps_lock_tick(); assert(dm_fps_lock_rates() == 0 && dm_fps_lock_pending() && !dm_fps_half_on() && !dm_fps_lock_floor() && !dm_fps_lock_engine() && dm_fps_target() == (which == 1 ? 20 : 30));   // the NRO not loaded yet: nothing held, the cap kept
+    g_nmod = 2; strcpy(g_mod[1].name, "nro0"); g_mod[1].nro = 1; g_mod[1].base = nro; strcpy(g_mod[1].build_id, which == 2 ? "4a1f4a1f4a1f4a1f4a1f4a1f4a1f4a20" : "4a1f4a1f4a1f4a1f4a1f4a1f4a1f4a1f");
+    *flag = 0x48;   // other flags of the game's in the same byte
+    dm_fps_lock_tick();
+    if (which == 2) { assert(*flag == 0x48 && writes == 0 && dm_fps_lock_rates() == 0 && !dm_fps_lock_pending() && !dm_fps_half_on() && !dm_fps_lock_floor()); return; }   // another build: no row
+    assert(dm_fps_lock_rates() == (4 | 32) && !dm_fps_lock_pending() && !dm_fps_lock_engine() && dm_fps_lock_floor());   // 30 and 60; the game's own interval stays
+    if (which == 1) { assert(*flag == 0x48 && writes == 0 && dm_fps_target() == 0 && !dm_fps_half_on()); return; }   // 20: not held, the game's own
+    assert(*flag == 0x49 && writes == 1 && dm_fps_half_on());   // 30: the flag, the other bits kept
+    dm_fps_lock_tick(); assert(writes == 1);
+    *flag = 0x48; dm_fps_lock_tick(); assert(*flag == 0x49 && writes == 2);   // the game cleared it: set again
+    dm_fps_target_set(60, "test"); dm_fps_lock_tick(); assert(*flag == 0x48 && writes == 3 && !dm_fps_half_on());   // 60: every step drawn
+    dm_fps_target_set(30, "test"); dm_fps_lock_tick(); assert(*flag == 0x49 && writes == 4 && dm_fps_half_on());
+    dm_fps_target_set(0, "test"); dm_fps_lock_tick(); assert(*flag == 0x48 && writes == 5 && !dm_fps_half_on());   // no cap
+    *flag = 0x49; dm_fps_lock_tick(); dm_fps_lock_tick(); assert(*flag == 0x49 && writes == 5);   // set by the game itself: not the host's to clear
+    dm_fps_target_set(45, "test"); dm_fps_lock_tick(); assert(dm_fps_target() == 0 && *flag == 0x49 && writes == 5);   // a cap set while running that it cannot hold
+}
+
 int main(void) {
+    for (int i = 0; i < 3; i++) { pid_t p = fork(); assert(p >= 0); if (!p) { half_check(i); _exit(0); } int status; assert(waitpid(p, &status, 0) == p); assert(WIFEXITED(status) && WEXITSTATUS(status) == 0); }
     for (int i = 0; i < 3; i++) { pid_t p = fork(); assert(p >= 0); if (!p) { steps_check(i); _exit(0); } int status; assert(waitpid(p, &status, 0) == p); assert(WIFEXITED(status) && WEXITSTATUS(status) == 0); }
     sead_rate_check();
     { pid_t p = fork(); assert(p >= 0); if (!p) { step_check(); _exit(0); } int status; assert(waitpid(p, &status, 0) == p); assert(WIFEXITED(status) && WEXITSTATUS(status) == 0); }
@@ -373,5 +400,5 @@ int main(void) {
         if (!p) { check(i); _exit(0); }
         int status; assert(waitpid(p, &status, 0) == p); assert(WIFEXITED(status) && WEXITSTATUS(status) == 0);
     }
-    puts("Frame limits: integer/float FPS, milliseconds, vsync copies, floors behind pointers and under the controller's maximum, caps set while running, build gates and overrides, sead's controller at the measured rate (on and off live), framework step counts, Unreal's fixed frame rate, Unity's frame rate and Monolith's interval found in any build passed");
+    puts("Frame limits: integer/float FPS, milliseconds, vsync copies, floors behind pointers and under the controller's maximum, caps set while running, build gates and overrides, sead's controller at the measured rate (on and off live), the engine's draw-every-other-step flag in an NRO, framework step counts, Unreal's fixed frame rate, Unity's frame rate and Monolith's interval found in any build passed");
 }

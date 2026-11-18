@@ -46,6 +46,7 @@ enum { GATE_FRAME = 0, GATE_SUBMIT = 1 };   // the gate number's parameter (bits
 #define SKIP_LOG_FRAMES 300            // the statistics line's window
 
 int dm_fps_decouple_on(void);   // hle_fpslock.c: Full game speed at low frame rates (the launcher, DM_FPS_DECOUPLE, nxhost_fps_decouple_set)
+int dm_fps_half_on(void);       // hle_fpslock.c: a 30 cap through flag 15 takes priority over the dynamic skip
 
 typedef struct {
     uint64_t ref, last;   // the clock's start and the last frame's start (ns); last 0 = start again at the next frame
@@ -157,6 +158,11 @@ static void stats(uint64_t now, int skip, uint64_t sig, uint32_t nj, uint32_t nc
 static void frame_gate(uint64_t now) {
     static int was_on = -1, nwarn;
     g_apply = 0;
+    if (dm_fps_half_on()) {
+        if (was_on > 0) { LOG("mtf skip: off (frame rate cap 30: flag 15 draws every other step)"); was_on = 0; }
+        g_s.last = 0; memset(&g_st, 0, sizeof g_st);
+        return;
+    }
     if (__atomic_load_n((uint8_t *)(g_base + M_FLAG), __ATOMIC_RELAXED) == 0) {   // only the host writes 0, and the frame's end writes 1 again
         if (nwarn++ < 4) LOG("[RED] mtf skip: the draw flag was still 0 at a frame's start; written 1");
         flag_write(1);

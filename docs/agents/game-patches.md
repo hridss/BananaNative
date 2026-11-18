@@ -43,6 +43,7 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
 | `game` → `host` | the languages the game ships: another language becomes the nearest it has | runtime | gap | judgement | 1 | `languages`: [The Legend of Zelda: Ocarina of Time](../../dm/games/0400486024DEC000/README.md) | a console gives a game a language of its control data (NACP), which a .nup does not carry: the list comes from the package's own data when the control data can be read (a phone's Thai reached a game that has none) |
 | `build` → `engine` | the dynamic resolution's level lists, lowered at load to fit DM_WINDOW_SIZE (the Android launcher's Game resolution) | rendering | gap | judgement | 1 | `res_levels`: [Pokemon Pokopia](../../dm/games/0400A3A01EE4C000/README.md) | KTGL's size table and level lists, at fixed offsets per main build; a fingerprint of the controller that picks the list (oe::GetOperationMode, oe::GetCurrentGraphicsScale, the 34-level table) could find them in other KTGL games |
 | `build` → `engine` | the dynamic resolution's range steered while the game runs (DM_DRS, the Android launcher's Dynamic resolution) | rendering | gap | judgement | 1 | `drs_ctl`: [Donkey Kong Bananza](../../dm/games/040074A01BF12000/README.md) | four places in sead / agl's MaintainGpuPercentage controller, at fixed offsets per main build (each checked for its instruction); a fingerprint of the controller could find them in other games on that engine |
+| `build` → `engine` | the engine's draw-every-other-step flag, set for a frame rate cap of 30: 60 steps a second, 30 frames drawn, at full game speed | frame rate | gap | judgement | 1 | `fps_half_draw`: [Mario Tennis Fever](../../dm/games/0400D4201C6EA000/README.md) | a flag byte at a fixed offset per build of the module that holds it; a fingerprint of the frame-start function (the draw flag set from the frame counter's low bit when the flag is on) could find it in the game's updates |
 | `build` → `engine` | the framework's fixed steps per frame (its mode and step count), written for the frame rate cap: 30 and 20 fps at full game speed | frame rate | gap | judgement | 1 | `fps_steps`: [Mario Kart World](../../dm/games/0400C3F00006E000/README.md) | the framework at a fixed global per main build; a fingerprint of its frame function (the step pick from the mode, then the update loop over the count and the present interval set to it) could find it in the game's updates |
 | `build` → `engine` | the output and render size written into every render configuration (DM_WINDOW_SIZE, DM_RENDER_PCT; hle_render.c) | rendering | gap | judgement | 1 | `render_cfg`: [Fire Emblem Fortune's Weave](../../dm/games/04007EF01F8AE000/README.md) | the game's table of render configurations, at a fixed offset per main build (the build, the heap and the game's own sizes checked before each write); a fingerprint of the selector that reads it could find it in other builds |
 | `build` → `engine` | the render target pool sized at load for the starting render setting (at least the first larger size on a device of more than 12 GB), and render_cfg's max_render raised with it (DM_RT_POOL_MB; loader.c) | memory | gap | judgement | 1 | `rt_pool`: [Fire Emblem Fortune's Weave](../../dm/games/04007EF01F8AE000/README.md) | the pool's size is one movz in the game's text, at a fixed offset per build (the build and the word checked before the write); a fingerprint of the pool's constructor call could find it in other builds |
@@ -516,7 +517,7 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
   - cut `+0x9bf4d4`: dynamic resolution: optimal frame cost 32.01 -> 16.005 ms at 60 fps (second load)
   - cut `+0x9bf4f8`: dynamic resolution: good frame cost 30 -> 15 ms at 60 fps
   - launcher capabilities: DYNAMIC_RESOLUTION
-  - host [hle_fpslock.c:149](../../dm/host/hle_fpslock.c#L149): frame interval and dynamic-resolution floor
+  - host [hle_fpslock.c:182](../../dm/host/hle_fpslock.c#L182): frame interval and dynamic-resolution floor
 
 ### NieR:Automata The End of YoRHa Edition (0100B8E016F76000)
 
@@ -535,7 +536,7 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
   - cut `+0x9c08e8`: dynamic resolution lower bound follows the selected preset
   - cut `+0x9c08f4`: dynamic resolution lower bound follows the selected preset
   - launcher capabilities: DYNAMIC_RESOLUTION
-  - host [hle_fpslock.c:150](../../dm/host/hle_fpslock.c#L150): frame interval and dynamic-resolution floor
+  - host [hle_fpslock.c:183](../../dm/host/hle_fpslock.c#L183): frame interval and dynamic-resolution floor
 
 ### Paper Mario: The Thousand-Year Door
 
@@ -803,6 +804,7 @@ Profile keys (`game.tsv`) whose value changes what the host does, set away from 
 | `drs_ctl e25c90c1c136638885659fd55bf8a03b 0x38e100 0x38de2c 0x38dcbc 0x38dbc8` | [Donkey Kong Bananza](../../dm/games/040074A01BF12000/README.md) | `build` → `engine`, gap | four places in sead / agl's MaintainGpuPercentage controller, at fixed offsets per main build (each checked for its instruction); a fingerprint of the controller could find them in other games on that engine |
 | `enc_thread on` | [Need For Speed™ Hot Pursuit Remastered](../../dm/games/010029B0118E8000/README.md) | `game` → `host`, gap | what iOS does for every game: a default for every game after `regress.py check` on the games |
 | `event_wait off` | [Mario Kart World](../../dm/games/0400C3F00006E000/README.md) | `game` → `host`, gap | parked waits cost this game a third of its frame rate and lose the device on Turnip V39; waits that cost no extra submissions would let every game keep them |
+| `fps_half_draw nro0 250a510a934129cb38e930c9a29082b6 0x3ec09e5 0x01` | [Mario Tennis Fever](../../dm/games/0400D4201C6EA000/README.md) | `build` → `engine`, gap | a flag byte at a fixed offset per build of the module that holds it; a fingerprint of the frame-start function (the draw flag set from the frame counter's low bit when the flag is on) could find it in the game's updates |
 | `fps_steps d00e4f399e411d0613aa8d26b1c02fef 0x37c8410 0x8 0x210 0x214` | [Mario Kart World](../../dm/games/0400C3F00006E000/README.md) | `build` → `engine`, gap | the framework at a fixed global per main build; a fingerprint of its frame function (the step pick from the mode, then the update loop over the count and the present interval set to it) could find it in the game's updates |
 | `fps_target 30` | [Fire Emblem Fortune's Weave](../../dm/games/04007EF01F8AE000/README.md) | `game`, at goal | a choice per game |
 | `game_env DOTNET_GCRegionRange=60000000` | [Absolum](../../dm/games/0100A83022A22000/README.md) | `game`, at goal | measured for the game's regions |

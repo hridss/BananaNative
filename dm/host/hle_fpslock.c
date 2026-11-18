@@ -134,6 +134,39 @@ static const steps_row_t k_steps[] = DM_FPS_STEPS_ROWS;
 #define NSTEPS DM_FPS_NSTEPS_ROWS
 #define STEPS_MAX 3    // 20 fps: the most steps a frame offered (each 1/60 s)
 #define STEPS_HOLD 3   // a mode outside the game's 0..2: its pick then leaves the count the host wrote
+// A draw-every-other-step flag, the profile's fps_half_draw rows (dm/games/game.py; one per build of the module that holds it, which may be an NRO): an engine that steps once a
+// frame call and has a flag that makes it draw and present only every second step, at present interval 2, while the steps stay 1/60 s. Mario Tennis Fever 1.1.1
+// (dm/games/0400D4201C6EA000/README.md, Frame rate): Camelot's engine, flag 15 of its flag array, bit 0 of the byte at nro0+0x3ec09e5, read at the start of each frame
+// (nro0+0x11f75b0). A cap of 30 sets the bit: 60 steps a second, 30 frames drawn, so the game keeps its speed where a late frame at interval 1 halves it. Any other cap, and no
+// cap, clears a bit the host set (one the game set itself stays). The game sets its present interval itself, so presentation follows the game (follows_game's rule: half_find in
+// dm_fps_lock_floor). The module may load after main (an NRO), so it is looked for until found. DM_FPS_HALF_ROWS: the unit tests' own rows
+#ifndef DM_FPS_HALF_ROWS
+#define DM_FPS_HALF_ROWS DM_GAME_FPS_HALF_DRAW
+#define DM_FPS_NHALF_ROWS DM_GAME_NFPS_HALF_DRAW
+#endif
+typedef struct { const char *module, *build; uint64_t off; uint8_t mask; } half_row_t;
+static const half_row_t k_half[] = DM_FPS_HALF_ROWS;
+#define NHALF DM_FPS_NHALF_ROWS
+static struct { _Atomic(uint8_t *) p; uint8_t mask, ours; int nlog, refused; } g_half;
+static uint8_t *half_find(void) {
+    uint8_t *p = atomic_load(&g_half.p);
+    if (p || !NHALF) return p;
+    for (int i = 0; i < g_nmod && !p; i++) for (int k = 0; k < NHALF && !p; k++)
+        if (k_half[k].build[0] && !strcmp(g_mod[i].name, k_half[k].module) && !strcmp(g_mod[i].build_id, k_half[k].build)) { g_half.mask = k_half[k].mask; p = g_mod[i].base + k_half[k].off; }
+    if (p) atomic_store(&g_half.p, p);
+    return p;
+}
+static int half_holds(int t) { return (t == 30 || t == 60) && half_find(); }
+// True while a profile's fps_half_draw module (e.g. an NRO decoded after main) has not loaded yet, so cap status reports "starting" instead of caching "picks its own"
+int dm_fps_lock_pending(void) {
+    if (!NHALF || half_find()) return 0;
+    for (int k = 0; k < NHALF; k++) if (k_half[k].module[0]) {
+        int seen = 0;
+        for (int i = 0; i < g_nmod && !seen; i++) seen = !strcmp(g_mod[i].name, k_half[k].module);
+        if (!seen) return 1;
+    }
+    return 0;
+}
 static int rd(uint64_t a, void *out, size_t n) { return a >= 0x1000 && !plat_mem_read(a, out, n); }
 
 // NieR 1.0.3 exposes its preset minimum but ships fixed mode-specific fallbacks.
@@ -352,9 +385,9 @@ static void lock_find(void) {
 // Without one, and without a frame step state page, nothing makes the game follow the cap, so the graphics layer keeps the game's own present interval (hle_nvn.c fps_present_cap):
 // presenting at a cap the game does not step by runs a fixed-step game fast or slow (Tears of the Kingdom 1.4.2 at 2x with DM_FPS_TARGET=60)
 // A floor or a step count does not fix the rate on its own terms: the game still sets its present interval (at or above the floor; the step count, which at a cap below 60 is the cap's)
-static int floor_only(void) { for (int r = 0; r < nrow; r++) if (!follows_game(rows[r]->kind)) return 0; return nrow > 0 && !nier && !fb.n && !uq.base; }
-int dm_fps_lock_engine(void) { pthread_once(&g_found, lock_find); return (nrow || nier || fb.n || uq.base) && !floor_only(); }
-int dm_fps_lock_floor(void) { pthread_once(&g_found, lock_find); for (int r = 0; r < nrow; r++) if (follows_game(rows[r]->kind)) return 1; return 0; }   // the game picks its interval at or above a floor the host writes, or by the step count it writes
+static int floor_only(void) { for (int r = 0; r < nrow; r++) if (!follows_game(rows[r]->kind)) return 0; return (nrow > 0 || half_find()) && !nier && !fb.n && !uq.base; }
+int dm_fps_lock_engine(void) { pthread_once(&g_found, lock_find); return (nrow || nier || fb.n || uq.base || half_find()) && !floor_only(); }
+int dm_fps_lock_floor(void) { pthread_once(&g_found, lock_find); for (int r = 0; r < nrow; r++) if (follows_game(rows[r]->kind)) return 1; return half_find() != NULL; }   // the game picks its interval at or above a floor the host writes, or by the step count it writes
 static int steps_row(void) { pthread_once(&g_found, lock_find); for (int r = 0; r < nrow; r++) if (rows[r]->kind == STEPS_I32) return 1; return 0; }
 // The cap: DM_FPS_TARGET or the profile's fps_target at start, then whatever the front end sets while the game runs (dm_fps_target_set: the Android launcher's in-game panel,
 // DM_CTL "fps <n>"). 0 = the game's own; else 15, 20, 30, 40, 45 or 60, each applied by the limiters that can hold it (rate_ok)
@@ -372,6 +405,7 @@ int dm_fps_target(void) {
     return atomic_load(&g_target);
 }
 int dm_fps_target_gen(void) { return atomic_load(&g_target_gen); }
+int dm_fps_half_on(void) { return half_find() && dm_fps_target() == 30; }
 void dm_fps_target_set(int t, const char *src) {
     if (!target_ok(t)) { LOG("[RED] frame rate cap %d (%s): must be 0, 15, 20, 30, 40, 45 or 60; unchanged", t, src); return; }
     dm_fps_target(); g_target_src = src; atomic_store(&g_target, t); atomic_fetch_add(&g_target_gen, 1);
@@ -403,7 +437,7 @@ static int row_holds(const lock_t *L, int t) {
     return !mx || 60 / t <= mx;
 }
 static int holds(int t) {
-    int ok = ((nier || uq.base) && 60 % t == 0 && 60 / t <= 4) || fb.n;
+    int ok = ((nier || uq.base) && 60 % t == 0 && 60 / t <= 4) || fb.n || half_holds(t);
     for (int r = 0; r < nrow && !ok; r++) ok = row_holds(rows[r], t);
     return ok;
 }
@@ -694,10 +728,29 @@ static void steps_tick(const lock_t *L, int r, int target, const char *src) {
     }
 }
 
+// The draw-every-other-step flag at the cap (k_half above): on at 30, the host's own bit off again at any other cap; a cap the game holds no other way becomes the game's own
+static void half_tick(void) {
+    uint8_t *p = half_find();
+    if (!p) return;
+    int t = dm_fps_target(); uint8_t m = g_half.mask, cur = __atomic_load_n(p, __ATOMIC_RELAXED);
+    if (t && !holds(t)) {
+        if (g_half.refused != t) { g_half.refused = t; LOG("main: frame rate cap %d fps (%s) is not one this game can hold (its engine draws every step or every other one: 60 or 30): the game's own frame rate instead", t, g_target_src ? g_target_src : "?"); }
+        dm_fps_target_set(0, "a cap this game cannot hold"); t = 0;
+    }
+    if (t == 30 && !(cur & m)) {
+        dm_guest_write_prepare(p, 1); __atomic_fetch_or(p, m, __ATOMIC_RELAXED); g_half.ours = 1;
+        if (g_half.nlog < 16) { g_half.nlog++; LOG("main: the engine draws every other step at 30 fps, 60 steps a second: its flag set (%s)", g_target_src ? g_target_src : "?"); }
+    } else if (t != 30 && (cur & m) && g_half.ours) {
+        dm_guest_write_prepare(p, 1); __atomic_fetch_and(p, (uint8_t)~m, __ATOMIC_RELAXED); g_half.ours = 0;
+        if (g_half.nlog < 16) { g_half.nlog++; LOG("main: the engine draws every step again: its flag cleared (%s)", g_target_src ? g_target_src : "?"); }
+    } else if (!(cur & m)) g_half.ours = 0;   // the game cleared it itself
+}
+
 void dm_fps_lock_tick(void) {
     fps_limit_wait();
     atomic_fetch_add_explicit(&g_presents, 1, memory_order_relaxed);   // sead_rate's frame count
     dynamic_resolution_tick();   // separate from the FPS cap
+    half_tick();   // before the rows: its module may not be main, and it needs none of them
     static int state = -2, nlog[NROWS], target, gen = -1, start_cap; static const char *src; static uint8_t over[NROWS];
     static uint32_t orig[NROWS][2]; static uint8_t have_orig[NROWS][2];   // what a row held before the host first wrote it: put back when the cap goes to 0 while the game runs
     if (state == -1) return;

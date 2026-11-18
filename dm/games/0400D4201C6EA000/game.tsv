@@ -25,6 +25,9 @@ romfs_marker	42
 zip_store	.metallib
 
 # ---- Frame rate ----
+# The engine's own draw-every-other-step flag (flag 15 of its flag array, nro0 1.1.1): the frame rate cap of 30 sets it, so the game steps 60 times a second and draws 30 frames
+# (the note's Frame rate section; hle_fpslock.c half_tick)
+fps_half_draw	nro0	250a510a934129cb38e930c9a29082b6	0x3ec09e5	0x01
 # The engine counts frames (one 1/60 s step a frame, the present interval its own min(frames since the last present, 5)), so a late frame plays slow. A frame behind real time skips
 # its submit and present through the game's own draw flag (patches.py OBS rows, dm/host/android/mtf_speed.c); the launcher's Full game speed at low frame rates turns it off. Keep the
 # default present_interval (game): presentation must follow the game's interval.
