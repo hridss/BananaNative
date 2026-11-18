@@ -41,6 +41,7 @@
 #   · BERG (Snowdrop, Mario + Rabbids Sparks of Hope): shader objects in the individually zstd-compressed records of its SDF data slices, see snowdrop_shaders
 #   · bnd2 (Criterion's Bundle 2, Need for Speed: Hot Pursuit Remastered): whole GLSLC outputs in the zlib resources of SHADERS.BNDL, see bnd2_resources and bnd2_shaders
 #   · Heaps (Dead Cells): whole GLSLC outputs in base64 after the GLSL of the engine's shader cache (shaders.cache.nx), inside its PAK archive, see heaps_pak_files and heaps_shaders
+#   · igArchive (Vicarious Visions' Alchemy, Crash Team Racing Nitro-Fueled): whole GLSLC outputs in the shader .igz files of its .pak archives (LZMA in 0x8000-byte blocks), see iga_entries and iga_shaders
 #   · Frostbite (EA SPORTS FC 27): the CompiledBytecode resources of the bundles its superbundle tables (.toc) list, in its cas files (Oodle Leviathan, decoded by the game's own decoder in the
 #       Mac host), each a VNVN record with one code area and control section (frostbite.py), see frostbite_jobs and frostbite_shaders
 #   · PDAT (the engine with the namespace phx, Kirby Air Riders): flatbuffer records tagged PMAP, zstd frames in the .dat archives, each holding a program's control sections and code areas, see pdat_jobs and pdat_shaders
@@ -3133,6 +3134,72 @@ def heaps_shaders(d, label):
     if not found: red(f'{label}: no GLSLC output in //BIN= comments')
     return found
 
+# Alchemy's igArchive (iga_entries, iga_member, iga_shaders), first met on Crash Team Racing Nitro-Fueled
+IGA = b'IGA\x1a'
+IGA_BLOCK = 0x8000
+
+def iga_entries(f):
+    """The files of an Alchemy igArchive version 13 (Vicarious Visions, Crash Team Racing Nitro-Fueled: 401 .pak files, 9.6 GB), open at +0 → (sector size, [(name, offset, length, blocks)]).
+    Header: 'IGA\x1a', u32 version, u32 table size, u32 file count, u32 sector size (0x800), two hash search words, u32 counts of the large, medium and small block tables,
+    u64 name table offset, u32 name table size, u32 flags. Then a u32 hash per file, a 16-byte record per file {u32 offset, u32 ordinal, u32 length, u32 mode}, the large (u32),
+    medium (u16) and small (u8) block tables, and at the name table offset a u32 offset per file to its two names (the build path, then the path in the archive).
+    mode 0xFFFFFFFF: the file is stored as it is (blocks None). Else its top 4 bits name the compression (2 = LZMA, the only one this game has) and the rest is the index of the
+    file's first entry in a block table: the small one for a file of at most 0x7F sectors, the medium one up to 0x7FFF sectors, else the large one (none in this game: read by the
+    same rule, not checked on a file). A file has one entry per 0x8000 bytes: the top bit says the block is compressed, the other bits are its sector from the file's offset.
+    Checked on all 74,311 files of the game's 401 archives: every block decodes to its length"""
+    h = f.read(0x38)
+    if len(h) < 0x38 or h[:4] != IGA: return None
+    ver, _, nf, sector, _, _, nl, nm, ns = struct.unpack_from('<9I', h, 4)
+    noff, nsz = struct.unpack_from('<QI', h, 0x28)
+    if ver != 13: red(f'igArchive version {ver}: only 13 is known')
+    if not sector or nf > 1 << 24 or max(nl, nm, ns) > 1 << 26 or nsz > 1 << 28: red('igArchive: a header count out of range')
+    base = 0x38 + 4 * nf; tl = base + 16 * nf; tm = tl + 4 * nl; ts = tm + 2 * nm
+    f.seek(0); t = f.read(ts + ns); f.seek(noff); names = f.read(nsz)
+    if len(t) < ts + ns or len(names) < 4 * nf: red('igArchive: its tables end past the file')
+    tabs = ((ts, 1, ns), (tm, 2, nm), (tl, 4, nl)); out = []
+    for i in range(nf):
+        off, _, length, mode = struct.unpack_from('<4I', t, base + 16 * i)
+        a = struct.unpack_from('<I', names, 4 * i)[0]; a = names.find(b'\0', a) + 1; b = names.find(b'\0', a)
+        if a <= 0 or b < 0: red(f'igArchive: file {i} has no name')
+        name = names[a:b].decode('utf-8', 'replace')
+        if mode == 0xFFFFFFFF: out.append((name, off, length, None)); continue
+        if mode >> 28 != 2: red(f'igArchive: {name}: compression {mode >> 28} is not known (2, LZMA, is)')
+        n = -(-length // IGA_BLOCK); at, w, cnt = tabs[0 if length <= 0x7f * sector else 1 if length <= 0x7fff * sector else 2]
+        first = mode & 0xfffffff
+        if first + n > cnt: red(f'igArchive: {name}: its blocks end past the block table')
+        vals = struct.unpack_from('<' + ' BH I'[w] * n, t, at + w * first); top = 1 << 8 * w - 1
+        out.append((name, off, length, tuple((v & top - 1, bool(v & top)) for v in vals)))
+    return sector, out
+
+def iga_member(f, sector, off, length, blocks):
+    """A file of an igArchive (iga_entries), decoded. A compressed block: u32 stored length, the 5 LZMA property bytes, then the raw LZMA stream of at most 0x8000 bytes"""
+    if blocks is None: f.seek(off); return f.read(length)
+    import lzma
+    out = bytearray()
+    for sec, packed in blocks:
+        want = min(IGA_BLOCK, length - len(out)); f.seek(off + sec * sector)
+        if not packed: out += f.read(want); continue
+        h = f.read(9)
+        if len(h) < 9: red('igArchive: a block ends past the file')
+        n, = struct.unpack_from('<I', h); pr = h[4]
+        if pr >= 9 * 5 * 5: red('igArchive: a block with LZMA properties out of range')
+        flt = dict(id=lzma.FILTER_LZMA1, dict_size=max(struct.unpack_from('<I', h, 5)[0], 4096), lc=pr % 9, lp=pr // 9 % 5, pb=pr // 45)
+        try: d = lzma.LZMADecompressor(lzma.FORMAT_RAW, filters=[flt]).decompress(f.read(n), max_length=want)
+        except lzma.LZMAError as e: red(f'igArchive: a block does not decode ({e})')
+        if len(d) != want: red(f'igArchive: a block decodes to {len(d)} bytes, not {want}')
+        out += d
+    if len(out) != length: red(f'igArchive: {len(out)} bytes read of a file of {length}')
+    return bytes(out)
+
+def iga_shaders(path, rel, found):
+    """Whole GLSLC outputs in the files of an igArchive (Crash Team Racing Nitro-Fueled: 2,582 in the 86 shader .igz files of archives/shaders_nx.pak, one stage each; its other
+    400 archives hold none). Every file is decoded and looked at, by no name"""
+    with open(path, 'rb') as f:
+        sector, ents = iga_entries(f)
+        for name, off, length, blocks in ents:
+            d = iga_member(f, sector, off, length, blocks)
+            if b'\x91\x68\x86\x19' in d: found += glslc_shaders(d, f'/{rel}/{name}', need=False)
+
 UE_TAG ={'SV': 'vs', 'SH': 'hs', 'SD': 'ds', 'SG': 'gs', 'SP': 'ps', 'SC': 'cs'}
 def main_imports(img):   # the names main imports (its dynamic symbols)
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../tools')); import nso_syms
@@ -3300,6 +3367,9 @@ def scan_file_in(args):
         return rel, uniq_keys(found), var_pairs(found), trees
     if head[:4] == BND2:   # a Criterion Bundle 2 (Need for Speed: Hot Pursuit Remastered's SHADERS.BNDL): GLSLC outputs in its zlib resources (bnd2_shaders)
         found += bnd2_shaders(open(path, 'rb').read(), '/' + rel)
+        return rel, uniq_keys(found), var_pairs(found), trees
+    if head[:4] == IGA:   # an Alchemy igArchive (Crash Team Racing Nitro-Fueled's .pak files): GLSLC outputs in its LZMA files (iga_shaders)
+        iga_shaders(path, rel, found)
         return rel, uniq_keys(found), var_pairs(found), trees
     if head[:3] == b'PAK':   # a Heaps PAK archive (Dead Cells): only its shader cache is read, not its 2 GB of other files (heaps_pak_files, heaps_shaders)
         with open(path, 'rb') as f:
