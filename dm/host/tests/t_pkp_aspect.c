@@ -38,6 +38,11 @@ static void done_param(void *camera, int param, uint64_t fp) {
 static void submit(void *camera) { submit_param(camera, 0); }
 static void build(void *camera) { build_param(camera, 0); }
 static void done(void *camera) { done_param(camera, 0, 0); }
+static void init_mask_entry(unsigned char entry[0x70], uint64_t tex, uint32_t blend) {
+    memset(entry, 0, 0x70);
+    memcpy(entry, &tex, sizeof tex);
+    memcpy(entry + 0x68, &blend, sizeof blend);
+}
 static void projection(void *camera) {
     uint64_t a = (uintptr_t)camera;
     float p11 = 1.0f / tanf(rdf(a + CAM_FOV) * 0.5f);
@@ -241,6 +246,34 @@ static void check_variant(int which) {
         r[19] = (uintptr_t)so;
         callbacks[OBS_PKP_PROJ_DONE](r, 5);
         assert(fabsf(rdf((uintptr_t)so + 0x1c)) < 1e-6f);
+
+        // Param 6 widens event stencil mask rect around its center under variant 43.
+        float mask_rect[4] = {651.681f, 445.084f, 1251.681f, 1045.084f};
+        uint64_t mr[31] = {0};
+        mr[1] = (uintptr_t)mask_rect;
+        callbacks[OBS_PKP_PROJ_DONE](mr, 6);
+        assert(fabsf(mask_rect[0] - 551.681f) < 1e-3f);
+        assert(fabsf(mask_rect[2] - 1351.681f) < 1e-3f);
+        assert(mask_rect[1] == 445.084f && mask_rect[3] == 1045.084f);
+
+        // Param 7 widens qualifying alpha-mask rect (non-null tex + 0x918000u blend) and leaves full-screen fade untouched.
+        _Alignas(16) unsigned char entry[0x70];
+        init_mask_entry(entry, 1, 0x918000u);
+        float alpha_rect[4] = {651.681f, 445.084f, 1251.681f, 1045.084f};
+        uint64_t ar[31] = {0};
+        ar[1] = (uintptr_t)alpha_rect;
+        ar[19] = (uintptr_t)entry;
+        callbacks[OBS_PKP_PROJ_DONE](ar, 7);
+        assert(fabsf(alpha_rect[0] - 551.681f) < 1e-3f);
+        assert(fabsf(alpha_rect[2] - 1351.681f) < 1e-3f);
+        assert(alpha_rect[1] == 445.084f && alpha_rect[3] == 1045.084f);
+
+        init_mask_entry(entry, 0, 0x90800u);
+        float fade_rect[4] = {0.0f, 0.0f, 1920.0f, 1080.0f};
+        ar[1] = (uintptr_t)fade_rect;
+        callbacks[OBS_PKP_PROJ_DONE](ar, 7);
+        assert(fade_rect[0] == 0.0f && fade_rect[1] == 0.0f &&
+               fade_rect[2] == 1920.0f && fade_rect[3] == 1080.0f);
         free(img);
     } else if (which == 15) {
         // B-1 row: non-43 DM_PATCH_VARIANT disables DM_PKP_ASPECT, Screen shape, and 30|3..5.
@@ -260,6 +293,18 @@ static void check_variant(int which) {
         r[1] = (uintptr_t)pane;
         callbacks[OBS_PKP_PROJ_DONE](r, 4);
         assert(fabsf(rdf((uintptr_t)so + 0x1c)) < 1e-6f);
+        float mask_rect[4] = {651.681f, 445.084f, 1251.681f, 1045.084f};
+        uint64_t mr[31] = {0};
+        mr[1] = (uintptr_t)mask_rect;
+        callbacks[OBS_PKP_PROJ_DONE](mr, 6);
+        assert(mask_rect[0] == 651.681f && mask_rect[1] == 445.084f &&
+               mask_rect[2] == 1251.681f && mask_rect[3] == 1045.084f);
+        _Alignas(16) unsigned char entry[0x70];
+        init_mask_entry(entry, 1, 0x918000u);
+        mr[19] = (uintptr_t)entry;
+        callbacks[OBS_PKP_PROJ_DONE](mr, 7);
+        assert(mask_rect[0] == 651.681f && mask_rect[1] == 445.084f &&
+               mask_rect[2] == 1251.681f && mask_rect[3] == 1045.084f);
         free(img);
     } else if (which == 16) {
         // B-1 row: unset DM_PATCH_VARIANT runs DM_PKP_ASPECT on 28/29/30|0, leaves 30|4..5 no-ops.
@@ -392,6 +437,34 @@ static void check_screen_shape(int which) {
         wrf(o + CAM_PROJ + 20, -2.0f / 1080.0f);
         done_param(ortho_cam, 1, 0);
         assert(fabsf(rdf(o + CAM_PROJ + 20) - (-2.0f / 1080.0f) * 0.75f) < 1e-6f);
+
+        // Param 6 widens event stencil mask rect around its center by (16/9)/(4/3) = 4/3.
+        float mask_rect[4] = {651.681f, 445.084f, 1251.681f, 1045.084f};
+        uint64_t mr[31] = {0};
+        mr[1] = (uintptr_t)mask_rect;
+        callbacks[OBS_PKP_PROJ_DONE](mr, 6);
+        assert(fabsf(mask_rect[0] - 551.681f) < 1e-3f);
+        assert(fabsf(mask_rect[2] - 1351.681f) < 1e-3f);
+        assert(mask_rect[1] == 445.084f && mask_rect[3] == 1045.084f);
+
+        // Param 7 widens qualifying alpha-mask rect and leaves full-screen fade untouched.
+        _Alignas(16) unsigned char entry[0x70];
+        init_mask_entry(entry, 1, 0x918000u);
+        float alpha_rect[4] = {651.681f, 445.084f, 1251.681f, 1045.084f};
+        uint64_t ar[31] = {0};
+        ar[1] = (uintptr_t)alpha_rect;
+        ar[19] = (uintptr_t)entry;
+        callbacks[OBS_PKP_PROJ_DONE](ar, 7);
+        assert(fabsf(alpha_rect[0] - 551.681f) < 1e-3f);
+        assert(fabsf(alpha_rect[2] - 1351.681f) < 1e-3f);
+        assert(alpha_rect[1] == 445.084f && alpha_rect[3] == 1045.084f);
+
+        init_mask_entry(entry, 0, 0x90800u);
+        float fade_rect[4] = {0.0f, 0.0f, 1920.0f, 1080.0f};
+        ar[1] = (uintptr_t)fade_rect;
+        callbacks[OBS_PKP_PROJ_DONE](ar, 7);
+        assert(fade_rect[0] == 0.0f && fade_rect[1] == 0.0f &&
+               fade_rect[2] == 1920.0f && fade_rect[3] == 1080.0f);
     } else if (which == 20) {
         // PR #412 Screen shape: text_consts (param 2) + DM_PKP_UI=0 disables UI squeeze/text.
         _Alignas(16) unsigned char prog[0x60] = {0}, mat[0x20] = {0};
@@ -437,6 +510,19 @@ static void check_screen_shape(int which) {
         float p11_ui = rdf(u + CAM_PROJ + 20);
         done(ui_cam);
         assert(fabsf(rdf(u + CAM_PROJ + 20) - p11_ui) < 1e-6f);
+
+        float mask_rect[4] = {651.681f, 445.084f, 1251.681f, 1045.084f};
+        uint64_t mr[31] = {0};
+        mr[1] = (uintptr_t)mask_rect;
+        callbacks[OBS_PKP_PROJ_DONE](mr, 6);
+        assert(mask_rect[0] == 651.681f && mask_rect[1] == 445.084f &&
+               mask_rect[2] == 1251.681f && mask_rect[3] == 1045.084f);
+        _Alignas(16) unsigned char entry[0x70];
+        init_mask_entry(entry, 1, 0x918000u);
+        mr[19] = (uintptr_t)entry;
+        callbacks[OBS_PKP_PROJ_DONE](mr, 7);
+        assert(mask_rect[0] == 651.681f && mask_rect[1] == 445.084f &&
+               mask_rect[2] == 1251.681f && mask_rect[3] == 1045.084f);
     } else if (which == 22) {
         // PR #412 Screen shape: pane_rules (param 3) cover + edge shift when guest 0x40.. address is available.
         void *mem = mmap((void *)0x4010000000ull, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);

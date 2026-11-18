@@ -1,11 +1,12 @@
 """Pokopia 2.0.1 aspect and native 4:3 variant hooks, exact main NSO build.
 
-Base OBS gates (28, 29, 30|0..3) feed dm/host/android/pkp_aspect.c:
+Base OBS gates (28, 29, 30|0..3, 30|6..7) feed dm/host/android/pkp_aspect.c:
 - Without DM_PATCH_VARIANT, DM_PKP_ASPECT / DM_VK_PICTURE_ASPECT (Screen shape) drives
-  world cameras and Screen shape UI scaling/anchoring (30|1..3); 30|4..5 are no-ops.
+  world cameras and Screen shape UI scaling/anchoring (30|1..3, 30|6..7); 30|4..5 are no-ops.
 - With DM_PATCH_VARIANT=43 (and VARIANT_CUTS['43'] applied to main), world cameras run at 4:3
   with T95 portrait-camera correction on 30|0, while 30|3..5 dispatch kg175 UI rules (pkp_ui43.c)
   and 30|1..2 are no-ops.
+- Gates 30|6 (0xebecec) and 30|7 (0xebedd0) adjust event mask rects for both Screen shape and variant 43.
 """
 import struct
 
@@ -32,6 +33,8 @@ OBS = {
         (0x1f72270, 30 | 3 << 8, 'f9401e68', 'ScreenLayout pane transform update, global matrix final, children next; x19 pane, x20 what changed'),
         (0x1f84fac, 30 | 4 << 8, 'aa1f03e3', 'ScreenLayout pre-bake before bl 0x1f85000; x0 scaleobj, x1 pane'),
         (0x1f84fb4, 30 | 5 << 8, 'f9400288', 'ScreenLayout post-bake after bl 0x1f85000; x19 scaleobj'),
+        (0x0ebecec, 30 | 6 << 8, 'f9401108', 'event stencil mask quad rect before submit; x1 rect[4]'),
+        (0x0ebedd0, 30 | 7 << 8, 'f9400108', 'event alpha-mask quad rect before submit; x1 rect[4], x19 entry'),
     ],
 }
 
