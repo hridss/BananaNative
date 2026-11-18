@@ -34,7 +34,7 @@ static uint32_t original(void *self, char *name, const void *data, unsigned inde
     return status;
 }
 static void *init_self, *init_buf; static unsigned init_size; static int inits;
-static void original_init(void *self, void *buf, unsigned size) { inits++; init_self = self; init_buf = buf; init_size = size; }
+static int original_init(void *self, void *buf, unsigned size) { inits++; init_self = self; init_buf = buf; init_size = size; return 0; }
 static char engine_buffer[1];
 static void *original_work(void *self) { (void)self; return engine_buffer; }   // the engine's own answer: the buffer it was initialized with
 void *guest_sym(const char *name) {
@@ -201,7 +201,7 @@ int main(void) {
     char rm[600]; snprintf(rm, sizeof rm, "rm -rf '%s'", dir); if (system(rm)) {}
     // A font engine with too little work memory for the stand-in font (Mario Tennis Fever's second engine: 50 KB) runs on host memory, at least 512 KB; the game still gets
     // its own buffer back from GetPointerToWorkBuffer (it frees that one). An engine with enough keeps the game's buffer
-    void (*init)(void *, void *, unsigned) = forced(e, bytes / sizeof *e, "_ZN2nn6fontll18ScalableFontEngine10InitializeEPvj");
+    int (*init)(void *, void *, unsigned) = forced(e, bytes / sizeof *e, "_ZN2nn6fontll18ScalableFontEngine10InitializeEPvj");
     void *(*work)(void *) = forced(e, bytes / sizeof *e, "_ZN2nn6fontll18ScalableFontEngine22GetPointerToWorkBufferEv");
     CHECK(init && work, "font engine Initialize and GetPointerToWorkBuffer are forced registrations");
     if (init && work) {
