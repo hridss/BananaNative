@@ -344,6 +344,20 @@ Most service calls can be found before they crash, before the first boot or the 
 - **Fix:** `motion_shape` (`motion_fusion.h`) applies a dead zone (default 0.5 degrees / s for the phone's gyro, `DM_MOTION_DEADZONE`) and a sensitivity factor for the phone's gyro (`DM_MOTION_SENS`; Game settings › Controls › **Motion sensitivity** and the in-game panel's slider, which applies at once through `Native.motionSens` / `dm_motion_sens`: 10 to 150 %, default 50 %, the phone's gyro only: a controller's gyro keeps its real turn) to every source's rate before the orientation is integrated. The tilt correction's weight falls linearly from 1 at 1 G to 0 at 0.9 and 1.1 G.
 - **Found on:** [Splatoon Raiders](../../dm/games/0400380020056000/README.md). Phone check open.
 
+### The six-axis history repeated the newest sample
+
+- **Symptom:** motion aiming feels late and loses part of a quick turn, most in a 30 fps game; the present path is not behind (`DM_VK_PRESENT_TRACE=1`: a frame is on the screen about 11 ms after it is queued).
+- **Cause:** `six_states` filled every entry of the history a game asks for with the newest sample. A game that reads the states since its last frame (`GetSixAxisSensorStates` once a frame) got one sample a frame: at 30 fps and a 109 Hz gyroscope, one of the three or four that arrived, and the turn the others measured never reached the game.
+- **Fix:** each motion source keeps its last 64 samples with their times (`live_motion.hist`), and entry i of a read is the sample that was current i × 5 ms ago (`motion_live_hist`: the source chosen as `motion_live` chooses it; a time before the oldest kept sample gives that one). One state read is the newest sample, as before. The first read logs `hid: the game reads N six-axis states at a time`. `t_hid` checks the history. From Peanuts Native (igawa6/peanuts-native 9ae221f87ffc); not yet confirmed by play here.
+- **Found on:** [The Legend of Zelda: Breath of the Wild](../../dm/games/01007EF00011E000/README.md) on an AYN Thor (Peanuts Native).
+
+### The phone's gyroscope reached the game five times a second (Android)
+
+- **Symptom:** aiming by the phone's gyroscope trails the hand and moves in steps while the sticks turn the camera smoothly ([issue #421](https://git.eden-emu.dev/moceure/BananaNative/issues/421) is the likely report). The log's `input: phone gyroscope:` line (10 s after the start, then once a minute) shows samples arriving about 200 ms after they were measured.
+- **Cause:** the sensor thread (`input_android.c` `motion_thread`) prepared its looper with `ALooper_prepare(0)` and added the sensor queue without a callback, which such a looper refuses (logcat: `Looper: Invalid attempt to set NULL callback but not allowed for this looper`). The queue never woke the poll, so the thread read the sensors only when its 200 ms timeout ran out, and every sample of a burst was stamped with the time it was read, so the turn between them counted as none. Measured on an AYN Thor: the sensor service had each sample within about 17 ms of its timestamp, the thread got it 202 to 205 ms after.
+- **Fix:** the looper is prepared with `ALOOPER_PREPARE_ALLOW_NON_CALLBACKS`; each gyroscope sample keeps the time the sensor measured it (the event's `CLOCK_BOOTTIME` timestamp moved onto the host clock, never in the future: `dm_motion_set_switch_at`); the sensors are asked for 200 Hz, the console's six-axis rate (was 100 Hz). From Peanuts Native (igawa6/peanuts-native 7c562dc7e526, 28ce2e68dbbc, 32e8fadf2240); not run on a device here.
+- **Found on:** [The Legend of Zelda: Breath of the Wild](../../dm/games/01007EF00011E000/README.md) on an AYN Thor (Peanuts Native).
+
 ### Android: a phone's own input device took player 1
 
 - **Symptom:** on Xiaomi and POCO phones a connected controller (a GameSir X3 Pro) does nothing in a game that reads only player 1; the log has `input: device 3 (uinput-xiaomi) is player 1` and the controller as player 2, and `hid controller applet: 1 to 1 players wanted, 2 connected`. The on-screen controls hide even with no controller connected.

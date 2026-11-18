@@ -36,6 +36,7 @@ void dm_pad_assign_callback(void (*fn)(int op, int a, int b));
 void dm_motion_set(int player, const float acc[3], const float rot[3]);
 void dm_motion_sens(float factor);   // the phone's rotation rates times this from now on (DM_MOTION_SENS sets the start value)
 void dm_motion_set_switch(int player, const float acc[3], const float rot[3]);   // player 0 only: the phone's own sensors in the Switch frame, kept separate; DM_MOTION_AXES does not apply
+void dm_motion_set_switch_at(int player, const float acc[3], const float rot[3], uint64_t sample_ns);   // the same with the sample's own time on the host clock (now_ns; 0: now), so samples read together keep their real spacing
 void dm_motion_clear(int player);   // clears GameController motion; another fresh source can take over
 // Passive controller HID, already in the Switch frame (G, rad/s). sample_ns is the sample's host now_ns() time, not the packet's arrival; stale / reordered samples are ignored.
 // Kept separate from GameController and the phone; used while GameController supplies no fresh motion for that player. DM_MOTION_AXES / ACC_SIGN apply only to GameController.

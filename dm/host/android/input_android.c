@@ -414,23 +414,34 @@ bool nxhost_input_motion(int device, const float acc[3], const float gyro[3]) {
 }
 static void *motion_thread(void *arg) {
     (void)arg; plat_thread_set_name("dm sensors");
-    ALooper *lp = ALooper_prepare(0); atomic_store(&g_mo_looper, lp);
+    // ALLOW_NON_CALLBACKS, not 0: the sensor queue below is added to this looper without a callback, which a looper prepared with 0 refuses ("Looper: Invalid attempt to
+    // set NULL callback but not allowed for this looper" in logcat). The queue then never woke the poll: the thread read the sensors when its 200 ms timeout ran out, so
+    // motion reached the game in bursts five times a second, up to 200 ms late (aiming by gyroscope trailed the hand and moved in steps)
+    ALooper *lp = ALooper_prepare(ALOOPER_PREPARE_ALLOW_NON_CALLBACKS); atomic_store(&g_mo_looper, lp);
     ASensorManager *m = ASensorManager_getInstanceForPackage("dev.nxnative.host");
     const ASensor *acc = m ? ASensorManager_getDefaultSensor(m, ASENSOR_TYPE_ACCELEROMETER) : NULL, *gyr = m ? ASensorManager_getDefaultSensor(m, ASENSOR_TYPE_GYROSCOPE) : NULL;
     ASensorEventQueue *q = m ? ASensorManager_createEventQueue(m, lp, 1, NULL, NULL) : NULL;
     int gyro = gyr && !env_off("DM_MOTION") && !env_off("DM_PHONE_MOTION");
     if (!q || !acc) { LOG("[RED] input: no accelerometer (sensor manager %p): no phone motion", (void *)m); atomic_store(&g_mo_run, 0); }
     else {
-        ASensorEventQueue_registerSensor(q, acc, 10000, 0);
-        if (gyro) ASensorEventQueue_registerSensor(q, gyr, 10000, 0);
+        // 200 Hz, the console's own six-axis rate and the most Android gives without the high-sampling-rate permission (was 100 Hz): a sample per entry of the history a game reads
+        ASensorEventQueue_registerSensor(q, acc, 5000, 0);
+        if (gyro) ASensorEventQueue_registerSensor(q, gyr, 5000, 0);
         LOG("input: phone sensors on: accelerometer for shakes%s", gyro ? ", gyroscope as player 1's six-axis sensor" : gyr ? " (gyroscope off by DM_MOTION / DM_PHONE_MOTION)" : " (no gyroscope)");
     }
     nxin_shake sh = {0}; const char *e = getenv("DM_SHAKE_G"); sh.thr = e && atof(e) > 0 ? (float)atof(e) : 1.5f;
     float a[3] = {0, 0, 9.80665f}; int have_a = 0;
+    // The gyroscope's delivery, logged 10 s after the start and then every minute: how many samples, their spacing by the sensor's clock, and how long after its measurement a sample got here
+    struct { uint64_t t0, last, n, late_max, gap_max, late_sum, every; } ms = {.every = 10000000000ull};
     while (atomic_load(&g_mo_run)) {
         ALooper_pollOnce(200, NULL, NULL, NULL);
         ASensorEvent ev[32]; ssize_t n;
-        while (q && (n = ASensorEventQueue_getEvents(q, ev, 32)) > 0) for (ssize_t i = 0; i < n; i++) {
+        while (q && (n = ASensorEventQueue_getEvents(q, ev, 32)) > 0) {
+          // A sensor event carries the time it was measured (CLOCK_BOOTTIME); off moves it onto the host clock, so events that waited for this thread keep their real
+          // spacing: stamped on arrival, events read together were turning counted as none
+          struct timespec bt; clock_gettime(CLOCK_BOOTTIME, &bt);
+          uint64_t now = now_ns(); int64_t off = (int64_t)now - ((int64_t)bt.tv_sec * 1000000000ll + bt.tv_nsec);
+          for (ssize_t i = 0; i < n; i++) {
             if (ev[i].type == ASENSOR_TYPE_ACCELEROMETER) {
                 memcpy(a, ev[i].acceleration.v, sizeof a); have_a = 1;
                 float g[3] = {-a[0] / 9.80665f, -a[1] / 9.80665f, -a[2] / 9.80665f};
@@ -441,8 +452,19 @@ static void *motion_thread(void *arg) {
             } else if (ev[i].type == ASENSOR_TYPE_GYROSCOPE && have_a) {
                 float acc_s[3], rot_s[3];
                 nxin_motion_to_switch(atomic_load(&g_rotation), a, ev[i].vector.v, acc_s, rot_s);
-                dm_motion_set_switch(0, acc_s, rot_s);
+                int64_t ts = ev[i].timestamp + off; uint64_t t = ts > 0 && (uint64_t)ts < now ? (uint64_t)ts : now;   // the sample's own time, never in the future
+                dm_motion_set_switch_at(0, acc_s, rot_s, t);
+                if (!ms.t0) ms.t0 = now;
+                if (ms.last && t > ms.last && t - ms.last > ms.gap_max) ms.gap_max = t - ms.last;
+                if (now - t > ms.late_max) ms.late_max = now - t;
+                ms.last = t; ms.n++; ms.late_sum += now - t;
+                if (now - ms.t0 >= ms.every) {
+                    LOG("input: phone gyroscope: %.0f samples a second, the longest gap %.1f ms; a sample arrives %.1f ms after it was measured on average, %.1f ms at most",
+                        (double)ms.n * 1e9 / (double)(now - ms.t0), (double)ms.gap_max / 1e6, (double)ms.late_sum / (double)ms.n / 1e6, (double)ms.late_max / 1e6);
+                    ms.t0 = now; ms.n = ms.late_max = ms.gap_max = ms.late_sum = 0; ms.every = 60000000000ull;
+                }
             }
+          }
         }
     }
     if (q) { if (acc) ASensorEventQueue_disableSensor(q, acc); if (gyro) ASensorEventQueue_disableSensor(q, gyr); ASensorManager_destroyEventQueue(m, q); }

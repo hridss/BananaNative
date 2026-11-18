@@ -722,6 +722,7 @@ static void motion_set(int p, const float acc[3], const float rot[3], int source
 void dm_motion_sens(float f) { pthread_once(&g_motion_once, motion_env); if (f > 0) atomic_store(&g_motion_sens, f); }   // live, from the in-game panel (after the env's value)
 void dm_motion_set(int p, const float acc[3], const float rot[3]) { motion_set(p, acc, rot, 0, 0); }
 void dm_motion_set_switch(int p, const float acc[3], const float rot[3]) { motion_set(p, acc, rot, 1, 0); }
+void dm_motion_set_switch_at(int p, const float acc[3], const float rot[3], uint64_t t) { motion_set(p, acc, rot, 1, t); }
 void dm_motion_set_hid(int p, const float acc[3], const float rot[3], uint64_t t) { if (t) motion_set(p, acc, rot, 2, t); }
 void dm_motion_clear(int p) {
     if (p < 0 || p >= DM_PLAYERS) return;
