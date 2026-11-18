@@ -60,8 +60,23 @@ class HalfFmaAlias(Alu):
                 with self.subTest(form=form, modifier=modifier):
                     hi = 0x000fe20000000014 | modifier   # the register in the 64-bit slot is R20
                     normal = self.kept(self.R2UR, (hi, lo), srcs=(19, 20, 21))
+                    if modifier == 1 << (78 - 64):   # .F32 result: the f32 FMA (upstream be4c103c)
+                        self.assertNotIn('fma(half(', normal)
+                    else:   # packed halves: one FMA rounded straight to half
+                        self.assertIn('fma(half(', normal)
                     mma = self.kept(self.R2UR, (hi, lo | 4), srcs=(19, 20, 21))
                     self.assertEqual(mma, normal)
+
+    def test_f32_source_in_each_slot_uses_float_fma(self):
+        lo = 0x0000001513067231
+        hi = 0x000fe20000000014
+        for source, words in (('A', (hi | 1 << (74 - 64), lo)),
+                              ('B', (hi, lo | 1 << 60)),
+                              ('C', (hi | 1 << (81 - 64), lo))):
+            with self.subTest(source=source):
+                msl = self.kept(words, srcs=(19, 20, 21))
+                self.assertIn('fma(', msl)
+                self.assertNotIn('fma(half(', msl)
 
 
 class Vote(Alu):

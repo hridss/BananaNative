@@ -1033,6 +1033,14 @@ Finding, keying and translating shaders (`dm/gfx/tools/shader_split.py`, `dmsh_b
 - **Found on:** no game symptom; upstream's synthetic Jetson Orin sm_87 programs (17 had been refused at HFMA2.MMA, 13 run with it).
 - **Check:** `DMSH_TEST_XLATE=<translator> python3 dm/gfx/tests/test_dmsh_ampere_alu.py` (`HalfFmaAlias`: HFMA2.MMA translates exactly as HFMA2 in all seven operand forms, plain and with each result modifier).
 
+### HFMA2 single rounding to half
+
+- **Symptom:** a packed HFMA2 result is one half ULP off near a rounding midpoint: `-3136 × -8.125 + 0.000124693` gives 25488 on an Orin and gave 25472.
+- **Cause:** the fused result was rounded to f32 first, which can turn a value just past a half midpoint into a tie, and packing that f32 then rounded the tie to the wrong half.
+- **Fix:** for HFMA2 and HFMA2.MMA whose sources and result are halves, `AHfma2` in `InstEmitAmpereAlu.cs` emits `Instruction.HalfFusedMultiplyAdd`, which the SPIR-V generator writes as an FMA on f16 (`GenerateHalfFusedMultiplyAdd`) widened exactly to f32 for the shared result handling (operand `.FTZ` before it, result `.FTZ`, `.RELU` and `.SAT` after). `.F32` sources or destinations and FFMA keep the f32 path (upstream seedds/nxnative be4c103c, PR #1902). Such shaders now declare the `Float16` capability, so the Vulkan device needs `shaderFloat16`: `vka_dev.c` enables every Vulkan 1.2 feature the device has, and the readiness report lists it.
+- **Found on:** no game symptom; upstream's Jetson Orin sm_87 probes (70 numeric differences in 9,140 lanes before, none after on an M4 Pro; NaN encodings still differ).
+- **Check:** `DMSH_TEST_XLATE=<translator> python3 dm/gfx/tests/test_dmsh_ampere_alu.py` (`HalfFmaAlias`) and `test_dmsh_ampere_mem.py` (`Pokopia`'s HFMA2 lane tests read the half FMA).
+
 ### TXD through a uniform register kept no handle
 
 - **Symptom:** `Failed to find handle source for bindless access` in the build's translator notes, for a shader with TXD through a uniform register (0xf6c). The MSL has no gradient sample, and what it read comes back 0.
