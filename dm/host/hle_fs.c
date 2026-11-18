@@ -604,12 +604,13 @@ HLE_FORCE("_ZN2nn2fs15MountSystemDataEPKcNS_3ncm12SystemDataIdEPvm", "fsp-srv; s
     if (!sysdata_dir(dir, sizeof dir, id)) { LOG("[RED] fs mount system data %s: the host has no %016llx", name, (unsigned long long)id); return RES_TARGET_NOT_FOUND; }
     return mount(name, dir, 1);
 }
-// IsMounted: the original SDK checks its own mount table, which stays empty because the host takes over mounting. Engage (IL2CPP) uses it to check whether "rom:" is mounted before opening a file; a "no" fails with an invalid-parameter error (0x57) and global-metadata.dat cannot be opened
-HLE_FORCE("_ZN2nn2fs9IsMountedEPKc", "fsp-srv; looks up the host mount table", int, h_fs_IsMounted, const char *name) {   // bool in w0: 1 / 0
+static int host_mounted(const char *name) {
     PATH_LOCK();
     for (int i = 0; name && i < g_nmnt; i++) if (!strcmp(g_mnt[i].name, name)) return 1;
     return 0;
 }
+// IsMounted: the original SDK checks its own mount table, which the host's mounts never enter. Engage (IL2CPP) uses it to check whether "rom:" is mounted before opening a file; a "no" fails with an invalid-parameter error (0x57) and global-metadata.dat cannot be opened
+HLE_FORCE("_ZN2nn2fs9IsMountedEPKc", "fsp-srv; looks up the host mount table", int, h_fs_IsMounted, const char *name) { return host_mounted(name); }   // bool in w0: 1 / 0
 // IsPathMounted / GetPathLengthMax: the SDK's C library (nnmusl) checks every path with them before it calls nn::fs (sdk+0x8ef50, under open / stat / opendir), and the original SDK answers from
 // its own empty mount table. Ace Attorney Investigations Collection (Unity 2022 IL2CPP): File.Exists → SystemNative_Stat → stat → open failed with no nn::fs call at all, so Addressables
 // never found StreamingAssets/aa/settings.json and the game crashed on a null asset (main+0x31100ec; found by armyja, GitHub issue #18). The mount name is the part before ':', as in FindFileSystem
@@ -824,18 +825,31 @@ out:
 HLE_FORCE("_ZN2nn2fs6CommitEPKcRKNS0_12CommitOptionE", "fsp-srv; same as Commit (the option only clears the restore flag)", Result, h_fs_CommitOpt, const char *name, const void *opt) { (void)opt; return h_fs_Commit(name); }
 // SDK 11's old name: CommitSaveData(mount name) is the later Commit (Metroid Dread)
 HLE_FORCE("_ZN2nn2fs14CommitSaveDataEPKc", "fsp-srv; same as Commit (SDK 11's old name)", Result, h_fs_CommitSaveData, const char *name) { return h_fs_Commit(name); }
-// Unmount: a save's name is freed, so the next MountSaveData under it mounts that user's save (Super Mario Bros. Wonder unmounts "save" and mounts it again for the user
-// whose save file it opens: a permanent table kept the first user's save under the name, and every user's save file was the first user's). What was not committed is
-// dropped, as on Horizon. Other mounts (rom, add-on content, cache storage) stay: their table entries are permanent, as before. The freed entry is taken by the next save mount
-// (mount_ex), so a game that mounts and unmounts its save again and again does not fill the table.
+// Unmount of a host mount: a save's name is freed, so the next MountSaveData under it mounts that user's save (Super Mario Bros. Wonder unmounts "save" and mounts it again
+// for the user whose save file it opens: a permanent table kept the first user's save under the name, and every user's save file was the first user's). What was not committed
+// is dropped, as on Horizon. Other host mounts (rom, add-on content, cache storage) stay: their table entries are permanent, as before. The freed entry is taken by the next save
+// mount (mount_ex), so a game that mounts and unmounts its save again and again does not fill the table.
 // Only with more than one user (dm_account_users): with one, every MountSaveData names the same save, so a kept name mounts the right one, and Unmount stays the no-op it
-// always was (a game that unmounts with writes not committed keeps them, as every earlier run did)
-HLE_FORCE("_ZN2nn2fs7UnmountEPKc", "fsp-srv; with more than one user a save's name is freed (its uncommitted writes dropped); other mounts, and every mount with one user, stay", void, h_fs_Unmount, const char *name) {
-    if (dm_account_users() < 2) return;
-    PATH_LOCK(); pthread_mutex_lock(&g_lock);
-    for (int i = 0; i < g_nmnt; i++)
-        if (g_mnt[i].save && !strcmp(g_mnt[i].name, name)) { LOG("fs unmount %s (save %s)", name, g_mnt[i].commit[0] ? g_mnt[i].commit : g_mnt[i].dir); g_mnt[i].name[0] = 0; }
-    pthread_mutex_unlock(&g_lock);
+// always was (a game that unmounts with writes not committed keeps them, as every earlier run did).
+// A mount call the host does not take over runs in the SDK and registers in the SDK's own table (nn::fs::MountRamDisk), and only the SDK can release it. Paper Mario: The
+// Thousand-Year Door unmounts its "cache" RAM disk, frees the buffer and mounts it again, which with the entry left behind failed with MountNameAlreadyExists and aborted
+// (main+0x303b74, GitHub issue #1012). The SDK's Unmount aborts on a name it does not hold, hence its IsMounted first; a name in neither table stays a no-op. No host lock is
+// held across the SDK's calls, which take the SDK's own locks and free guest memory
+HLE_FORCE("_ZN2nn2fs7UnmountEPKc", "fsp-srv; host mounts: with more than one user a save's name is freed (its uncommitted writes dropped), others stay; a mount in the SDK's own table (RAM disk) is released there", void, h_fs_Unmount, const char *name) {
+    if (!name) return;
+    if (host_mounted(name)) {
+        if (dm_account_users() < 2) return;
+        PATH_LOCK(); pthread_mutex_lock(&g_lock);
+        for (int i = 0; i < g_nmnt; i++)
+            if (g_mnt[i].save && !strcmp(g_mnt[i].name, name)) { LOG("fs unmount %s (save %s)", name, g_mnt[i].commit[0] ? g_mnt[i].commit : g_mnt[i].dir); g_mnt[i].name[0] = 0; }
+        pthread_mutex_unlock(&g_lock);
+        return;
+    }
+    int (*sdk_is_mounted)(const char *) = guest_sym("_ZN2nn2fs9IsMountedEPKc");
+    void (*sdk_unmount)(const char *) = guest_sym("_ZN2nn2fs7UnmountEPKc");
+    if (!sdk_is_mounted || !sdk_unmount || !sdk_is_mounted(name)) return;
+    LOG("fs unmount %s: in the SDK's own mount table, released there", name);
+    sdk_unmount(name);
 }
 
 // ---------- Files ----------
