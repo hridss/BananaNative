@@ -115,6 +115,16 @@ int main(void) {
     h_cv_vp9rel(dec, 1, sync); assert(!h_cv_vp9acq(&idx, &sync, dec) && idx == 1 && !h_gs_trywait(&sync));
     assert(!h_cv_vp9submit(&id, dec, vp9, sizeof vp9, 4000, false) && h_gs_trywait(&sync));
     assert(!h_cv_vp9props(&w, &h, &cw, &ch, &ts, &eos, dec, 1) && ts == 4000 && w == 16);
+    // The frame step's movie signal (hle_movie.c dm_movie_hz; upstream nxnative 9f824c7d): times microseconds apart give no rate, and nn::codec does not count a stream without
+    // one; two pictures 1/60 s apart after a gap of a second (the rate is taken anew) make a 60-picture movie, a flush (a seek, a loop) keeps it and a stop ends it at once
+    assert(dm_movie_hz() == 0);
+    for (int k = 0; k < 2; k++) {
+        h_cv_vp9rel(dec, 1, sync); assert(!h_cv_vp9acq(&idx, &sync, dec) && idx == 1);
+        assert(!h_cv_vp9submit(&id, dec, vp9, sizeof vp9, 1000000000 + k * 16666667, false) && h_gs_trywait(&sync));
+    }
+    assert(dm_movie_hz() == 60);
+    assert(!h_cv_vp9flush(dec) && dm_movie_hz() == 60);
+    assert(!h_cv_vp9stop(dec) && dm_movie_hz() == 0);
     // A flush drops the waiting pictures and restarts the decoder; finalize frees it and destroys its event
     assert(!h_cv_vp9flush(dec) && d->nheld == 0 && d->vpx_ok && ev_set(ev));
     assert(!h_cv_vp9fin(dec) && !cv_of(dec) && !g_ev[ev_slot(ev)].bound);
