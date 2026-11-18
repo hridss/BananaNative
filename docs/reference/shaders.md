@@ -1049,6 +1049,14 @@ Finding, keying and translating shaders (`dm/gfx/tools/shader_split.py`, `dmsh_b
 - **Found on:** no game symptom; upstream's Jetson Orin sm_87 probes (signed nearest-even: 16 differences in 1,024 lanes before, none after) and synthetic boundary cases in all four modes.
 - **Check:** upstream's `test_dmsh_ampere_orin.py`, a Metal test with its Orin fixture, not in this tree.
 
+### F2FP packs BF16 and applies RELU and RZ
+
+- **Symptom:** `F2FP.BF16.PACK_AB` returns a pair of F16 values, `F2FP.RELU.PACK_AB` keeps negative values, and a toward-zero pack can round away from zero or turn a finite value into infinity.
+- **Cause:** `AF2fp` used the same nearest-even F16 pack for every `PACK_AB` and ignored the format, clamp and rounding bits.
+- **Fix:** `AF2fp` in `InstEmitAmpereAlu.cs` clamps negative inputs (-0 and -infinity included) to +0 for `.RELU`, keeping NaNs, which it writes as `0x7fff`. BF16 takes the upper 16 input bits, with a nearest-even bias when asked, and canonical NaNs. F16 `.RZ` steps the rounded half back one code where a finite input rounded away from zero. Plain F16 `.RN` and `.MERGE_C` keep their conversion (upstream seedds/nxnative c379a903, PR #2046).
+- **Found on:** no game symptom; upstream's Jetson Orin sm_87 probes (BF16: 1,880 differences in 2,048 halves before, none after; F16 `.RELU`: 913, none after).
+- **Check:** upstream's `test_dmsh_ampere_orin.py`, a Metal test with its Orin fixture, not in this tree; `test_dmsh_ampere_mem.py`'s Pokopia `.MERGE_C` cases cover the unchanged path.
+
 ### TXD through a uniform register kept no handle
 
 - **Symptom:** `Failed to find handle source for bindless access` in the build's translator notes, for a shader with TXD through a uniform register (0xf6c). The MSL has no gradient sample, and what it read comes back 0.
