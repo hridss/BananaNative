@@ -89,6 +89,7 @@ typedef struct {
     uint8_t *ctl_list;                   // The recording's first control entry once written: its handle (NULL before)
     uint8_t *chunk;                      // Start of the recording's piece of records in the current segment not yet in a CTL_CHUNK entry (NULL = none open)
     int64_t copy_row, copy_img;          // The last SetCopyRowStride / SetCopyImageStride recorded into this command buffer (copy_keep: the layout of the bytes it keeps)
+    uint64_t rec_id;                     // The current or last recording's serial (hle_nvn.c BeginRecording): its own host-lent segments are not freed by its own writes (hostseg_written)
 } cmd_t;                                                                                   FITS(cmd_t, NVNcommandBuffer);
 
 // ---------- State objects (defaults follow the NVN / GL defaults) ----------
