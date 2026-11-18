@@ -10,7 +10,9 @@
 // frames on time are not. Frames whose cost scatters around k (Mario Kart World on an M4 Max: 20–30% of them 1–5 ms late, 57.5–61 fps and game time 0.99–1.02 of real
 // time with no holds) met three in a row about once a second and spent half the time at 30 or 20 (nxnative issue #1823); a short hitch (pipeline compiles) stepped to 30 the
 // same way. The late frames are paid back by the step, so only a rate that falls short of k is worth a longer hold. The step goes to the cheapest of the three late frames'
-// cost: a hitch as the third no longer means 20 fps.
+// cost: a hitch as the third no longer means 20 fps. The average leaves out the window's longest frame: a lone stall (43-68 ms of texture streaming or a pipeline built
+// in play) among those near-misses filled two thirds of the limit and stepped to 30 for a second (nxnative issue #1823, after the fix above). Two stalls in 30 frames
+// still count one.
 // A game takes steps up to its stub's largest (smax, the fixups table's STEP_MAX; 3 when the stub declares none): k and the paid-back step stay within it, or the frames held
 // longer than the game steps play in slow motion and the debt counted as paid is lost.
 // A probe is a trial back to kmin that the cost does not justify: while the caller reports the CPU slowed for reasons other than heat (an iPhone's performance controller
@@ -125,8 +127,11 @@ static inline int nvn_fstep_next(nvn_fstep *s, double shown, double cost, int km
         if (held != s->ck) { s->ck = held; s->cn = 0; }
         if (!late && fits) { s->ccur = s->cn ? s->ccur + (cost - s->ccur) / 8 : cost; s->cn++; }
     }
-    // A rate below k over the last FSTEP_RUN frames (the slots not filled yet since the hold changed count as on time); the screen's verdict (present snapshots) is its own
-    int short_of_k = scr || s->over_sum > FSTEP_LATE * FSTEP_RUN;
+    // A rate below k over the last FSTEP_RUN frames (the slots not filled yet since the hold changed count as on time); the screen's verdict (present snapshots) is its own.
+    // The longest frame of the window is left out (upstream nxnative edc07d34): one stall is not a rate. Counted at FSTEP_SHORT_MAX it was two thirds of the limit, and
+    // with near-misses at 57 fps around it the next three late frames stepped to 30 for a second (Mario Kart World on an M4 Max, 43-68 ms stalls; nxnative issue #1823)
+    double omax = 0; for (int i = 0; i < FSTEP_RUN; i++) if (s->over[i] > omax) omax = s->over[i];
+    int short_of_k = scr || s->over_sum - omax > FSTEP_LATE * FSTEP_RUN;
     if (s->late_run >= 3 && s->k < kmax && short_of_k) {   // step up to the cost of the cheapest of the three late frames, at least one vsync
         double c3 = s->last_cost[0] < s->last_cost[1] ? s->last_cost[0] : s->last_cost[1]; if (s->last_cost[2] < c3) c3 = s->last_cost[2];
         int want = (int)ceil(c3 - 0.05);
