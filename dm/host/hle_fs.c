@@ -568,6 +568,9 @@ int dm_aoc_usable(int index) {
         romfs_img *m = img_open(dir);   // a red line says why when it does not open
         if (!m) { LOG("[RED] aoc: add-on content %d (%s) cannot be read (the line above says why): the game runs without it", index, dir); return 0; }
         romfs_image_close(m);
+    } else if (stat(dir, &st)) {   // neither a package spec nor a path that is there: a link to the launcher's descriptor of a file whose name no reader takes
+        // (it does not end in ".nup" or ".nsp", e.g. "DLC.NSP"). It counted as owned and then did not mount
+        LOG("[RED] aoc: add-on content %d (%s) is neither a package, a RomFS image nor a folder that is there: the game runs without it", index, dir); return 0;
     }
     return 1;
 }
