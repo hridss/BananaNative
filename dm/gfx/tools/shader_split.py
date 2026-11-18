@@ -2883,7 +2883,7 @@ def unity_compute(x, base, trees):
     Unity 2022.3 lists a kernel's variants in uniqueVariants; Unity 2020.3 keys them by keyword set in variantMap (AI: THE SOMNIUM FILES - nirvanA Initiative's bundles, whose type trees say so).
     Unity 2019.4 has no variant wrapper: each named kernel holds its code directly (Pokemon Brilliant Diamond's GPU skinning)."""
     import unityfs
-    out = []
+    out = []; empty = []   # the kernel variants without code (below)
     try:
         for cid, pid, o in unityfs.serialized_objects(x, COMMON, {unityfs.CLASS_COMPUTE_SHADER}, trees):
             for v in o['variants']:
@@ -2891,7 +2891,11 @@ def unity_compute(x, base, trees):
                     variants = k['uniqueVariants'] if 'uniqueVariants' in k else [p['second'] for p in k['variantMap']] if 'variantMap' in k else [k]
                     for i, u in enumerate(variants):
                         where = f'{base}#{o["m_Name"]}#{k["name"]}.{i}'
+                        # a kernel variant with 0 bytes of code is no program (My Time at Sandrock's `shader` bundle: SkyboxCompute's CubemapFilteringSecondPassCS).
+                        # unity_program raised on it, and the whole file went as unreadable, its 152 Shader objects with it
+                        if not u['code']: empty.append(where); continue
                         out.extend((where, st, ctl, cd) for st, ctl, cd in unity_program(u['code'], where, 'cs'))
+        if empty: print(f'unity compute: {len(empty)} kernel variant(s) without code left out (first: {empty[0]})', flush=True)   # counted, not silent
     except unityfs.NoTree as e:
         if not TREES: raise
         print(f'[RED] {base}: ComputeShader objects that no bundle lends a type tree to and unityfs.py has no layout for, their kernels are left out ({e})', flush=True)
@@ -2927,7 +2931,7 @@ def unity_shaders(d, label, out, trees):
     """Shaders and compute shaders in a UnityFS bundle or serialized file → out and legacy pass pairs; raises NoTree when no type tree is available"""
     import unityfs
     if COMMON is None: red(f'{label}: a Unity asset, but main has no Unity common string table')
-    pairs = set()
+    pairs = set(); empty = []   # the subprograms without code (below)
     sers = unityfs.bundle_files(d) if d[:8] == b'UnityFS\0' else [('', d)]
     for node, x in sers:
         if not unityfs.is_serialized(x): continue
@@ -2937,13 +2941,17 @@ def unity_shaders(d, label, out, trees):
             legacy = {}
             for plat, k, sp in unityfs.shader_programs(o, unity_code_blobs(o)):
                 where = f'{label}{":" + node if node else ""}#{name}#var{plat}.{k}'
-                code = unityfs.subprogram(sp)[4]
+                # a blob entry of 0 bytes, or one whose program code is 0 bytes, is no program: left out and counted, as unity_compute does for a kernel without
+                # code. Reading it raised, and the whole file went as unreadable. None was met in a game's files yet
+                code = unityfs.subprogram(sp)[4] if sp else b''
+                if not code: empty.append(where); continue
                 programs = unity_program(code, where, stages.get(k))
                 out.extend((where, st, ctl, cd) for st, ctl, cd in programs)
                 if len(code) >= 0x14 and code[0x10:0x14] == CTL_MAGIC: legacy[plat, k] = programs[0]
             pairs |= unity_pass_pairs(o, legacy)
         out.extend(unity_compute(x, f'{label}{":" + node if node else ""}', trees))
         out.extend(unity_text_glslc(x, f'{label}{":" + node if node else ""}'))
+    if empty: print(f'unity shaders: {len(empty)} subprogram(s) without code left out (first: {empty[0]})', flush=True)   # counted, not silent
     return pairs
 
 def unity_text_glslc(x, base):
