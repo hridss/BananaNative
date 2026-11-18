@@ -103,7 +103,7 @@ void dm_ue_lod_tick(void) {
 // the first hold, or the one the game wrote over the hold since (a hold from the first frame came before the game's device profile: Orbitals' floor 67 % held from the
 // start gave back the engine's start value, far under the game's 83.3, when turned off). The engine reads these variables every frame
 typedef struct { const char *name, *value, *env; int ref; } ue_set_row;
-typedef struct { int state, nlog, saved; const ue_set_row *held; uint32_t bits, orig[2], wrote[2]; uint64_t off; } ue_set_st;   // state: 0 not looked up yet, 1 found, -1 not found; wrote: what the hold last left in each copy
+typedef struct { int state, nlog, saved, ngame; const ue_set_row *held; uint32_t bits, orig[2], wrote[2]; uint64_t off; } ue_set_st;   // state: 0 not looked up yet, 1 found, -1 not found; wrote: what the hold last left in each copy
 static int ue_set_on(const ue_set_row *r) { const char *e = *r->env ? getenv(r->env) : "1"; return e && !strcmp(e, "1"); }
 // One variable: `on` is its row to hold (the last row on), NULL to give the game's value back
 static void ue_set_apply(const ue_set_row *r0, const ue_set_row *on, ue_set_st *s) {
@@ -132,14 +132,17 @@ static void ue_set_apply(const ue_set_row *r0, const ue_set_row *on, ue_set_st *
     for (int c = 0; c < n; c++) {
         uint32_t cur;
         if (!rd((uint64_t)(uintptr_t)p[c], &cur, sizeof cur)) continue;
-        if (cur != s->wrote[c]) s->orig[c] = cur;   // the game set its own value over the hold: the one to give back (or to leave, at the release)
+        if (cur != s->wrote[c]) {   // the game set its own value over the hold: the one to give back (or to leave, at the release)
+            s->orig[c] = cur;
+            if (s->ngame < 8) { s->ngame++; float f; memcpy(&f, &cur, 4); LOG("main: Unreal %s%s: the game set %g / %d over the hold", r0->name, r0->ref ? "" : c ? " (render thread)" : " (game thread)", f, (int32_t)cur); }
+        }
         uint32_t want = on ? s->bits : s->orig[c];
         if (on) s->wrote[c] = want;
         if (cur == want) continue;
         dm_guest_write_prepare(p[c], sizeof *p[c]); __atomic_store_n(p[c], want, __ATOMIC_RELAXED);
         if (on && s->nlog < 4) { s->nlog++; LOG("main: Unreal %s%s → %s (%s)", r0->name, r0->ref ? "" : c ? " (render thread)" : " (game thread)", on->value, src); }
     }
-    if (!on) { s->saved = 0; LOG("main: Unreal %s back to the game's value (%s off)", r0->name, src); }
+    if (!on) { s->saved = 0; float f; memcpy(&f, &s->orig[0], 4); LOG("main: Unreal %s back to the game's value %g / %d (%s off)", r0->name, f, (int32_t)s->orig[0], src); }
 }
 void dm_ue_set_tick(void) {
 #ifdef DM_GAME_UE_SET
