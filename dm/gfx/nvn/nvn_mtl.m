@@ -7139,7 +7139,14 @@ static uint64_t gmem_map_gpu(void) {
         uint64_t lo = MAX((uint64_t)p->lo, end), hi = p->hi;
         if (lo >= hi) continue;
         if (n == DMSH_GMEM_MAP_ENTRIES) { over++; continue; }
-        uint64_t e[3] = {lo, hi, p->gpu - p->base}; memcpy(t + (size_t)n++ * DMSH_GMEM_MAP_ENTRY, e, sizeof e); end = hi;
+        uint8_t *entry = t + (size_t)n++ * DMSH_GMEM_MAP_ENTRY;
+        uint64_t e[3] = {lo, hi, p->gpu - p->base};
+        memcpy(entry, e, sizeof e);
+        if (hi - lo <= UINT32_MAX && (lo >> 32) == ((hi - 1) >> 32)) {   // the span a load's check of its last entry reads (GlobalToStorage.cs)
+            uint32_t span = (uint32_t)(hi - lo);
+            memcpy(entry + 28, &span, sizeof span);
+        }
+        end = hi;
     }
     pthread_mutex_unlock(&g_mu);
     if (over) RED_ONCE(140, "raw global memory: %d more memory pools than the %d entries of the pool table; addresses in them are not reached", over, DMSH_GMEM_MAP_ENTRIES - 1);

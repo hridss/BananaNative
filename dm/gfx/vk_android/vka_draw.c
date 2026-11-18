@@ -1288,7 +1288,10 @@ static int gmem_map(VkDescriptorBufferInfo *bi) {
     { uint64_t sink = vka_mem_sink(); memcpy(s.ptr + 24, &sink, 8); }   // entry 0's last words: where an access in no pool goes (vk_android_spv.py gmem_sink)
     static uint64_t lo[DMSH_GMEM_MAP_ENTRIES], hi[DMSH_GMEM_MAP_ENTRIES], bda[DMSH_GMEM_MAP_ENTRIES];
     int k = vka_mem_chunks(lo, hi, bda, DMSH_GMEM_MAP_ENTRIES - 1);
-    for (int i = 0; i < k && i + 1 < DMSH_GMEM_MAP_ENTRIES; i++) { uint64_t e[4] = {lo[i], hi[i], bda[i] - lo[i], 0}; memcpy(s.ptr + (size_t)(i + 1) * DMSH_GMEM_MAP_ENTRY, e, sizeof e); }
+    for (int i = 0; i < k && i + 1 < DMSH_GMEM_MAP_ENTRIES; i++) {   // word 7: the span a raw load's check of its last entry reads (vka_gmem.h)
+        uint64_t e[4] = {lo[i], hi[i], bda[i] - lo[i], (uint64_t)vka_gmem_span(lo[i], hi[i]) << 32};
+        memcpy(s.ptr + (size_t)(i + 1) * DMSH_GMEM_MAP_ENTRY, e, sizeof e);
+    }
     vka_gmem_hints(s.ptr, lo, hi, k);   // the 2 MiB chunks' lookup hints, none at entry 0 (the sink's words: vka_gmem.h)
     g_gm.valid = 1; g_gm.gen = gen; g_gm.s = s;   // (a segment that came between the read of gen and the table: the next draw sees a new gen and builds it again)
     *bi = (VkDescriptorBufferInfo){s.buf, s.off, n}; return 1;
