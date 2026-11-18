@@ -93,8 +93,9 @@ static void check_ue_set(int set) {
     vals[1] = 1; ue_set_apply(&lod, &lod, &sl); assert(vals[1] == 3 && writes == 6);
     ue_set_apply(&lod, &lod4, &sl); assert(vals[0] == 4 && vals[1] == 4 && writes == 8);   // the later row switched on wins
     ue_set_apply(&lod, &lod, &sl); assert(vals[0] == 3 && vals[1] == 3 && writes == 10);   // and off: the earlier row again
-    ue_set_apply(&lod, NULL, &sl); assert(vals[0] == 1 && vals[1] == 1 && writes == 12);   // none on: the game's value from before the first hold
-    ue_set_apply(&gone, &gone, &sg); assert(sg.state < 0 && writes == 12); // not named in main's fixups
+    vals[0] = 2; ue_set_apply(&lod, &lod, &sl); assert(vals[0] == 3 && writes == 11);    // the game sets its own value over the hold (a device profile after the start)
+    ue_set_apply(&lod, NULL, &sl); assert(vals[0] == 2 && vals[1] == 1 && writes == 13);   // none on: the value the game last set, else the one before the first hold
+    ue_set_apply(&gone, &gone, &sg); assert(sg.state < 0 && writes == 13); // not named in main's fixups
     munmap(base, SIZE);
 }
 

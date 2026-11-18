@@ -99,10 +99,11 @@ void dm_ue_lod_tick(void) {
 // registered by reference (ue_cvar.py REFS: the row's ref). A row with an environment variable applies only while it is 1: the launcher's Game options toggles (Orbitals:
 // "Particle light volume off" holds r.TranslucentLightingVolume at 0, GPU about 3.8 ms a frame less in its split-screen gameplay on the AYN Thor). A value with a decimal
 // point is written as a float, else as an int. The toggles are read on every present, so a live option (the in-game panel's "env <switch>=0|1" lines, vka_ctl.c) applies
-// from the next frame: of the rows on one variable the last one on is held, and with none on any more the variable gets back the game's value from before the first hold.
-// The engine reads these variables every frame
+// from the next frame: of the rows on one variable the last one on is held, and with none on any more the variable gets back the value the game last set: the one before
+// the first hold, or the one the game wrote over the hold since (a hold from the first frame came before the game's device profile: Orbitals' floor 67 % held from the
+// start gave back the engine's start value, far under the game's 83.3, when turned off). The engine reads these variables every frame
 typedef struct { const char *name, *value, *env; int ref; } ue_set_row;
-typedef struct { int state, nlog, saved; const ue_set_row *held; uint32_t bits, orig[2]; uint64_t off; } ue_set_st;   // state: 0 not looked up yet, 1 found, -1 not found
+typedef struct { int state, nlog, saved; const ue_set_row *held; uint32_t bits, orig[2], wrote[2]; uint64_t off; } ue_set_st;   // state: 0 not looked up yet, 1 found, -1 not found; wrote: what the hold last left in each copy
 static int ue_set_on(const ue_set_row *r) { const char *e = *r->env ? getenv(r->env) : "1"; return e && !strcmp(e, "1"); }
 // One variable: `on` is its row to hold (the last row on), NULL to give the game's value back
 static void ue_set_apply(const ue_set_row *r0, const ue_set_row *on, ue_set_st *s) {
@@ -127,10 +128,14 @@ static void ue_set_apply(const ue_set_row *r0, const ue_set_row *on, ue_set_st *
     if (!r0->ref && (!rd((uint64_t)(uintptr_t)(base + s->off + 0x10), &val, sizeof val) || !val)) return;   // not created yet
     int n = r0->ref ? 1 : 2;
     uint32_t *p[2] = {(uint32_t *)(uintptr_t)val, (uint32_t *)(uintptr_t)(val + 4)};
-    if (on && !s->saved) { for (int c = 0; c < n; c++) if (!rd((uint64_t)(uintptr_t)p[c], &s->orig[c], 4)) return; s->saved = 1; }
+    if (on && !s->saved) { for (int c = 0; c < n; c++) { if (!rd((uint64_t)(uintptr_t)p[c], &s->orig[c], 4)) return; s->wrote[c] = s->orig[c]; } s->saved = 1; }
     for (int c = 0; c < n; c++) {
-        uint32_t cur, want = on ? s->bits : s->orig[c];
-        if (!rd((uint64_t)(uintptr_t)p[c], &cur, sizeof cur) || cur == want) continue;
+        uint32_t cur;
+        if (!rd((uint64_t)(uintptr_t)p[c], &cur, sizeof cur)) continue;
+        if (cur != s->wrote[c]) s->orig[c] = cur;   // the game set its own value over the hold: the one to give back (or to leave, at the release)
+        uint32_t want = on ? s->bits : s->orig[c];
+        if (on) s->wrote[c] = want;
+        if (cur == want) continue;
         dm_guest_write_prepare(p[c], sizeof *p[c]); __atomic_store_n(p[c], want, __ATOMIC_RELAXED);
         if (on && s->nlog < 4) { s->nlog++; LOG("main: Unreal %s%s → %s (%s)", r0->name, r0->ref ? "" : c ? " (render thread)" : " (game thread)", on->value, src); }
     }
