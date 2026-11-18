@@ -24,6 +24,8 @@ int main(void) {
         assert(h_acc_GetUserId(&out, &h) == RES_OK);
         assert(out.v[0] == 0 && out.v[1] == 0);
     }
+    // The network service account check of a local account is the account applet's cancellation, ResultCancelledByUser (2124-0001)
+    assert(h_acc_TryOpenPre(&h) && h_acc_EnsureNsa(&h) == 0x27c);
     puts("t_account: OK");
     return 0;
 }

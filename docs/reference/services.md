@@ -766,6 +766,14 @@ Most service calls can be found before they crash, before the first boot or the 
 - **Fix:** the constructor is no longer taken over (`hle_account.c`): the SDK's own runs. No host interface sets the IPC pointer, so the SDK's destructor, reached through the vtable, finds no session to close and frees the object. `friends::AsyncContext` and `account::NintendoAccountAuthorizationRequestContext` have no vtable (their SDK constructors write none), so their takeovers stay.
 - **Found on:** Pokémon Friends (`010008C01E742000`, update 1.1.5, SDK 19.3.11; no profile in the repository yet). The managed names come from Il2CppDumper's table ([IL2CPP method lookup](../development.md#il2cpp-method-lookup)).
 
+### The network account check is cancelled offline
+
+- **Symptom:** a "Transmitting" loading screen with a hint stays for ever before the main menu while the game keeps drawing at 60 fps and its music plays (Taiko no Tatsujin: Rhythm Festival). No red line, no crash; `DM_SF_TRACE=1` shows nothing after `nsd:u`. `DM_HLECOUNT` shows `account::EnsureNetworkServiceAccountAvailable` called thousands of times (4,647 in under three minutes, about once per frame).
+- **Cause:** the host's `EnsureNetworkServiceAccountAvailable` returned `RES_FAIL`. The SDK opens the account applet for account errors that require user interaction. Cancelling it returns `ResultCancelledByUser` (2124-0001, `0x27c`), as confirmed by replaying the SDK 13.3.0 path with a cancelled applet exit. Taiko takes that result as "continue offline" (`main+0x16ee0f4`: `and x8, x0, #0x3fffff; cmp x8, #0x27c`) and retries on anything else.
+- **Fix:** the call returns `RES_ACC_CANCELLED`, the result the user selector already gives on cancel (`hle_account.c`). The other network-account calls (`GetNetworkServiceAccountId`, `LoadNetworkServiceAccountIdTokenCache`) still fail.
+- **Check:** `make -C dm/host/tests GAME=<id> run` runs `t_account`.
+- **Found on:** Taiko no Tatsujin: Rhythm Festival (`01006B0016AD6000`, update 6.2.0, Unity 2020.3.26f1 IL2CPP, SDK 13.3.2; no profile in the repository yet). Before the fix, a cheat that rewrote main's import stub for the call (`main+0x1845440`, build `7150D78C454E7C55`) to return `0x27c` got it to the main hub.
+
 ### Creating an ssl context needs no network
 
 - **Symptom:** a second controller ends the game with `FATAL account::GetUserId: the handle was not issued by the host (0x2)`, at boot with both connected or when the second joins during play (EA SPORTS FC 27 1.8d.6523; the FC 26 patch reports `(0x8)`).
