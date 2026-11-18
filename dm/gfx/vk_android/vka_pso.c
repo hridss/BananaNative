@@ -237,6 +237,18 @@ static void pc_open_once(void) {
     pw_start();
 }
 static void pc_open(void) { static pthread_once_t once = PTHREAD_ONCE_INIT; pthread_once(&once, pc_open_once); }   // (the prewarm threads it starts call it too: they wait for it)
+// len bytes of data to path through tmp, whole or not at all: 1 when path holds them. The stream is closed exactly once (fclose ends it even when it fails, so a second
+// fclose on the failure path was undefined), and tmp is removed on any failure; the file path held before stays
+static int pc_write_atomic(const char *path, const char *tmp, const void *data, size_t len) {
+    FILE *f = data ? fopen(tmp, "wb") : NULL;
+    if (f) {
+        int ok = fwrite(data, 1, len, f) == len;
+        if (fclose(f)) ok = 0;
+        if (ok && !rename(tmp, path)) return 1;
+    }
+    unlink(tmp);
+    return 0;
+}
 // The cache and the prewarm list to their files. vkGetPipelineCacheData runs without g_mu (the cache is internally synchronized): holding it there kept the replay thread's
 // pipeline lookups waiting for a 17 MB copy once a minute
 static void save_now(void) {
@@ -255,19 +267,17 @@ static void save_now(void) {
         if (gr != VK_SUCCESS) { free(d); d = NULL; n = 0; static _Atomic int k; if (atomic_fetch_add(&k, 1) < 4) VRED("pipeline cache not saved: vkGetPipelineCacheData %d after 3 tries (pipelines being added meanwhile); the next save tries again", (int)gr); }
         if (d) {
             char tmp[1100]; snprintf(tmp, sizeof tmp, "%s.tmp", g_pc_path);
-            FILE *f = fopen(tmp, "wb");
-            if (f && fwrite(d, 1, n, f) == n && !fclose(f) && !rename(tmp, g_pc_path)) {
+            if (pc_write_atomic(g_pc_path, tmp, d, n)) {
                 g_saved_at = made;
                 // Its stamp after it: the shaders it was read with that this library keeps, and those this run made. Written whole or not at all (a stamp that
                 // cannot be written is removed, and the next run starts empty)
                 char sp[1100], st[1200]; snprintf(sp, sizeof sp, "%s.lib", g_pc_path); snprintf(st, sizeof st, "%s.lib.tmp", g_pc_path);
                 size_t nr = 0, tl = 0; vka_pck_ent *run = g_pc_lib ? vka_shader_made(&nr) : NULL;
                 char *txt = g_pc_lib ? vka_pck_format(g_pc_lib, g_pck.dead, g_pck.ent, g_pck.n, run, nr, &tl) : NULL; free(run);
-                FILE *sf = txt ? fopen(st, "wb") : NULL;
-                if (!(sf && fwrite(txt, 1, tl, sf) == tl && !fclose(sf) && !rename(st, sp))) { if (sf) fclose(sf); unlink(st); unlink(sp); }
+                if (!pc_write_atomic(sp, st, txt, tl)) unlink(sp);
                 free(txt);
             }
-            else { if (f) fclose(f); unlink(tmp); static _Atomic int k; if (atomic_fetch_add(&k, 1) < 2) VRED("pipeline cache not written to %s", g_pc_path); d = NULL; n = 0; }
+            else { static _Atomic int k; if (atomic_fetch_add(&k, 1) < 2) VRED("pipeline cache not written to %s", g_pc_path); free(d); d = NULL; n = 0; }   // (the copy is freed: it was dropped unfreed)
         }
     }
     int keys = pw_save();
@@ -1033,9 +1043,8 @@ static int pw_save(void) {   // the saver thread or a forced save: the list when
     pthread_mutex_unlock(&g_pw_mu);
     pwhdr2 h; memset(&h, 0, sizeof h); memcpy(h.magic, VKA_PW_MAGIC2, 8); h.gkey_size = sizeof(vka_gkey); h.n = n; h.layout = vka_pw_layout(); memcpy(out, &h, sizeof h);
     char tmp[1200]; snprintf(tmp, sizeof tmp, "%s.tmp", g_pw_path);
-    FILE *f = fopen(tmp, "wb");
-    int ok = f && fwrite(out, 1, sizeof h + len, f) == sizeof h + len && !fclose(f) && !rename(tmp, g_pw_path);
-    if (!ok) { if (f) fclose(f); unlink(tmp); static _Atomic int k; if (atomic_fetch_add(&k, 1) < 2) VRED("prewarm list not written to %s", g_pw_path); pthread_mutex_lock(&g_pw_mu); g_pw_dirty = 1; pthread_mutex_unlock(&g_pw_mu); }
+    int ok = pc_write_atomic(g_pw_path, tmp, out, sizeof h + len);
+    if (!ok) { static _Atomic int k; if (atomic_fetch_add(&k, 1) < 2) VRED("prewarm list not written to %s", g_pw_path); pthread_mutex_lock(&g_pw_mu); g_pw_dirty = 1; pthread_mutex_unlock(&g_pw_mu); }
     free(out);
     return ok ? (int)n : -1;
 }
