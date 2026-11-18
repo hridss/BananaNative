@@ -17,6 +17,7 @@ static size_t compression_decode_buffer(uint8_t *d, size_t dn, const uint8_t *s,
 #define CAP_SIZE(T, n) _Static_assert(sizeof(T) == (n), "nvn_capture.c: " #T " changed size: update cap_rec_fields and cap_layout")
 #define CAP_OFF(T, f, n) _Static_assert(offsetof(T, f) == (n), "nvn_capture.c: " #T "." #f " moved: update cap_rec_fields and cap_layout")
 CAP_SIZE(tex_t, 128); CAP_OFF(tex_t, mem, 88); CAP_OFF(tex_t, pool, 96); CAP_OFF(tex_t, serial, 120);
+CAP_SIZE(nvn_texdesc, 40); CAP_OFF(nvn_texdesc, pkg_layout, 36); CAP_OFF(nvn_texdesc, gob_order, 38);
 CAP_SIZE(pool_t, 40); CAP_SIZE(dpool_t, 24); CAP_SIZE(prog_t, 112); CAP_SIZE(sync_t, 16); CAP_SIZE(samp_par, 40); CAP_SIZE(view_t, 16);
 CAP_SIZE(p_set_rt, 240); CAP_OFF(p_set_rt, n, 0); CAP_OFF(p_set_rt, color, 8); CAP_OFF(p_set_rt, depth, 208);
 CAP_SIZE(p_bind_program, 16); CAP_OFF(p_bind_program, prog, 0);
@@ -42,6 +43,7 @@ CAP_SIZE(p_viewports, 392); CAP_OFF(p_viewports, v, 8); CAP_OFF(p_viewports, ori
 #define VIEWPORT_ORIGIN_LAYOUT "p_viewports 392 v 8 stride 24 origin 24 bias 1\n"
 _Static_assert(OP_DEPTH_BOUNDS == 57 && sizeof(p_depth_bounds) == 12, "keep existing capture op numbers stable");
 _Static_assert(OP_COUNT_ == 58, "nvn_capture.c: a record op was added or removed: give it a case in cap_rec_fields");
+#define TEXTURE_GOB_LAYOUT "nvn_texdesc 40 pkg_layout u16 36 gob_order u16 38\n"
 
 const char *cap_layout(void) {
     // sizes and pointer offsets as the walk knows them (the asserts above hold them to nvn_obj.h); bump this text with any change to the walk
@@ -50,11 +52,15 @@ const char *cap_layout(void) {
            "p_set_rt 240 color 8 depth 208\np_bind_program 16\np_bind_vbuf 264 r 8\np_bind_vbuf1 16 addr 8\np_bind_buf 24 addr 8\np_bind_ubo_small 16 addr 8\n"
            "p_bind_handles 280 src 16\np_bind_tex1 24 nobase 0x100 short 16\np_bind_state short\np_draw 48 ind 24 mdi_cnt 32\np_draw_idx 56 ibuf 24 ind 32 mdi_cnt 40\np_dispatch 32 ind 24\np_set_pool 8\n"
            "p_copy_b2t 64 src 0 tex 8\np_copy_t2t 104 src 0 dst 8\np_clear_tex 72 tex 0\np_clear_buf 24 addr 0\np_tf_bind 24 addr 8\np_tf_state 16 ctl 8\np_render_cond 16 addr 8\n"
-           "signal_event 16 val 0\nreport_counter 16 addr 8\ncopy_b2b 24 src 0 dst 8\nupdate_ub dst 0\nfence_sync 8 sync 0\njump 8\ncall 8\n" VIEWPORT_ORIGIN_LAYOUT;
+           "signal_event 16 val 0\nreport_counter 16 addr 8\ncopy_b2b 24 src 0 dst 8\nupdate_ub dst 0\nfence_sync 8 sync 0\njump 8\ncall 8\n" VIEWPORT_ORIGIN_LAYOUT TEXTURE_GOB_LAYOUT;
 }
 int cap_layout_matches(const char *layout, size_t n) {
-    const char *current = cap_layout(); size_t full = strlen(current), no_origin = full - (sizeof VIEWPORT_ORIGIN_LAYOUT - 1);
-    return (n == full || n == no_origin) && !memcmp(layout, current, n);
+    const char *current = cap_layout();
+    // Older captures store pkg_layout as a 32-bit value in 0..0x1000. Its high half reads as order 0, matching the old replayer's X1 default.
+    // Their zero-filled viewport origin slot also retains the former device-origin interpretation when that extension is absent.
+    size_t full = strlen(current), no_gob = full - (sizeof TEXTURE_GOB_LAYOUT - 1);
+    size_t no_origin = no_gob - (sizeof VIEWPORT_ORIGIN_LAYOUT - 1);
+    return (n == full || n == no_gob || n == no_origin) && !memcmp(layout, current, n);
 }
 
 // One 8-byte field at byte offset off of the payload, present only when the record is long enough to hold it
