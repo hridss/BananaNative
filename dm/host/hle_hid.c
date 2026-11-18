@@ -337,8 +337,10 @@ static int style_ev_slot(uint32_t id) { return id < DM_PLAYERS ? (int)id : id ==
 static void style_changed(uint32_t id) { int k = style_ev_slot(id); void *ev = k >= 0 ? atomic_load(&g_style_ev[k]) : NULL; if (ev) hle_signal_bound_system_event(ev); }
 // The operation mode changed while the game runs (hle_oe.c oe_state_set: the in-game panel's Console mode): player 1 is on the Handheld npad in handheld mode and on
 // No1 docked (connected_id), so the styles of No1 and Handheld change (players 2 to 8 keep their npads); a game that waits for the style event (Link's Awakening) would
-// otherwise keep reading the npad that went away
-void dm_hid_opmode_changed(void) { style_changed(NPAD_NO1); style_changed(NPAD_HANDHELD); }
+// otherwise keep reading the npad that went away. When it changed is kept for the controller applet a game opens because of it (ctrl_support)
+static _Atomic uint64_t g_mode_change_ns; static _Atomic int g_mode_changed;
+#define MODE_APPLET_NS 5000000000ull
+void dm_hid_opmode_changed(void) { atomic_store(&g_mode_change_ns, now_ns()); atomic_store(&g_mode_changed, 1); style_changed(NPAD_NO1); style_changed(NPAD_HANDHELD); }
 // The controllers appear (styles_set above): the style events bound before fire, as on a connect. why: what lifted it, for the log (red: a game that never set them)
 static void styles_now(int red, const char *why) {
     if (styles_set() || atomic_exchange(&g_styles_set, 1) == 1) return;   // once, whichever thread comes first
@@ -616,6 +618,28 @@ HLE_FORCE("_ZN2nn3hid20StopLrAssignmentModeEv", "L/R assignment mode (Joy-Con pa
 __attribute__((weak)) int front_controller_support(const void *arg, int *count) { (void)arg; (void)count; return -2; }
 static Result ctrl_support(int32_t *info, const int8_t *arg) {
     ctrl_arg a; ctrl_arg_parse(&a, (const uint8_t *)arg);
+    // The applet a game opens right after the operation mode changed: the mode moves player 1's controller between No1 and Handheld, the game sees its controller go
+    // and asks for controllers again (Link's Awakening, a second after each change in the in-game panel: the join screen came up every time, "1 to 1 players, 1 already
+    // joined"). Nothing changed about who plays, so the first applet within 5 s of the change is answered with the players as they are when they are enough; too few,
+    // and the join screen opens as ever (docs/reference/services.md, The join screen opened with nothing to choose)
+    if (atomic_exchange(&g_mode_changed, 0) && now_ns() - atomic_load(&g_mode_change_ns) < MODE_APPLET_NS) {
+        usable_changed();
+        int have = 0, lim = a.single ? 1 : a.max; for (int p = 0; p < DM_PLAYERS; p++) have += reported(p);
+        if (have >= a.min && have >= 1) {
+            if (lim > 0 && have > lim) have = lim;
+            LOG("hid controller applet: %d to %d players wanted right after an operation mode change: answered with the %d connected, no join screen", a.min, lim, have);
+            if (info) { info[0] = have; info[1] = (int32_t)connected_id(); }
+            return RES_OK;
+        }
+    }
+    // One player wanted and one controller there (player 1's, or the on-screen controls; no other device holds a player): the join screen has nothing to choose, so the
+    // game is answered at once. A second connected controller, or a game asking for more players, opens it
+    { int lim = a.single ? 1 : a.max;
+      if (arg && lim == 1 && a.min <= 1 && !(atomic_load(&g_players) & ~1u)) {
+          LOG("hid controller applet: one player wanted and one controller connected: answered with player 1, no join screen");
+          if (info) { info[0] = 1; info[1] = (int32_t)connected_id(); }
+          return RES_OK;
+      } }
     int joined = 0, r = front_controller_support(&a, &joined);
     if (r != -2) {
         LOG("hid controller applet: %d to %d players wanted%s%s: %s, %d player%s", a.min, a.single ? 1 : a.max, a.single ? ", single mode" : "", a.take_over ? "" : ", no take over",
