@@ -100,6 +100,7 @@ run: $(B)/t_language $(B)/t_motion $(B)/t_heap_size $(B)/t_touch $(B)/t_gesture 
 	$(B)/t_android_driverpath
 	$(B)/t_android_rsslog
 	$(B)/t_android_psogate
+	$(B)/t_android_pwbusy
 	$(B)/t_android_hangparts
 	$(B)/t_android_auto
 	$(B)/t_nvn_dpool
@@ -517,6 +518,10 @@ $(B)/t_android_wbfollow: t_android_wbfollow.c $(VKA)/vka_wbfollow.h | $(B)
 run: $(B)/t_android_wbfollow
 $(B)/t_android_psogate: t_android_psogate.c $(VKA)/vka_psogate.h | $(B)
 	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -fsanitize=address,undefined -I.. -o $@ t_android_psogate.c
+# Speculative compiles that did not finish: the busy and unfinished sets and their files (vka_pwbusy.h; vka_pso.c spec_begin / spec_end / unf_load)
+$(B)/t_android_pwbusy: t_android_pwbusy.c $(VKA)/vka_pwbusy.h | $(B)
+	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -fsanitize=address,undefined -I.. -o $@ t_android_pwbusy.c
+run: $(B)/t_android_pwbusy
 # Where in a submission the GPU stopped, from the parts' timestamps (vka_hangparts.h; vka_exec.c vka_exec_hang_parts)
 $(B)/t_android_hangparts: t_android_hangparts.c $(VKA)/vka_hangparts.h | $(B)
 	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -fsanitize=address,undefined -I.. -o $@ t_android_hangparts.c

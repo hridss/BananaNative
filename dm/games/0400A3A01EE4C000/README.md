@@ -161,6 +161,8 @@ The first boot shows the language list: `A`, `LUp`, `A` picks English. The chara
 - [A library with failed shaders passed as finished](../../../docs/reference/shaders.md#a-library-with-failed-shaders-passed-as-finished-android): the card said Ready with them missing (resolved).
 - [The Joy-Con mouse pointer](../../../docs/reference/services.md#the-joy-con-mouse-pointer) and [GameShare guest displays](../../../docs/reference/services.md#gameshare-guest-displays): boot aborts.
 
+- [A compile that ended the process is tried again at every start](../../../docs/reference/memory.md#a-compile-that-ended-the-process-is-tried-again-at-every-start-android): the prewarm of compute shader `af8f64d9f5542ef2` aborted every start on System Driver v800.72; the next start leaves it out and runs at 7,778 maps.
+
 ## Screen shape: the world and the UI at the device's shape
 
 Game settings › Aspect ratio › **Screen shape** (game.tsv `aspect screen`; the launcher passes the window's shape as `DM_VK_PICTURE_ASPECT`, 1:1 up to 16:9, a wider window keeps 16:9) shows the game's 16:9 frame at the screen's own shape, and [`pkp_aspect.c`](../../host/android/pkp_aspect.c) makes the game draw for it, k = shape / (16/9) (0.75 at 4:3):
