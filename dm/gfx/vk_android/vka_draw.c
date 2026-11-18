@@ -1306,15 +1306,20 @@ static int gmem_log(VkDescriptorBufferInfo *bi) {
 
 // Placeholders for unbound images when the device has no null descriptors: 1x1 images of the shapes a shader may declare, zero (float, sint and uint views)
 VkImageView placeholder(uint8_t dim, int storage) {
-    static vka_img *im2, *im3, *im1; static VkImageView cache[3][7][3];
+    static vka_img *images[3][3]; static VkImageView cache[3][7][3];   // shape and numeric class each own their image
     int cls = dim & DMSH_VK_DIM_SINT ? 1 : dim & DMSH_VK_DIM_UINT ? 2 : 0, d = dim & DMSH_VK_DIM_MASK, a = (dim & DMSH_VK_DIM_ARRAY) != 0;
     if ((dim & DMSH_VK_DIM_MS) || d == 0) return VK_NULL_HANDLE;   // 1D shapes: the replay makes no 1D images (vka_tex.c img_create) and the translator declares none
     VkImageViewType vt = d == 0 ? (a ? VK_IMAGE_VIEW_TYPE_1D_ARRAY : VK_IMAGE_VIEW_TYPE_1D) : d == 2 ? VK_IMAGE_VIEW_TYPE_3D : d == 3 ? (a ? VK_IMAGE_VIEW_TYPE_CUBE_ARRAY : VK_IMAGE_VIEW_TYPE_CUBE) : a ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
     if (cache[storage][vt][cls]) return cache[storage][vt][cls];
-    vka_img **pim = d == 2 ? &im3 : d == 0 ? &im1 : &im2;
+    // An integer placeholder has an integer image from its first use. A shared RGBA8 image has only its UNORM / sRGB formats in its format list:
+    // SINT / UINT views of it fell back to UNORM ("which its format list does not have: viewed in its own format"). Unbound descriptors read a typed
+    // zero without learning formats (rendering.md, Integer unbound-image placeholders using normalized views)
+    int shape = d == 2 ? 1 : d == 0 ? 2 : 0;
+    vka_img **pim = &images[shape][cls];
     if (!*pim) {   // a texture of our own, made through the same path as the game's (zeroed at first use)
-        static tex_t t[3]; tex_t *tt = &t[d == 2 ? 1 : d == 0 ? 2 : 0]; memset(tt, 0, sizeof *tt);
-        tt->d.target = d == 2 ? NVN_TEXTURE_TARGET_3D : d == 0 ? NVN_TEXTURE_TARGET_1D_ARRAY : NVN_TEXTURE_TARGET_CUBEMAP_ARRAY; tt->d.format = NVN_FORMAT_RGBA8;
+        static const int formats[3] = {NVN_FORMAT_RGBA8, NVN_FORMAT_RGBA8I, NVN_FORMAT_RGBA8UI};
+        static tex_t t[3][3]; tex_t *tt = &t[shape][cls]; memset(tt, 0, sizeof *tt);
+        tt->d.target = d == 2 ? NVN_TEXTURE_TARGET_3D : d == 0 ? NVN_TEXTURE_TARGET_1D_ARRAY : NVN_TEXTURE_TARGET_CUBEMAP_ARRAY; tt->d.format = formats[cls];
         tt->d.width = 1; tt->d.height = 1; tt->d.depth = d == 2 ? 1 : 6; tt->d.levels = 1; tt->d.flags = NVN_TEXTURE_FLAGS_IMAGE;
         nvn_tex_layout(&tt->d, &tt->L); tt->serial = nvn_new_serial();
         *pim = vka_tex_get(tt, g_cb);
