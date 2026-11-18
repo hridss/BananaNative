@@ -46,6 +46,24 @@ class HalfImmediate(Alu):
         self.assertRegex(msl, r'\b2\.0\b')
 
 
+class HalfFmaAlias(Alu):
+    """HFMA2.MMA (0x035) shares decoding and result modifiers with ordinary HFMA2 (0x031): upstream seedds/nxnative 391c68f9 (PR #2049).
+    These are synthetic translation checks, including forms absent from the Orin recording."""
+    R2UR = (0x000fe200000e0000, 0x00000000130473c2)   # R2UR UR4, R19
+
+    def test_all_operand_forms_and_result_modifiers(self):
+        for form in range(1, 8):
+            slot32 = (21 << 32 if form == 1 else 0x3c003c00 << 32 if form in (2, 4) else
+                      (3 << 54 | 0x10 << 38) if form in (3, 5) else 4 << 32)
+            lo = 0x031 | form << 9 | 7 << 12 | 6 << 16 | 19 << 24 | slot32
+            for modifier in (0, 1 << (77 - 64), 1 << (78 - 64), 1 << (79 - 64), 1 << (80 - 64)):
+                with self.subTest(form=form, modifier=modifier):
+                    hi = 0x000fe20000000014 | modifier   # the register in the 64-bit slot is R20
+                    normal = self.kept(self.R2UR, (hi, lo), srcs=(19, 20, 21))
+                    mma = self.kept(self.R2UR, (hi, lo | 4), srcs=(19, 20, 21))
+                    self.assertEqual(mma, normal)
+
+
 class Vote(Alu):
     """VOTEU (0x886) writes the uniform predicate UPd and leaves the lane predicate of that number alone; VOTE (0x806) writes the lane predicate. nvdisasm reads 0x886 as
     VOTEU.ANY UP0, P0 (CuAssembler's sm_86 records) and NAK encodes it with a uniform destination at 81..84. Yoshi and the Mysterious Book's cbd80cb96ad38a61 votes P0 into

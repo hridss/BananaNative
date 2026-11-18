@@ -1025,6 +1025,14 @@ Finding, keying and translating shaders (`dm/gfx/tools/shader_split.py`, `dmsh_b
 - **Found on:** no game; upstream's comparison of the translated instructions with a Jetson Orin's results (HMUL2.FTZ: 449 differing halves before, 234 after, all of them NaN bit patterns). PR #2048 counts about 7,700 FTZ half instructions in Ocarina of Time.
 - **Check:** upstream's `test_dmsh_ampere_orin.py` (`AMPERE_ORIN_ONLY=f16x2`), a Metal test with its Orin fixture, not in this tree.
 
+### HFMA2.MMA, the half-pair FMA on the tensor pipe
+
+- **Symptom:** `NotSupportedException: Ampere instruction 235` or `435` in the translator's notes, and the shader is not built. Half `.RELU` arithmetic also turns a NaN into zero instead of keeping it.
+- **Cause:** the decoder registered ordinary HFMA2 (low nine opcode bits 0x031) but not its tensor-pipe form 0x035, which NVIDIA's compiler emits for `fma.rn.f16x2` and for constant loads such as `-RZ * RZ + imm`. `.RELU` was a plain maximum with zero; unlike `.SAT`, [.RELU keeps a NaN result](https://docs.nvidia.com/cuda/archive/12.0.1/parallel-thread-execution/index.html#half-precision-floating-point-instructions-fma), and neither Metal's maximum nor SPIR-V's `FMax` (whose NaN result is undefined) does.
+- **Fix:** 0x035 is registered with `AHfma2`, so it has HFMA2's operand forms and result modifiers, `.FTZ` included. `AHalfResult` selects a NaN through before the maximum with zero for HFMA2, HFMA2.MMA and HMUL2 `.RELU`. No game or build gate; non-RELU output is unchanged (upstream seedds/nxnative 391c68f9, PR #2049).
+- **Found on:** no game symptom; upstream's synthetic Jetson Orin sm_87 programs (17 had been refused at HFMA2.MMA, 13 run with it).
+- **Check:** `DMSH_TEST_XLATE=<translator> python3 dm/gfx/tests/test_dmsh_ampere_alu.py` (`HalfFmaAlias`: HFMA2.MMA translates exactly as HFMA2 in all seven operand forms, plain and with each result modifier).
+
 ### TXD through a uniform register kept no handle
 
 - **Symptom:** `Failed to find handle source for bindless access` in the build's translator notes, for a shader with TXD through a uniform register (0xf6c). The MSL has no gradient sample, and what it read comes back 0.
