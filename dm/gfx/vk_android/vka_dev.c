@@ -1190,10 +1190,87 @@ static void kg_scan(int keep_fds) {   // this process's descriptors on /dev/kgsl
     }
     for (int i = 0; i < g_kg_nfd; i++) { memset(g_kg_own[i], 0, sizeof g_kg_own[i]); for (unsigned id = 1; id < KG_IDS; id++) if (!kg_set(g_kg_fd[i], id, 0, 0)) g_kg_own[i][id / 8] |= (uint8_t)(1u << (id % 8)); }
 }
+// The driver's own kernel calls that decide whether the floor holds (Adreno 830, 2026-11-17). On a kernel that applies the constraint at dispatch (host DCVS: the probe in
+// vka_kgsl_after gets -EINVAL for a scaled level), it is applied only to submissions of a context created with KGSL_CONTEXT_PWR_CONSTRAINT (adreno_ringbuffer.c
+// adreno_ringbuffer_set_constraint). Qualcomm's drivers create theirs with it (flags 0x405088d2); Turnip does not (0x13: tu_knl_kgsl.cc kgsl_submitqueue_new), so its floor
+// was taken (0) and never applied: in Mario Tennis Fever, after its 30 fps cap went off, the clock stayed at 342 MHz with 24 ms of GPU time a frame and the game at 30, where
+// the system driver held 1,050 MHz and 60. Qualcomm 891.14 sets its context's constraint to none before nearly every submission (IOCTL_KGSL_SETPROPERTY
+// KGSL_PROP_PWR_CONSTRAINT, type 0; the system's 3967b80d3b once), which undid the floor until it was sent again 30 frames later (the same 30 fps trap). So the libraries the
+// Vulkan driver brings (those loaded from the first open of the driver to vkCreateDevice: the custom driver and its kernel layer, or the system's when the process had not
+// loaded it before) call ioctl through the host, by their GOT slot: a kernel context they create gets KGSL_CONTEXT_PWR_CONSTRAINT, and their constraint calls on the
+// queue's contexts are dropped while the floor is above 0. With the floor at 0 (DM_VK_GPU_FLOOR=0) both pass as they are. DM_VK_KGSL_FILTER=0 (restart) leaves the calls alone
+#include <sys/mman.h>
+#include <stdarg.h>
+struct kg_phdr { uint32_t type, flags; uint64_t off, vaddr, paddr, filesz, memsz, align; };   // (the ELF64 layouts: <link.h> clashes with dm.h's)
+struct kg_info { uintptr_t addr; const char *name; const struct kg_phdr *phdr; uint16_t phnum; };
+struct kg_dyn { int64_t tag; uint64_t val; };
+struct kg_rela { uint64_t off, info; int64_t add; };
+struct kg_sym { uint32_t name; uint8_t info, other; uint16_t shndx; uint64_t value, size; };
+extern int dl_iterate_phdr(int (*)(struct kg_info *, size_t, void *), void *);
+struct kgsl_dcc { unsigned int flags, id; };
+#define KGSL_IOCTL_DRAWCTXT_CREATE _IOWR(0x09, 0x13, struct kgsl_dcc)
+enum { KGSL_CONTEXT_PWR_CONSTRAINT = 0x800, KG_MARK = 1024 };
+static _Atomic int g_floor_cur;   // (defined below)
+static int (*g_kf_ioctl)(int, int, ...);
+static uintptr_t g_kf_mark[KG_MARK]; static int g_kf_nmark = -1, g_kf_libs;
+static _Atomic unsigned g_kf_added, g_kf_ctx, g_kf_drop;
+static int kg_is_dev(int fd) { char p[40], to[24]; snprintf(p, sizeof p, "/proc/self/fd/%d", fd); ssize_t n = readlink(p, to, sizeof to - 1); return n > 12 && !strncmp(to, "/dev/kgsl-3d", 12); }
+static int kg_ours(unsigned id) { for (int k = 0; k < g_kg_n; k++) if (g_kg[k].id == id) return 1; return 0; }
+static int kg_ioctl(int fd, int req, ...) {
+    va_list ap; va_start(ap, req); void *arg = va_arg(ap, void *); va_end(ap);
+    if ((unsigned)req == (unsigned)KGSL_IOCTL_DRAWCTXT_CREATE && arg && kg_is_dev(fd)) {
+        struct kgsl_dcc *c = arg; atomic_fetch_add(&g_kf_ctx, 1);
+        if (!(c->flags & KGSL_CONTEXT_PWR_CONSTRAINT)) { c->flags |= KGSL_CONTEXT_PWR_CONSTRAINT; atomic_fetch_add(&g_kf_added, 1); }
+    } else if ((unsigned)req == (unsigned)KGSL_IOCTL_SETPROPERTY && arg && atomic_load(&g_floor_cur) > 0) {
+        const struct kgsl_gp *g = arg; const struct kgsl_dc *c = g->value;
+        if (g->type == 0x12 && c && g->sizebytes >= sizeof *c && kg_ours(c->context_id) && kg_is_dev(fd)) {   // KGSL_PROP_PWR_CONSTRAINT on the queue's context
+            if (!atomic_fetch_add(&g_kf_drop, 1)) VLOG("GPU clock floor (KGSL): the driver set its context %u's power constraint (type %u); its calls are dropped while the floor holds", c->context_id, c->type);
+            return 0;
+        }
+    }
+    return g_kf_ioctl(fd, req, arg);
+}
+static int kg_mark_cb(struct kg_info *in, size_t sz, void *u) { (void)sz; (void)u; if (g_kf_nmark < KG_MARK) g_kf_mark[g_kf_nmark++] = in->addr; return 0; }
+void vka_kgsl_mark(void) {   // the libraries loaded before the Vulkan driver is first opened (vka_driver_open)
+    if (g_kf_nmark >= 0 || !VKA_ENV("DM_VK_KGSL_FILTER", 1)) return;
+    g_kf_nmark = 0; dl_iterate_phdr(kg_mark_cb, NULL);
+}
+static int kg_filter_cb(struct kg_info *in, size_t sz, void *u) {   // one library loaded since the mark: its GOT slots for ioctl to kg_ioctl
+    (void)sz; (void)u;
+    for (int i = 0; i < g_kf_nmark; i++) if (g_kf_mark[i] == in->addr) return 0;
+    const struct kg_dyn *dyn = NULL;
+    for (int i = 0; i < in->phnum; i++) if (in->phdr[i].type == 2) dyn = (const struct kg_dyn *)(in->addr + in->phdr[i].vaddr);   // PT_DYNAMIC
+    if (!dyn) return 0;
+    uintptr_t b = in->addr, jr = 0, ra = 0, sy = 0, st = 0; size_t jn = 0, rn = 0;
+    for (const struct kg_dyn *d = dyn; d->tag; d++) switch (d->tag) {   // DT_JMPREL, DT_PLTRELSZ, DT_RELA, DT_RELASZ, DT_SYMTAB, DT_STRTAB
+        case 23: jr = d->val; break; case 2: jn = d->val; break; case 7: ra = d->val; break; case 8: rn = d->val; break; case 6: sy = d->val; break; case 5: st = d->val; break; }
+    if (!sy || !st) return 0;
+    if (sy < b) sy += b; if (st < b) st += b; if (jr && jr < b) jr += b; if (ra && ra < b) ra += b;   // (unrelocated vaddrs on bionic)
+    int n = 0;
+    for (int pass = 0; pass < 2; pass++) {
+        const struct kg_rela *r = (const struct kg_rela *)(pass ? ra : jr); size_t cnt = (pass ? rn : jn) / sizeof *r; if (!r) continue;
+        for (size_t i = 0; i < cnt; i++) {
+            unsigned t = (unsigned)(r[i].info & 0xffffffff), sx = (unsigned)(r[i].info >> 32);
+            if ((t != 1026 && t != 1025) || !sx || strcmp((const char *)st + ((const struct kg_sym *)sy)[sx].name, "ioctl")) continue;   // JUMP_SLOT / GLOB_DAT of ioctl
+            void **slot = (void **)(b + r[i].off);
+            if (*slot == (void *)kg_ioctl) continue;
+            if (mprotect((void *)((uintptr_t)slot & ~(uintptr_t)4095), 4096, PROT_READ | PROT_WRITE)) { VRED("KGSL filter: the GOT of %s stays as it is (mprotect %d)", in->name ? in->name : "?", errno); continue; }
+            *slot = (void *)kg_ioctl; n++;
+        }
+    }
+    if (n) g_kf_libs++;
+    return 0;
+}
+static void kg_filter(void) {
+    if (g_kf_nmark < 0) return;   // (DM_VK_KGSL_FILTER=0, or no mark)
+    if (!g_kf_ioctl) g_kf_ioctl = (int (*)(int, int, ...))dlsym(RTLD_DEFAULT, "ioctl");
+    if (g_kf_ioctl) dl_iterate_phdr(kg_filter_cb, NULL);
+}
 static uint8_t g_kg_was[KG_FDS][KG_IDS / 8]; static int g_kg_wasfd[KG_FDS], g_kg_wasn, g_kg_tried;
 void vka_kgsl_before(int has_ext) {   // (not with the queue hint's extension: its driver's contexts are left alone)
     g_kg_tried = !has_ext && VKA_ENV("DM_VK_GPU_FLOOR_KGSL", 1) != 0;
     if (!g_kg_tried) return;
+    kg_filter();
     kg_scan(0); g_kg_wasn = g_kg_nfd; memcpy(g_kg_wasfd, g_kg_fd, sizeof g_kg_fd); memcpy(g_kg_was, g_kg_own, sizeof g_kg_own);
 }
 void vka_kgsl_after(int has_hint) {
@@ -1213,6 +1290,9 @@ void vka_kgsl_after(int has_hint) {
     if (g_kg_n) VLOG("GPU clock floor through KGSL: the queue's kernel context%s %s (%d descriptor%s on /dev/kgsl-3d0; %s), DM_VK_GPU_FLOOR (DM_VK_GPU_FLOOR_KGSL)",
                      g_kg_n > 1 ? "s" : "", b, g_kg_nfd, g_kg_nfd == 1 ? "" : "s", g_kg_host ? "host DCVS: highest clock only" : "GMU DCVS: floor in % of the highest clock");
     else VLOG("GPU clock floor through KGSL: %s", g_kg_nfd ? "no kernel context of the device's own (the ADPF floor)" : "no /dev/kgsl-3d0 descriptor (not an Adreno with KGSL; the ADPF floor)");
+    if (g_kg_n && g_kf_nmark >= 0)
+        VLOG("GPU clock floor through KGSL: the driver's ioctl through the host in %d librar%s; %u kernel context%s created, KGSL_CONTEXT_PWR_CONSTRAINT added to %u (DM_VK_KGSL_FILTER)",
+             g_kf_libs, g_kf_libs == 1 ? "y" : "ies", atomic_load(&g_kf_ctx), atomic_load(&g_kf_ctx) == 1 ? "" : "s", atomic_load(&g_kf_added));
 }
 int vka_floor_kgsl(void) { return !V.perf_hint && g_kg_n > 0; }
 static VkResult kg_apply(int s) {   // the floor s % (0: none) on the queue's contexts

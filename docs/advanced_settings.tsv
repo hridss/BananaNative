@@ -575,6 +575,7 @@ DM_VK_IMG_SPV	internal	Diagnostics			text			both						test harness
 DM_VK_IMG_UPGRADE	developer	Memory			text			both							
 DM_VK_INSTANCE	advanced	Performance	Instanced draws		toggle			game		Game settings > Instanced draws					
 DM_VK_INSTANCE_FAST	developer	Diagnostics			text			both							
+DM_VK_KGSL_FILTER	developer	Graphics			text			both							
 DM_VK_LAYER	advanced	Graphics	Shaders while playing		toggle			game		Game settings > Shaders while playing					
 DM_VK_LAYER_DIR	internal	Graphics			text			both						set by the launcher	
 DM_VK_LAYER_DROP	developer	Graphics			text			both							

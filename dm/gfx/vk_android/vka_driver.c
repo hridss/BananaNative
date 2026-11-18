@@ -65,7 +65,7 @@ static void *driver_open(void);
 void *vka_driver_open(void) {
     static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER; static int tried; static void *lib;
     pthread_mutex_lock(&mu);
-    if (!tried) { tried = 1; lib = driver_open(); }
+    if (!tried) { void vka_kgsl_mark(void); vka_kgsl_mark(); tried = 1; lib = driver_open(); }   // (the libraries loaded before the driver: vka_dev.c's KGSL filter)
     pthread_mutex_unlock(&mu);
     return lib;
 }
