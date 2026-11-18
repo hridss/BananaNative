@@ -1049,6 +1049,14 @@ Finding, keying and translating shaders (`dm/gfx/tools/shader_split.py`, `dmsh_b
 - **Found on:** no game symptom; upstream's Jetson Orin sm_87 probes. Upstream's Fast Fusion menu runs measured a higher p99 frame time with it on the Mac (17.5 → 18.9-19.4 ms over two runs each); not measured on a phone.
 - **Check:** upstream's `test_dmsh_ampere_orin.py`, a Metal test with its Orin fixture, not in this tree.
 
+### Directed rounding in FADD, FMUL and FFMA
+
+- **Symptom:** FADD, FMUL and FFMA with `.RM`, `.RP` or `.RZ` can return the round-to-nearest result, one ULP from the one the shader asked for.
+- **Cause:** the Ampere and Maxwell emitters dropped the directed modes, and Metal's and Vulkan's float arithmetic round to nearest (the Vulkan library sets no float-controls rounding mode).
+- **Fix:** `FPAddRounded`, `FPMultiplyRounded` and `FPFusedMultiplyAddRounded` in `InstEmitAluHelper.cs` compute the nearest result and its exact error (TwoSum for FADD, ordered by magnitude so a finite sum never overflows; the significands' product error for FMUL, with the operand scaled that keeps the intermediate in range; Boldo and Muller's ErrFma on a scaled copy for FFMA) and step the result one ULP where the error lies on the side the mode excludes. The error's operations are marked precise (`NoContraction` in SPIR-V). Directed `.FTZ` keeps the signs of flushed inputs and results; the FMUL rule also covers the `1/(2π)` multiplier before MUFU. Only instructions with a directed mode get the extra code (upstream seedds/nxnative c22f30a3, PR #2051).
+- **Found on:** no game symptom; upstream's Jetson Orin sm_87 probes (2,857 rounding differences in 9,216 lanes before, none after on an M4 Pro).
+- **Check:** upstream's `test_dmsh_ampere_orin.py`, a Metal test with its Orin fixture, not in this tree.
+
 ### I2F from a 64-bit integer rounds once
 
 - **Symptom:** `I2F` from a signed or unsigned 64-bit register pair to f32 can give the wrong float; a negative integer close to zero can lose its whole value to cancellation.
