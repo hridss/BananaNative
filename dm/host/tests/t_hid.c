@@ -611,6 +611,16 @@ static void t_motion_live(void) {
     CHECK(h_hid_SixStates(st, 1, &h) == 1 && st[0].acc[0] == 0 && st[0].acc[2] == -1, "cleared: flat again");
     CHECK(h_hid_SixRest(&h), "cleared: at rest");
 
+    // The history: entry i is the sample that was current i x 5 ms ago, not the newest repeated (samples 20, 10 and 0 ms old)
+    {   SixAxisState hs[5]; float z[3] = {0, 0, 0};
+        dm_motion_set_hid(0, (float[]){0.1f, 0, -1}, z, motion_now - 20000000); dm_motion_set_hid(0, (float[]){0.2f, 0, -1}, z, motion_now - 10000000);
+        dm_motion_set_hid(0, (float[]){0.3f, 0, -1}, z, motion_now);
+        CHECK(h_hid_SixStates(hs, 5, &h) == 5, "history: every entry");
+        CHECK(fabsf(hs[0].acc[0] - 0.3f) < 1e-4f && fabsf(hs[1].acc[0] - 0.2f) < 1e-4f && fabsf(hs[2].acc[0] - 0.2f) < 1e-4f && fabsf(hs[3].acc[0] - 0.1f) < 1e-4f
+              && fabsf(hs[4].acc[0] - 0.1f) < 1e-4f, "history: each entry the sample of its time (0.3, 0.2, 0.2, 0.1, 0.1)");
+        CHECK(h_hid_SixStates(hs, 1, &h) == 1 && fabsf(hs[0].acc[0] - 0.3f) < 1e-4f, "history: one state read is the newest sample");
+        dm_motion_clear_hid(0); }
+
     // Auto uses fresh controller data ahead of the phone, including when the phone publishes last.
     dm_motion_set(0, a, w);
     dm_motion_set_switch(0, (float[]){0, -1, 0}, (float[]){0, 0, 0});
