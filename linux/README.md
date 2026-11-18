@@ -87,11 +87,19 @@ ends with a `[RED]` line naming the display variables), `NX_VK_DISPLAY_TIMING=1`
 (`scripts/pack_android.py`): the code rewrite and the Vulkan shader library. `linux/tools/linux-pack.sh setup` (also run
 by the first pack) puts what it needs in `~/.local/share/banananative/packer` with no root: a Python environment with
 Capstone 5, lz4 and zbic (pip from its bootstrap script where the system Python has no `ensurepip`), the .NET 10 runtime
-(Microsoft's `dotnet-install.sh`) for the translator's portable dlls (`dm/gfx/tools/dmsh_xlate_bin`; the apphost there
+(Microsoft's archive) for the translator's portable dlls (`dm/gfx/tools/dmsh_xlate_bin`; the apphost there
 is the Mac's, so a wrapper beside the dlls, `dmsh_xlate-linux`, is what `XLATE` names), and it needs `spirv-val` on
 PATH (SPIRV-Tools). The pack goes to `<title ID>-work/android-pack` beside the game file, where the launcher's picker
 finds it. Checked on the Odin 2 with Mario Kart World 1.8.0 (`.nup`): the code modules equal the phone's pack byte
 for byte except `sdk`, which carries the two `AddressRegionManager` cuts the 0.3.24 rewriter adds; the pack boots.
+
+What setup downloads is pinned at the top of `linux-pack.sh`: the .NET runtime 10.0.15 (linux-arm64 or linux-x64, glibc
+only: musl stops setup) and, without `ensurepip`, `get-pip.py` and the pip 26.3 wheel it installs with no index, each checked
+against its sha512/sha256 before use; a mismatch stops setup with a `[RED]` line and installs nothing. The Python packages
+(capstone 5.0.9, lz4 4.4.5, zbic 1.0.1.post1) are exact versions, wheels only, not hash-checked. An environment that
+already has a .NET 10 runtime keeps it (it is not checked again). To bump a pin, change the version and its hash: pip's
+from `https://pypi.org/pypi/pip/<version>/json` (and get-pip.py at the same tag of `pypa/get-pip`), .NET's from
+`https://builds.dotnet.microsoft.com/dotnet/release-metadata/10.0/releases.json`.
 
 ## AppImage
 
@@ -159,8 +167,10 @@ screen with the new AppImage. Press **Prepare** again for each game after updati
 
 `linux/appimage/build-appimage.sh [title ID ...]` builds `linux/build/appimage/BananaNative-<version>-aarch64.AppImage`
 on an x86_64 PC: one host per title ID in `usr/bin`, a fallback SDL3 (`build-sdl3.sh`: X11 only, used where the system
-has no `libSDL3.so.0`), and the launcher `AppRun`. It downloads `appimagetool` and the aarch64 runtime from the AppImage
-project's GitHub releases on first use and needs `rsvg-convert`.
+has no `libSDL3.so.0`), and the launcher `AppRun`. It downloads `appimagetool` 1.9.1 and the aarch64 runtime (type2-runtime
+20251108) from the AppImage project's GitHub releases on first use, pinned at the top of the script with the sha256 their
+release pages list (bump: the version and that hash); the cached files are checked on every run and a mismatch stops the
+build. fontTools (for `nintendo_ext.ttf`) is an exact version, a wheel, not hash-checked. It needs `rsvg-convert`.
 
     BananaNative-aarch64.AppImage <pack folder> [game file (.nup)]
     BananaNative-aarch64.AppImage                    (no argument, from a desktop) a game picker

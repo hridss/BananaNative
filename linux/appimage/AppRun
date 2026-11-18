@@ -149,7 +149,7 @@ prepare() {
       rm -rf "$SRC"; mv "$SRC.part" "$SRC"
       for o in "$PE"/src-*; do [ "$o" = "$SRC" ] || rm -rf "$o"; done
       echo 100 ) | Z --progress --pulsate --auto-close --no-cancel --text="Getting the pack tools..."
-    [ -x "$SRC/linux/tools/linux-pack.sh" ] && [ -x "$PE/venv/bin/python" ] ||
+    [ -x "$SRC/linux/tools/linux-pack.sh" ] && [ -x "$PE/venv/bin/python" ] && [ -x "$PE/dotnet/dotnet" ] ||
       { Z --error --text="Getting the pack tools failed. Details: $PE/setup.log"; return; }
   fi
   OUT="$HOME/Games/BananaNative/packs/$i"; LOGF="$PE/prepare-$i.log"; mkdir -p "$(dirname "$OUT")"; rm -rf "$OUT.new" "$LOGF.rc"
