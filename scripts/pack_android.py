@@ -31,7 +31,7 @@
 # --no-shaders makes a pack without a library, a valid one (no pack.tsv shaders row); --optional-shaders takes a current library from the cache when there is one and packs without
 # otherwise. --code-only rewrites the modules and stops (pack.tsv, game.tsv and the shaders untouched); --keep-code packs without rewriting (the phone's two steps).
 # Usage: pack_android.py <game folder | .nup file> [--version N] [--out DIR] [-j N] [--shader-cache DIR] [--shader-pkg DIR] [--shader-python PY] [-J N] [--no-shaders | --optional-shaders] [--code-only | --keep-code] [--in-process]   (exit 1 on error)
-import argparse, hashlib, os, runpy, shutil, signal, subprocess, sys, time
+import argparse, hashlib, os, runpy, shutil, signal, subprocess, sys, tempfile, time
 from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / 'scripts')); sys.path.insert(0, str(REPO / 'dm/games'))
@@ -691,6 +691,13 @@ def split_shaders(a, g, vdir, pkg, parts=None, aoc=(), nros=None):   # parts: th
     tmp.rmdir()
 
 
+def shader_work(a, work):
+    """The folder of the library build's temporary files: beside the library cache when --shader-cache names one, as <work>/android-shaders/work is beside the
+    default cache. With --out and --shader-cache elsewhere (a .nup on a drive the pack is not made on) nothing is made beside the game any more; before, a pack with both
+    still made <title ID>-work/android-shaders/work beside the .nup"""
+    return a.shader_cache.resolve().parent / 'work' if a.shader_cache else work / 'android-shaders' / 'work'
+
+
 def pack_shaders(a, g, work, out, vdir, parts=None, aoc=()):
     """shaders/v-<V>/ in the pack: an up-to-date library from the cache (built there first when it is missing or stale, from the shader package, split from the dump
     first when there is none and --shader-pkg names none). → the library path in the pack, or None"""
@@ -708,8 +715,8 @@ def pack_shaders(a, g, work, out, vdir, parts=None, aoc=()):
         if not pkg.is_dir(): split_shaders(a, g, vdir, pkg, parts, aoc, collected_nros(work))   # also into a --shader-pkg folder that is not there yet
         py = shader_python(a.shader_python)
         print(f'shaders: building the Vulkan library {lib} from {pkg} with {py} (J={a.J}; about 10 minutes on DKB)', flush=True)
-        (work / 'android-shaders' / 'work').mkdir(parents=True, exist_ok=True)
-        env = child_env(DM_GAME=g.id, J=str(a.J), WORK=str(work / 'android-shaders' / 'work'))
+        swork = shader_work(a, work); swork.mkdir(parents=True, exist_ok=True)   # beside a --shader-cache folder (shader_work)
+        env = child_env(DM_GAME=g.id, J=str(a.J), WORK=str(swork))
         keys = selected_keys(g.dir)   # a profile with a selected set (shader_seen.tsv): only its shaders, as the phone builds them (PackService, ShaderLibs.selection)
         if keys is not None:
             if not keys: raise Error(f'the profile\'s shader_seen.tsv names none of the shaders of its shader_map.tsv')
@@ -719,12 +726,14 @@ def pack_shaders(a, g, work, out, vdir, parts=None, aoc=()):
                   '(the [RED] "not in the package" line below counts them)', flush=True)
             env['DMSH_VK_REQUIRE_ALL'] = '0'
             if keys is not None: keys = [k for k in keys if k not in absent]
-        args = []
-        if keys:   # on Windows a file the wrapper reads (vk_android_win.py "@<file>"): thousands of keys pass a command line's 32,767 characters there
-            if WINDOWS:
-                kf = work / 'android-shaders' / 'keys.txt'; write_lf(kf, ''.join(k + '\n' for k in keys)); args = ['@' + str(kf)]
-            else: args = keys
-        r = subprocess.run([py, str(VK_BUILD_WIN if WINDOWS or sys.platform.startswith('linux') else VK_BUILD), '--target', 'vulkan', str(pkg), str(cache), *args], env=env)   # on Linux too, for the translator's start (the repository's apphost is the Mac's; vk_android_win.py starts the dlls with dotnet)
+        # The selection file is this build's own (a folder of its own, removed after the child): two builds of one game at once (sibling caches) overwrote a shared keys.txt
+        with tempfile.TemporaryDirectory(prefix='selection-', dir=swork) as selection_dir:
+            args = []
+            if keys:   # on Windows a file the wrapper reads (vk_android_win.py "@<file>"): thousands of keys pass a command line's 32,767 characters there
+                if WINDOWS:
+                    kf = Path(selection_dir) / 'keys.txt'; write_lf(kf, ''.join(k + '\n' for k in keys)); args = ['@' + str(kf)]
+                else: args = keys
+            r = subprocess.run([py, str(VK_BUILD_WIN if WINDOWS or sys.platform.startswith('linux') else VK_BUILD), '--target', 'vulkan', str(pkg), str(cache), *args], env=env)   # on Linux too, for the translator's start (the repository's apphost is the Mac's; vk_android_win.py starts the dlls with dotnet)
         if r.returncode: raise Error(f'vk_android_build.py exit code {r.returncode} (a package that lacks the profile\'s shaders stops it: delete {pkg} and the split runs again)')
         if not library_current(lib, g): raise Error(f'vk_android_build.py finished but {lib} is not a full library of {g.id} with the current inputs')
     else: print(f'shaders: {lib} is current (game {g.id}, inputs {dmsh_chain.inputs(g)})')
