@@ -1041,6 +1041,14 @@ Finding, keying and translating shaders (`dm/gfx/tools/shader_split.py`, `dmsh_b
 - **Found on:** no game symptom; upstream's Jetson Orin sm_87 probes (70 numeric differences in 9,140 lanes before, none after on an M4 Pro; NaN encodings still differ).
 - **Check:** `DMSH_TEST_XLATE=<translator> python3 dm/gfx/tests/test_dmsh_ampere_alu.py` (`HalfFmaAlias`) and `test_dmsh_ampere_mem.py` (`Pokopia`'s HFMA2 lane tests read the half FMA).
 
+### I2F from a 64-bit integer rounds once
+
+- **Symptom:** `I2F` from a signed or unsigned 64-bit register pair to f32 can give the wrong float; a negative integer close to zero can lose its whole value to cancellation.
+- **Cause:** `AI2f64` rounded the high and low words to floats separately before adding them, and dropped the rounding mode.
+- **Fix:** `AI2f64` in `InstEmitAmpereAlu.cs` forms the magnitude as two integer words, normalizes it to the 24 kept bits plus round and sticky bits, and rounds once in the encoded mode; the leading-bit search's operand keeps its low bit set so a zero input gives valid shift counts, and a zero input gives +0. The Ampere register-pair form with an f32 destination only (upstream seedds/nxnative 6a4e3215, PR #2045).
+- **Found on:** no game symptom; upstream's Jetson Orin sm_87 probes (signed nearest-even: 16 differences in 1,024 lanes before, none after) and synthetic boundary cases in all four modes.
+- **Check:** upstream's `test_dmsh_ampere_orin.py`, a Metal test with its Orin fixture, not in this tree.
+
 ### TXD through a uniform register kept no handle
 
 - **Symptom:** `Failed to find handle source for bindless access` in the build's translator notes, for a shader with TXD through a uniform register (0xf6c). The MSL has no gradient sample, and what it read comes back 0.
