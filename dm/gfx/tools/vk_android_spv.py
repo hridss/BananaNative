@@ -1578,6 +1578,65 @@ def _dominance(blks, preds):
     return dominates
 
 
+GLSL_FABS = 4
+SUPPORT_RENDER_SCALE = 5   # Ryujinx's SupportBufferField.RenderScale: the support buffer struct's member of the render scales
+
+
+def scale_identity(m):
+    """Calls of the translator's render-scale helpers (Ryujinx HelperFunctionManager TexelFetchScale, TextureSizeUnscale; TexturePass inserts one a coordinate or size
+    component of every texel fetch, image access and size query) replaced by their first argument. Each helper begins `if (render_scale[i] == 1.0) return input;`, and the
+    support buffer's render scales are always 1.0 (dmsh_abi_vk.h DMSH_VK_KIND_SUPPORT; vka_bind.c vka_support_fill), so every call returns its input. The calls cost
+    the driver's compiler, not the GPU: Pokopia's compute shader af8f64d9f5542ef2 walks a list with 2,612 dependent fetches, each scaled by two calls of a helper with a
+    branch (5,224 calls, 1.6 MB of SPIR-V), and Qualcomm's compiler took 60-77 s on it, its memory maps past vm.max_map_count on System Driver v800.72 (the process aborted);
+    without the calls, 3.7 s (docs/reference/memory.md "One driver compile can fill the process's memory maps alone"). A helper is recognised by its first block alone:
+    a float loaded from the support buffer's render scales (or its absolute value) compared equal to 1.0, branching to a block that returns the first parameter, whose
+    type is the function's result type. The helpers left without callers are removed. → calls replaced"""
+    sup = {v for v, (ptr, sc) in m.vars.items() if m.names.get(v) == 'support_buffer' and sc == SC_UNIFORM}
+    if not sup: return 0
+    glsl = {x[1] for x in m.ins if x[0] & 0xffff == OP_EXT_INST_IMPORT and string_at(x, 2)[0] == 'GLSL.std.450'}
+    ones = {c for c, (t, v) in m.consts.items() if m.op(t) == OP_TYPE_FLOAT and v == [0x3f800000]}
+    helpers = set()
+    for k, x in enumerate(m.ins):
+        if x[0] & 0xffff != OP_FUNCTION or x[2] == m.entry_function(): continue
+        a, e = m.function_range(x[2])
+        body = m.ins[a:e + 1]
+        params = [y[2] for y in body if y[0] & 0xffff == OP_FUNCTION_PARAMETER]
+        ptype = [y[1] for y in body if y[0] & 0xffff == OP_FUNCTION_PARAMETER]
+        if not params or ptype[0] != x[1]: continue
+        labels = [i for i, y in enumerate(body) if y[0] & 0xffff == OP_LABEL]
+        if len(labels) < 2: continue
+        first = body[labels[0] + 1:labels[1]]
+        defs = {y[2]: y for y in first if len(y) > 2}
+        term = first[-1] if first else None
+        if not term or term[0] & 0xffff != OP_BRANCH_CONDITIONAL: continue
+        cmp_ = defs.get(term[1])
+        if not cmp_ or cmp_[0] & 0xffff != OP_FORD_EQUAL: continue
+        def scale_load(v):
+            y = defs.get(v)
+            if y and y[0] & 0xffff == OP_EXT_INST and y[3] in glsl and y[4] == GLSL_FABS: y = defs.get(y[5])
+            if not y or y[0] & 0xffff != OP_LOAD: return False
+            ac = defs.get(y[3])
+            return bool(ac) and ac[0] & 0xffff in (OP_ACCESS_CHAIN, OP_IN_BOUNDS_ACCESS_CHAIN) and ac[3] in sup and len(ac) > 4 and const_int(m, ac[4]) == SUPPORT_RENDER_SCALE
+        if not ((cmp_[3] in ones and scale_load(cmp_[4])) or (cmp_[4] in ones and scale_load(cmp_[3]))): continue
+        t = next((i for i in labels if body[i][1] == term[2]), None)
+        if t is None or t + 1 >= len(body): continue
+        ret = body[t + 1]
+        if ret[0] & 0xffff != OP_RETURN_VALUE or ret[1] != params[0]: continue
+        helpers.add(x[2])
+    if not helpers: return 0
+    n = 0
+    for k, x in enumerate(m.ins):
+        if x[0] & 0xffff == OP_FUNCTION_CALL and x[3] in helpers:
+            m.ins[k] = [4 << 16 | OP_COPY_OBJECT, x[1], x[2], x[4]]; n += 1
+    called = {x[3] for x in m.ins if x[0] & 0xffff == OP_FUNCTION_CALL}
+    for f in helpers - called:
+        a, e = m.function_range(f)
+        del m.ins[a:e + 1]
+        m.ins = [y for y in m.ins if not (y[0] & 0xffff == OP_NAME and y[1] == f)]
+    m.index()
+    return n
+
+
 def promote_locals(m):
     """Single-store (or unused) Function variables whose store dominates every load of them replaced by the stored value, so the translator's per-expression temporaries
     and lowered helper arguments do not leave tens of thousands of Function variables for the driver's pre-SSA passes (nir_opt_copy_prop_vars)"""

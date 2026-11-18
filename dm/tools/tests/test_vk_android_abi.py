@@ -197,6 +197,102 @@ OpFunctionEnd
 '''
 
 # A passthrough geometry shader as Ryujinx emulates it: the viewport mask output set to all, then a primitive emitted only when it is not 0
+SCALE_CS = '''OpCapability Shader
+%glsl = OpExtInstImport "GLSL.std.450"
+OpMemoryModel Logical GLSL450
+OpEntryPoint GLCompute %main "main"
+OpExecutionMode %main LocalSize 1 1 1
+OpName %sup "support_buffer"
+OpDecorate %arr ArrayStride 16
+OpMemberDecorate %SB 0 Offset 0
+OpMemberDecorate %SB 1 Offset 16
+OpMemberDecorate %SB 2 Offset 32
+OpMemberDecorate %SB 3 Offset 48
+OpMemberDecorate %SB 4 Offset 64
+OpMemberDecorate %SB 5 Offset 80
+OpDecorate %SB Block
+OpDecorate %sup DescriptorSet 0
+OpDecorate %sup Binding 0
+%void = OpTypeVoid
+%fv = OpTypeFunction %void
+%int = OpTypeInt 32 1
+%float = OpTypeFloat 32
+%bool = OpTypeBool
+%v4f = OpTypeVector %float 4
+%int_73 = OpConstant %int 73
+%arr = OpTypeArray %v4f %int_73
+%SB = OpTypeStruct %v4f %v4f %v4f %v4f %v4f %arr
+%ptr_SB = OpTypePointer Uniform %SB
+%sup = OpVariable %ptr_SB Uniform
+%ptr_f = OpTypePointer Uniform %float
+%fi2 = OpTypeFunction %int %int %int
+%int_0 = OpConstant %int 0
+%int_1 = OpConstant %int 1
+%int_4 = OpConstant %int 4
+%int_5 = OpConstant %int 5
+%int_7 = OpConstant %int 7
+%float_1 = OpConstant %float 1
+%main = OpFunction %void None %fv
+%m0 = OpLabel
+%a = OpFunctionCall %int %fetch %int_7 %int_0
+%b = OpFunctionCall %int %fetch %a %int_1
+%c = OpFunctionCall %int %unscale %b %int_0
+%d = OpFunctionCall %int %other %c %int_0
+OpReturn
+OpFunctionEnd
+%fetch = OpFunction %int None %fi2
+%fx = OpFunctionParameter %int
+%fs = OpFunctionParameter %int
+%f0 = OpLabel
+%fidx = OpIAdd %int %int_1 %fs
+%fp = OpAccessChain %ptr_f %sup %int_5 %fidx %int_0
+%fsc = OpLoad %float %fp
+%fone = OpFOrdEqual %bool %fsc %float_1
+OpSelectionMerge %f2 None
+OpBranchConditional %fone %f1 %f2
+%f1 = OpLabel
+OpReturnValue %fx
+%f2 = OpLabel
+%fcv = OpConvertSToF %float %fx
+%fmul = OpFMul %float %fcv %fsc
+%fr = OpConvertFToS %int %fmul
+OpReturnValue %fr
+OpFunctionEnd
+%unscale = OpFunction %int None %fi2
+%ux = OpFunctionParameter %int
+%us = OpFunctionParameter %int
+%u0 = OpLabel
+%uidx = OpIAdd %int %int_1 %us
+%up = OpAccessChain %ptr_f %sup %int_5 %uidx %int_0
+%ul = OpLoad %float %up
+%usc = OpExtInst %float %glsl FAbs %ul
+%uone = OpFOrdEqual %bool %usc %float_1
+OpSelectionMerge %u2 None
+OpBranchConditional %uone %u1 %u2
+%u1 = OpLabel
+OpReturnValue %ux
+%u2 = OpLabel
+%ucv = OpConvertSToF %float %ux
+%udiv = OpFDiv %float %ucv %usc
+%ur = OpConvertFToS %int %udiv
+OpReturnValue %ur
+OpFunctionEnd
+%other = OpFunction %int None %fi2
+%ox = OpFunctionParameter %int
+%os = OpFunctionParameter %int
+%o0 = OpLabel
+%op = OpAccessChain %ptr_f %sup %int_4 %int_0
+%osc = OpLoad %float %op
+%oone = OpFOrdEqual %bool %osc %float_1
+OpSelectionMerge %o2 None
+OpBranchConditional %oone %o1 %o2
+%o1 = OpLabel
+OpReturnValue %ox
+%o2 = OpLabel
+OpReturnValue %os
+OpFunctionEnd
+'''
+
 GS = '''OpCapability Geometry
 OpCapability ShaderViewportMaskNV
 OpExtension "SPV_NV_viewport_array2"
@@ -299,6 +395,18 @@ class Rewrites(unittest.TestCase):
         if text:
             self.assertIn('PerPrimitiveEXT', text); self.assertIn('StorageBuffer', text); self.assertNotIn('BufferBlock', text)
         self.assertEqual(spv.per_primitive_inputs(self.module(MESH_FS), {3}), [])   # no such input: unchanged
+
+    def test_scale_identity(self):
+        # the translator's TexelFetchScale (compute form) and TextureSizeUnscale (|scale|) called from main, and a look-alike that compares another support member
+        m = self.module(SCALE_CS)
+        self.assertEqual(spv.scale_identity(m), 3)   # two fetch-scale calls and one unscale call; the look-alike's call stays
+        text = self.valid(m)
+        calls = [x for x in m.ins if x[0] & 0xffff == spv.OP_FUNCTION_CALL]
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(sum(1 for x in m.ins if x[0] & 0xffff == spv.OP_FUNCTION), 2)   # main and the look-alike: the helpers without callers removed
+        if text: self.assertEqual(text.count('OpCopyObject'), 3)
+        self.assertEqual(spv.scale_identity(m), 0)   # nothing left to replace
+        self.assertEqual(spv.scale_identity(self.module(SCALE_CS.replace('OpName %sup "support_buffer"', ''))), 0)   # no support buffer: untouched
 
     def test_viewport_mask_private(self):
         m = self.module(GS)

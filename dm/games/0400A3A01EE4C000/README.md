@@ -132,6 +132,8 @@ The first boot shows the language list: `A`, `LUp`, `A` picks English. The chara
 
 ## Found on this game
 
+- [One driver compile can fill the process's memory maps alone](../../../docs/reference/memory.md#one-driver-compile-can-fill-the-processs-memory-maps-alone-android): compute shader `af8f64d9f5542ef2` (5,224 render-scale helper calls) took Qualcomm's compiler 60-77 s and aborted the game on the first-boot language screen on System Driver v800.72; 3.7 s with the calls replaced by their input.
+
 - [A game asked for a shader its library lacks](../../../docs/reference/shaders.md#a-game-asked-for-a-shader-its-library-lacks-android): the run-time shader layer builds the missing shader while the game runs (`DM_VK_LAYER`, default on); tested here with faked misses (`DM_VK_LAYER_DROP`), a real miss (Carkol) not yet run (2026-11-16).
 
 - [Opt-in LDN sessions and virtual UDP sockets](../../../docs/reference/services.md#opt-in-ldn-sessions-and-virtual-udp-sockets): experimental Android-to-PC Link Play; current verification limits are in [Link Play on Android](#link-play-on-android).
