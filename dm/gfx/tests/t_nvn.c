@@ -188,8 +188,13 @@ int main(void) {
       EXPECT("native 60 cap: period ns",16666666,present_period(&w));
       EXPECT("native 60 cap: display-link target",60,nvn_game_fps());
       setenv("DM_FPS_TARGET","0",1);g_present_cap=-1;w.interval=2;
-      EXPECT("no cap preserves display pacing",1,present_itv(&w));nvn_present_config(60,0);
+      EXPECT("no cap preserves display pacing",1,present_itv(&w));
+      EXPECT("display mode: the game reads back the interval the window presents at",1,window_interval(&w));
+      setenv("DM_FPS_TARGET","30",1);g_present_cap=-1;
+      EXPECT("display mode under a 30 cap: the game reads back 2",2,window_interval(&w));
+      setenv("DM_FPS_TARGET","0",1);g_present_cap=-1;nvn_present_config(60,0);
       EXPECT("no cap preserves game pacing",2,present_itv(&w));
+      EXPECT("game mode: the game reads back the interval it set",2,window_interval(&w));
       _Alignas(8) uint8_t state[64]={0};float cap=60;memcpy(state,&cap,4);dm_fps_state=state;
       EXPECT("stub state takes precedence over env",60,fps_present_cap());
       *(uint32_t *)(state+4)=1;
