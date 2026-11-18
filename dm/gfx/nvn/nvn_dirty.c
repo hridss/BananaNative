@@ -243,15 +243,25 @@ static void explain(void *addr) {
             (unsigned long long)atomic_load(&g_mp_fail), atomic_load(&g_mp_errno), strerror(atomic_load(&g_mp_errno) > 0 ? atomic_load(&g_mp_errno) : 0),
             (unsigned long)atomic_load(&g_mp_fail_a), atomic_load(&g_mp_fail_n), atomic_load(&g_mp_fail_prot));
 }
+// Page geometry, the timebase and the hooks (page fault, host pre-write, crash explanation) are set when the host loads, on one thread before main: every pool registration,
+// fault and host pre-write sees them complete. They were set by the first nvn_dirty_add_range behind a plain flag, published before the geometry and the hooks and with no lock:
+// a pool registered on another thread at that moment could get zero geometry or return before the hooks existed, and a host write into guest memory (hle_fs.c reading a file on a
+// game thread) read crash.c's hook table while it grew (upstream PR #2225). With no pool registered the hooks scan an empty table, so a game that never makes one pays nothing for them
+__attribute__((constructor)) static void dirty_init(void) {
+    g_pg = (uintptr_t)getpagesize(); g_shift = __builtin_ctzl(g_pg); plat_timebase(&g_tb);
+    dm_fault_explain_register(explain); dm_fault_hook_register(on_fault); dm_guest_write_prep_register(prep_write);
+}
+// The switches are read at the first registration, not at load: the launcher's settings may reach the environment after the host library is loaded
+static void dirty_env(void) {
+    const char *e = getenv("DM_DIRTY_BLOCK_KB"); size_t kb = e ? strtoul(e, NULL, 0) : DIRTY_BLOCK_KB; size_t b = kb << 10;   // a power of two of at least a page, else by the page
+    g_bwant = b > g_pg && !(b & (b - 1)) ? b - 1 : 0;
+    e = getenv("DM_DIRTY_BLOCK_AT"); g_block_at = e ? strtoull(e, NULL, 0) : 8192;
+    if (!g_block_at) g_bmask = g_bwant;
+    e = getenv("DM_DIRTY_FAULT_RUN_KB"); { size_t kb2 = e ? strtoul(e, NULL, 0) : 1024; g_frun = (kb2 << 10) >> g_shift; }
+}
 void nvn_dirty_add_range(const void *mem, size_t size) {
-    static int inited;
-    if (!inited) dm_fault_explain_register(explain);
-    if (!inited) { inited = 1; g_pg = (uintptr_t)getpagesize(); g_shift = __builtin_ctzl(g_pg); plat_timebase(&g_tb);
-        { const char *e = getenv("DM_DIRTY_BLOCK_KB"); size_t kb = e ? strtoul(e, NULL, 0) : DIRTY_BLOCK_KB; size_t b = kb << 10;   // a power of two of at least a page, else by the page
-          g_bwant = b > g_pg && !(b & (b - 1)) ? b - 1 : 0;
-          e = getenv("DM_DIRTY_BLOCK_AT"); g_block_at = e ? strtoull(e, NULL, 0) : 8192;
-          if (!g_block_at) g_bmask = g_bwant;
-          e = getenv("DM_DIRTY_FAULT_RUN_KB"); { size_t kb = e ? strtoul(e, NULL, 0) : 1024; g_frun = (kb << 10) >> g_shift; } } dm_fault_hook_register(on_fault); dm_guest_write_prep_register(prep_write); }
+    static pthread_once_t env_once = PTHREAD_ONCE_INIT;
+    pthread_once(&env_once, dirty_env);   // before the range is published (the release store of live), so a fault in it sees the block settings
     atomic_fetch_add(&g_adds_total, 1);
     pthread_mutex_lock(&g_slot_mu);
     int n = atomic_load(&g_nr);
