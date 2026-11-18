@@ -251,6 +251,19 @@ class Damaged(Fixture):
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
         self.assertIn('big.bin', r.stdout); self.assertRegex(r.stdout, r'\d+ files, [1-9]\d* bad')
 
+    def test_extent_not_a_frame_says_what_it_holds(self):   # issue 445: "Unknown frame descriptor" alone did not say whether the copy or the writer was at fault
+        good = self.nup.read_bytes(); n = nup.open_nup(self.nup)
+        rel = f'update/{VER}/romfs/Shader/big.bin'
+        _, off, stored, _, codec = n.record(n.node(rel)); self.assertEqual(codec, nup.ZSTD)
+        for case, data, held in (('zeros', bytes(stored), 'zeros, not a zstd frame'), ('raw', BIG[:stored], 'bytes that are not a zstd frame \\(00 01 02 03'),
+                                 ('middle', good[off:off + 16] + bytes(stored - 16), 'a zstd frame damaged after its start')):
+            d = bytearray(good); d[off:off + stored] = data
+            p = self.bad(bytes(d), f'{case}.nup'); m = nup.Nup(p)
+            for small, peek in ((nup.SMALL, nup.PEEK), (nup.SMALL, 0), (1000, 0)):   # the prefix read, the whole load, the stream
+                with self.subTest(case, small=small, peek=peek), mock.patch.object(nup, 'SMALL', small), mock.patch.object(nup, 'PEEK', peek), \
+                        self.assertRaisesRegex(nup.Error, f"'big.bin', zstd extent at {off:#x} .*the extent holds {held}.*copy it again"):
+                    with m.open(m.node(rel)) as f: f.read(4); f.read()
+
 
 class Tools(Fixture):
     def test_pack_dump_scan(self):

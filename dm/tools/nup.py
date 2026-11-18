@@ -32,6 +32,7 @@ NONE = 0xFFFFFFFF
 BASE, UPDATE, ADDON = 0, 1, 2
 KINDS = {BASE: 'base', UPDATE: 'update', ADDON: 'addon', 3: 'addon_update', 4: 'system'}   # 3 and 4 are reserved: accepted in a file, never selected
 RAW, ZSTD = 0, 1
+ZSTD_MAGIC = b'\x28\xb5\x2f\xfd'   # a zstd frame's first four bytes (RFC 8878 §3.1.1)
 SMALL = 64 << 20   # a zstd file up to this size is decompressed into memory at its first read; a larger one is streamed
 PEEK = 1 << 20     # a read that ends within this many bytes of a file's start, and before its end, decompresses only up to the read's end (_Zstd._prefix)
 SELECTOR = re.compile(r'(base|update/[0-9]+|addon/[0-9a-fA-F]{16})(?:/(.*))?', re.S)
@@ -318,7 +319,7 @@ class Nup:
         if self.is_dir(k): raise IsADirectoryError(errno.EISDIR, 'is a directory', self.path)
         size, off, stored, _, codec = self.record(k)
         if codec == RAW or not size: return _Raw(self.path, off, size, regions)
-        return _Zstd(self.path, off, stored, size, regions)
+        return _Zstd(self.path, off, stored, size, regions, os.fsdecode(self.name(k)))
 
     def read(self, k):
         with self.open(k) as f: return f.read()
@@ -365,9 +366,10 @@ class _Zstd(io.RawIOBase):
     """A zstd file (codec 1: one frame of the whole file). Up to SMALL: decompressed into memory at the first read. Larger: streamed through the module's ZstdFile
     over the extent (a seek back starts the frame again). fileno() decompresses it into an unlinked temporary file ($DM_TEMP, else the system's) and reads from
     there from then on. A read that ends within PEEK of the start and before the end (a tool reading a file's magic: shader_split.py zip_jobs opens every RomFS
-    file for 4 bytes) decompresses only up to its end, not the whole file (docs/reference/packing.md, A magic read of a .nup file decompressed all of it)"""
-    def __init__(self, path, start, stored, size, regions=None):
-        self.path, self.start, self.stored, self.length, self.regions = path, start, stored, size, regions
+    file for 4 bytes) decompresses only up to its end, not the whole file (docs/reference/packing.md, A magic read of a .nup file decompressed all of it).
+    An extent zstd refuses is an Error that says what the extent holds (_refused)"""
+    def __init__(self, path, start, stored, size, regions=None, name=None):
+        self.path, self.start, self.stored, self.length, self.regions, self.name = path, start, stored, size, regions, name
         self.pos, self.data, self.stream, self.tmp, self.head = 0, None, None, None, None
         zstd()   # fails here, at open, when there is no zstd module
     def readable(self): return True
@@ -378,10 +380,23 @@ class _Zstd(io.RawIOBase):
         if whence not in (0, 1, 2) or pos < 0: raise ValueError('invalid seek')
         self.pos = pos; return pos
     def _bad(self, got): return Error(f'{self.path}: zstd extent at {self.start:#x} gives {got} bytes, its record says {self.length}')
+    def _refused(self, e):
+        """The Error for an extent zstd refuses, saying what the extent holds, as the file's TOC (checked by its SHA-256) records it as one zstd frame: zeros
+        (a copy that did not finish writing the file, its size still right), other bytes (not a frame: written raw while recorded as zstd, or overwritten), or a frame
+        damaged after its start (docs/reference/packing.md, A .nup whose zstd extent is not a zstd frame)"""
+        try:
+            with _Raw(self.path, self.start, min(self.stored, 16)) as r: head = r.readall()
+        except OSError: head = b''
+        if head[:4] == ZSTD_MAGIC: held = 'a zstd frame damaged after its start'
+        elif head and not head.strip(b'\0'): held = 'zeros, not a zstd frame'
+        else: held = f'bytes that are not a zstd frame ({head.hex(" ")})'
+        what = f'{self.name!r}, ' if self.name else ''
+        return Error(f'{self.path}: {what}zstd extent at {self.start:#x} ({self.stored} bytes): {e}: the extent holds {held}. The .nup is damaged: '
+                     'copy it again from the computer that made it (check it there with `nup verify`), or make it again')
     def _load(self):
         with _Raw(self.path, self.start, self.stored) as r: comp = r.readall()
         try: self.data = zstd().decompress(comp)
-        except Exception as e: raise Error(f'{self.path}: zstd extent at {self.start:#x}: {e}') from None
+        except Exception as e: raise self._refused(e) from None
         if len(self.data) != self.length: raise self._bad(len(self.data))
         self.head = None
     def _prefix(self, n):
@@ -395,7 +410,7 @@ class _Zstd(io.RawIOBase):
                         if not c: break
                     else: c = b''
                     b = d.decompress(c, n - got); out.append(b); got += len(b)
-        except z.ZstdError as e: raise Error(f'{self.path}: zstd extent at {self.start:#x}: {e}') from None
+        except z.ZstdError as e: raise self._refused(e) from None
         if got < n: raise self._bad(got)
         return b''.join(out)
     def readinto(self, buffer):
@@ -412,8 +427,10 @@ class _Zstd(io.RawIOBase):
             if self.stream is None or self.stream.tell() > self.pos:
                 if self.stream is not None: self.stream.close()
                 self.stream = zstd().ZstdFile(_Raw(self.path, self.start, self.stored), 'rb')
-            if self.stream.tell() < self.pos: self.stream.seek(self.pos)
-            data = self.stream.read(want)
+            try:
+                if self.stream.tell() < self.pos: self.stream.seek(self.pos)
+                data = self.stream.read(want)
+            except zstd().ZstdError as e: raise self._refused(e) from None
             if len(data) < want: raise self._bad(self.pos + len(data))
         buffer[:len(data)] = data; self.pos += len(data)
         return len(data)
@@ -425,7 +442,7 @@ class _Zstd(io.RawIOBase):
     def fileno(self):
         if self.tmp is None:
             tmp = tempfile.TemporaryFile(dir=os.environ.get('DM_TEMP') or None)
-            src = _Zstd(self.path, self.start, self.stored, self.length)
+            src = _Zstd(self.path, self.start, self.stored, self.length, name=self.name)
             n = 0
             while b := src.read(8 << 20): tmp.write(b); n += len(b)
             src.close(); tmp.flush()
