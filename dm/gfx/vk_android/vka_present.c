@@ -947,19 +947,6 @@ static int present_one(const pq_item *it) {
                        .commandBufferCount = 1, .pCommandBuffers = &cb, .signalSemaphoreCount = 1, .pSignalSemaphores = &g_sdone[idx]};
     if (!it->fence) ti.waitSemaphoreValueCount = 1;
     frame_rate(it->period); refresh_poll();
-    uint64_t want = 0, period = (uint64_t)((it->hold > 0 ? it->hold : it->period) * 1e9);
-    // With frame generation every image gets a time too, at least one refresh after the one before: a game frame and its generated frames are handed over back to back,
-    // and with their hold under 1.5 refreshes (4x at 25 fps: 10 ms) they went out untimed, two landed in one refresh and the compositor dropped one (on the Portal
-    // about 48 of 105 a second, mostly generated frames, so the screen showed little more than the game's own rate)
-    if (g_fg_on && g_refresh_ns && period < g_refresh_ns) period = g_refresh_ns;
-    if (g_refresh_ns && (period > g_refresh_ns * 3 / 2 || g_fg_on)) {   // hold each image for its present period: the panel refreshes faster than the game presents
-        uint64_t now = now_ns(); want = g_last_desired ? g_last_desired + period : now;
-        if (want < now) want = now;
-        g_last_desired = want; want -= g_refresh_ns / 2;
-    } else g_last_desired = 0;
-    VkPresentTimeGOOGLE pt = {(uint32_t)it->ticket, want};
-    VkPresentTimesInfoGOOGLE ptv = {VK_STRUCTURE_TYPE_PRESENT_TIMES_INFO_GOOGLE, .swapchainCount = 1, .pTimes = &pt};
-    VkPresentInfoKHR pi = {VK_STRUCTURE_TYPE_PRESENT_INFO_KHR, .pNext = V.display_timing ? &ptv : NULL, .waitSemaphoreCount = 1, .pWaitSemaphores = &g_sdone[idx], .swapchainCount = 1, .pSwapchains = &g_swap, .pImageIndices = &idx};
     // The frame done on the GPU before the queue lock is taken: a submission that waits for a timeline value still pending can block inside vkQueueSubmit until it is
     // signalled (Turnip on KGSL emulates timeline semaphores: 25-35 ms a frame with the lock held, so every replay submission behind it waited; Ocarina of Time's note).
     // The copy cannot start before the frame ends anyway; only a value already handed to the queue is waited for here (a later one is handled under the lock below)
@@ -994,7 +981,25 @@ static int present_one(const pq_item *it) {
     void vka_qhold_add(int k, uint64_t ns); uint64_t th0 = now_ns();
     r = vka_hung() ? VK_ERROR_DEVICE_LOST : vk.vkQueueSubmit(V.q, 1, &si, g_fr[k].fence);
     uint64_t th1 = now_ns();
-    VkResult pr = r ? r : vk.vkQueuePresentKHR(V.q, &pi);
+    VkResult pr = r;
+    if (!r) {
+        // The image's desired present time, chosen here, after the waits above (the frame's timeline value, a gate, the queue lock) and the submission: chosen before them
+        // it could be past already when presented (a wait of up to the gate's 30 ms on Turnip), and a failed submission advanced the next frame's time
+        uint64_t want = 0, period = (uint64_t)((it->hold > 0 ? it->hold : it->period) * 1e9);
+        // With frame generation every image gets a time too, at least one refresh after the one before: a game frame and its generated frames are handed over back to back,
+        // and with their hold under 1.5 refreshes (4x at 25 fps: 10 ms) they went out untimed, two landed in one refresh and the compositor dropped one (on the Portal
+        // about 48 of 105 a second, mostly generated frames, so the screen showed little more than the game's own rate)
+        if (g_fg_on && g_refresh_ns && period < g_refresh_ns) period = g_refresh_ns;
+        if (g_refresh_ns && (period > g_refresh_ns * 3 / 2 || g_fg_on)) {   // hold each image for its present period: the panel refreshes faster than the game presents
+            uint64_t now = now_ns(); want = g_last_desired ? g_last_desired + period : now;
+            if (want < now) want = now;
+            g_last_desired = want; want -= g_refresh_ns / 2;
+        } else g_last_desired = 0;
+        VkPresentTimeGOOGLE pt = {(uint32_t)it->ticket, want};
+        VkPresentTimesInfoGOOGLE ptv = {VK_STRUCTURE_TYPE_PRESENT_TIMES_INFO_GOOGLE, .swapchainCount = 1, .pTimes = &pt};
+        VkPresentInfoKHR pi = {VK_STRUCTURE_TYPE_PRESENT_INFO_KHR, .pNext = V.display_timing ? &ptv : NULL, .waitSemaphoreCount = 1, .pWaitSemaphores = &g_sdone[idx], .swapchainCount = 1, .pSwapchains = &g_swap, .pImageIndices = &idx};
+        pr = vk.vkQueuePresentKHR(V.q, &pi);
+    }
     vka_qhold_add(0, th1 - th0); vka_qhold_add(1, now_ns() - th1);
     pthread_mutex_unlock(&V.qmu);
     g_fr[k].held = im;
