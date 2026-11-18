@@ -864,6 +864,7 @@
     <string name="ready_this_device_lacks_it_this">"ينقص هذا الجهاز؛ وتحتاج إليه هذه اللعبة. "</string>
     <string name="ready_not_reported">غير مُبلَّغ عنه</string>
     <string name="ready_guest_address_memory_is_available">ذاكرة عناوين الضيف متاحة عبر اسم بديل مُصدَّر للذاكرة تم اختباره (memory.fdAlias=1).</string>
+    <string name="ready_placed_remap_test_failed">يُبلغ برنامج التشغيل عن خرائط ذاكرة موضوعة، لكن اختبار إعادة تعيين مخزن الضيف فشل: %1$s</string>
     <string name="ready_gpu_features">ميزات GPU</string>
     <string name="ready_texture_tables_runtime_arrays_the">جداول القوام (مصفوفات وقت التشغيل): تعيش فيها مجمّعات قوام اللعبة</string>
     <string name="ready_texture_tables_partially_bound_the">جداول القوام (مرتبطة جزئيًا): تعيش فيها مجمّعات قوام اللعبة</string>

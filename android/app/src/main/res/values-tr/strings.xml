@@ -848,6 +848,7 @@
     <string name="ready_this_device_lacks_it_this">"Bu cihazda yok; bu oyun buna ihtiyaç duyar. "</string>
     <string name="ready_not_reported">bildirilmedi</string>
     <string name="ready_guest_address_memory_is_available">Konuk adres belleği, test edilmiş bir dışa aktarılmış bellek takma adıyla kullanılabilir (memory.fdAlias=1).</string>
+    <string name="ready_placed_remap_test_failed">Sürücü yerleştirilmiş bellek eşlemelerini bildiriyor, ancak misafir arabelleği yeniden eşleme testi başarısız oldu: %1$s</string>
     <string name="ready_gpu_features">GPU özellikleri</string>
     <string name="ready_texture_tables_runtime_arrays_the">Doku tabloları (çalışma zamanı dizileri): oyunun doku havuzları bunlarda durur</string>
     <string name="ready_texture_tables_partially_bound_the">Doku tabloları (kısmen bağlı): oyunun doku havuzları bunlarda durur</string>

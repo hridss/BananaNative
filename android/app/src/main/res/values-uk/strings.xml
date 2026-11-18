@@ -897,6 +897,7 @@
     <string name="ready_this_device_lacks_it_this">"Цей пристрій не підтримує це; грі це необхідно. "</string>
     <string name="ready_not_reported">не повідомляється</string>
     <string name="ready_guest_address_memory_is_available">Пам\'ять із гостьовою адресацією доступна через перевірений псевдонім експортованої пам\'яті (memory.fdAlias=1).</string>
+    <string name="ready_placed_remap_test_failed">Драйвер повідомляє про розміщені відображення пам\'яті, але його перевірка повторного відображення гостьового буфера не вдалася: %1$s</string>
     <string name="ready_gpu_features">Можливості GPU</string>
     <string name="ready_texture_tables_runtime_arrays_the">Таблиці текстур (динамічні масиви): у них розміщуються пули текстур гри</string>
     <string name="ready_texture_tables_partially_bound_the">Таблиці текстур (частково прив\'язані): у них розміщуються пули текстур гри</string>

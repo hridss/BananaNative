@@ -844,6 +844,7 @@
     <string name="ready_this_device_lacks_it_this">"此设备缺少它；此游戏需要它。 "</string>
     <string name="ready_not_reported">未报告</string>
     <string name="ready_guest_address_memory_is_available">可通过已测试的导出内存别名使用游戏地址内存（memory.fdAlias=1）。</string>
+    <string name="ready_placed_remap_test_failed">驱动程序报告支持放置式内存映射，但其客户缓冲区重映射测试失败：%1$s</string>
     <string name="ready_gpu_features">GPU 功能</string>
     <string name="ready_texture_tables_runtime_arrays_the">纹理表（运行时数组）：游戏的纹理池存放其中</string>
     <string name="ready_texture_tables_partially_bound_the">纹理表（部分绑定）：游戏的纹理池存放其中</string>

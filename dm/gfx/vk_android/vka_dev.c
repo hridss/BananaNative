@@ -9,6 +9,7 @@
 #include <string.h>
 #include <time.h>
 #include "vka_fd_alias.h"
+#include "vka_remap_probe.h"
 #include "vka_tlsig.h"
 #include "vka_auto.h"
 _Static_assert(VKA_DRV_QCOM == VK_DRIVER_ID_QUALCOMM_PROPRIETARY && VKA_DRV_TURNIP == VK_DRIVER_ID_MESA_TURNIP, "vka_auto.h driver IDs");
@@ -355,6 +356,15 @@ static int init_once(void) {
     V.guest_type = vka_mem_type(~0u, HV | VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT, 0);
     if (V.guest_type == UINT32_MAX) V.guest_type = vka_mem_type(~0u, HV | VK_MEMORY_PROPERTY_HOST_CACHED_BIT, 0);
     if (V.guest_type == UINT32_MAX) V.guest_type = vka_mem_type(~0u, HV, 0);
+    // An advertised placed-map feature can still refuse the guest pools' remaps (vka_remap_probe.h): then the tested exported-memory alias, if it works
+    if (placed && V.placed) {
+        char why[160]; V.placed = vka_guest_remap_probe(&vk, V.dev, V.guest_type, V.bda, V.placed_align, why, sizeof why);
+        VLOG("guest placed memory: %s", why);
+        if (!V.placed) {
+            V.placed_range = V.unmap_reserve = 0;
+            if (x_fd && vka_fd_enabled()) { V.fd_alias = vka_fd_probe(&vk, V.pd, V.dev, &V.memp, V.bda, why, sizeof why); VLOG("exported guest memory alias: %s (%s)", V.fd_alias ? "on" : "unavailable", why); }
+        }
+    }
     V.upload_type = V.guest_type;
     V.local_type = vka_mem_type(~0u, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 0);
 

@@ -852,6 +852,7 @@
     <string name="ready_this_device_lacks_it_this">"Este dispositivo no lo tiene; este juego lo necesita. "</string>
     <string name="ready_not_reported">no informado</string>
     <string name="ready_guest_address_memory_is_available">La memoria de direcciones del invitado está disponible mediante un alias de memoria exportada probado (memory.fdAlias=1).</string>
+    <string name="ready_placed_remap_test_failed">El controlador indica mapas de memoria colocados, pero su prueba de reasignación del búfer invitado falló: %1$s</string>
     <string name="ready_gpu_features">Funciones de la GPU</string>
     <string name="ready_texture_tables_runtime_arrays_the">Tablas de texturas (arrays en tiempo de ejecución): los grupos de texturas del juego viven en ellas</string>
     <string name="ready_texture_tables_partially_bound_the">Tablas de texturas (parcialmente enlazadas): los grupos de texturas del juego viven en ellas</string>

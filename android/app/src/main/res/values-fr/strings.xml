@@ -852,6 +852,7 @@
     <string name="ready_this_device_lacks_it_this">"Cet appareil ne l'a pas ; ce jeu en a besoin. "</string>
     <string name="ready_not_reported">non signalé</string>
     <string name="ready_guest_address_memory_is_available">La mémoire d\'adresses invité est disponible via un alias de mémoire exportée testé (memory.fdAlias=1).</string>
+    <string name="ready_placed_remap_test_failed">Le pilote annonce des mappages mémoire placés, mais son test de remappage d\'un tampon invité a échoué : %1$s</string>
     <string name="ready_gpu_features">Fonctions du GPU</string>
     <string name="ready_texture_tables_runtime_arrays_the">Tables de textures (tableaux d\'exécution) : les pools de textures du jeu y résident</string>
     <string name="ready_texture_tables_partially_bound_the">Tables de textures (partiellement liées) : les pools de textures du jeu y résident</string>

@@ -856,6 +856,7 @@
     <string name="ready_this_device_lacks_it_this">"To urządzenie tego nie ma; ta gra tego potrzebuje. "</string>
     <string name="ready_not_reported">nie zgłoszono</string>
     <string name="ready_guest_address_memory_is_available">Pamięć adresów gościa jest dostępna przez przetestowany alias pamięci eksportowanej (memory.fdAlias=1).</string>
+    <string name="ready_placed_remap_test_failed">Sterownik zgłasza umieszczone mapowania pamięci, ale jego test ponownego mapowania bufora gościa nie powiódł się: %1$s</string>
     <string name="ready_gpu_features">Funkcje GPU</string>
     <string name="ready_texture_tables_runtime_arrays_the">Tablice tekstur (tablice czasu wykonania): w nich mieszczą się pule tekstur gry</string>
     <string name="ready_texture_tables_partially_bound_the">Tablice tekstur (częściowo powiązane): w nich mieszczą się pule tekstur gry</string>

@@ -902,6 +902,7 @@
     <string name="ready_this_device_lacks_it_this">"This device lacks it; this game needs it. "</string>
     <string name="ready_not_reported">not reported</string>
     <string name="ready_guest_address_memory_is_available">Guest-address memory is available through a tested exported-memory alias (memory.fdAlias=1).</string>
+    <string name="ready_placed_remap_test_failed">The driver reports placed memory maps, but its guest-buffer remap test failed: %1$s</string>
     <string name="ready_gpu_features">GPU features</string>
     <string name="ready_texture_tables_runtime_arrays_the">Texture tables (runtime arrays): the game\'s texture pools live in them</string>
     <string name="ready_texture_tables_partially_bound_the">Texture tables (partially bound): the game\'s texture pools live in them</string>

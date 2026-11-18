@@ -834,6 +834,7 @@
     <string name="ready_this_device_lacks_it_this">"이 기기에는 없지만 이 게임에는 필요해요. "</string>
     <string name="ready_not_reported">보고되지 않음</string>
     <string name="ready_guest_address_memory_is_available">검증된 내보낸 메모리 별칭(memory.fdAlias=1)으로 게스트 주소 메모리를 사용할 수 있어요.</string>
+    <string name="ready_placed_remap_test_failed">드라이버가 배치된 메모리 매핑을 지원한다고 보고하지만, 게스트 버퍼 재매핑 테스트에 실패했습니다: %1$s</string>
     <string name="ready_gpu_features">GPU 기능</string>
     <string name="ready_texture_tables_runtime_arrays_the">텍스처 테이블(runtime arrays): 게임의 텍스처 풀이 여기에 있어요</string>
     <string name="ready_texture_tables_partially_bound_the">텍스처 테이블(partially bound): 게임의 텍스처 풀이 여기에 있어요</string>

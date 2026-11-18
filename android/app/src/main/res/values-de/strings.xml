@@ -849,6 +849,7 @@
     <string name="ready_this_device_lacks_it_this">"Diesem Gerät fehlt es; dieses Spiel braucht es. "</string>
     <string name="ready_not_reported">nicht gemeldet</string>
     <string name="ready_guest_address_memory_is_available">Gast-Adressspeicher ist über einen getesteten exportierten Speicher-Alias verfügbar (memory.fdAlias=1).</string>
+    <string name="ready_placed_remap_test_failed">Der Treiber meldet platzierte Speicherzuordnungen, aber sein Test der Neuzuordnung eines Gast-Puffers ist fehlgeschlagen: %1$s</string>
     <string name="ready_gpu_features">GPU-Funktionen</string>
     <string name="ready_texture_tables_runtime_arrays_the">Texturtabellen (Runtime-Arrays): Die Texturpools des Spiels liegen darin</string>
     <string name="ready_texture_tables_partially_bound_the">Texturtabellen (teilweise gebunden): Die Texturpools des Spiels liegen darin</string>
