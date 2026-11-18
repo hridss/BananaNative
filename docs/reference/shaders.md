@@ -1057,6 +1057,14 @@ Finding, keying and translating shaders (`dm/gfx/tools/shader_split.py`, `dmsh_b
 - **Found on:** no game symptom; upstream's Jetson Orin sm_87 probes (BF16: 1,880 differences in 2,048 halves before, none after; F16 `.RELU`: 913, none after).
 - **Check:** upstream's `test_dmsh_ampere_orin.py`, a Metal test with its Orin fixture, not in this tree; `test_dmsh_ampere_mem.py`'s Pokopia `.MERGE_C` cases cover the unchanged path.
 
+### IDP integer dot products
+
+- **Symptom:** `Ampere instruction 226 at 0x… is not implemented` (or another opcode whose low nine bits are 0x026) in the shader build: a shader using `dp4a` or `dp2a` is left out.
+- **Cause:** the Ampere decoder had no IDP entry.
+- **Fix:** `AIdp` in `InstEmitAmpereAlu.cs`, registered as `InstName.Idp` with the shared ALU operand reader: DP4A sums the four products of the sources' bytes, DP2A A's two halfwords times B's low or high pair of bytes (`.HI`, bit 77), each source signed or unsigned on its own (bits 73 and 74), accumulated into C with 32-bit wraparound. Other modifier bits stop the shader with their own message (upstream seedds/nxnative 2dacca8d, PR #2052).
+- **Found on:** no game; upstream's Jetson Orin sm_87 probes (five programs refused before; all 5,120 lanes match after) and synthetic checks of the constant-buffer, immediate and uniform-register forms.
+- **Check:** upstream's `test_dmsh_ampere_orin.py`, a Metal test with its Orin fixture, not in this tree.
+
 ### TXD through a uniform register kept no handle
 
 - **Symptom:** `Failed to find handle source for bindless access` in the build's translator notes, for a shader with TXD through a uniform register (0xf6c). The MSL has no gradient sample, and what it read comes back 0.
