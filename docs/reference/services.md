@@ -757,6 +757,13 @@ Most service calls can be found before they crash, before the first boot or the 
 - **Fix:** `GetUserId` copies the Uid and returns 0 for any handle, as the SDK does (`hle_account.c`); the open calls still write the marker, which nothing checks. `t_account` covers the host's handle and built handles with third words 2, 8, 0 and all ones.
 - **Found on:** [EA SPORTS FC 27](../../dm/games/0100C49025D3E000/README.md) (PR #1129; two DualSense controllers on a Mac and an iPad Air M4, reported in its review thread); first found on EA SPORTS FC 26 by the [FC 26 120 fps patch](https://github.com/imnotsharingmyname/nxnative-fc26-120fps) (MIT).
 
+### The local user's profile image
+
+- **Symptom:** `Break#1 reason=0 Result=0` right after the first save is created, then exit 42; the stack has `nn::diag::detail::OnAssertionFailure` under `nn::image::JpegDecoder::Decode` (`sdk+0x394e4`), called from the game (Burnout Paradise Remastered, SDK 9.3).
+- **Cause:** `account::LoadProfileImage` failed with 0 bytes ("the host has none"). Every user on a console has a profile image, a 256x256 JPEG, and the game hands the buffer to `JpegDecoder` without checking the Result.
+- **Fix:** `hle_account.c` answers every user (`DM_USERS`) with the same image, a plain 256x256 baseline JPEG of 670 bytes built into the host: the size is the image's, the copy what the buffer holds.
+- **Found on:** Burnout Paradise Remastered (`0100DBF01000A000`, no profile; [issue #1118](https://github.com/seedds/nxnative/issues/1118)), from the reporter's symbolized stack; not run here.
+
 ### Mii database answered by the host
 
 - **Symptom:** `[RED] sf: the game connects to service mii:e … mii:u itself`, then an abort.
