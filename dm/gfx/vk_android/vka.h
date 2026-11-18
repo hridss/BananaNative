@@ -311,6 +311,7 @@ typedef struct vka_img {
     // The texture cache's own bookkeeping (vka_tex.c "Live images"): its place in the live list + 1 (0: not in it), the next live image in its storage address's chain,
     // and the video pool registrations count (dm_codec_video_epoch) at which it was last checked for lying in a video pool
     int live_ix; struct vka_img *mnext; uint64_t vep;
+    uint32_t smap_n;   // its entries in the serial map (vka_smap.h: vksm_del_im stops after them), under g_tmu
 } vka_img;
 // Texture level lv as a level of im (a sparse or soft texture's image starts at level im->base): 0 when the image does not hold it
 static inline int vka_img_lv(const vka_img *im, uint32_t *lv) { if (!vksoft_lv(im->base, im->levels - im->lvk, lv)) return 0; *lv += im->lvk; return 1; }   // (a level child's: + lvk)
