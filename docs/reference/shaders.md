@@ -1065,6 +1065,14 @@ Finding, keying and translating shaders (`dm/gfx/tools/shader_split.py`, `dmsh_b
 - **Found on:** no game; upstream's Jetson Orin sm_87 probes (five programs refused before; all 5,120 lanes match after) and synthetic checks of the constant-buffer, immediate and uniform-register forms.
 - **Check:** upstream's `test_dmsh_ampere_orin.py`, a Metal test with its Orin fixture, not in this tree.
 
+### VABSDIFF, the absolute difference with an add
+
+- **Symptom:** `Ampere instruction 214 at 0x… is not implemented` (low nine bits 0x014) in the shader build: a shader using `sad.u32` is left out.
+- **Cause:** the GPU compiler writes `sad` as `VABSDIFF.U32`, and the Ampere decoder had no entry for it.
+- **Fix:** `AVabsdiff` in `InstEmitAmpereAlu.cs` writes `max(a, b) - min(a, b) + c` with 32-bit wraparound, signed ordering when bit 73 is set. Bits 81..83 are the `Pu` predicate field; only `PT`, the recorded form, is taken, and another `Pu` or modifier stops the shader with its own message (upstream seedds/nxnative a3663659, PR #2053).
+- **Found on:** no game; upstream's Jetson Orin sm_87 probes (the refused unsigned shader matches all 1,024 lanes after) and synthetic checks of signed extrema and non-register inputs.
+- **Check:** upstream's `test_dmsh_ampere_orin.py`, a Metal test with its Orin fixture, not in this tree.
+
 ### TXD through a uniform register kept no handle
 
 - **Symptom:** `Failed to find handle source for bindless access` in the build's translator notes, for a shader with TXD through a uniform register (0xf6c). The MSL has no gradient sample, and what it read comes back 0.
