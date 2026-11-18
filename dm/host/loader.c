@@ -919,8 +919,11 @@ static void arena_reserve(module_t *mods, int n, const char **mdir) {
     g_arena = g_arena_cur = a; g_arena_end = a + total;
     LOG("module arena %p +%#zx: %d modules back to back in load order", a, total, n);
 }
-static uint8_t *module_mmap(const char *name, size_t len) {   // the next len bytes of the arena, or a mapping of their own without one
-    if (!g_arena) return mmap(NULL, len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+// An NRO (nro.tsv, preload_nros) has a mapping of its own: the arena is sized for the modules of the game's start (arena_reserve), the ones the console lays back to
+// back, and an NRO mapped into it found no room ("do not fit in the module arena (0 left)": the host stopped at start for every pack with NROs). What asks whether an
+// address is the game's code asks the module list (module_of), which holds the NROs too
+static uint8_t *module_mmap(const char *name, size_t len, int nro) {   // the next len bytes of the arena, or a mapping of their own without one
+    if (!g_arena || nro) return mmap(NULL, len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
     if (g_arena_cur + len > g_arena_end) die("%s: %#zx bytes do not fit in the module arena (%#zx left)", name, len, (size_t)(g_arena_end - g_arena_cur));
     uint8_t *p = mmap(g_arena_cur, len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_FIXED, -1, 0);
     if (p != MAP_FAILED) g_arena_cur += len;
@@ -939,7 +942,7 @@ static void map_image(module_t *m, const char *dir) {
         if (sz < fl + bl) die("%s is shorter than FILE_IMAGE_LEN %#llx + BACK_LEN %#llx", path, (unsigned long long)fl, (unsigned long long)bl);
         m->size = m->image_size; m->patch_len = (sz - bl - fl + 0x3FFF) & ~0x3FFFull;
         if (m->patch_len > pre) die("%s patch area of %#llx bytes does not fit in the %#llx before the base", path, (unsigned long long)m->patch_len, (unsigned long long)pre);
-        uint8_t *a = module_mmap(m->name, pre + m->size);   // the module arena (see above)
+        uint8_t *a = module_mmap(m->name, pre + m->size, m->nro);   // the module arena (see above)
         if (a == MAP_FAILED) die("%s mmap %#llx", m->name, (unsigned long long)(pre + m->size));
         m->base = a + pre;
         memcpy(m->base, raw, fl); memcpy(a, raw + fl, sz - bl - fl); if (bl) memcpy(m->base + m->back_off, raw + sz - bl, bl);
@@ -952,7 +955,7 @@ static void map_image(module_t *m, const char *dir) {
         return;
     }
     m->size = (sz + 0x3FFF) & ~0x3FFFull;
-    m->base = module_mmap(m->name, m->size);   // the module arena (see above)
+    m->base = module_mmap(m->name, m->size, m->nro);   // the module arena (see above)
     if (m->base == MAP_FAILED) die("%s mmap", m->name);
     memcpy(m->base, raw, sz); free(raw); install_key_page(m); window_apply(m); shape_apply(m); fiber_pac_apply(m); pac_patch_text(m); rt_pool_apply(m);
     uint64_t rx = (m->text_end + 0x3FFF) & ~0x3FFFull;
