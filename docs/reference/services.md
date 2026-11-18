@@ -759,6 +759,15 @@ Most service calls can be found before they crash, before the first boot or the 
 
 ### `account::GetUserId` copies the Uid of any handle
 
+### An account AsyncContext needs its SDK constructor
+
+- **Symptom:** `CRASH sig=11` at `main+0x5b64f8`, `lr=main+0x3f1b8cc` (`nn.account.AsyncContext$$Finalize`), on an IL2CPP thread-pool worker a few seconds after the player confirms a name and birthday (Pokémon Friends 1.1.5). The object's first word, its vtable, holds stray bytes (`0xffffd256` in one run, `0x15600000128` in another). The game had started `account::EnsureNetworkServiceAccountIdTokenCacheAsync`.
+- **Cause:** `nn::account::AsyncContext` is polymorphic. The SDK's constructor (SDK 19.3.11: `sdk+0x1ad6c8`) writes the class's vtable and nulls the three words after it, the IPC object pointer at +0x18 among them, and sends nothing. The host took the constructor over with one that wrote no memory, so the vtable word kept what the allocator left there. The game's C# binding deletes the native context from the managed finalizer through the virtual deleting destructor, inlined in main (`main+0x5b64f0`: `if (p) p->vtable[1](p)`), which the host's `AsyncContextD1Ev` takeover never sees, and jumped through those bytes.
+- **Fix:** the constructor is no longer taken over (`hle_account.c`): the SDK's own runs. No host interface sets the IPC pointer, so the SDK's destructor, reached through the vtable, finds no session to close and frees the object. `friends::AsyncContext` and `account::NintendoAccountAuthorizationRequestContext` have no vtable (their SDK constructors write none), so their takeovers stay.
+- **Found on:** Pokémon Friends (`010008C01E742000`, update 1.1.5, SDK 19.3.11; no profile in the repository yet). The managed names come from Il2CppDumper's table ([IL2CPP method lookup](../development.md#il2cpp-method-lookup)).
+
+### Creating an ssl context needs no network
+
 - **Symptom:** a second controller ends the game with `FATAL account::GetUserId: the handle was not issued by the host (0x2)`, at boot with both connected or when the second joins during play (EA SPORTS FC 27 1.8d.6523; the FC 26 patch reports `(0x8)`).
 - **Cause:** the host checked the handle's third word against the marker its own open calls write. The SDK's accessor never reads that word: FC 27's `nn::account::GetUserId` (`sdk+0x1c0040`) calls `detail::GetUserId` (`sdk+0x1bede0`, `ldp x8, x1, [x0]; mov x0, x8; ret`), stores the 16 bytes and returns 0. For a second controller's player FC 27 passes a handle it built and never filled (`main+0x1f638b0`; words `0x7012222b20 0x400000001 0x2`), so on a console the call succeeds and returns those bytes.
 - **Fix:** `GetUserId` copies the Uid and returns 0 for any handle, as the SDK does (`hle_account.c`); the open calls still write the marker, which nothing checks. `t_account` covers the host's handle and built handles with third words 2, 8, 0 and all ones.
