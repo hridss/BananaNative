@@ -40,6 +40,7 @@ typedef struct {
     int kind;
     uint64_t serial, fence, frame; int origin_ll;   // J_SUB: the queue, its window origin, the fence reserved for it, the game's frame when it submitted; J_WAIT: the queue, the fence it waits for
     const uint8_t **h; int nh;                   // J_SUB: the command handles, in order
+    void *blk;                                   // J_SUB: the host block of canonical records the handles point into (hle_nvn.c rec_linear; freed once replayed)
     qs_wsnap *ws; int nws;                       // J_SUB: what the syncs of its WAIT_SYNC records held when it was submitted
     int w0done, w0kind; volatile uint32_t *w0word; uint32_t w0mode, w0value; uint64_t w0fence;   // J_SUB: its first wait, when no event signal comes before it (qs_sub.w0kind)
     uint64_t ticket; tex_t t; double period; int has_crop, crop[4];   // J_PRESENT
@@ -49,7 +50,7 @@ static job_t g_q[NJOB]; static uint64_t g_qin, g_qout, g_pres_in, g_pres_out;   
 static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER; static pthread_cond_t g_cv = PTHREAD_COND_INITIALIZER;
 static int g_on = -1, g_frames = 1, g_up;
 // The submission being gathered on the game's thread (the host submits under its own lock: one at a time)
-static job_t g_cur; static int g_cur_cap, g_in_sub; static uint64_t g_pend_serial; static int g_pend_origin;
+static job_t g_cur; static int g_cur_cap, g_in_sub; static uint64_t g_pend_serial; static int g_pend_origin; static void *g_cur_blk;
 
 int vka_worker_on(void) {
     if (g_on < 0) { const char *e = getenv("DM_VK_WORKER"); g_on = !e || atoi(e); e = getenv("DM_VK_WORKER_FRAMES"); g_frames = e && atoi(e) > 0 ? atoi(e) : 1; }
@@ -315,7 +316,7 @@ static void *worker_main(void *arg) {
         aff_check();
         if (j.kind == J_SUB && qon) {
             qs_sub *q = calloc(1, sizeof *q);
-            q->serial = j.serial; q->fence = j.fence; q->frame = j.frame; q->origin_ll = j.origin_ll; q->h = j.h; q->nh = j.nh; q->ws = j.ws; q->nws = j.nws;
+            q->serial = j.serial; q->fence = j.fence; q->frame = j.frame; q->origin_ll = j.origin_ll; q->h = j.h; q->nh = j.nh; q->ws = j.ws; q->nws = j.nws; q->blk = j.blk;
             q->w0kind = j.w0kind; q->w0word = j.w0word; q->w0mode = j.w0mode; q->w0value = j.w0value; q->w0fence = j.w0fence;
             vka_qtrace(QT_SUB, j.serial, j.fence, j.frame, (uint32_t)j.w0kind, j.w0mode, j.w0value, 0, j.w0word);
             qs_submit(&g_qs, q); qs_poll(&g_qs); qs_publish();
@@ -324,7 +325,7 @@ static void *worker_main(void *arg) {
             vka_gp_sub_frame(j.frame); vka_exec_sub_frame(j.frame); vka_rp_sub_begin();
             for (int i = 0; i < j.nh; i++) vka_rp_exec(j.h[i], j.fence);
             vka_rp_sub_commit(j.fence);
-            free(j.h); free(j.ws);
+            free(j.h); free(j.ws); free(j.blk);
         } else if (j.kind == J_WAIT) {
             if (qon) { qs_sub *q = calloc(1, sizeof *q); q->serial = j.serial; q->wait_fence = j.fence; q->frame = j.frame; vka_qtrace(QT_SUB, j.serial, 0, j.frame, 3, 0, 0, 0, NULL); qs_submit(&g_qs, q); qs_publish(); }
         } else if (j.kind == J_PRESENT) {
@@ -412,10 +413,13 @@ void mtl_exec(const uint8_t *handle) {
     if (g_cur.nh == g_cur_cap) { g_cur_cap = g_cur_cap ? 2 * g_cur_cap : 64; g_cur.h = realloc(g_cur.h, (size_t)g_cur_cap * sizeof *g_cur.h); }
     g_cur.h[g_cur.nh++] = handle;
 }
+// The submission's record block (hle_nvn.c nvnQueueSubmitCommands): the worker replays it after the game's thread goes on, so the job keeps it and frees it once replayed
+// (with its handles: here, or with its qs_sub). Replayed inline, the submission is done when mtl_sub_commit returns and the caller frees it
+int mtl_sub_keep(void *block) { if (!g_in_sub) return 0; g_cur_blk = block; return 1; }
 uint64_t mtl_sub_commit(void) {
     if (!g_in_sub) { uint64_t f = vka_fp_host(NULL), r = vka_rp_sub_commit(0); vka_fp_back(f); return r; }
     g_in_sub = 0;
-    job_t j = {J_SUB}; j.serial = g_pend_serial; j.origin_ll = g_pend_origin; j.nh = g_cur.nh;
+    job_t j = {J_SUB}; j.serial = g_pend_serial; j.origin_ll = g_pend_origin; j.nh = g_cur.nh; j.blk = g_cur_blk; g_cur_blk = NULL;
     j.h = malloc((size_t)(j.nh ? j.nh : 1) * sizeof *j.h); if (j.nh) memcpy(j.h, g_cur.h, (size_t)j.nh * sizeof *j.h);
     j.fence = vka_fence_next(); j.frame = vka_frame();
     int cap = 0; for (int i = 0; i < j.nh; i++) fence_syncs(j.h[i], j.fence, 0, &j, &cap);

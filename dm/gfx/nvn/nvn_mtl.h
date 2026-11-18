@@ -43,6 +43,7 @@ void mtl_sub_copy(uint64_t src, uint64_t dst, uint64_t n);               // Buff
 void mtl_sub_event(volatile uint32_t *val, uint32_t mode, uint32_t v);   // Write the event value after completion (0 write / 1 add)
 void mtl_sub_counter(uint64_t addr, uint32_t type);                       // Write the counter record after completion
 uint64_t mtl_sub_commit(void);
+int mtl_sub_keep(void *block);                       // before mtl_sub_commit: 1 = the backend frees the submission's record block (malloc'd, hle_nvn.c rec_linear) once it has replayed it; 0 = the caller frees it after the commit
 
 uint64_t mtl_last_fence(void);                       // Fence value of the most recent submit (0 = never submitted)
 uint64_t mtl_acquire_fence(uint64_t presented);       // The fence a window acquire sync waits for (presented: the last fence reserved when that image was last presented); weak default in hle_nvn.c: mtl_last_fence()

@@ -44,6 +44,7 @@ typedef struct qs_sub {
     struct qs_sub *next;
     uint64_t serial, fence, frame, seq; int origin_ll;   // fence 0: a queue-level wait (wait_fence), no commands
     const uint8_t **h; int nh;                            // the command handles (owned: freed with the submission)
+    void *blk;                                            // the record block the handles point into (owned: freed with the submission; hle_nvn.c rec_linear)
     qs_wsnap *ws; int nws, wsi;                           // its WAIT_SYNC snapshots in replay order (owned), the next one
     uint64_t wait_fence;                                  // nvnQueueWaitSync: the fence its queue's later work waits for
     int hi, resumed; qs_cont cont;                        // replay goes on at handle hi (at cont when resumed)
@@ -238,7 +239,7 @@ static inline qs_queue *qs_queue_of(qs *sc, uint64_t serial) {
     if (sc->nq == QS_NQ) return NULL;
     qs_queue *q = &sc->q[sc->nq++]; memset(q, 0, sizeof *q); q->serial = serial; return q;
 }
-static inline void qs_free(qs_sub *s) { free((void *)s->h); free(s->ws); free(s); }
+static inline void qs_free(qs_sub *s) { free((void *)s->h); free(s->ws); free(s->blk); free(s); }
 static inline void qs_force_all(qs *sc, int why);
 // Room for one more commit: QS_DEFER_MAX unsignalled commits release everything first (their completion effects wait for a covering signal: vka_exec.c carries at most
 // NCARRY). Asked before a submission is taken off its queue's list, so the release keeps each queue's order
