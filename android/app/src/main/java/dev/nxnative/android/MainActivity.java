@@ -1143,10 +1143,14 @@ public final class MainActivity extends Activity {
         gameBox.removeAllViews();
         selectedTile = null;
         if (addFab != null) addFab.setVisibility(View.VISIBLE);   // Add game is always there: with no game it is the only way in (#381: it was hidden and the welcome card had no button)
-        if (games.isEmpty() && !Ondevice.showing()) {   // no game: one line, the button has the focus
+        boolean empty = games.isEmpty() && !Ondevice.showing();
+        if (addFab != null) addFab.setFocusedByDefault(empty);   // where a controller's first press lands (startSelection): Add game only when there is no game
+        if (empty) {   // no game: one line, the button has the focus
             gameBox.addView(emptyHint(), new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
             noFocusTint(gameBox);
-            if (addFab != null) addFab.post(() -> { if (addFab.isAttachedToWindow() && !addFab.isInTouchMode() && getCurrentFocus() == null) addFab.requestFocus(); });
+            boolean first = !tilesShown;
+            tilesShown = true;
+            if (addFab != null) addFab.post(() -> { if (addFab.isAttachedToWindow() && !addFab.isInTouchMode() && (first || getCurrentFocus() == null)) addFab.requestFocus(); });
             hintUpdate();
             return;
         }
@@ -1351,10 +1355,11 @@ public final class MainActivity extends Activity {
     private boolean tilesShown;
 
     /**
-     * A controller or keyboard starts on the first game's tile (nothing happens in touch mode, where tiles take no focus); the first game is the selected one either
-     * way. The first build since the screen was made (the app opened) moves the focus to the first game even when the window already gave it to another view
-     * (Android focuses the first focusable view, a top-bar button, before the tiles exist: the ring was there, not on the first game); a later build only when
-     * nothing has the focus
+     * A controller or keyboard starts on the first game's tile; the first game is the selected one either way. The app opens in touch mode, where a tile takes no
+     * focus (requestFocus does nothing), and a controller's first press leaves it: Android then gives the focus to the window's default view
+     * (ViewRootImpl.leaveTouchMode → restoreDefaultFocus), which without one is the first focusable view in the tree, a top-bar button. So the first tile is the
+     * window's default focus (setFocusedByDefault; Add game is when there is no game: refresh). Out of touch mode, the first build since the screen was made (the
+     * app opened) moves the focus to the first game even when the window already gave it to another view; a later build only when nothing has the focus
      */
     private void startSelection(ViewGroup row) {
         boolean first = !tilesShown;
@@ -1364,7 +1369,11 @@ public final class MainActivity extends Activity {
             if (row.getChildAt(k).getTag() instanceof TileInfo) {
                 View t = row.getChildAt(k);
                 selectTile(t, false);
-                if (first || getCurrentFocus() == null) t.requestFocus();
+                t.setFocusedByDefault(true);
+                if (!t.isInTouchMode() && (first || getCurrentFocus() == null)) {
+                    if (t.isAttachedToWindow()) t.requestFocus();
+                    else t.post(() -> { if (!t.isInTouchMode() && (first || getCurrentFocus() == null)) t.requestFocus(); });   // the app opening: once the page is in the window
+                }
                 return;
             }
     }
