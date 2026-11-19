@@ -602,6 +602,9 @@ void vka_dispatch(vka_dstate *d, const p_dispatch *dp);
 // Whether the game is a Switch 2 one (NVN2: its compute reads the group counts at c0 + DMSH_C0_DISPATCH_NVN2): dm_sdk_ounce() unless set (the replayer sets it from the capture)
 int vka_nvn2(void);
 void vka_set_nvn2(int on);
+// The GOB order (nvn_texdesc.gob_order, nvn_deswizzle.h) of a texture the replay makes itself with no game texture to take it from: the order nvnTextureInitialize gives a texture
+// whose builder names no device (hle_nvn.c), the Switch 2's for an NVN2 game and the X1's otherwise. A texture made from a game's one takes that texture's order instead
+static inline uint16_t vka_gob_order(void) { return (uint16_t)(vka_nvn2() != 0); }
 void vka_draw_force(int on);   // draws on whatever the memory (the selftest, whose memory may be a mapped allocation)
 // DM_VK_NANSCAN (vka_nanscan.c): NaN / infinite texels in each pass's float attachments, logged with the pass's shaders
 int vka_nan_on(void);

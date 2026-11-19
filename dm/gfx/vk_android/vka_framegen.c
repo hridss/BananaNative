@@ -172,7 +172,7 @@ static vka_img *out_new(VkExtent2D e, int i, VkImageView *view) {
     if (!im) return NULL;
     im->serial = 0xF6000000ull + (uint64_t)i; im->refs = 1; im->inited = 1; im->gpu_owned = 1;
     im->f = (vka_fmt){VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_R8G8B8A8_UNORM, 0, 0, 4, 1, 1};
-    im->d.target = NVN_TEXTURE_TARGET_2D; im->d.width = e.width; im->d.height = e.height;
+    im->d.target = NVN_TEXTURE_TARGET_2D; im->d.width = e.width; im->d.height = e.height; im->d.gob_order = vka_gob_order();
     im->usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     im->aspect = VK_IMAGE_ASPECT_COLOR_BIT; im->w = e.width; im->h = e.height; im->depth = im->layers = im->levels = im->samples = 1;
     VkImageCreateInfo ci = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO, .imageType = VK_IMAGE_TYPE_2D, .format = im->f.vk, .extent = {e.width, e.height, 1}, .mipLevels = 1, .arrayLayers = 1,

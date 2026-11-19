@@ -109,7 +109,7 @@ static void astc_check(VkCommandBuffer cb) {
         memcpy(blocks + 16 * b, &lo, 8); memcpy(blocks + 16 * b + 8, &hi, 8);
     }
     memset(&t, 0, sizeof t);
-    t.d.target = NVN_TEXTURE_TARGET_2D; t.d.format = 0x79; t.d.width = 8; t.d.height = 8; t.d.depth = 1; t.d.levels = 1; t.d.flags = NVN_TEXTURE_FLAGS_LINEAR; t.d.stride = 32;
+    t.d.target = NVN_TEXTURE_TARGET_2D; t.d.format = 0x79; t.d.width = 8; t.d.height = 8; t.d.depth = 1; t.d.levels = 1; t.d.flags = NVN_TEXTURE_FLAGS_LINEAR; t.d.stride = 32; t.d.gob_order = vka_gob_order();
     nvn_tex_layout(&t.d, &t.L); t.mem = blocks; t.serial = nvn_new_serial();
     vka_img *im = vka_tex_get(&t, cb);
     if (!im || !vka_static(64 * 16, V.sb_align, &g_fetch_out)) { VLOG("NaN scan: ASTC check: no test texture"); return; }

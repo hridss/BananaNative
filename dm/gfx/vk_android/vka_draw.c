@@ -494,15 +494,16 @@ static void rt_range(const vka_img *im, const view_t *v, int has_v, uint32_t *lv
 // back after it (vkCmdCopyImage between size-compatible formats: a texel of one is a block of the other). Only levels whose size is a whole number of blocks; others are
 // not drawn into, as before, logged. DM_VK_BC_RT=0: none (the earlier behaviour)
 static int bc_fmt(const vka_fmt *f) { return f->bw > 1 || f->bh > 1; }   // (vka_tex.c compressed)
-static struct { int fmt; uint32_t w, h, nl; tex_t t; } g_bcsh[16]; static int g_nbcsh;   // (the recording thread only)
-static vka_img *bcrt_shadow(int fmt, uint32_t w, uint32_t h, uint32_t nl) {
-    int k = 0; while (k < g_nbcsh && !(g_bcsh[k].fmt == fmt && g_bcsh[k].w == w && g_bcsh[k].h == h && g_bcsh[k].nl == nl)) k++;
+static struct { int fmt; uint32_t w, h, nl; uint16_t go; tex_t t; } g_bcsh[16]; static int g_nbcsh;   // (the recording thread only)
+// go: the GOB order of the texture drawn through it (nvn_texdesc.gob_order): the shadow stands for that texture's blocks, so it takes its order
+static vka_img *bcrt_shadow(int fmt, uint32_t w, uint32_t h, uint32_t nl, uint16_t go) {
+    int k = 0; while (k < g_nbcsh && !(g_bcsh[k].fmt == fmt && g_bcsh[k].w == w && g_bcsh[k].h == h && g_bcsh[k].nl == nl && g_bcsh[k].go == go)) k++;
     if (k == g_nbcsh) {
         if (k == 16) { VRED_ONCE("block-compressed render targets: more than 16 shadow shapes: the rest are not drawn into"); return NULL; }
         tex_t *t = &g_bcsh[k].t; memset(t, 0, sizeof *t);
-        t->d.target = nl > 1 ? NVN_TEXTURE_TARGET_2D_ARRAY : NVN_TEXTURE_TARGET_2D; t->d.format = (uint32_t)fmt; t->d.width = w; t->d.height = h; t->d.depth = nl; t->d.levels = 1;
+        t->d.target = nl > 1 ? NVN_TEXTURE_TARGET_2D_ARRAY : NVN_TEXTURE_TARGET_2D; t->d.format = (uint32_t)fmt; t->d.width = w; t->d.height = h; t->d.depth = nl; t->d.levels = 1; t->d.gob_order = go;
         nvn_tex_layout(&t->d, &t->L); t->serial = nvn_new_serial();
-        g_bcsh[k].fmt = fmt; g_bcsh[k].w = w; g_bcsh[k].h = h; g_bcsh[k].nl = nl; g_nbcsh++;
+        g_bcsh[k].fmt = fmt; g_bcsh[k].w = w; g_bcsh[k].h = h; g_bcsh[k].nl = nl; g_bcsh[k].go = go; g_nbcsh++;
         VLOG("block-compressed render target: a shadow of %ux%u x%u in NVN format %#x (serial %llu)", w, h, nl, (unsigned)fmt, (unsigned long long)t->serial);
     }
     return vka_tex_get(&g_bcsh[k].t, g_cb);   // (looked up each time: the image may have been let go and made again)
@@ -523,7 +524,7 @@ static VkImageView bcrt_attach(const p_set_rt *rt, int i, vka_img *im, const vka
     uint32_t mw = im->w >> lv ? im->w >> lv : 1, mh = im->h >> lv ? im->h >> lv : 1;
     if (mw % im->f.bw || mh % im->f.bh) { VRED_ONCE("block-compressed render target %ux%u (level %u) is not a whole number of blocks: not drawn into", mw, mh, lv); return VK_NULL_HANDLE; }
     uint32_t bw = mw / im->f.bw, bh = mh / im->f.bh;
-    vka_img *sh = bcrt_shadow(rt->cview[i].format, bw, bh, nl);
+    vka_img *sh = bcrt_shadow(rt->cview[i].format, bw, bh, nl, im->d.gob_order);
     if (!sh || !(sh->usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT)) { VRED_ONCE("block-compressed render target: no shadow image of NVN format %#x: not drawn into", rt->cview[i].format); return VK_NULL_HANDLE; }
     vka_tex_own(im, g_cb); vka_tex_own(sh, g_cb);
     VkImageView v = vka_view(sh, f->view, nl > 1 ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D, VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, nl, NULL);
@@ -1364,7 +1365,7 @@ VkImageView placeholder(uint8_t dim, int storage) {
         static const int formats[3] = {NVN_FORMAT_RGBA8, NVN_FORMAT_RGBA8I, NVN_FORMAT_RGBA8UI};
         static tex_t t[3][3]; tex_t *tt = &t[shape][cls]; memset(tt, 0, sizeof *tt);
         tt->d.target = d == 2 ? NVN_TEXTURE_TARGET_3D : d == 0 ? NVN_TEXTURE_TARGET_1D_ARRAY : NVN_TEXTURE_TARGET_CUBEMAP_ARRAY; tt->d.format = formats[cls];
-        tt->d.width = 1; tt->d.height = 1; tt->d.depth = d == 2 ? 1 : 6; tt->d.levels = 1; tt->d.flags = NVN_TEXTURE_FLAGS_IMAGE;
+        tt->d.width = 1; tt->d.height = 1; tt->d.depth = d == 2 ? 1 : 6; tt->d.levels = 1; tt->d.flags = NVN_TEXTURE_FLAGS_IMAGE; tt->d.gob_order = vka_gob_order();
         nvn_tex_layout(&tt->d, &tt->L); tt->serial = nvn_new_serial();
         *pim = vka_tex_get(tt, g_cb);
         if (!*pim) return VK_NULL_HANDLE;
