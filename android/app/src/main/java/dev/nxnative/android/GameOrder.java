@@ -59,6 +59,42 @@ final class GameOrder {
         return out;
     }
 
+    /**
+     * Home is a recency list, as a console's home: the order after a game was played (or added), that game first and the others as shown; the list given is
+     * not changed. The player's moves (Move) stay until a game is played or added
+     */
+    static List<String> front(List<String> shown, String id) {
+        List<String> out = new ArrayList<>(shown.size() + 1);
+        out.add(id);
+        for (String x : shown) if (!x.equals(id)) out.add(x);
+        return out;
+    }
+
+    /**
+     * The stored order with the games Home has not had before in front, newest first; null when nothing changes. ids: the games now, in the order they were added
+     * (the list's order: a new entry is appended). A game is new when its title has no id in the order (an entry whose pack changed, Prepare's, keeps its place:
+     * {@link #sort}). With no stored order yet (a list from before recency, or the first games): the games played (used &gt; 0) by their last play, newest first,
+     * then the others in their order, and nothing counts as new
+     */
+    static List<String> recent(List<String> order, List<String> ids, java.util.function.ToLongFunction<String> used) {
+        if (ids.isEmpty()) return null;
+        if (order.isEmpty()) {
+            Integer[] idx = new Integer[ids.size()];
+            for (int i = 0; i < idx.length; i++) idx[i] = i;
+            Arrays.sort(idx, (a, b) -> Long.compare(used.applyAsLong(ids.get(b)), used.applyAsLong(ids.get(a))));   // stable: unplayed (0) keep their order, last
+            List<String> out = new ArrayList<>();
+            for (int i : idx) out.add(ids.get(i));
+            return out;
+        }
+        Set<String> titles = new HashSet<>();
+        for (String x : order) titles.add(title(x));
+        List<String> fresh = new ArrayList<>();
+        for (String x : ids) if (!order.contains(x) && !titles.contains(title(x))) fresh.add(0, x);   // newest (last added) first
+        if (fresh.isEmpty()) return null;
+        fresh.addAll(order);
+        return fresh;
+    }
+
     /** What is stored after a move: the shown order (the games now). Ids of games that are gone are not kept */
     static List<String> write(List<String> shown) { return new ArrayList<>(shown); }
 

@@ -10,7 +10,7 @@ public final class GameOrderJvmTest {
 
     private static void eq(Object want, Object got, String what) {
         n++;
-        if (!want.equals(got)) { System.out.println("FAIL " + what + ": want " + want + ", got " + got); System.exit(1); }
+        if (!java.util.Objects.equals(want, got)) { System.out.println("FAIL " + what + ": want " + want + ", got " + got); System.exit(1); }
     }
 
     private static List<String> sort(List<String> games, List<String> order) { return GameOrder.sort(games, order, g -> g); }
@@ -44,6 +44,18 @@ public final class GameOrderJvmTest {
         eq(Arrays.asList(C, A2, B), sort(Arrays.asList(A2, B, C), Arrays.asList(C, A, B)), "merged entry keeps the place");
         // two entries of one title (both listed) keep their own places
         eq(Arrays.asList(A2, B, A), sort(Arrays.asList(A, B, A2), Arrays.asList(A2, B, A)), "two dumps of one title");
+        // a recency list: the game played comes first, the others as shown
+        eq(Arrays.asList(B, C, A), GameOrder.front(Arrays.asList(C, A, B), B), "played game first");
+        eq(Arrays.asList(C, A, B), GameOrder.front(Arrays.asList(C, A, B), C), "first stays first");
+        // the first time (no order kept): played games by their last play, newest first, then the rest in list order
+        java.util.Map<String, Long> used = new java.util.HashMap<>();
+        used.put(B, 100L); used.put(D, 300L);
+        eq(Arrays.asList(D, B, A, C, E), GameOrder.recent(new ArrayList<>(), Arrays.asList(A, B, C, D, E), id -> used.getOrDefault(id, 0L)), "first time: by last play");
+        // games Home has not had before go first, the newest (last added) first; known titles do not move
+        eq(Arrays.asList(E, D, C, A, B), GameOrder.recent(Arrays.asList(C, A, B), Arrays.asList(A, B, C, D, E), id -> 0L), "new games first, newest first");
+        eq(null, GameOrder.recent(Arrays.asList(C, A, B), Arrays.asList(A, B, C), id -> 0L), "nothing new: unchanged");
+        eq(null, GameOrder.recent(Arrays.asList(C, A, B), Arrays.asList(A2, B, C), id -> 0L), "a prepared entry (same title, another pack) is not new");
+        eq(Arrays.asList(C, A2, B), sort(Arrays.asList(A2, B, C), Arrays.asList(C, A, B)), "and it keeps its place");
         // the stored form
         List<String> ids = Arrays.asList(A, B, C);
         eq(ids, GameOrder.decode(GameOrder.encode(ids)), "encode and decode");

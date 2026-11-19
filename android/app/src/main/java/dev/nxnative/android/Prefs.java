@@ -45,12 +45,15 @@ final class Prefs {
     static boolean startupLog(Context c) { return of(c).getBoolean("startup_log", false); }
     static void startupLog(Context c, boolean on) { of(c).edit().putBoolean("startup_log", on).commit(); }
 
-    /** Home's tile order the player chose (GameOrder: game ids, one per line); empty: the order the games were added in */
+    /** Home's tile order (GameOrder: game ids, one per line): a recency list (played or added last first) the player may change with Move; empty: the order the games were added in */
     static java.util.List<String> gameOrder(Context c) { return GameOrder.decode(of(c).getString("game_order", "")); }
     static void gameOrder(Context c, java.util.List<String> ids) { of(c).edit().putString("game_order", GameOrder.encode(ids)).commit(); }
     /** The names the player gave games (GameNames: one line per game); empty: none */
     static String gameNames(Context c) { return of(c).getString("game_names", ""); }
     static void gameNames(Context c, String v) { of(c).edit().putString("game_names", v).commit(); }
+    /** Whether the order was made a recency list once (MainActivity.orderRecent: an order kept from before is sorted by last play the first time) */
+    static boolean orderRecent(Context c) { return of(c).getBoolean("game_order_recent", false); }
+    static void orderRecent(Context c, boolean on) { of(c).edit().putBoolean("game_order_recent", on).commit(); }
     /** Home's layout (HomeLayout): 0 the sideways row of tiles (default), 1 a grid with the names, 2 a list */
     static int homeLayout(Context c) { return of(c).getInt("home_layout", 0); }
     static void homeLayout(Context c, int v) { of(c).edit().putInt("home_layout", v).commit(); }
