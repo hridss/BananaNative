@@ -492,7 +492,7 @@ def site_select(ins, args, temp):
     rd, other, other_cond, wide = args
     start, skip = here(), len(patch)
     emit(NOP)  # filled with the conditional branch once the other arm's address is known
-    emit(MRS_TPIDRRO(temp)); emit_slot_addr(temp, rd, 'K18')
+    emit_tp(temp); emit_slot_addr(temp, rd, 'K18')
     emit(LDRX(rd, temp) if wide else 0xB9400000 | (temp << 5) | rd)  # ldr wD,[xT] zero-extends the result
     emit(BX(here(), ins.address + 4))
     struct.pack_into('<I', patch, skip, BEQ(start, here()) | other_cond)
