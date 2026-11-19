@@ -404,6 +404,14 @@ Frame pacing: the host's frame step, engine frame limiters, present intervals an
 - **Check (fixed-rate policy correction, #822):** the full graphics suite passed, including `t_present_rescue --metal` (64 checks) with synthetic fixed/variable screen transitions and both explicit overrides; an isolated run of the production screen classifier passed fixed 60/120 Hz, variable refresh, mode-change and unknown-screen cases. The iOS compile check passed all 185 sources, C/Objective-C lint had no new findings, and the documentation tests passed. Regression risk was judged **moderate** because the policy uses shared Mac presentation state. The three selected fullscreen comparisons were Tears of the Kingdom (the original ProMotion workaround), Breath of the Wild (another affected frame-step profile), and Pokémon Scarlet (a different engine on the same presentation path); all three were named by `regress.py impact`. The user stopped the regression during shader/host preparation, before gameplay comparisons, so no game regression result is claimed.
 - **Not checked:** Mario Kart 8 Deluxe on the M4 with latency 2; physical fixed-rate displays; moving between screens or changing refresh mode while a game runs (only synthetic state transitions in `t_present_rescue`); the new policy's fullscreen gameplay comparison.
 
+### An early display-link wake logs zero lateness
+
+- **Symptom:** `DM_NVN_TSV` reports an `@late_ms` value close to 18.4 trillion ms for an acquire that woke before its texture's slot.
+- **Cause:** `nvnWindowAcquireTexture` subtracts the slot time from the wake time as unsigned nanoseconds. A display-link tick can wake the acquire before that slot.
+- **Fix:** measure the delay only when the wake is later than the slot. An early wake writes zero.
+- **Found on:** [The Legend of Zelda: Breath of the Wild](../../dm/games/01007EF00011E000/README.md#found-on-this-game) on the Mac. [PR #1041](https://github.com/seedds/nxnative/pull/1041) identified the underflow.
+- **Check:** upstream's `t_link_ticks` drives the real acquire with synthetic display-link ticks and checks the TSV: a wake 1 ms early writes `0.000` and a wake 1.25 ms late writes `1.250`. That test is Mac-only and was not ported with the fix; on Android the acquire path is the same code (`hle_nvn.c`), not checked by a test here.
+
 ### Fixed-rate display-link delay remains at latency 1
 
 - **Symptom:** on a MacBook Air M2's fixed 60 Hz built-in display, the reporter measured about 50 ms from the game's present call to on-screen presentation with the display link, at both requested frame latencies 1 and 2, versus 29 ms with `DM_PRESENT_LINK=0`. After loading, all three runs held 60 fps with 0.3% of on-screen intervals outside 16.7 ± 2 ms and no frame-step changes.
