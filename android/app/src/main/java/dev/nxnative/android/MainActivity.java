@@ -1362,14 +1362,24 @@ public final class MainActivity extends Activity {
         workUi.postDelayed(workRun, 700);
     }
 
-    /** A controller or keyboard starts on the first game's tile (nothing happens in touch mode, where tiles take no focus); the first game is the selected one either way */
+    /** Whether Home's tiles were built once since the screen was made (startSelection) */
+    private boolean tilesShown;
+
+    /**
+     * A controller or keyboard starts on the first game's tile (nothing happens in touch mode, where tiles take no focus); the first game is the selected one either
+     * way. The first build since the screen was made (the app opened) moves the focus to the first game even when the window already gave it to another view
+     * (Android focuses the first focusable view, a top-bar button, before the tiles exist: the ring was there, not on the first game); a later build only when
+     * nothing has the focus
+     */
     private void startSelection(ViewGroup row) {
+        boolean first = !tilesShown;
+        tilesShown = true;
         if (gameBox != null) noFocusTint(gameBox);   // the tiles were made after the page was
         for (int k = 0; k < row.getChildCount(); k++)
             if (row.getChildAt(k).getTag() instanceof TileInfo) {
                 View t = row.getChildAt(k);
                 selectTile(t, false);
-                if (getCurrentFocus() == null) t.requestFocus();
+                if (first || getCurrentFocus() == null) t.requestFocus();
                 return;
             }
     }
