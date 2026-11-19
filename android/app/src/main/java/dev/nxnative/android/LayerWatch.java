@@ -35,29 +35,43 @@ final class LayerWatch {
     private final Context ctx;
     private final String titleId, version;
     private final File root;
-    private final Shown shown;
+    /** shown: the label as the tick gives it, handed to the main thread (only while the watcher is on); shownUi: the screen's own, called on the main thread */
+    private final Shown shown, shownUi;
     private final Handler ui = new Handler(Looper.getMainLooper());
-    private boolean on, quotaNoted;
+    /**
+     * The tick's own thread. The tick lists the layer's request folder and reads built.tsv and pairs.tsv several times; the folder is the pack's, which may be on an SD
+     * card behind the system's FUSE daemon, where a listing waits behind the packer's writes for seconds. On the main thread that wait held every key and stick event
+     * with it (controls frozen on their last state for ~2 s at the start of a verify run: issue 489); here it delays only the label
+     */
+    private android.os.HandlerThread thread;
+    private volatile Handler work;
+    private volatile boolean on;
+    private boolean quotaNoted;
     private long startedAt;
     private String nNote;
     private long lastStart, quotaAt = -QUOTA_EVERY_MS;
     private int lastSettled = -1, emptyRuns;
     private volatile long used = 0, quota = LayerGuard.QUOTA_MAX;
     private volatile boolean measuring;
-    /** What the last tick saw, for the in-game panel's line (LayerStatus.panelLine); read on the main thread, like the tick */
-    private int nPending, nBuilt;
-    private String nPaused;
-    private boolean nGaveUp;
+    /** What the last tick saw, for the in-game panel's line (LayerStatus.panelLine): written by the tick's thread, read on the main thread */
+    private volatile int nPending, nBuilt;
+    private volatile String nPaused;
+    private volatile boolean nGaveUp;
 
     /** root: the layer folder (LayerDir) */
     LayerWatch(Context c, String titleId, File root, Shown shown) {
-        this.ctx = c.getApplicationContext(); this.titleId = titleId; this.root = root; this.shown = shown; this.version = BuildConfig.NX_DMSH_VK_CHAIN;
+        this.ctx = c.getApplicationContext(); this.titleId = titleId; this.root = root; this.shownUi = shown; this.version = BuildConfig.NX_DMSH_VK_CHAIN;
+        this.shown = text -> ui.post(() -> {
+            if (!on) return;   // (a tick that ended after stop() must not show the label again)
+            // (a screen that throws while it draws the label must not take the watcher with it)
+            try { shownUi.show(text); } catch (RuntimeException e) { android.util.Log.w("nxnative", "shader label: " + e); }
+        });
     }
 
-    private File keptFolder;
-    private LayerKept kept;
+    private volatile File keptFolder;
+    private volatile LayerKept kept;
     private long lastVerify;
-    private int nVerify;
+    private volatile int nVerify;
 
     /** The library the game plays is one a sample kept (ShaderLibs.kept): the shaders it covers are verified in the background, not counted as missing (LayerKept) */
     void keep(File lib, String titleId) {
@@ -97,6 +111,10 @@ final class LayerWatch {
     void seed(String dump, String gameVersion) {
         if (seedAsked || dump == null) return;
         seedAsked = true;
+        if (work != null) work.post(() -> seedNow(dump, gameVersion)); else seedNow(dump, gameVersion);   // (on the tick's thread: lastStart is the tick's)
+    }
+
+    private void seedNow(String dump, String gameVersion) {
         try {
             ctx.startService(new Intent().setComponent(new ComponentName(ctx, SERVICE)).putExtra(LayerPending.EXTRA_GAME, titleId).putExtra(LayerPending.EXTRA_ROOT, root.getPath())
                     .putExtra(EXTRA_MAX_BYTES, quota).putExtra(EXTRA_PROCS, LayerGuard.procs(Runtime.getRuntime().availableProcessors(), thermal(ctx), LayerGuard.MANY_PENDING, headroom(ctx)))
@@ -112,11 +130,25 @@ final class LayerWatch {
         on = true;
         startedAt = android.os.SystemClock.elapsedRealtime();
         LayerPending.selfPackage = ctx.getPackageName();
-        if (LayerPending.clearStale(root, System.currentTimeMillis())) Native.note("shader layer: the build marker of a stopped build is removed, builds start at once");
-        ui.postDelayed(this::tick, TICK_MS);
+        thread = new android.os.HandlerThread("nxlayer-watch", android.os.Process.THREAD_PRIORITY_BACKGROUND);
+        thread.start();
+        work = new Handler(thread.getLooper());
+        work.post(() -> { if (LayerPending.clearStale(root, System.currentTimeMillis())) Native.note("shader layer: the build marker of a stopped build is removed, builds start at once"); });
+        work.postDelayed(this::tick, TICK_MS);
     }
 
-    void stop() { on = false; ui.removeCallbacksAndMessages(null); shown.show(null); if (kept != null) { kept.close(); kept = null; } }
+    void stop() {
+        on = false;
+        ui.removeCallbacksAndMessages(null);
+        try { shownUi.show(null); } catch (RuntimeException e) { android.util.Log.w("nxnative", "shader label: " + e); }
+        LayerKept k = kept; kept = null;
+        if (work != null) {   // the library is closed on the tick's thread, after a tick that is running now (the looper runs one message at a time)
+            work.removeCallbacksAndMessages(null);
+            work.post(() -> { if (k != null) k.close(); });
+            thread.quitSafely();
+            work = null; thread = null;
+        } else if (k != null) k.close();
+    }
 
     /** PowerManager's thermal status (0 none … 6 shutdown) */
     static int thermal(Context c) {
@@ -166,8 +198,10 @@ final class LayerWatch {
         }, "nxlayer-quota").start();
     }
 
+    /** Every TICK_MS on the watcher's own thread (start: never the main thread, which delivers the game's input) */
     private void tick() {
         if (!on) return;
+        final LayerKept kept = this.kept; final File keptFolder = this.keptFolder;   // (stop() lets go of them from the main thread)
         long now = android.os.SystemClock.elapsedRealtime();
         java.util.Set<String> pend = LayerPending.pending(root, version);
         int n = pend.size();
@@ -192,8 +226,8 @@ final class LayerWatch {
         nPending = n; nBuilt = LayerPending.built(root, version); nGaveUp = gaveUp; nPaused = n == 0 ? null : full ? LayerStatus.STORAGE : paused;
         long wait = emptyRuns > 0 ? RETRY_SLOW_MS : RETRY_MS;
         int retryIn = busy || lastStart == 0 || emptyRuns == 0 ? 0 : (int) Math.max(1, (wait - (now - lastStart) + 999) / 1000);
-        // (Off hides the label only: the build below goes on; a screen that throws while it draws the label must not take the tick, and so the build, with it)
-        try { shown.show(gaveUp ? null : LayerStatus.shown(Prefs.layerLabel(ctx), n, nPaused, lastStart != 0 || busy, busy, retryIn, nNote)); } catch (RuntimeException e) { android.util.Log.w("nxnative", "shader label: " + e); }
+        // (Off hides the label only: the build below goes on; the label is drawn on the main thread, and a screen that throws there does not reach the tick: shown)
+        shown.show(gaveUp ? null : LayerStatus.shown(Prefs.layerLabel(ctx), n, nPaused, lastStart != 0 || busy, busy, retryIn, nNote));
         if (LayerStatus.buildDue(n, gaveUp, full, paused, busy, now, lastStart, wait)) {
             int s = LayerPending.settled(root, version);
             if (lastStart != 0 && s <= lastSettled) emptyRuns++; else emptyRuns = 0;   // the last run settled none
@@ -220,6 +254,7 @@ final class LayerWatch {
                 Native.note("shader layer: " + nVerify + " played shaders of the kept library to verify, the packer is asked for a few");
             } catch (RuntimeException e) { /* no packer: the library plays as it is */ }
         }
-        ui.postDelayed(this::tick, TICK_MS);
+        Handler w = work;
+        if (on && w != null) w.postDelayed(this::tick, TICK_MS);
     }
 }

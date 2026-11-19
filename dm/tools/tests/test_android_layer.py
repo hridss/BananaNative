@@ -205,6 +205,14 @@ class Pending(unittest.TestCase):
         self.assertIn('Prefs.layerLabel(act, w)', (main / 'SidePanel.java').read_text(encoding='utf-8'))
         self.assertIn('Prefs.layerLabel(this, w)', (main / 'MainActivity.java').read_text(encoding='utf-8'))
 
+    def test_tick_off_the_main_thread(self):   # issue 489: the tick's folder reads (an SD card behind FUSE) held the game's input on the main thread for seconds
+        lw = (J / 'main/java/dev/nxnative/android/LayerWatch.java').read_text(encoding='utf-8')
+        self.assertIn('new android.os.HandlerThread("nxlayer-watch"', lw)
+        self.assertIn('work.postDelayed(this::tick, TICK_MS)', lw); self.assertIn('w.postDelayed(this::tick, TICK_MS)', lw)
+        self.assertNotRegex(lw, r'ui\.post(Delayed)?\(this::tick')
+        self.assertIn('work.post(() -> seedNow(', lw)
+        self.assertIn('thread.quitSafely()', lw)
+
     def test_label_honest(self):
         # "Building shaders" only while the packer builds; between runs that settled nothing the label says it waits and when it tries again
         self.assertEqual(self.java('label2', 635, '-', 'true', 'true', 0, '-'), 'Building shaders (635)')
