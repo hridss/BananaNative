@@ -1134,6 +1134,7 @@ public final class MainActivity extends Activity {
         if (Ondevice.sampleAny()) updateUi.postDelayed(sampleRun, 2000);
         games.clear();
         games.addAll(Game.load(this));
+        orderRecent();
         if (gameBox == null) return;
         if (BuildConfig.DEBUG && Prefs.demoGames(this)) { refreshDemo(); return; }   // test builds only: sample tiles to judge the look
         if (!merged && games.size() > 1) {   // a list an older version left with two entries of one game: one card each (GameList.collapse; reads the dumps: off the main thread)
@@ -1180,6 +1181,25 @@ public final class MainActivity extends Activity {
 
     /** Home's games in the player's order; a game not in it goes last */
     private List<Game> shownGames() { return GameOrder.sort(games, Prefs.gameOrder(this), Game::orderId); }
+
+    /**
+     * Home is a recency list (GameOrder.recent, .front): a game played (start) or added goes first, newest first. The games already on Home keep their places:
+     * the first time (Prefs.orderRecent), the order Home shows is stored as it is (the player's order, else the order the games were added in), so nothing moves
+     */
+    private void orderRecent() {
+        List<String> ids = new ArrayList<>();
+        for (Game g : games) ids.add(g.orderId());
+        if (ids.isEmpty()) return;
+        if (!Prefs.orderRecent(this)) {
+            List<String> shown = new ArrayList<>();
+            for (Game g : shownGames()) shown.add(g.orderId());
+            Prefs.gameOrder(this, GameOrder.write(shown));
+            Prefs.orderRecent(this, true);
+            return;
+        }
+        List<String> now = GameOrder.recent(Prefs.gameOrder(this), ids);
+        if (now != null) Prefs.gameOrder(this, now);
+    }
 
     /**
      * A game's options, from a long press on its tile (Hold X or Y on a controller): Move (a reorder mode, below), Set cover image (and Reset cover when it has one: CoverUi)
@@ -2409,6 +2429,9 @@ public final class MainActivity extends Activity {
     private void start(Game g) {
         Ondevice.playTakesLead(this);   // a running shader check stops and waits at the front of the line; the game does not wait for it
         Game.touch(this, g);   // the entry played last is the one kept if the list ever holds this game twice
+        List<String> shownIds = new ArrayList<>();
+        for (Game x : shownGames()) shownIds.add(x.orderId());
+        Prefs.gameOrder(this, GameOrder.front(shownIds, g.orderId()));   // Home is a recency list: the game played last comes first
         Intent intent = new Intent(this, GameActivity.class).putExtra("title_id", g.titleId).putExtra("name", g.name).putExtra("game", g.gameDir).putExtra("pack", g.packDir);
         if (getIntent().getBooleanExtra("no_pause", false)) intent.putExtra("no_pause", true);
         GameReturn.remember(this, g.titleId, g.name, g.gameDir, g.packDir);   // the app's icon goes back to this game while it runs
