@@ -24,7 +24,7 @@ There is no game-specific patch and no rewriter cut. Everything else it needed i
 
 ## Shaders
 
-- 11,059 shaders (`Nin_Ounce_NVN2` BNSH) in [`shader_map.tsv`](shader_map.tsv); a full Mac build takes about 9 minutes on the M6, 4:46 for a second one.
+- 11,058 shaders (`Nin_Ounce_NVN2` BNSH) in [`shader_map.tsv`](shader_map.tsv) since 2026-11-19, 11,059 before (one false BAHS entry removed, not confirmed against a dump: [Found on this game](#found-on-this-game)); a full Mac build takes about 9 minutes on the M6, 4:46 for a second one.
 - 6 are refused (4 task, 2 mesh shaders of the sea, agl `AnnaSea`): their task payloads (21-28 KB) are past Metal's 16 KB ([issue #1753](https://github.com/seedds/nxnative/issues/1753); FifteenPen's [PR #2264](https://github.com/seedds/nxnative/pull/2264) passes them through a device buffer). No draw has been seen to use them.
 - 612 pixel shaders read the fragment's shading-rate size; until it read 1 x 1 the sea and the avatars' hair and clothes were black (The fragment's shading-rate size reads 1 x 1).
 - [`pso_manifest.tsv`](pso_manifest.tsv) is this Mac's own list (3,474 shaders, 1,868 render, 41 compute and 22 task / mesh pipelines): a first start, the menus and a doubles match. The pull requests' lists were recorded by an older host: none of their render or mesh pipeline keys matches the current one's.
@@ -65,6 +65,8 @@ The work folder `04008E001F098000-work` beside the dump has `run/boot.sh <log> <
 - iPhone and iPad: no IPA built.
 
 ## Found on this game
+
+- [A control section's words read as a BAHS entry](../../../docs/reference/shaders.md#a-control-sections-words-read-as-a-bahs-entry): payload outside the binary record slots (upstream PR #2943). Vertex `16d1e80284e796bd` at `Lib/agl/agl_resource.Nin_Ounce_NVN2.release.sarc.zs/agl_technique_pfx.sharcb#BAHS@0x1c78d4` was removed from the map on 2026-11-19 (rows renumbered; no facts, pairs, pipeline pairs or other table named it). **Not confirmed against a dump of this game** (none was on hand): it was removed because the same key, the same control and code bytes, is the false entry the fixed split drops in [Wonder - Nintendo Switch 2 Edition](../040015100B514001/README.md#found-on-this-game)'s add-on (`agl_technique_pfx.sharcb#BAHS@0x10eda4`) and in [Splatoon Raiders](../0400380020056000/README.md#found-on-this-game) (debug `agl_technique_pfx.sharcb#BAHS@0x10eda4`), both checked on their dumps; a profile that listed it would stop every pack with "the dump's shaders lack ...". Open until checked with a dump: the readers before and after the fix on this game's BAHS files should lose exactly this key. Profile shader inputs `0d910a7aed3f` → `cdf7d681830c`: its libraries need a rebuild (current: not built or run).
 
 - A dump tool's `.listing` files in the game's folders
 - File calls on a mount in the SDK's own table
