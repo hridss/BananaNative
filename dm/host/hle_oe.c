@@ -154,6 +154,9 @@ HLE_FORCE("_ZN2nn2oe16GetOperationModeEv", "operation mode query; a fixed value 
 //   (table main+0xada6d0, else 1280x720). Handheld with Boost: no TV calibration on a phone, full-size drawing
 // A game with a render_cfg row (hle_render.c): the player's graphics quality gives the performance mode, and this call writes the render configurations the game reads next.
 // Weak defaults for builds without hle_render.c (the unit tests that include this file)
+#ifndef dm_sdk_ounce
+__attribute__((weak)) int dm_sdk_ounce(void) { return 0; }
+#endif
 __attribute__((weak)) int dm_render_perf_mode(void) { return -1; }
 __attribute__((weak)) int dm_render_active(void) { return 0; }
 __attribute__((weak)) int dm_render_script(const char *key, int v) { (void)key; (void)v; return 0; }
@@ -265,8 +268,9 @@ HLE_FORCE("_ZN2nn2gs3sdk26SetGraphicsFrameLengthModeENS1_23GraphicsFrameLengthMo
           void, h_gs_FrameLength, int mode) {
     static int last = -1; if (mode != last) { LOG("gs: graphics frame length mode %d (0 auto, 1 30 fps, 2 60 fps, 3 120 fps)", mode); last = mode; }
 }
-HLE_FORCE("_ZN2nn2oe27GetDefaultDisplayResolutionEPiS1_", "default display resolution: 1920x1080 docked, 1280x720 handheld", void, h_oe_DefRes, int *w, int *h) {
-    int con = opmode() == 1; if (w) *w = con ? 1920 : 1280; if (h) *h = con ? 1080 : 720;
+// Switch 1: 1920x1080 docked, 1280x720 handheld; Switch 2 (Ounce): 1080p built-in panel in handheld too (as vi::QueryDisplayBufferMaxResolution)
+HLE_FORCE("_ZN2nn2oe27GetDefaultDisplayResolutionEPiS1_", "default display resolution: 1920x1080 docked, 1280x720 handheld (1920x1080 on Switch 2)", void, h_oe_DefRes, int *w, int *h) {
+    int fhd = opmode() == 1 || dm_sdk_ounce(); if (w) *w = fhd ? 1920 : 1280; if (h) *h = fhd ? 1080 : 720;
 }
 HLE_FORCE("_ZN2nn2oe38GetDefaultDisplayResolutionChangeEventEPNS_2os11SystemEventE", "default display resolution change event: signalled when the operation mode changes",
           void, h_oe_DefResEv, void *ev) {

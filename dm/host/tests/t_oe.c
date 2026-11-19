@@ -3,6 +3,9 @@
 #ifndef HLE_OE_SOURCE
 #define HLE_OE_SOURCE "../hle_oe.c"
 #endif
+static int test_ounce;
+static int test_dm_sdk_ounce(void) { return test_ounce; }
+#define dm_sdk_ounce test_dm_sdk_ounce
 #include HLE_OE_SOURCE
 #include <signal.h>
 #include <sys/wait.h>
@@ -250,5 +253,11 @@ int main(void) {
     setenv("DM_LANG", "es-MX", 1); CHECK(h_oe_GetRegion() == 1, "es-MX is an American console");
     unsetenv("DM_LANG");
     { uint64_t v = h_oe_GetLang(); char c[9] = {0}; memcpy(c, &v, 8); CHECK(!strcmp(c, "en-US"), "no DM_LANG is en-US"); }
+    { int dw = 0, dh = 0;
+      test_ounce = 0; g_opmode = 1; h_oe_DefRes(&dw, &dh); CHECK(dw == 1920 && dh == 1080, "GetDefaultDisplayResolution Switch 1 docked: 1920x1080");
+      g_opmode = 0; h_oe_DefRes(&dw, &dh); CHECK(dw == 1280 && dh == 720, "GetDefaultDisplayResolution Switch 1 handheld: 1280x720");
+      test_ounce = 1; g_opmode = 1; h_oe_DefRes(&dw, &dh); CHECK(dw == 1920 && dh == 1080, "GetDefaultDisplayResolution Switch 2 docked: 1920x1080");
+      g_opmode = 0; h_oe_DefRes(&dw, &dh); CHECK(dw == 1920 && dh == 1080, "GetDefaultDisplayResolution Switch 2 handheld: 1920x1080");
+      test_ounce = 0; g_opmode = 1; }
     printf("== oe %d checks, %d failed ==\n", checks, fails); return fails != 0;
 }
