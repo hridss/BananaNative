@@ -83,6 +83,13 @@ The SDK's movie library (`movie::Decoder`, `movie::Extractor`), which the host t
 - **Fix:** the host now does the same (`md_event` in `hle_movie.c`). When the client's entry is not a readable, 8-byte aligned pointer, it falls back to the entry's value at registration if that was one (Dread's case), and otherwise logs a red line.
 - **Found on:** [Metroid Dread](../../dm/games/010093801237C000/README.md); [DRAGON QUEST XI S](../../dm/games/01006C300E9F0000/README.md).
 
+### A completed video batch needs another output event
+
+- **Symptom:** Super Mario Sunshine freezes at the first M graffiti while music continues. Hagi waits for frame 286 of `EX128x144_q0.mp4` with 14 pictures and an end-of-stream output ready in the host.
+- **Cause:** the host coalesces deferred video events. Hagi takes one output per auto-cleared event, and a completed AVC drain has no further decode work to signal the outputs still queued.
+- **Fix:** after a successful video acquisition, `h_movie_AcqOut` re-arms the deferred output event if more outputs are ready. `t_movie_avc` takes one output per event through the end of a synthetic drain.
+- **Found on:** Super Mario Sunshine (Super Mario 3D All-Stars; upstream nxnative's profile 010049900F546002, not in Banana Native) in [issue #2990](https://github.com/seedds/nxnative/issues/2990).
+
 ### `Flush`, `Stop` and `Start`
 
 - **Fix:** as with MediaCodec, `Flush` announces nothing, and no input or output index is handed out while the decoder is stopped. The "input available" after `Start` is signalled about 2 ms later from a guest thread, as the SDK's codec thread would. Pending signals are dropped at `Stop`, `Flush` and destruction.
