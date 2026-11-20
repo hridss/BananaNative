@@ -147,6 +147,7 @@ static struct { uint64_t base, size, src; uint32_t state; } g_map[MAX_MAP];
 enum { SHARED_MEMORY_STATE = 6 };
 static unsigned g_shared_maps;   // under g_map_lock
 static int g_nmap;
+static hle_transfer_mapping *g_transfer_mappings;   // in-place service mappings, under g_map_lock
 static pthread_mutex_t g_map_lock = PTHREAD_MUTEX_INITIALIZER;
 // A hole-free read / write of guest heap bytes for the cheat VM (hle_cheats.c): under g_map_lock no concurrent SetHeapSize
 // can mprotect the span away between the bounds check and the copy (both hold this same lock), so a live heap address cannot
@@ -347,7 +348,7 @@ static uint32_t map_arguments(uint64_t dst, uint64_t src, uint64_t size) {
     if (size > UINT64_MAX - src || size > UINT64_MAX - dst) return 0xD401;
     return memory_contains((uintptr_t)g_stack, g_stack_cap, dst, size) ? 0 : 0xDC01;
 }
-static int map_source_busy(uint64_t addr, uint64_t size) { // g_map_lock held; nonwrapping ranges
+static int map_source_borrowed(uint64_t addr, uint64_t size) { // g_map_lock held; nonwrapping ranges
     for (int i = 0; i < g_nmap; ++i)
         if (g_map[i].state != SHARED_MEMORY_STATE && addr < g_map[i].src + g_map[i].size && g_map[i].src < addr + size) return 1;
     return 0;
@@ -360,6 +361,11 @@ int dm_map_source_overlap(uint64_t addr, uint64_t size, uint64_t *s, uint64_t *n
         if (g_map[i].state == 0x0B && addr < g_map[i].src + g_map[i].size && g_map[i].src < addr + size) { *s = g_map[i].src; *n = g_map[i].size; r = 1; }
     pthread_mutex_unlock(&g_map_lock);
     return r;
+}
+static int map_source_busy(uint64_t addr, uint64_t size) {   // g_map_lock held: the source of a live MapMemory, or memory a host service holds mapped in place
+    for (const hle_transfer_mapping *m = g_transfer_mappings; m; m = m->next)
+        if (addr < m->address + m->size && m->address < addr + size) return 1;
+    return map_source_borrowed(addr, size);
 }
 // Loader text/patch seals use 16 KiB boundaries, independently of host page size.
 static void module_readonly_run(uint64_t off, uint64_t start, uint64_t end,
@@ -398,22 +404,42 @@ static int transfer_source_backed(uintptr_t address, size_t size) {
     return backed;
 }
 
-void *hle_map_transfer_memory(uint32_t handle, uint64_t size, uint32_t owner_perm) {
+int hle_map_transfer_memory(hle_transfer_mapping *mapping, uint32_t handle, uint64_t size, uint32_t owner_perm) {
     hle_transfer_memory memory;
-    if (!hle_get_transfer_memory(handle, &memory) || memory.size != size || memory.owner_perm != owner_perm)
-        return NULL;
-    // The service and its client share an address space. Check that the original backing is still available.
-    return transfer_source_backed(memory.address, memory.size) ? (void *)memory.address : NULL;
+    if (!size || !hle_get_transfer_memory(handle, &memory) || memory.size != size || memory.owner_perm != owner_perm)
+        return 0;
+    // The client and service share an address space. Keep the original backing in place until the service releases it.
+    pthread_mutex_lock(&g_map_lock);
+    int backed = map_source_backed(memory.address, memory.size) && !map_source_borrowed(memory.address, memory.size);
+    if (backed) {
+        if (!mapping->size) {
+            mapping->next = g_transfer_mappings;
+            g_transfer_mappings = mapping;
+        }
+        mapping->address = memory.address;
+        mapping->size = memory.size;
+    }
+    pthread_mutex_unlock(&g_map_lock);
+    return backed;
+}
+
+void hle_unmap_transfer_memory(hle_transfer_mapping *mapping) {
+    pthread_mutex_lock(&g_map_lock);
+    if (mapping->size) {
+        hle_transfer_mapping **link = &g_transfer_mappings;
+        while (*link != mapping) link = &(*link)->next;
+        *link = mapping->next;
+        *mapping = (hle_transfer_mapping){0};
+    }
+    pthread_mutex_unlock(&g_map_lock);
 }
 int svc_nro_deactivate(module_t *m) {
     pthread_mutex_lock(&g_map_lock);
     uint64_t base = (uintptr_t)m->base;
-    for (int i = 0; i < g_nmap; i++)
-        if (g_map[i].state != SHARED_MEMORY_STATE && g_map[i].src < base + m->size && base < g_map[i].src + g_map[i].size) {
-            pthread_mutex_unlock(&g_map_lock); return 0;
-        }
-    m->loaded = 0;
-    pthread_mutex_unlock(&g_map_lock); return 1;
+    int busy = map_source_busy(base, m->size);
+    if (!busy) m->loaded = 0;
+    pthread_mutex_unlock(&g_map_lock);
+    return !busy;
 }
 static void map_source_query(uint64_t addr, uint64_t *base, uint64_t *size, uint32_t *attr, uint64_t *perm) {
     uint64_t lo = *base, remaining = *size; // the final free page can end at 2^64
