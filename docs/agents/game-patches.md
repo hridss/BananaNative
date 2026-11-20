@@ -731,7 +731,7 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
 - **`build` → `game`**, frame rate, blocked: one build on hand; the faster tensor path is translator work (docs/reference/shaders.md, Ampere HMMA through simdgroup_matrix, Open), judgement: movie player: the plain player instead of the NDVE-enhanced one. A workaround: the tensor network costs 47.5 ms of GPU a movie frame; a function fingerprint could carry it over updates, and once the translator keeps LDSM / MOVM / HMMA chains in matrices the cut can go
 - **`build` → `game`**, rendering, blocked: one build on hand; the projection reads are plain sead code a function fingerprint could find, judgement: Ocarina of Time camera and 2D layer aspect callback, and foliage distance and fog callbacks, in main v131072. The aspect callback reads sead's PerspectiveProjection fields, the same in every title of this engine, but its eight gates (five cameras, the HUD canvas, the movie viewport and the save picture) are fixed addresses of this build; the foliage callback's six gates are loads of the foliage update of this build, the fog callback's two gates the scene manager's loads of its sky in this build
 
-- **v131072 `main`** `e0f3ccfa…` ([patches.py:9](../../dm/games/0400486024DEC000/patches.py#L9))
+- **1.1.1 `main`** `e0f3ccfa…` ([patches.py:9](../../dm/games/0400486024DEC000/patches.py#L9))
   - cut `+0x3b5f524`: movie player: cbz w8 → b main+0x3b5f548 (the plain player, without the NDVE tensor network)
   - gate 5151 at `+0x4c5340`: camera update, after it stored the camera aspect at +0xb0 (ldr x8,[x8]); x20 the projection
   - gate 31 at `+0x3485cc0`: sead PerspectiveProjection matrix update (ldp s0,s1,[x0,#0xac]); x0 the projection
