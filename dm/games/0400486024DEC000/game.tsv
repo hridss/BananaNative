@@ -36,6 +36,9 @@ mem_alias	0x200000000
 mem_stack	0x10000000
 app_pool	0x240000000
 sys_resource	0x3000000
+# Android, devices of 12 GB or less by default (DM_VK_LOW_RAM=1 on larger dual-screen devices): pools >= 64 MiB placed in 16 MiB parts and texture cache ceiling 1280 MiB; low_ram_app_pool_mb is omitted because main sizes SetHeapSize as TotalMemorySize - 2.80 GiB and requires the 9216 MiB total for its 6.20 GiB heap
+low_ram_place_part_mb	64
+low_ram_img_cache_max_mb	1280
 
 # ---- Language ----
 # The languages the game ships (Mals/ has a message archive for each: JPja USen EUen EUfr USfr EUde EUit EUes USes EUnl USpt EUru KRko CNzh TWzh EUpl; no Thai, no European Portuguese). The host gives the game
