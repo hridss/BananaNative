@@ -575,6 +575,7 @@ int vka_rp_split_ok(const p_set_rt *rt, int has_rt);
 void vka_draw_cb_switch(VkCommandBuffer cb);
 void vka_dyn_invalidate(void);                       // the draws' dynamic state is set again in full at the next draw (another pipeline was bound)
 int vka_pass_keep(void);                             // DM_VK_PASS_KEEP=0: a SET_RT ends the pass, as before
+int vka_rt_same(const p_set_rt *a, int ha, const p_set_rt *b, int hb);
 void vka_rp_set_rt(const p_set_rt *rt);              // OP_SET_RT while a pass stays open: notes a continuation of the same targets
 int vka_rp_ub_defer(uint64_t dst, uint64_t n, const void *data);   // OP_UPDATE_UB while a pass is open: 1 = kept for the pass's UBOs and flushed at vka_rp_end
 int vka_rp_open_for(const p_set_rt *rt, int has_rt);   // a pass is open over these targets

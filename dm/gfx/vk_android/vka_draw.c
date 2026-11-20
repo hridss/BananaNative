@@ -319,6 +319,7 @@ static int rt_same(const p_set_rt *a, int ha, const p_set_rt *b, int hb) {
     }
     return 1;
 }
+int vka_rt_same(const p_set_rt *a, int ha, const p_set_rt *b, int hb) { return rt_same(a, ha, b, hb); }
 // ---------- Classic render passes (DM_VK_CLASSIC_RP) ----------
 // The game's passes as VkRenderPass objects begun with an imageless VkFramebuffer instead of dynamic rendering. Qualcomm's driver (Adreno 740, 512.863) spends 13 us of
 // CPU in a vkCmdBeginRendering + vkCmdEndRendering pair at the least and ~40 us in Donkey Kong Bananza's level (a quarter of the encoder thread, with ~110 passes a frame);

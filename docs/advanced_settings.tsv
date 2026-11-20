@@ -624,6 +624,7 @@ DM_VK_MEM_LOCK_WHOLE	developer	Diagnostics			text			both
 DM_VK_MESH	developer	Graphics			text		On; off with Qualcomm's driver, where mesh draws go through compute	both							
 DM_VK_MESH_EMU	developer	Graphics			text			both							
 DM_VK_MESH_EMU_BAR	developer	Graphics			text			both							
+DM_VK_MESH_EMU_COND	developer	Graphics			text			both							
 DM_VK_MESH_EMU_MB	developer	Graphics			text			both							
 DM_VK_MESH_IND	developer	Graphics			text			both							
 DM_VK_MESH_LOG	developer	Diagnostics			text			both							

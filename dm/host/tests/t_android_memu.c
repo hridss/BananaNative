@@ -6,6 +6,7 @@
 // each module (GL depth 0) is written there as <key>.in.spv (folded) and <key>.cs.spv / .vs.spv / .flat.spv, for a look with spirv-dis or an interpreter
 #include "../../gfx/vk_android/vka_memu_spv.h"
 #include "../../gfx/vk_android/vka_memu_abi.h"
+#include "../../gfx/vk_android/vka_memu_cond.h"
 #include "../../gfx/vk_android/vka_memu_order.h"
 #include "../../gfx/vk_android/vka_spvpatch.h"
 #include "../../gfx/vk_android/vka_shlib.h"
@@ -113,10 +114,58 @@ static void t_feeds(void) {
     CHECK(vka_memu_fs_input_locs(MEMU_MESH_TRI, sizeof MEMU_MESH_TRI / 4, &in) && in == 0, "a mesh module has no user inputs");
 }
 
+// Render-condition walk state (vka_memu_cond.h): evaluating OP_RENDER_COND and tracking in-walk OP_REPORT_COUNTER updates
+static void t_cond(void) {
+    // mode 2 (always draw -> skip 0) and mode 3 (never draw -> skip 1)
+    CHECK(vka_mrc_eval(2, 0, 0, 0, 0) == 0 && vka_mrc_eval(2, 1, 7, 1, 9) == 0, "mode 2 always draws");
+    CHECK(vka_mrc_eval(3, 0, 0, 0, 0) == 1 && vka_mrc_eval(3, 1, 7, 1, 7) == 1, "mode 3 always skips");
+    // mode 0 (RENDER_IF_EQUAL): equal -> 0, unequal -> 1, either unknown -> 0
+    CHECK(vka_mrc_eval(0, 1, 42, 1, 42) == 0, "mode 0 equal draws");
+    CHECK(vka_mrc_eval(0, 1, 42, 1, 99) == 1, "mode 0 unequal skips");
+    CHECK(vka_mrc_eval(0, 0, 42, 1, 99) == 0 && vka_mrc_eval(0, 1, 42, 0, 99) == 0, "mode 0 unknown draws");
+    // mode 1 (RENDER_IF_NOT_EQUAL): unequal -> 0, equal -> 1, either unknown -> 0
+    CHECK(vka_mrc_eval(1, 1, 10, 1, 20) == 0, "mode 1 unequal draws");
+    CHECK(vka_mrc_eval(1, 1, 10, 1, 10) == 1, "mode 1 equal skips");
+    CHECK(vka_mrc_eval(1, 0, 10, 1, 10) == 0 && vka_mrc_eval(1, 1, 10, 0, 10) == 0, "mode 1 unknown draws");
+
+    vka_mrc_walk w;
+    vka_mrc_init(&w, 1, 0);
+    CHECK(w.rc_skip == 1 && w.oq_count == 0 && w.nrep == 0, "init state");
+    uint64_t val = 12345;
+    CHECK(vka_mrc_walk_known(&w, 0, 0x1000, &val) == -1 && val == 12345, "unseen address delegates to rc_known");
+    CHECK(vka_mrc_walk_known(&w, 0, 0, &val) == -1, "zero address delegates");
+    CHECK(vka_mrc_note_report(&w, 0, VKA_MRC_TS) == 1 && w.nrep == 0, "zero address report is no-op");
+
+    // Timestamp report in flight reads 0 even if qmem is set
+    CHECK(vka_mrc_note_report(&w, 0x1000, VKA_MRC_TS) == 1 && w.nrep == 1, "note TS");
+    val = 999;
+    CHECK(vka_mrc_walk_known(&w, 0, 0x1000, &val) == 1 && val == 0, "TS in walk reads 0 (qmem=0)");
+    val = 999;
+    CHECK(vka_mrc_walk_known(&w, 1, 0x1000, &val) == 1 && val == 0, "TS in walk reads 0 (qmem=1)");
+
+    // Non-TS reports return 0 when qmem=0, -2 when qmem=1
+    CHECK(vka_mrc_note_report(&w, 0x2000, VKA_MRC_OQ) == 1 && w.nrep == 2, "note OQ");
+    CHECK(vka_mrc_walk_known(&w, 0, 0x2000, &val) == 0 && vka_mrc_walk_known(&w, 1, 0x2000, &val) == -2, "OQ lookup");
+    CHECK(vka_mrc_note_report(&w, 0x3000, VKA_MRC_CONST) == 1 && w.nrep == 3, "note CONST");
+    CHECK(vka_mrc_walk_known(&w, 0, 0x3000, &val) == 0 && vka_mrc_walk_known(&w, 1, 0x3000, &val) == -2, "CONST lookup");
+
+    // Overwriting existing address updates kind in place without growing nrep
+    CHECK(vka_mrc_note_report(&w, 0x1000, VKA_MRC_OQ) == 1 && w.nrep == 3, "overwrite in place");
+    CHECK(vka_mrc_walk_known(&w, 0, 0x1000, &val) == 0, "overwritten kind takes effect");
+
+    // Capacity bound VKA_MRC_MAX_REP
+    for (int i = 3; i < VKA_MRC_MAX_REP; i++) {
+        CHECK(vka_mrc_note_report(&w, 0x10000ull + (uint64_t)i * 16, VKA_MRC_TS) == 1, "fill up to VKA_MRC_MAX_REP");
+    }
+    CHECK(w.nrep == VKA_MRC_MAX_REP, "nrep at VKA_MRC_MAX_REP");
+    CHECK(vka_mrc_note_report(&w, 0x90000ull, VKA_MRC_TS) == 0 && w.nrep == VKA_MRC_MAX_REP, "65th distinct report rejected");
+}
+
 int main(void) {
     g_val = system("spirv-val --version >/dev/null 2>&1") == 0;
     t_order();
     t_feeds();
+    t_cond();
     char err[256]; vka_memu_layout L; size_t on;
     // The layouts
     CHECK(vka_memu_layout_of(MEMU_MESH_TRI, sizeof MEMU_MESH_TRI / 4, &L, err, sizeof err), "triangle mesh layout (%s)", err);
