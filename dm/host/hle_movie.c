@@ -886,7 +886,11 @@ HLE_FORCE("_ZN5movie7Decoder24AcquireOutputBufferIndexEPiPlPjS1_", "movie decode
         *idx = s; *pts = d->out[s].pts; *flags = d->out[s].flags; *left = d->noutq; d->out[s].cli = 1; r = 0;
     }
     pthread_mutex_unlock(&d->mu);
-    if (!r && !MD_AUDIO(d)) atomic_store_explicit(&g_movie_pic_ns, now_ns(), memory_order_relaxed);
+    if (!r && !MD_AUDIO(d)) {
+        atomic_store_explicit(&g_movie_pic_ns, now_ns(), memory_order_relaxed);
+        // Deferred notifications coalesce. A client taking one output per event still needs a wake for the rest of the batch.
+        if (*left) md_pump_ev(d, 1);
+    }
     if (!r) MD_TRACE(d, 8, "AcquireOutputBufferIndex → index %d time %lld flags %#x left %d", *idx, (long long)*pts, *flags, *left);
     return r;
 }
