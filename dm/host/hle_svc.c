@@ -390,6 +390,21 @@ static int map_source_backed(uint64_t src, uint64_t size) {
     module_data_query(m, off, &lo, &hi, &perm);
     return perm == 3 && hi >= lo && memory_contains(lo, hi - lo, off, size);
 }
+
+static int transfer_source_backed(uintptr_t address, size_t size) {
+    pthread_mutex_lock(&g_map_lock);
+    int backed = map_source_backed(address, size) && !map_source_busy(address, size);
+    pthread_mutex_unlock(&g_map_lock);
+    return backed;
+}
+
+void *hle_map_transfer_memory(uint32_t handle, uint64_t size, uint32_t owner_perm) {
+    hle_transfer_memory memory;
+    if (!hle_get_transfer_memory(handle, &memory) || memory.size != size || memory.owner_perm != owner_perm)
+        return NULL;
+    // The service and its client share an address space. Check that the original backing is still available.
+    return transfer_source_backed(memory.address, memory.size) ? (void *)memory.address : NULL;
+}
 int svc_nro_deactivate(module_t *m) {
     pthread_mutex_lock(&g_map_lock);
     uint64_t base = (uintptr_t)m->base;
@@ -841,6 +856,21 @@ uint64_t svc_dispatch(int num, uint64_t *regs, uint64_t orig_addr) {
               if (rt != APP_POOL) snprintf(t, sizeof t, ", reported total %.2f GB", rt / 1073741824.0);
               LOG("[mem] alias region mapped %.2f GB (application pool %.2f GB%s)", after / 1073741824.0, APP_POOL / 1073741824.0, t); } }
         regs[0] = 0; return 0;
+    }
+    case 0x15: {  // CreateTransferMemory(→w1 handle; x1 address, x2 size, w3 owner permission): a typed kernel handle (CloseHandle releases it); the placeholder answered success
+        // and left the address's low word in w1 as the handle, which a later CloseHandle could have taken for another object
+        hle_transfer_memory memory = { regs[1], regs[2], (uint32_t)regs[3] };
+        if (memory.address & 0xfff) { regs[0] = 0xcc01u; return 0; }
+        if (!memory.size || (memory.size & 0xfff)) { regs[0] = 0xca01u; return 0; }
+        if (!memory.address || memory.size > UINTPTR_MAX - memory.address) { regs[0] = 0xd401u; return 0; }
+        if (memory.owner_perm != 0 && memory.owner_perm != 1 && memory.owner_perm != 3) { regs[0] = 0xd801u; return 0; }
+        if (!transfer_source_backed(memory.address, memory.size)) {
+            static _Atomic int nred; if (atomic_fetch_add(&nred, 1) < 4) LOG("[RED] svc CreateTransferMemory %#llx+%#llx: not backed by heap, mapped alias or module data (refused 0xd401)", regs[1], regs[2]);
+            regs[0] = 0xd401u; return 0;
+        }
+        uint32_t h = hle_new_transfer_memory(memory);
+        if (!h) { regs[0] = 0xce01u; return 0; }
+        regs[0] = 0; regs[1] = h; return 0;
     }
     case 0x26: {  // Break(reason, ptr, size): SDK fatal abort
         uint32_t res = (regs[1] && regs[2] >= 4) ? *(uint32_t *)regs[1] : 0;
