@@ -3183,6 +3183,16 @@ VkSampler vka_samp_default(void) {
               vk.vkCreateSampler(V.dev, &ci, NULL, &s); }
     return s;
 }
+// Slot 0 of every sampler pool, which the NVN driver fills itself (NVN SDKs 11.4.3 / 15.3.0, NVN2 SDK 20.5.19): linear minification and magnification, no mipmaps (the base
+// level), clamp to edge. A handle that names a texture and sampler 0 samples with it (vka_bind.c, VKA_SID_POOL_ZERO). After upstream nxnative (#3049)
+VkSampler vka_samp_pool_zero(void) {
+    static VkSampler s;
+    if (!s) { VkSamplerCreateInfo ci = {VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO, .magFilter = VK_FILTER_LINEAR, .minFilter = VK_FILTER_LINEAR, .mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
+                                         .addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, .addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+                                         .addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, .maxLod = 0.25f};
+              vk.vkCreateSampler(V.dev, &ci, NULL, &s); }
+    return s;
+}
 
 void vka_tex_prepare(VkCommandBuffer cb) {
     bindless_init();

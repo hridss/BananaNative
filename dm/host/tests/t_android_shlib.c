@@ -218,6 +218,20 @@ static void test_walk(void) {
         CHECK(na == 3 && r[1].tid == 121 && r[2].sid == 231, "DM_VK_TEXU_ELEM=0: %d/%d", r[1].tid, r[2].sid);
         vka_texu_elem = 1;
     }
+    // A handle that names a texture and sampler 0 samples with the sampler pool's slot 0, which the NVN driver fills (upstream nxnative #3049); a zero handle is no binding
+    {
+        uint32_t h0 = 24, hz = 0; memcpy(g_mem + 0x60, &h0, 4); memcpy(g_mem + 0x68, &hz, 4);
+        static vka_bstate zs; memcpy(&zs, &s, sizeof zs); zs.tex[1][1] = 7;
+        dmsh_vk_bind zb[] = {
+            {.kind = DMSH_VK_KIND_TEX, .desc = 1, .binding = 256, .count = 1, .reg = 1, .skind = DMSH_VK_KIND_SAMP_TEX, .sreg = 1, .dim = 1},
+            {.kind = DMSH_VK_KIND_TEX_UBO, .desc = 1, .binding = 257, .count = 1, .reg = 0, .off = 0x60, .skind = DMSH_VK_KIND_SAMP_UBO, .sreg = 0, .soff = 0x60, .dim = 1},
+            {.kind = DMSH_VK_KIND_SAMP_UBO, .desc = 0, .binding = 258, .count = 1, .reg = 0, .off = 0x68, .dim = 1},
+        };
+        dmsh_vk_entry ez = {.stage = DMSH_VK_STAGE_FS, .bind_count = 3};
+        int nz = vka_walk(&zs, 1, &ez, zb, 0, 64, rd, NULL, r, 32, NULL, why, sizeof why);
+        CHECK(nz == 3 && r[0].what == VKA_R_TEX && r[0].tid == 7 && r[0].sid == VKA_SID_POOL_ZERO && r[1].tid == 124 && r[1].sid == VKA_SID_POOL_ZERO && r[2].what == VKA_R_NULL,
+              "sampler 0 of a handle is the pool's slot 0: %d, %d/%d %d/%d %d", nz, r[0].tid, r[0].sid, r[1].tid, r[1].sid, r[2].what);
+    }
     // An image whose handle the game keeps in its uniform buffer (DMSH_VK_KIND_IMG_UBO; Unreal Engine 5.6 on the Switch 2, Orbitals' compute shaders: c[3] word 2): a storage
     // image of the handle's texture ID with the pool base, as tex_ubo's and upstream's IMGU; a zero handle binds nothing
     {

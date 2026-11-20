@@ -27,18 +27,22 @@ int vka_texu_elem = 1;
 // Element k's byte offset past an array's base: a uniform buffer's array of 64-bit NVN handles that the shader indexes (BindlessToArray: the host fills element k from base + 8k)
 static unsigned ubo_elem(const dmsh_vk_bind *b, unsigned k) { return b->count > 1 && vka_texu_elem ? 8u * k : 0; }
 static int ubo_tex_id(const vka_bstate *s, uint32_t h) { int t = (int)(h & 0xfffff); return t ? t + s->tex_base : 0; }
-static int ubo_samp_id(const vka_bstate *s, uint32_t h) { int x = (int)(h >> 20); return x ? x + s->samp_base : 0; }
+// A handle's sampler of pool slot 0 (VKA_SID_POOL_ZERO): the driver fills slot 0 of every sampler pool itself (linear, no mipmaps, clamp to edge), so a handle that names a texture
+// and sampler 0 samples with that, not with the empty slot's sampler (vka_samp_default, nearest). The Witcher 3 samples its glyph atlas that way; with the nearest sampler thin
+// strokes of the text dropped out. A handle of 0 is no binding. After upstream nxnative (#3049)
+static int ubo_samp_id(const vka_bstate *s, uint32_t h) { int x = (int)(h >> 20); return x ? x + s->samp_base : h ? VKA_SID_POOL_ZERO : 0; }
+static int bound_sid(uint64_t h) { int x = (int)(h >> 20 & 0xfff); return x || !h ? x : VKA_SID_POOL_ZERO; }
 
 // The sampler half of a combined image sampler (skind, sreg, soff); element k of an array
 static int samp_of(const vka_bstate *s, int st, const dmsh_vk_bind *b, unsigned k, vka_read_fn rd, void *ctx) {
     switch (b->skind) {
-    case DMSH_VK_KIND_SAMP_TEX: return b->sreg >= 0 && b->sreg < VKA_NTEX ? (int)(s->tex[st][b->sreg] >> 20 & 0xfff) : 0;
-    case DMSH_VK_KIND_SAMP: return b->sreg >= 0 && b->sreg < 128 ? (int)(s->samp[st][b->sreg] >> 20 & 0xfff) : 0;
+    case DMSH_VK_KIND_SAMP_TEX: return b->sreg >= 0 && b->sreg < VKA_NTEX ? bound_sid(s->tex[st][b->sreg]) : 0;
+    case DMSH_VK_KIND_SAMP: return b->sreg >= 0 && b->sreg < 128 ? (int)(s->samp[st][b->sreg] >> 20 & 0xfff) : 0;   // (a sampler handle of slot 0 is 0: no binding)
     case DMSH_VK_KIND_SAMP_ID: return b->sreg > 0 ? b->sreg : 0;   // a constant of the shader (nvn_mtl.m NVN_RB_SAMPI): taken as it is
     case DMSH_VK_KIND_SAMP_UBO: return ubo_samp_id(s, (uint32_t)ubo_word(s, st, b->sreg, b->soff + ubo_elem(b, k), 4, rd, ctx));
     case DMSH_VK_KIND_SAMP_C2A: {   // the handle at c2 byte off + 8 k, ORed with the separate sampler word at soff (nvn_mtl.m NVN_RB_SAMPA)
         uint64_t sw = b->soff != 0xFFFF ? vka_c2_handle(s, st, b->soff) : 0;
-        return (int)((vka_c2_handle(s, st, b->off + 8u * k) | sw) >> 20 & 0xfff); }
+        return bound_sid(vka_c2_handle(s, st, b->off + 8u * k) | sw); }
     default: return 0;
     }
 }

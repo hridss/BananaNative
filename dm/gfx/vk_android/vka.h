@@ -441,6 +441,7 @@ int vka_tex_id_class_rec(int id);                   // the same, memoized for th
 VkSampler vka_samp_id_rec(int id);
 VkSampler vka_samp_id(int id);                      // sampler ID id; VK_NULL_HANDLE = not registered
 VkSampler vka_samp_default(void);                   // the sampler an unbound sampler slot reads with (nearest, clamp to edge)
+VkSampler vka_samp_pool_zero(void);                 // a sampler pool's slot 0, as the NVN driver fills it (linear, base level, clamp to edge)
 
 // ---------- Shaders (vka_shader.c) ----------
 // The game's Vulkan shader library, <pack>/shaders/v-<DMSH_VK_CHAIN>/dmsh_vk.lib (DM_VK_SHLIB overrides the path), loaded at the first program the replay resolves.

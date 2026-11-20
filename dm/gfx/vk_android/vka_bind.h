@@ -34,13 +34,14 @@ enum {
     VKA_R_C1,         // the shader's own c1 bytes
     VKA_R_SUPPORT,    // Ryujinx's support buffer
     VKA_R_DRV,        // a driver segment the replay fills (bank 0, 2 or DMSH_PUSH_BANK: vka_drv_fill)
-    VKA_R_TEX,        // texture ID tid (0 = none) with sampler ID sid (0 = none), read through a view of shape dim
+    VKA_R_TEX,        // texture ID tid (0 = none) with sampler ID sid (0 = none, VKA_SID_POOL_ZERO = a pool's slot 0), read through a view of shape dim
     VKA_R_IMG,        // image of texture ID tid, storage
     VKA_R_TBUF,       // buffer texture of texture ID tid
     VKA_R_GMEM_MAP,   // the guest → device address table of raw global memory
     VKA_R_GMEM_LOG,   // that memory's write log, cleared per draw or dispatch
     VKA_R_SHARED_SPILL,   // a compute program's shared memory past the device's limit (DMSH_VK_KIND_SHARED_SPILL): size = bytes of one workgroup's slice
 };
+#define VKA_SID_POOL_ZERO (-1)   // vka_res.sid: slot 0 of the bound sampler pool, which the NVN driver fills (vka_samp_pool_zero)
 typedef struct {
     uint8_t what, desc, flags, dim;    // VKA_R_*, VkDescriptorType, DMSH_VK_BF_*, DMSH_VK_DIM_*
     uint16_t binding, elem;            // set 0 binding and array element
