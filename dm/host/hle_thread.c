@@ -28,7 +28,7 @@
 #define WAITERS_BIT   0x40000000u
 #define H_CUR_THREAD  0xFFFF8000u
 
-enum { O_FREE, O_THREAD, O_EVENT_R, O_EVENT_W };
+enum { O_FREE, O_THREAD, O_EVENT_R, O_EVENT_W, O_READONLY_SHMEM };
 // Service-layer SystemEvent bindings (see hle_bind_system_event): guest SystemEventType address → the write-end handle of its kernel event.
 // An entry lives as long as that handle: CloseHandle on it removes the entry (se_unbind), so a SystemEvent destroyed and created again at the same address gets a new kernel event.
 // Entries used to stay forever: the second bind returned early, the new event was never created and signals went to the closed handle (or to whatever event reused its number).
@@ -1268,12 +1268,23 @@ static int svc_thread_impl(int num, uint64_t *regs) {
             g_h[i].type = O_FREE; g_h[i].obj = NULL;
             t->closed = 1;
             if (t->exited) thr_free(t);
+        } else if (i > 0 && i < MAX_H && g_h[i].type == O_READONLY_SHMEM) {
+            g_h[i].type = O_FREE; g_h[i].obj = NULL;
         }
         pthread_mutex_unlock(&G);
         regs[0] = 0; return 1;
     }
     }
     return 0;
+}
+
+uint32_t hle_new_readonly_shmem(const hle_readonly_shmem *memory) {
+    pthread_mutex_lock(&G); uint32_t h = h_new(O_READONLY_SHMEM, (void *)memory); pthread_mutex_unlock(&G);
+    return h;
+}
+const hle_readonly_shmem *hle_get_readonly_shmem(uint32_t handle) {
+    pthread_mutex_lock(&G); const hle_readonly_shmem *memory = h_peek(handle, O_READONLY_SHMEM); pthread_mutex_unlock(&G);
+    return memory;
 }
 
 // ---------- SystemEvent of the service layer ----------

@@ -36,6 +36,9 @@ int g_nmod;
 struct dm_flags g_flag;
 void hlecount_svc(int num) { (void)num; }
 int svc_thread(int num, uint64_t *regs) { (void)num; (void)regs; return 0; }
+static const uint8_t readonly_bytes[0x8000] = { 0x53, [0x7fff] = 0x49 };
+static const hle_readonly_shmem readonly_memory = { readonly_bytes, sizeof readonly_bytes };
+const hle_readonly_shmem *hle_get_readonly_shmem(uint32_t handle) { return handle == 0x1042 ? &readonly_memory : NULL; }
 void dm_backtrace(uint64_t fp) { (void)fp; }
 void guest_clock_read_wait(void) {}
 uint64_t guest_ns(void) { return 0; }
@@ -133,6 +136,30 @@ static memory_info query(uintptr_t a) {
 static void expect(uintptr_t a, uintptr_t base, size_t size, unsigned state, unsigned attr, unsigned perm) {
     memory_info m = query(a);
     assert(m.base == base && m.size == size && m.state == state && m.attr == attr && m.perm == perm);
+}
+static uint32_t shared_svc(int svc, uint32_t handle, uintptr_t addr, size_t size, unsigned permission) {
+    uint64_t regs[31] = { handle, addr, size, permission };
+    svc_dispatch(svc, regs, 0);
+    return (uint32_t)regs[0];
+}
+static void readonly_shared_memory(void) {
+    uintptr_t addr = alias + 0x10000;
+    size_t size = sizeof readonly_bytes;
+    assert(shared_svc(0x13, 0, addr, size, 1) == 0xe401u);
+    assert(shared_svc(0x13, 0x1042, addr, size, 3) != 0);
+    assert(!pages(1, addr, size));
+    assert(shared_svc(0x13, 0x1042, addr, size, 1) == BAD);
+    assert(!pages(0, addr, size));
+    assert(!shared_svc(0x13, 0x1042, addr, size, 1));
+    expect(addr, addr, size, 6, 0, 1);
+    assert(!memcmp((void *)addr, readonly_bytes, size));
+    assert(pages(1, addr, size) == BAD && pages(0, addr, size) == BAD);
+    assert(shared_svc(0x13, 0x1042, addr, size, 1) == BAD);
+    assert(!shared_svc(0x14, 0x1042, addr, size, 0));
+    assert(query(addr).state == 0);
+    assert(!pages(1, addr, size));
+    assert(*(uint8_t *)addr == 0 && *(uint8_t *)(addr + size - 1) == 0);
+    assert(!pages(0, addr, size));
 }
 static void fatal(unsigned svc, uint64_t x0, uint64_t x1, uint64_t x2) {
     fflush(NULL); pid_t pid = fork(); assert(pid >= 0);
@@ -573,6 +600,7 @@ int main(int argc, char **argv) {
     for (unsigned i = 0; i < 8; ++i) assert(!pthread_create(&threads[i], NULL, init_worker, &addresses[i]));
     for (unsigned i = 0; i < 8; ++i) { assert(!pthread_join(threads[i], NULL)); assert(addresses[i] == addresses[0]); }
     alias = addresses[0]; stack = info(I_StackAddr); heap = info(I_HeapAddr);
+    readonly_shared_memory();
     lazy_commit(); alias_lifecycle(); ownership(); unmap_gives_pages_back(); module_sources(); module_back_patch(); failures(); release_fallback(); concurrency(); fragmented_queries();
     guest_helper(); read_mapped_race();
     if (!DM_GAME_MEM_MAP_LIMIT) metadata_limit();
