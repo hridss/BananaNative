@@ -27,12 +27,13 @@
 // ---- Object file conventions ----
 // The tables are ELF sections; the linker bounds each by __start_<name> / __stop_<name>. Weak: an image without the section has none
 #define TABLE(n) extern const char __start_##n[] __attribute__((weak, visibility("hidden"))), __stop_##n[] __attribute__((weak, visibility("hidden")));
-TABLE(swhle) TABLE(swforce) TABLE(swnvn)
+TABLE(swhle) TABLE(swforce) TABLE(swnvn) TABLE(swsf)
 const void *plat_table(const char *name, unsigned long *size) {
     const char *b = NULL, *e = NULL;
     if (!strcmp(name, "swhle")) { b = __start_swhle; e = __stop_swhle; }
     else if (!strcmp(name, "swforce")) { b = __start_swforce; e = __stop_swforce; }
     else if (!strcmp(name, "swnvn")) { b = __start_swnvn; e = __stop_swnvn; }
+    else if (!strcmp(name, "swsf")) { b = __start_swsf; e = __stop_swsf; }
     *size = b && e > b ? (unsigned long)(e - b) : 0;
     return *size ? b : NULL;
 }
