@@ -1,11 +1,26 @@
 // Clock snapshot arithmetic (hle_time.c, from PR #36): CalculateSpanBetween and CalculateStandardUserSystemClockDifferenceByUser looked up by their mangled names in the real swforce
 // registrations, run on both host snapshot entries and on edited copies; the C library's local-time functions, UTC as on a Switch, against nn::time's local conversion (issue #2784)
+#include "../hle.h"
+#include <sys/wait.h>
+#include <time.h>
+#include <unistd.h>
+// The clocks hle_time.c reads, set by check_sample_phase in a child process (0: the real ones)
+static uint64_t test_wall_ns, test_steady_ns;
+static uint64_t test_clock_ns(clockid_t c) { return !test_wall_ns ? plat_clock_ns(c) : c == CLOCK_REALTIME ? test_wall_ns : test_steady_ns; }
+static int test_clock_gettime(clockid_t c, struct timespec *ts) {
+    if (!test_wall_ns) return clock_gettime(c, ts);
+    uint64_t v = test_clock_ns(c); ts->tv_sec = (time_t)(v / 1000000000ull); ts->tv_nsec = (long)(v % 1000000000ull); return 0;
+}
+#define plat_clock_ns test_clock_ns
+#define clock_gettime test_clock_gettime
 #include "../hle_time.c"
+#undef clock_gettime
+#undef plat_clock_ns
 #include "../hle_net.c"   // DM_ONLINE: nifm proxy setting and nsd name resolution
 #include <mach-o/getsect.h>
 
 void dm_guest_sleep_ns(int64_t ns) { (void)ns; }   // hle_net.c (socket Poll) links these
-uint64_t guest_ns(void) { return clock_gettime_nsec_np(CLOCK_MONOTONIC); }
+uint64_t guest_ns(void) { return clock_gettime_nsec_np(CLOCK_MONOTONIC); }   // never moves with the test clocks: the context must not follow the guest ticks
 static int checks, fails;
 extern const struct mach_header_64 _mh_execute_header;
 #define CHECK(c, msg) do { checks++; if (!(c)) { fails++; fprintf(stderr, "FAIL: %s\n", msg); } } while (0)
@@ -50,7 +65,39 @@ void *guest_sym(const char *name) {
 }
 static void put64(uint8_t *s, int off, int64_t v) { memcpy(s + off, &v, 8); }
 static int64_t get64(const uint8_t *s, int off) { int64_t v; memcpy(&v, s + off, 8); return v; }
+// The user clock context in a fresh process whose first read falls at a given phase of the steady clock's second (upstream nxnative PR #3065): one offset whatever the phase,
+// kept through a one-second change, renewed past it either way, and kept while time passes with the guest ticks standing still
+static void check_sample_phase(uint64_t phase) {
+    const int64_t offset = 1794821231;
+    pid_t pid = fork();
+    if (pid == 0) {
+        unsetenv("DM_FIXED_TIME"); unsetenv("DM_TIME"); unsetenv("DM_TIME_OFFSET");
+        test_steady_ns = 300000000000000ull + phase;
+        test_wall_ns = test_steady_ns + offset * 1000000000ull + 400000000ull;
+        uint8_t a[0xd0], b[0xd0];
+        h_time_Snapshot(a);
+        int phase_stable = get64(a, 0) == offset;
+        test_wall_ns += 1000000000ull; h_time_Snapshot(b);
+        int threshold = !memcmp(a, b, 0x20);
+        test_wall_ns += 1000000000ull; h_time_Snapshot(b);
+        int forward = h_time_UserDiff(a, b) == 2000000000ll;
+        test_wall_ns -= 4000000000ull; h_time_Snapshot(b);
+        int backward = h_time_UserDiff(a, b) == -2000000000ll;
+        memcpy(a, b, sizeof a);
+        test_steady_ns += 60000000000ull; test_wall_ns += 60000000000ull; h_time_Snapshot(b);   // a minute passes; guest_ns is not the test's clock
+        int elapsed = !memcmp(a, b, 0x20) && get64(b, 0x90) - get64(a, 0x90) == 60;
+        _exit((!phase_stable) | (!threshold) << 1 | (!forward) << 2 | (!backward) << 3 | (!elapsed) << 4);
+    }
+    int status, result = pid > 0 && waitpid(pid, &status, 0) == pid && WIFEXITED(status) ? WEXITSTATUS(status) : 31;
+    CHECK(!(result & 1), "the same user-to-steady separation gives one offset in fresh processes");
+    CHECK(!(result & 2), "a one-second change keeps the context");
+    CHECK(!(result & 4), "a forward clock change past the threshold makes a new context");
+    CHECK(!(result & 8), "a backward clock change past the threshold makes a new context");
+    CHECK(!(result & 16), "time passing does not change the context");
+}
 int main(void) {
+    check_sample_phase(250000000ull);
+    check_sample_phase(750000000ull);
     Result (*snap)(uint8_t *) = hook("_ZN2nn4time13ClockSnapshot29CreateWithStandardSystemClockEPS1_");
     Result (*adj_snap)(uint8_t *) = hook("_ZN2nn4time13ClockSnapshot31CreateWithAdjustableSystemClockEPS1_");
     unsigned (*span)(int64_t *, const uint8_t *, const uint8_t *) = hook("_ZN2nn4time20CalculateSpanBetweenEPNS_8TimeSpanERKNS0_13ClockSnapshotES5_");
