@@ -1332,3 +1332,10 @@ Most service calls can be found before they crash, before the first boot or the 
 - **Cause:** `PlayReport::Send` returns a nontrivial `AsyncContext` in the caller's x8 storage that expects an initialized state and connects to `prepo:u` if unhandled.
 - **Fix:** in `dm/host/hle_offline.c`, `h_prepo_SendU` invokes the guest's `nn::prepo::AsyncContext::AsyncContext(Result)` constructor with `RES_OK` via x8, completing the asynchronous telemetry report offline without requiring a service session.
 - **Found on:** [The Legend of Zelda: Ocarina of Time](../../dm/games/0400486024DEC000/README.md).
+
+### `oe::GetDefaultDisplayResolution` returns 720p in handheld mode on Switch 2
+
+- **Symptom:** Fast Fusion draws its 1080p DLSS output into `WindowCrop 0,0 1280x720` in handheld mode, leaving HUD elements and edges soft.
+- **Cause:** `oe::GetDefaultDisplayResolution` answered 1280×720 in handheld mode for every SDK, whereas Switch 2's screen is 1080p (matching `vi::QueryDisplayBufferMaxResolution`).
+- **Fix:** return 1920×1080 in handheld mode when `dm_sdk_ounce()` is true; Switch 1 keeps 1280×720.
+- **Found on:** [Fast Fusion](../../dm/games/040041E0212AE000/README.md#found-on-this-game) on the Android app on the Odin 3 (system driver and Turnip v32): `WindowCrop 0,0 1920x1080`, sharper HUD and edges, GPU 12.4 → 13.8 ms, fps unchanged; docked unchanged. Mario Tennis Fever stores it in a global it never reads (no effect).

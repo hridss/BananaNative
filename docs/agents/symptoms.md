@@ -427,6 +427,7 @@ One line per symptom in the [subsystem references](../reference/): what you see 
 - SIGSEGV reading address 0 in `SdkMutexType::Lock` right after graphics initialize, under `nn::vi2::InitializeWithVrrLfcEnabled`. → [`vi::InitializeWithVrrLfcEnabled`](../reference/services.md#viinitializewithvrrlfcenabled)
 - gRPC in Nintendo's online library (NPLN) aborts at startup (`main+0x21f0c7c`) because its poll engine's initializer (`main+0x21f1280`) finds no wakeup fd while socket calls fail offline. → [Eventfds served offline](../reference/services.md#eventfds-served-offline)
 - crash or abort at the first gameplay transition when sending an asynchronous play report (`nn::prepo::PlayReport::Send`). → [An asynchronous play report opens prepo:u](../reference/services.md#an-asynchronous-play-report-opens-prepou)
+- Fast Fusion draws its 1080p DLSS output into `WindowCrop 0,0 1280x720` in handheld mode, leaving HUD elements and edges soft. → [`oe::GetDefaultDisplayResolution` returns 720p in handheld mode on Switch 2](../reference/services.md#oegetdefaultdisplayresolution-returns-720p-in-handheld-mode-on-switch-2)
 
 ## Movies
 

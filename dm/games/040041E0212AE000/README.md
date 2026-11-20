@@ -50,6 +50,7 @@ Regression level: moderate, because shared shader extraction and translation cha
 - Subword task and mesh payload accesses.
 - Indexed texture handles in NVN2 compute c0.
 - DLSS scalers released under their encoders: already fixed before this bring-up; the earlier report reached its eighth network after about nine minutes.
+- [`oe::GetDefaultDisplayResolution` returns 720p in handheld mode on Switch 2](../../../docs/reference/services.md#oegetdefaultdisplayresolution-returns-720p-in-handheld-mode-on-switch-2): returning 1920×1080 for `dm_sdk_ounce()` gives `WindowCrop 0,0 1920x1080` and sharper HUD and edges on the Android app on the Odin 3 (system driver and Turnip v32; GPU 12.4 → 13.8 ms, fps unchanged).
 
 ## Open
 
