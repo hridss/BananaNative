@@ -495,6 +495,15 @@ static void rec_start(void) {
     LOG("DM_REC: recording player 1's input to %s as DM_KEYS steps in presented frames", e);
 }
 
+// Each stick held inside the circle of radius DM_STICK_MAX, as Horizon's hid reports it: a Switch stick's calibrated value never leaves that circle, while an
+// Android (or Mac) controller's axes each reach ±1 on their own, so a diagonal read up to about 1.15 of full tilt (as do the on-screen sticks and the keyboard).
+// A game that takes the magnitude as at most full tilt got more than it could; the direction is kept. After upstream nxnative (Persona 3 Portable)
+static void stick_circle(int32_t a[4]) {
+    for (int i = 0; i < 4; i += 2) {
+        double m = hypot((double)a[i], (double)a[i + 1]);
+        if (m > DM_STICK_MAX) { a[i] = (int32_t)lrint(a[i] * DM_STICK_MAX / m); a[i + 1] = (int32_t)lrint(a[i + 1] * DM_STICK_MAX / m); }
+    }
+}
 // A whole controller shown as one Joy-Con (pad_style): the other half's buttons count as the ones in the same place on the shown side (the D-pad as A / B / X / Y on a right
 // Joy-Con, and the other way round), and the more deflected stick is that side's stick; the other half reads nothing
 static uint64_t single_joy_fold(uint32_t style, uint64_t b, int32_t a[4]) {
@@ -537,6 +546,7 @@ static void fill(NpadState *s, uint32_t id, uint32_t style) {
     }
     b &= 0xffffull;
     if (single_joy(shown)) b = single_joy_fold(shown, b, a);
+    stick_circle(a);
     s->lx = a[0]; s->ly = a[1]; s->rx = a[2]; s->ry = a[3];
     if (s->lx < -STICK_THRESH) b |= 1u << 16;
     if (s->ly > STICK_THRESH) b |= 1u << 17;
