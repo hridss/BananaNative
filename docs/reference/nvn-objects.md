@@ -573,6 +573,13 @@ Games read this count as a position in their own command memory and size their h
 - **Fix:** a sampled texture in a sparse pool (not a render target, image, linear or buffer texture) is now uploaded like a packaged one, through the pool's page table ([Textures read through a 4 KB page table of a sparse pool](#textures-read-through-a-4-kb-page-table-of-a-sparse-pool)).
 - **Found on:** [Monster Hunter Rise](../../dm/games/0100B04011742000/README.md): the hunter's innerwear (ASTC 6x6) came out magenta and the face black.
 
+### Block-compressed textures with sparse layout in CPU-visible pools
+
+- **Symptom:** bright magenta patches on materials that sample block-compressed (BC or ASTC) textures; the image holds all-zero blocks while the texture's pool holds texture data.
+- **Cause:** `SPARSE` also selects the byte layout of a texture in an ordinary, non-virtual pool. The host took sparse textures from their storage only in virtual pools, and the first-use upload of block-compressed textures left out `SPARSE`, so a texture the game filled directly in a CPU-visible pool kept its zero-filled image.
+- **Fix:** block-compressed textures with `SPARSE` in a non-virtual pool the CPU can access (not images, compressible, multisampled or 1D array textures) are tracked from their storage from their first use, even while it is still empty: on Metal in `tex_from_storage`, on the Vulkan replay in `storage_mode` (`vka_tex.c`, `ST_TRACK`). The first CPU writes and later level uploads reach the image; virtual pools keep their page tables.
+- **Found on:** Bloodstained: Ritual of the Night (1.60 on Apple M6, upstream nxnative's profile `0100BF500207C000`, ported from seedds/nxnative 950212b9f): seven zero-filled ASTC inputs in the portrait pass; the opening dialogue and the status screen render with their intended colors. No game here is known to hit it yet; the Vulkan path is untested on a phone (open).
+
 ### Dirty-page ranges of pools that share a host page
 
 - **Symptom:** some textures are re-uploaded every frame (several MB per frame).

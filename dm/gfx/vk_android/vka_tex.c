@@ -711,6 +711,16 @@ static int storage_mode(const tex_t *t, const uint8_t *c, const vka_fmt *f, int 
     else if (linear && t->pool) want = ST_TRACK;
     else if (is_vid) want = ST_TRACK;
     else if (comp && !(d->flags & (NVN_TEXTURE_FLAGS_IMAGE | NVN_TEXTURE_FLAGS_COMPRESSIBLE | NVN_TEXTURE_FLAGS_SPARSE)) && mem_any_mapped(c, t)) want = ST_TRACK;
+    // SPARSE selects the texture's byte layout in an ordinary pool too, not only in a virtual one (nvn_mtl.m tex_from_storage): a block-compressed texture with it in a pool the CPU
+    // can write is filled through that pool, possibly after the texture is made (Bloodstained: Ritual of the Night's ASTC portraits stayed zero, magenta, on the Mac). Tracked from its
+    // first use even while its storage is still empty, so the first CPU writes and later level uploads reach the image (docs/reference/nvn-objects.md)
+    else if (comp && t->pool && (d->flags & NVN_TEXTURE_FLAGS_SPARSE) && !(d->flags & (NVN_TEXTURE_FLAGS_IMAGE | NVN_TEXTURE_FLAGS_COMPRESSIBLE))
+             && !(pf & (NVN_MEMORY_POOL_FLAGS_CPU_NO_ACCESS | NVN_MEMORY_POOL_FLAGS_VIRTUAL)) && d->target != NVN_TEXTURE_TARGET_1D_ARRAY) {
+        want = ST_TRACK;
+        static _Atomic uint64_t nsl; uint64_t k = atomic_fetch_add(&nsl, 1);
+        if (k < 4) VLOG("texture serial %llu %ux%ux%u format %#x pool flags %#x: sparse layout in an ordinary pool, block-compressed: tracked from its storage (%llu so far)",
+                        (unsigned long long)t->serial, d->width, d->height, d->depth, d->format, pf, (unsigned long long)k + 1);
+    }
     else if (nvn2_sampled_content(t, f, pf, sampled)) {
         int any = mem_any_mapped(c, t); uint64_t k = g_nvn2_first[!any]++; want = ST_TRACK;
         if (any && k < 4) VLOG("texture serial %llu %ux%ux%u format %#x pool flags %#x: written by the CPU before its first use, a sample (NVN2): uploaded from its storage, re-uploaded when it changes (%llu so far, %llu more with empty storage)",
