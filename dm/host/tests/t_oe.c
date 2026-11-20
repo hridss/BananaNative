@@ -250,5 +250,7 @@ int main(void) {
     setenv("DM_LANG", "es-MX", 1); CHECK(h_oe_GetRegion() == 1, "es-MX is an American console");
     unsetenv("DM_LANG");
     { uint64_t v = h_oe_GetLang(); char c[9] = {0}; memcpy(c, &v, 8); CHECK(!strcmp(c, "en-US"), "no DM_LANG is en-US"); }
+    reset(); h_oe_EnableCrashReport(); h_oe_DisableCrashReport();
+    CHECK(empty() && h_oe_GetFocus() == 1, "crash-report service switches require no SDK proxy or notifications");
     printf("== oe %d checks, %d failed ==\n", checks, fails); return fails != 0;
 }
