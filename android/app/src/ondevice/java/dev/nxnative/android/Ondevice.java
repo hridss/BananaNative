@@ -82,9 +82,11 @@ final class Ondevice {
      * with no question, once per app process (a failed job, or one paused by anything but the player, is resumed once). The game card then shows it, and Play stays on
      * when that library is playable (Pack.playableLibrary); otherwise Play waits for it as before. When the game plays meanwhile only a small delta starts by itself
      * (Pack.deltaAutomatic, ShaderLibs.autoDelta): a larger one is an offer on the game's page, like an update with no manifest. Only the card's own pack is updated (card = true): never the pack Folders.packFor would pick
-     * (a game added with another pack, e.g. the play app's beside the dump), never a whole job, never a job for another pack folder
+     * (a game added with another pack, e.g. the play app's beside the dump), never a whole job, never a job for another pack folder. Nothing starts, not even the quick
+     * check, when Settings › System › Update shaders automatically is off (Prefs.autoShaderUpdate): the card says "Ready · update", the game's page updates them
      */
     static void autoUpdate(MainActivity a, File dump, File packDir, String titleId) {
+        if (!Prefs.autoShaderUpdate(a)) return;
         if (panel == null || panel.a != a || panel.alive()) return;
         if (sampledKeep(a, dump, packDir, titleId)) return;   // the quick check first (below): the older library may stand as this version's; a difference goes on to the update as before
         if (!Pack.deltaAutomatic(packDir, titleId) || !autoTried.add(dump.getPath())) return;

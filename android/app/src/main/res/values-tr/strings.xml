@@ -229,6 +229,9 @@
     <string name="settings_updates">Güncellemeler</string>
     <string name="settings_what_s_new">Yenilikler</string>
     <string name="settings_while_home_shows_a_game">Ana ekranda bir oyun hazırlanırken</string>
+    <string name="settings_update_shaders_automatically">Gölgelendiricileri otomatik güncelle</string>
+    <string name="settings_auto_shader_update_on">Gölgelendiricileri güncel olmayan bir oyun bunları arka planda günceller</string>
+    <string name="settings_auto_shader_update_off">Kapalı: oyunun sayfası istediğinizde bunları günceller</string>
     <string name="settings_xbox_button_label_swap">Xbox düğme etiketi değişimi</string>
     <string name="game_1_player">1 oyuncu</string>
     <string name="game_3d_scene">3B sahne</string>

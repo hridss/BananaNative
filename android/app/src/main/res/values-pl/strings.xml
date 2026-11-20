@@ -231,6 +231,9 @@
     <string name="settings_updates">Aktualizacje</string>
     <string name="settings_what_s_new">Co nowego</string>
     <string name="settings_while_home_shows_a_game">Gdy ekran główny pokazuje przygotowywaną grę</string>
+    <string name="settings_update_shaders_automatically">Aktualizuj shadery automatycznie</string>
+    <string name="settings_auto_shader_update_on">Gra z nieaktualnymi shaderami aktualizuje je w tle</string>
+    <string name="settings_auto_shader_update_off">Wyłączone: strona gry aktualizuje je na żądanie</string>
     <string name="settings_xbox_button_label_swap">Zamiana etykiet przycisków Xbox</string>
     <string name="game_1_player">1 gracz</string>
     <string name="game_3d_scene">Scena 3D</string>

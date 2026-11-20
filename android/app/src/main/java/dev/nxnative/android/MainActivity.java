@@ -875,6 +875,9 @@ public final class MainActivity extends Activity {
         // some phones stop or slow a background job once the screen is off (GitHub discussion 58): Home keeps the screen on while preparing (Ondevice), the service its wake lock
         sys.addView(new Ui.Setting(this, "🔆", Tx.s(R.string.settings_keep_the_screen_on_while), null).toggle(this, Prefs.keepScreenPreparing(this), (b, on) -> Prefs.keepScreenPreparing(this, on))
                 .value(Tx.s(R.string.settings_while_home_shows_a_game)).view);   // the game, pack and save folders, kept across updates (Folders.java)
+        // a game whose shaders are not this version's is updated in the background at start and at Play (Ondevice.autoUpdate); off: the game's page does it when asked
+        sys.addView(new Ui.Setting(this, "🔄", Tx.s(R.string.settings_update_shaders_automatically), null).toggle(this, Prefs.autoShaderUpdate(this), (b, on) -> Prefs.autoShaderUpdate(this, on))
+                .says(Tx.s(R.string.settings_auto_shader_update_on), Tx.s(R.string.settings_auto_shader_update_off)).view);
 
         Ui.add(content, Ui.section(this, Tx.s(R.string.common_help)), Ui.SECTION_GAP);
         LinearLayout help = settingsCard(content);
@@ -1696,6 +1699,7 @@ public final class MainActivity extends Activity {
                 else if (problem.playable && Ondevice.sampling(new File(g.packDir))) { state(st, PrepareText.CHECKING_SHADERS(), R.color.bn_leaf, ST_SOFT | ST_WORKING); updating.put(st, g); updateTick(); updateUi.removeCallbacks(sampleRun); updateUi.postDelayed(sampleRun, 2000); }   // the quick check of the older library (Ondevice.sampledKeep): the card follows it
                 else if (problem.playable && Pack.shaderLayerFills(new File(g.packDir), g.titleId, Prefs.layerEnv(this, g.titleId))) state(st, Tx.s(R.string.home_ready), R.color.bn_leaf, ST_HIDDEN);   // the layer builds what the older library lacks: no "update" to nag about
                 else if (problem.playable && !Pack.deltaAutomatic(new File(g.packDir), g.titleId)) state(st, Tx.s(R.string.home_ready_update), R.color.bn_accent, ST_SOFT);   // an optional shader update (no manifest row, or a large delta): the game's page offers it (GameSettings.shaderUpdateCard)
+                else if (problem.playable && !Prefs.autoShaderUpdate(this) && !Ondevice.busy(this)) state(st, Tx.s(R.string.home_ready_update), R.color.bn_accent, ST_SOFT);   // Update shaders automatically is off: nothing started, the game's page updates them
                 else if (problem.playable) { state(st, Tx.s(R.string.home_ready_updating_shaders), R.color.bn_leaf, ST_SOFT | ST_WORKING); updating.put(st, g); updateTick(); }   // the count follows (updateTick)
                 else if (problem.legacy) state(st, Tx.s(R.string.home_ready_shaders_need_one_update), R.color.bn_accent, ST_SOFT);
                 else state(st, problem.label, problem.prepare || problem.anyway ? R.color.bn_accent : R.color.bn_danger, problem.working ? ST_WORKING : 0);

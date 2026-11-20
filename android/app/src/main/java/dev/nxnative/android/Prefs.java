@@ -591,6 +591,14 @@ final class Prefs {
     static boolean keepScreenPreparing(Context c) { return of(c).getBoolean("keep_screen_preparing", true); }
     static void keepScreenPreparing(Context c, boolean on) { of(c).edit().putBoolean("keep_screen_preparing", on).commit(); }
 
+    /**
+     * Update a game's shaders by themselves (Settings › System, on by default): when a game's library is not this app version's and the dump can make it, Home's check
+     * and Play start the update in the background (Ondevice.autoUpdate, with its quick check first). Off: nothing starts by itself; the card says "Ready · update"
+     * and the game's page offers Update shaders
+     */
+    static boolean autoShaderUpdate(Context c) { return of(c).getBoolean("auto_shader_update", true); }
+    static void autoShaderUpdate(Context c, boolean on) { of(c).edit().putBoolean("auto_shader_update", on).commit(); }
+
     /** Game language (Game settings): a console language code (GameLanguage.CODES) passed as DM_LANG, null for the phone's language (the default) */
     static String gameLang(Context c, String titleId) { return of(c).getString(gameKey("lang", titleId), null); }
     static void gameLang(Context c, String titleId, String code) { put(c, gameKey("lang", titleId), code); }

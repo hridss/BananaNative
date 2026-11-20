@@ -228,6 +228,9 @@
     <string name="settings_updates">更新</string>
     <string name="settings_what_s_new">新内容</string>
     <string name="settings_while_home_shows_a_game">在主页显示正在准备的游戏时</string>
+    <string name="settings_update_shaders_automatically">自动更新着色器</string>
+    <string name="settings_auto_shader_update_on">着色器过时的游戏会在后台更新</string>
+    <string name="settings_auto_shader_update_off">关闭：按需在游戏页面中更新</string>
     <string name="settings_xbox_button_label_swap">Xbox 按键标签互换</string>
     <string name="game_1_player">1 名玩家</string>
     <string name="game_3d_scene">3D 场景</string>

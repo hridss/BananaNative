@@ -231,6 +231,9 @@
     <string name="settings_updates">Оновлення</string>
     <string name="settings_what_s_new">Що нового</string>
     <string name="settings_while_home_shows_a_game">Поки на головному екрані триває підготовка гри</string>
+    <string name="settings_update_shaders_automatically">Оновлювати шейдери автоматично</string>
+    <string name="settings_auto_shader_update_on">Гра із застарілими шейдерами оновлює їх у фоновому режимі</string>
+    <string name="settings_auto_shader_update_off">Вимкнено: сторінка гри оновлює їх на ваш запит</string>
     <string name="settings_xbox_button_label_swap">Підміна позначень кнопок під Xbox</string>
     <string name="game_1_player">1 гравець</string>
     <string name="game_3d_scene">3D-сцена</string>

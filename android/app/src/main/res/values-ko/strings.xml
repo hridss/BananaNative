@@ -228,6 +228,9 @@
     <string name="settings_updates">업데이트</string>
     <string name="settings_what_s_new">새로운 기능</string>
     <string name="settings_while_home_shows_a_game">홈에 준비 중인 게임이 표시되는 동안</string>
+    <string name="settings_update_shaders_automatically">셰이더 자동 업데이트</string>
+    <string name="settings_auto_shader_update_on">셰이더가 오래된 게임은 백그라운드에서 업데이트합니다</string>
+    <string name="settings_auto_shader_update_off">끄기: 요청하면 게임 페이지에서 업데이트합니다</string>
     <string name="settings_xbox_button_label_swap">Xbox 버튼 라벨 바꾸기</string>
     <string name="game_1_player">1인 플레이</string>
     <string name="game_3d_scene">3D 장면</string>
