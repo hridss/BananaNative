@@ -477,6 +477,8 @@ int vka_shader_variant_key(uint64_t key);   // 1 when a key is no library key bu
 typedef struct { vka_shader *sh[VKA_NSTAGE]; unsigned bad; } vka_progsh;   // by NVN stage; bad: stages whose shader is refused (bit = NVN stage) or VKA_BAD_MISSING (their draws are skipped)
 #define VKA_BAD_MISSING (1u << VKA_NSTAGE)   // vka_progsh.bad: a stage's shader is not in the library (its NVN stage unknown)
 int vka_prog_shaders(const prog_t *p, vka_progsh *out);      // 1 = resolved (stages the program lacks are NULL); 0 = no library or no program
+#define VKA_STAGE_UNKNOWN (1u << VKA_NSTAGE)                   // vka_prog_stage_mask: a stage whose shader the library lacks (its NVN stage unknown)
+unsigned vka_prog_stage_mask(const prog_t *p);               // bit = an NVN stage the program has a shader for, without making a module
 unsigned vka_layer_gen(void);   // raised when the run-time shader layer (vka_shader.c) gains a library, or its requests are to be asked again: a cached vka_progsh with VKA_BAD_MISSING is stale
 void vka_layer_poll(void);    // once a second from the present path: maps a layer the packer made (cheap: one stat a second)
 void vka_prog_put(uint64_t serial, const vka_progsh *ps);   // a program made by the host itself (the selftest), by serial

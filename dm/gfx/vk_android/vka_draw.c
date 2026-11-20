@@ -82,9 +82,15 @@ int vka_state_op(vka_dstate *d, uint32_t op, const void *a) {
     if (op != OP_BIND_UBO && op != OP_BIND_UBO_SMALL) { d->bind_gen++; }
     switch (op) {
     case OP_SET_TEX_POOL: case OP_SET_SAMP_POOL: { int tex = op == OP_SET_TEX_POOL, b = nvn_dpool_base(((const p_set_pool *)a)->pool, tex); if (tex) d->b.tex_base = b; else d->b.samp_base = b; break; }
-    case OP_BIND_PROGRAM: { const p_bind_program *b = a;
-        if (b->stages & 0x20) d->cprog = b->prog;
-        for (int st = 0; st < VKA_NSTAGE; st++) if (st != 5 && (b->stages >> st & 1)) d->bst[st] = b->prog;   // NVN binds per stage (nvn_mtl.m bind_stages); 6 / 7: NVN2's task and mesh
+    case OP_BIND_PROGRAM: { const p_bind_program *b = a; int stages = b->stages;
+        if (stages & 0x20) d->cprog = b->prog;
+        // A graphics program bound with the vertex bit that has another graphics stage but neither a vertex nor a mesh shader leaves the vertex stage as it was, as the hardware does:
+        // Little Busters! Converted Edition makes one program per shader and binds each with every graphics bit (BindProgram(vs, 0x1f), then BindProgram(ps, 0x1f)); the pixel bind
+        // replaced the vertex stage and every draw lacked a vertex shader (a black screen). A stage the program lacks is still unbound otherwise (Xenoblade Chronicles 2 binds
+        // vertex-only programs with 0x1f after vertex + pixel ones; Mario Kart World and Ocarina of Time bind depth-only task / mesh programs with 0xff / 0xc3). A program with a
+        // shader the library lacks binds as it says. After upstream nxnative (PR #3055)
+        if (b->prog && (stages & 1)) { unsigned m = vka_prog_stage_mask(b->prog); if ((m & 0x1e) && !(m & (0x81u | VKA_STAGE_UNKNOWN))) stages &= ~1; }
+        for (int st = 0; st < VKA_NSTAGE; st++) if (st != 5 && (stages >> st & 1)) d->bst[st] = b->prog;   // NVN binds per stage (nvn_mtl.m bind_stages); 6 / 7: NVN2's task and mesh
         break; }
     case OP_BIND_STATE: {
         const p_bind_state *b = a; blend_st bs;

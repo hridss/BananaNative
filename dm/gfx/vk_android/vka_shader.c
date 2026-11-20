@@ -1146,6 +1146,28 @@ int vka_prog_shaders(const prog_t *p, vka_progsh *out) {
     vka_prog_put(p->serial, out);
     return 1;
 }
+// The NVN stages a program has shaders for, without making a module (vka_draw.c's program bind asks at every bind): from the program's resolved shaders when it has been
+// drawn with, else from the prepared library's entries. A stage whose shader the library lacks sets VKA_STAGE_UNKNOWN (its stage is not known here); a mask with it is not
+// kept, so the program is asked again once the layer may have the shader. Kept per thread by serial (a new serial at every nvnProgramSetShaders)
+unsigned vka_prog_stage_mask(const prog_t *p) {
+    if (!p || !p->serial) return p ? VKA_STAGE_UNKNOWN : 0;
+    static __thread struct { uint64_t serial; unsigned mask; } cache[256];
+    unsigned h = (unsigned)(p->serial * 0x9E3779B97F4A7C15ull >> 56);
+    if (cache[h].serial == p->serial) return cache[h].mask;
+    unsigned m = 0;
+    pthread_mutex_lock(&g_mu); prent *e = pr_find(p->serial); vka_progsh ps; if (e) ps = e->ps; pthread_mutex_unlock(&g_mu);
+    if (e && !(ps.bad & VKA_BAD_MISSING)) {
+        for (int st = 0; st < VKA_NSTAGE; st++) if (ps.sh[st] || (ps.bad >> st & 1)) m |= 1u << st;   // (a refused shader still names its stage)
+    } else if (lib_ready()) {
+        for (unsigned i = 0; i < p->nstage && i < 6; i++) {
+            uint8_t md[8]; const dmsh_vk_entry *en = prog_key(p, i, md) ? main_find(vka_shlib_key(md)) : NULL;
+            int st = en ? vka_nvn_stage(en->stage) : -1;
+            m |= st >= 0 ? 1u << st : VKA_STAGE_UNKNOWN;
+        }
+    } else m = VKA_STAGE_UNKNOWN;
+    if (!(m & VKA_STAGE_UNKNOWN)) { cache[h].serial = p->serial; cache[h].mask = m; }
+    return m;
+}
 // A task / mesh shader's base words for its compute form (vka_memu.c): the library's module, with the one-invocation subgroup rewrite where the device's compute stage
 // needs it (sg_plan's compute row, not the mesh stage's). malloc'd
 uint32_t *vka_shader_memu_words(vka_shader *s, size_t *nb, char *err, size_t errn) {
