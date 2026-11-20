@@ -348,6 +348,14 @@ Most service calls can be found before they crash, before the first boot or the 
 - **Found on:** [Super Mario Odyssey](../../dm/games/0100000000010000/README.md); [Hollow Knight: Silksong](../../dm/games/010013C00E930000/README.md).
 - **Note:** Odyssey's six-axis history is read the same way ([Six-axis sensors](#six-axis-sensors)).
 
+### Host controller sticks past full tilt on a diagonal
+
+- **Symptom:** with a controller whose stick axes each reach full tilt on their own, both analog sticks move the character or camera erratically while the D-pad works (Persona 3 Portable 1.0.2 with a DualSense on the Mac).
+- **Cause:** a Switch stick's calibrated value stays inside the circle of radius `DM_STICK_MAX`, but an Android or Mac controller's axes (and the keyboard's and the on-screen sticks' values) each reach full tilt on their own, so a diagonal reads more than full tilt: up to about 1.41 for a square gate, 1.15 for a DualSense. A game that takes the stick's magnitude as at most full tilt got more than it could.
+- **Fix:** `hle_hid.c` holds each stick inside that circle, keeping its direction, for every npad state it fills (`stick_circle` in `fill`). A stick inside the circle is unchanged. After upstream nxnative ([PR #3053](https://github.com/seedds/nxnative/pull/3053)).
+- **Found on:** Persona 3 Portable (no profile here; upstream [#3050](https://github.com/seedds/nxnative/pull/3050)).
+- **Check:** `t_hid` puts a full-tilt diagonal on both sticks and checks that each stays inside the circle and keeps its direction (run on the phone).
+
 ### Npad style set update event
 
 - **Symptom:** the game never reads the controller (the title's "Press L+R" never sees a press; no `GetNpadState` call at all).
