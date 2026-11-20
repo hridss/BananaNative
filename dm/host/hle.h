@@ -96,4 +96,21 @@ void dm_audio_reset(void);   // iOS media services reset: recreate the AudioUnit
 // An nn::gs::NativeSyncHandle (16 bytes, magic first) the host made that never signals: GameChat's camera pictures, which never come (no camera; hle_misc.c). nn::gs::TryWaitNativeSync (hle_codec_video.c) reads it as not reached
 #define DM_SYNC_NEVER 0x4e436d44u   // 'DmCN'
 uint32_t dm_sf_host_session(const char *name);   // hle_sf.c: a session the host answers (success, zeroed output) for a service the game reaches without sm
+// Host service sessions (hle_sf.c): a request on a session the host serves, as its service sees it, and the answer it fills in. The input is the raw CMIF data after the "SFCI"
+// header; the buffers are the client's A (send), B (receive) and X (pointer) descriptors, read and written in place (one address space); the output is the raw data after "SFCO",
+// zeroed beforehand. A service may copy one kernel handle to the client (an event's read end) and move one (a new session: an out object outside a domain)
+typedef struct {
+    unsigned cmd, object;                              // CMIF command; domain object (0 outside a domain)
+    const uint8_t *in; size_t in_len;                  // raw input data
+    uint32_t copy[4], move[4]; unsigned ncopy, nmove;  // handles the client sent
+    struct { uint8_t *p; uint64_t size; } a[4], b[4], x[4]; unsigned na, nb, nx;
+    uint8_t out[0xc0]; size_t out_len;                 // raw output data (zeroed; out_len is how much of it the service wrote)
+    uint32_t out_copy, out_move;                       // handles for the client (0: none)
+    void *ctx;                                         // the session's own state (sf_session)
+} sf_req;
+typedef Result (*sf_answer)(sf_req *r);
+uint32_t sf_session(const char *name, sf_answer answer, void *ctx, void (*close)(void *ctx));   // a new host session (its handle), for a service to move to its client
+// A service the host serves in its own file: SF_SERVICE("name", answer) registers it (the swsf table, plat_table), and connecting to that name gives a session answered by it
+typedef struct { const char *name; sf_answer answer; } sf_service_ent;
+#define SF_SERVICE(svc, fn) PLAT_TABLE(swsf) static const sf_service_ent sf_service_##fn = {svc, fn}
 uint32_t hle_new_event(uint32_t *write_end);   // hle_thread.c: a new kernel event's read end (a service's handle copied to its client); its write end in *write_end, none when NULL (never signaled)
