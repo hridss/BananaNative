@@ -548,6 +548,7 @@ DM_VK_FSR3_WAVE	developer	Diagnostics			text		1 (quad shuffles) with Turnip, 0 w
 DM_VK_FSR_SHARP	developer	Graphics			text			both							
 DM_VK_GATE_EVENT	developer	Graphics			text			both							
 DM_VK_GMEM_REACH	developer	Diagnostics			text			both							
+DM_VK_GMEM_REPLAY	developer	Graphics			text			both							
 DM_VK_GPL	developer	Graphics			text			both							
 DM_VK_GPL_GIVEUP	developer	Graphics			text			both							
 DM_VK_GPL_PROBE	developer	Diagnostics			text			both							

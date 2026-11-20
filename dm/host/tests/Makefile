@@ -133,6 +133,7 @@ run: $(B)/t_language $(B)/t_motion $(B)/t_heap_size $(B)/t_touch $(B)/t_gesture 
 	$(B)/t_android_gbar
 	$(B)/t_android_memu
 	$(B)/t_android_quad_ind
+	$(B)/t_android_gmem_replay
 	TMPDIR="$(abspath $(B))" $(B)/t_android_layerreq
 	$(B)/t_server_environment
 run: $(B)/t_nro
@@ -473,7 +474,7 @@ coverage:
 	LLVM_PROFILE_FILE="$(call cov_profile,$(B)/cov)" $(MAKE) -i B=$(B)/cov SAN="$(COV_FLAGS)" run
 	@$(call cov_export,$(B)/cov)
 # The Android host's pure parts (dm/host/android): resampler, channel map, SPS size, MediaCodec picture layouts; gamepad / touch / sensor mapping
-run: $(B)/t_android_av $(B)/t_android_input $(B)/t_android_shlib $(B)/t_android_spvpatch $(B)/t_android_imgmem $(B)/t_android_zshare $(B)/t_android_texlimit $(B)/t_android_tstick $(B)/t_android_lowram $(B)/t_android_livemap $(B)/t_android_smap $(B)/t_android_mapbudget $(B)/t_android_rsslog $(B)/t_android_hostmem $(B)/t_android_psogate $(B)/t_android_hangparts $(B)/t_android_wbfollow $(B)/t_android_pckeep $(B)/t_android_pwlist $(B)/t_android_fmtlist $(B)/t_android_place $(B)/t_android_ovl $(B)/t_android_pace $(B)/t_lse_unaligned $(B)/t_android_skipwarn $(B)/t_android_gmem $(B)/t_android_fpenv $(B)/t_android_soft $(B)/t_android_qsched $(B)/t_android_poolslot $(B)/t_android_prepass $(B)/t_android_tlsig $(B)/t_android_texown $(B)/t_android_gbar $(B)/t_android_memu $(B)/t_android_auto $(B)/t_android_layerreq $(B)/t_android_driverpath $(B)/t_android_placefail $(B)/t_android_rplist $(B)/t_android_quad_ind
+run: $(B)/t_android_av $(B)/t_android_input $(B)/t_android_shlib $(B)/t_android_spvpatch $(B)/t_android_imgmem $(B)/t_android_zshare $(B)/t_android_texlimit $(B)/t_android_tstick $(B)/t_android_lowram $(B)/t_android_livemap $(B)/t_android_smap $(B)/t_android_mapbudget $(B)/t_android_rsslog $(B)/t_android_hostmem $(B)/t_android_psogate $(B)/t_android_hangparts $(B)/t_android_wbfollow $(B)/t_android_pckeep $(B)/t_android_pwlist $(B)/t_android_fmtlist $(B)/t_android_place $(B)/t_android_ovl $(B)/t_android_pace $(B)/t_lse_unaligned $(B)/t_android_skipwarn $(B)/t_android_gmem $(B)/t_android_fpenv $(B)/t_android_soft $(B)/t_android_qsched $(B)/t_android_poolslot $(B)/t_android_prepass $(B)/t_android_tlsig $(B)/t_android_texown $(B)/t_android_gbar $(B)/t_android_memu $(B)/t_android_auto $(B)/t_android_layerreq $(B)/t_android_driverpath $(B)/t_android_placefail $(B)/t_android_rplist $(B)/t_android_quad_ind $(B)/t_android_gmem_replay
 $(B)/t_android_av: t_android_av.c ../android/av_android.h | $(B)
 	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -fsanitize=address,undefined -I.. $(WEAK_HOST) -o $@ t_android_av.c
 $(B)/t_android_input: t_android_input.c ../android/input_map.c ../android/input_map.h ../../gfx/vk_android/vka_present_fit.h ../motion_fusion.h ../dm_input.h | $(B)
@@ -634,6 +635,9 @@ $(B)/t_android_quad_ind: t_android_quad_ind.c $(VKA)/vka_quad_indirect_spv.h | $
 # The replay's SPIR-V rewrite of integer-fed vertex inputs (vka_spvpatch.c): the selftest's vertex shader, validated by spirv-val when it is on the PATH; DM_VK_SPV_DIR=<.spv folder> adds those modules
 $(B)/t_android_spvpatch: t_android_spvpatch.c $(VKA)/vka_spvpatch.c $(VKA)/vka_spvpatch.h $(VKA)/vka_selftest_spv.h | $(B)
 	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -fsanitize=address,undefined -I.. -o $@ t_android_spvpatch.c $(VKA)/vka_spvpatch.c
+# Standalone runtime SPIR-V GMEM replay pass (vka_spv_gmem_replay.c)
+$(B)/t_android_gmem_replay: t_android_gmem_replay.c $(VKA)/vka_spv_gmem_replay.c $(VKA)/vka_spv_gmem_replay.h | $(B)
+	$(CLANG) -std=c11 -O1 -g -Wall -Wextra -Werror -Wno-unused-function -fsanitize=address,undefined -I.. -o $@ t_android_gmem_replay.c $(VKA)/vka_spv_gmem_replay.c
 
 # Optional local-wireless host checks. COOP_DIR is the separately pinned module;
 # the default test run does not require it or open any network connection.

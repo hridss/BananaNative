@@ -12,6 +12,7 @@
 #include "../nvn/dmsh_chain_vk.h"
 #include "game_profile.h"
 #include "vka_spvpatch.h"
+#include "vka_spv_gmem_replay.h"
 #include "vka_layerreq.h"
 #include "plat/plat.h"
 #include <stdio.h>
@@ -415,6 +416,32 @@ static void prep_words(const dmsh_vk_entry *e, uint64_t key, uint32_t **w, size_
     if (e->flags & DMSH_VK_F_SUBGROUP) single_lane(key, e->stage, w, nb);
     gs_fill(key, e->stage, w, nb);
 }
+// Opt-in (DM_VK_GMEM_REPLAY=1): pre-replay vertex-shader GMEM helpers inline at load so existing shader libraries get straight-line replay without a chain bump
+static void gmem_replay_vs(const vka_shlib *L, const dmsh_vk_entry *e, uint32_t **w, size_t *nb) {
+    if (!e || !w || !*w || !nb || *nb < 20 || (*nb & 3u) != 0) return;
+    if (e->stage != DMSH_VK_STAGE_VS || !VKA_ENV("DM_VK_GMEM_REPLAY", 0)) return;
+    const dmsh_vk_bind *b = vka_shlib_binds(L, e);
+    if (!b || e->bind_count == 0) return;
+    uint32_t gset = 0, gbind = 0, ng = 0;
+    for (uint32_t i = 0; i < e->bind_count; i++) {
+        if (b[i].kind != DMSH_VK_KIND_GMEM_MAP) continue;
+        gset = b[i].set; gbind = b[i].binding; ng++;
+    }
+    if (ng != 1) return;
+    size_t on = 0; int sites = 0; char e2[160] = "";
+    uint32_t *o = vka_spv_gmem_replay(*w, *nb / 4, gset, gbind, &on, &sites, e2, sizeof e2);
+    if (o) {
+        free(*w); *w = o; *nb = on * 4;
+        if (sites > 0) {
+            static _Atomic int hit_n;
+            int k = atomic_fetch_add(&hit_n, 1) + 1;
+            if ((k & (k - 1)) == 0) VLOG("raw global memory replay: vertex shader %016llx (%d site%s, #%d)", (unsigned long long)e->key, sites, sites == 1 ? "" : "s", k);
+        }
+    } else if (e2[0]) {
+        static _Atomic int err_n;
+        if (atomic_fetch_add(&err_n, 1) < 8) VRED("vertex shader %016llx: raw global memory replay failed (%s)", (unsigned long long)e->key, e2);
+    }
+}
 // A library module's words. With the mesh draws drawn through compute (V.memu, vka_memu.c), a pixel shader of per-primitive inputs is only ever drawn behind the generated
 // vertex shader: every module of it is made from its words with those inputs flat (vka_memu_fs_flat), so the variants and retypes made from them are too
 static uint32_t *lib_words(const vka_shlib *L, const dmsh_vk_entry *e, const dmsh_vk_module *m, size_t *nb, char *err, size_t errn) {
@@ -424,6 +451,7 @@ static uint32_t *lib_words(const vka_shlib *L, const dmsh_vk_entry *e, const dms
         if (o) { free(w); w = o; *nb = on * 4; }
         else if (e2[0]) { static _Atomic int n; if (atomic_fetch_add(&n, 1) < 8) VRED("pixel shader %016llx: per-primitive inputs not made flat (%s): its pipelines are refused", (unsigned long long)e->key, e2); }
     }
+    if (w) gmem_replay_vs(L, e, &w, nb);
     return w;
 }
 static VkShaderModule spv_module_(const vka_shlib *L, const dmsh_vk_entry *e, const dmsh_vk_module *m, uint64_t key, const char **why, char *err, size_t errn, uint8_t *fcomp) {
