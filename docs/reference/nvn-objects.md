@@ -696,6 +696,15 @@ Games read this count as a position in their own command memory and size their h
 - **Fix:** `g_devinfo` (`hle_nvn.c`) takes 0x5F to 0x68 from the Switch's own driver. The NVN linked into a game's `sdk` answers the items it does not read from the device from a table of constants, items 2 to 0x68 and 0 past them (SDK 19.3: Metroid Prime 4's `sdk+0x4a3cb0`, Pokémon Legends: Z-A's `sdk+0x4a3820`, read statically; both alike, and they agree with the measured items). 0x5F is 32, as NVN2's; 0x60 to 0x68 are 65535, 1, 32 (0x62: the driver reads it from the device, `+0xbc`, which `nvnDeviceInitialize` copies from the GPU description the system gives, `+0x228` (`sdk+0x4b7f30`, `sdk+0x4b34e4`); the table's 32 is the X1's, as on 0x2B, 0x2D and 0x38, where the table and the device both answer and the table holds the measured values), 256, 16, 65535, 65535, 256 and 16383. `t_nvn.c` checks 0x5E, 0x5F and the new items.
 - **Found on:** Frostpunk (`0100B1C0249B4000`, SDK 20.5.19, 11 bit studios' Liquid engine): the Mac.
 
+### Sampler pool slot zero
+
+- **Symptom:** thin strokes of text drop out (The Witcher 3's glyph atlas): a texture sampled with nearest filtering where the game expects linear.
+- **Cause:** the NVN driver fills slot 0 of every sampler pool itself (linear minification and magnification, no mipmaps, clamp to edge; NVN SDKs 11.4.3 and 15.3.0, NVN2 SDK 20.5.19), and a game may name it: a texture handle whose sampler field is 0. The replay read sampler 0 as no binding and sampled with its empty-slot sampler (`vka_samp_default`, nearest).
+- **Fix:** `vka_bind.c` gives a handle that is not 0 but names sampler 0 (a bound combined handle, a handle in a uniform buffer, a driver-table handle) `VKA_SID_POOL_ZERO`, which `vka_draw.c` binds as `vka_samp_pool_zero` (`vka_tex.c`). A handle of 0, and a separate sampler handle of slot 0 (which is 0), are still no binding. After upstream nxnative ([#3049](https://github.com/seedds/nxnative/pull/3049)).
+- **Open:** the bindless sampler table (shaders that read the pools) still has nothing at a pool's slot 0; upstream's Metal replay also fills that entry.
+- **Found on:** The Witcher 3 (`0100A0800E9C4000`, no profile here; upstream #3049, on the Mac).
+- **Check:** `t_android_shlib` walks a combined slot and a uniform-buffer handle with sampler 0, and a zero sampler word (run on the phone).
+
 ### Extensions fetched by name and called unchecked
 
 - **Symptom:** a jump to pc=0 right after the NVN bootstrap loader (`lr=main+0x37fe930`, `[RED] NVN address lookup of an unknown name: nvnSetExternalDebuggerEnabledNVX`).

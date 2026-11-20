@@ -1472,7 +1472,7 @@ static int stage_writes(const vka_dstate *d, int st, const vka_shader *sh, const
                 if (!v && !V.null_desc) { VRED_ONCE("an unbound image of shape %#x and no null descriptors: the draw is skipped", r[i].dim); g_skip_dev[VKS_FEATURE]++; return 0; }
             }
             if (r[i].desc == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER || r[i].desc == VK_DESCRIPTOR_TYPE_SAMPLER) {
-                s = r[i].sid ? vka_samp_id_rec(r[i].sid) : VK_NULL_HANDLE;
+                s = r[i].sid > 0 ? vka_samp_id_rec(r[i].sid) : r[i].sid == VKA_SID_POOL_ZERO ? vka_samp_pool_zero() : VK_NULL_HANDLE;
                 if (!s) s = vka_samp_default();
             }
             *ii = (VkDescriptorImageInfo){s, v, lay};
