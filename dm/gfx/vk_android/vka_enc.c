@@ -27,7 +27,7 @@
     X(vkCmdBindPipeline) X(vkCmdBindDescriptorSets) X(vkCmdBindVertexBuffers2) X(vkCmdBindIndexBuffer) \
     X(vkCmdDraw) X(vkCmdDrawIndexed) X(vkCmdDrawIndirect) X(vkCmdDrawIndexedIndirect) X(vkCmdDispatch) X(vkCmdDispatchIndirect) X(vkCmdDispatchBase) \
     X(vkCmdSetViewport) X(vkCmdSetScissor) X(vkCmdSetCullMode) X(vkCmdSetFrontFace) X(vkCmdSetPrimitiveTopology) \
-    X(vkCmdSetDepthTestEnable) X(vkCmdSetDepthWriteEnable) X(vkCmdSetDepthCompareOp) X(vkCmdSetDepthBoundsTestEnable) X(vkCmdSetStencilTestEnable) X(vkCmdSetStencilOp) \
+    X(vkCmdSetDepthTestEnable) X(vkCmdSetDepthWriteEnable) X(vkCmdSetDepthCompareOp) X(vkCmdSetDepthBoundsTestEnable) X(vkCmdSetDepthBounds) X(vkCmdSetStencilTestEnable) X(vkCmdSetStencilOp) \
     X(vkCmdSetStencilCompareMask) X(vkCmdSetStencilWriteMask) X(vkCmdSetStencilReference) X(vkCmdSetDepthBias) X(vkCmdSetDepthBiasEnable) \
     X(vkCmdSetRasterizerDiscardEnable) X(vkCmdSetPrimitiveRestartEnable) X(vkCmdSetBlendConstants) X(vkCmdSetLineWidth) \
     X(vkCmdPushDescriptorSetKHR) X(vkCmdSetVertexInputEXT) X(vkCmdPushConstants) X(vkCmdDrawMeshTasksEXT) X(vkCmdDrawMeshTasksIndirectEXT) \
@@ -308,6 +308,9 @@ TWO(vkCmdSetStencilCompareMask) TWO(vkCmdSetStencilWriteMask) TWO(vkCmdSetStenci
 static void VKAPI_CALL e_vkCmdSetDepthBias(VkCommandBuffer cb, float a, float b, float c) {
     DIRECT(vkCmdSetDepthBias, cb, a, b, c); BEGIN(r_val, E_vkCmdSetDepthBias, 0); r->f[0] = a; r->f[1] = b; r->f[2] = c; END();
 }
+static void VKAPI_CALL e_vkCmdSetDepthBounds(VkCommandBuffer cb, float lo, float hi) {
+    DIRECT(vkCmdSetDepthBounds, cb, lo, hi); BEGIN(r_val, E_vkCmdSetDepthBounds, 0); r->f[0] = lo; r->f[1] = hi; END();
+}
 static void VKAPI_CALL e_vkCmdSetBlendConstants(VkCommandBuffer cb, const float c[4]) {
     DIRECT(vkCmdSetBlendConstants, cb, c); BEGIN(r_val, E_vkCmdSetBlendConstants, 0); memcpy(r->f, c, 16); END();
 }
@@ -412,6 +415,7 @@ static void run(const hdr *h) {
     case E_vkCmdSetDepthBiasEnable: { C(r_val); R.vkCmdSetDepthBiasEnable(r->cb, r->v[0]); break; }
     case E_vkCmdSetRasterizerDiscardEnable: { C(r_val); R.vkCmdSetRasterizerDiscardEnable(r->cb, r->v[0]); break; }
     case E_vkCmdSetPrimitiveRestartEnable: { C(r_val); R.vkCmdSetPrimitiveRestartEnable(r->cb, r->v[0]); break; }
+    case E_vkCmdSetDepthBounds: { C(r_val); R.vkCmdSetDepthBounds(r->cb, r->f[0], r->f[1]); break; }
     case E_vkCmdSetBlendConstants: { C(r_val); R.vkCmdSetBlendConstants(r->cb, r->f); break; }
     case E_vkCmdSetLineWidth: { C(r_val); R.vkCmdSetLineWidth(r->cb, r->f[0]); break; }
     case E_vkCmdPushDescriptorSetKHR: { C(r_push); R.vkCmdPushDescriptorSetKHR(r->cb, r->bp, r->l, r->set, r->n, r->w); break; }
