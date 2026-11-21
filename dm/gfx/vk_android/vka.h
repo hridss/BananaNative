@@ -412,6 +412,9 @@ void vka_img_barrier(VkCommandBuffer cb, VkImage img, VkImageAspectFlags aspect,
 // twin), so the result is written sRGB-encoded
 int vka_dlss_fsr3(VkCommandBuffer cb, vka_img *src, VkFormat sfmt, vka_img *dst, int enc, vka_img *depth, vka_img *motion, const p_dlss_t2t *o);   // vka_fsr3.c: FSR 3.1 for DM_VK_DLSS=4; 0 = not done (the caller falls back to FSR 1)
 int vka_dlss_run(VkCommandBuffer cb, const p_dlss *o, int mode, vka_img *s, uint32_t sl, VkFormat sfmt, int sx, int sy, int iw, int ih, vka_img *d, uint32_t dl, int enc, int dx, int dy, int ow, int oh);
+// vka_fgtime.c: GPU time of frame generation and the presents (DM_VK_FG_GPUTIME); off by default
+void vka_fgt_fg_begin(VkCommandBuffer cb, unsigned k); void vka_fgt_fg_mark(VkCommandBuffer cb, unsigned k, int which); void vka_fgt_fg_end(VkCommandBuffer cb, unsigned k, int ng); void vka_fgt_fg_done(unsigned k);
+void vka_fgt_pr_begin(VkCommandBuffer cb, unsigned k, int gen); void vka_fgt_pr_end(VkCommandBuffer cb, unsigned k); void vka_fgt_pr_done(unsigned k);
 // vka_fgui.c
 int vka_fgui_on(void); void vka_fgui_draw(uint64_t fkey, vka_img *c0); void vka_fgui_tex(uint64_t key, int tid); void vka_fgui_pass_end(VkCommandBuffer cb);
 typedef struct { VkImage pre, layer; VkImageView pre_v, layer_v, mv_v; uint32_t w, h, mw, mh; float mvs[2]; uint64_t sfence, pre_serial, layer_serial, op_q; int has_ui, has_mv; } vka_fgui_frame;

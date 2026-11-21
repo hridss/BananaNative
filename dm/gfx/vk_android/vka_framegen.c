@@ -493,6 +493,7 @@ int vka_fg_frame(uint64_t serial, const int *crop, double period, uint64_t fence
     for (VkResult w; !vka_hung() && (w = vk.vkWaitForFences(V.dev, 1, &F.fr[k].fence, VK_TRUE, 100000000ull)) == VK_TIMEOUT;) {}   // bounded, as present_one's
     if (vka_hung()) { vka_tex_drop(im); return 0; }
     gputime_take(k); probe_poll();
+    vka_fgt_fg_done(k);   // the slot's last timestamps
     vka_fgui_post_done(k);   // the slot's cut decision (DM_FG_CUT_LOG)
     vka_fgmv_done(k);   // the slot's timing
     if (F.fr[k].held) { vka_tex_drop(F.fr[k].held); F.fr[k].held = NULL; }
@@ -506,6 +507,7 @@ int vka_fg_frame(uint64_t serial, const int *crop, double period, uint64_t fence
     if (timed) T.reset(cb, T.qp, 2 * k, 2);
     vka_barrier(cb);   // the replay's writes to the window texture, and the presents still reading the outputs (earlier submissions)
     if (timed) T.write(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, T.qp, 2 * k);
+    vka_fgt_fg_begin(cb, k);
     // DM_FG_UI=layer: the chain reads this frame's picture without UI (vka_fgui.c), when its frame has one of the chain's size
     vka_fgui_frame u; int ugot = vka_fgui_take(serial, &u);
     VkImage in_c = mv ? vka_fgmv_input(count) : lsfg_chain_input(F.chain, count);   // the input this frame is copied into
@@ -522,13 +524,16 @@ int vka_fg_frame(uint64_t serial, const int *crop, double period, uint64_t fence
         VkImageBlit b = {{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {{cx, cy, 0}, {cx + cw, cy + ch, 1}}, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {{0, 0, 0}, {(int32_t)e.width, (int32_t)e.height, 1}}};
         vk.vkCmdBlitImage(cb, im->img, VK_IMAGE_LAYOUT_GENERAL, in_c, VK_IMAGE_LAYOUT_GENERAL, 1, &b, fit ? VK_FILTER_LINEAR : VK_FILTER_NEAREST);
     }
+    vka_fgt_fg_mark(cb, k, 1);   // after the copy (DM_VK_FG_GPUTIME_SPLIT)
     int pa = (int)((count + 1) & 1), pc_ = (int)(count & 1), force = count >= 1 && F.in_pre[pa] != use_pre, dch = count >= 1 && F.in_mv[pa] != u.has_mv;
     F.in_pre[pc_] = use_pre; F.in_mv[pc_] = u.has_mv;
     uint64_t opq_a = F.in_op[pa]; F.in_op[pc_] = u.op_q;   // each input's op pass
     if (mv) {   // the generated frames (or C again: no motion data, a cut, an input change), C's UI layer over them
+        vka_fgt_fg_mark(cb, k, 2);
         if (ng && !vka_fgmv_gen(cb, k, count, ng, &u, use_pre, opq_a, F.in_pre[pa], force, dch)) ng = 0;
     } else {
     if (warm) lsfg_chain_shared(F.chain, cb, count);
+    vka_fgt_fg_mark(cb, k, 2);   // after the shared passes
     if (ng) lsfg_chain_generate(F.chain, cb, count, ng, in_order);
     if (timed) T.write(cb, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, T.qp, 2 * k + 1);
     vka_barrier(cb);   // the outputs for the presents after this
@@ -544,6 +549,7 @@ int vka_fg_frame(uint64_t serial, const int *crop, double period, uint64_t fence
     }
     }
     F.fr[k].timed = timed; F.fr[k].serial = in_order; F.fr[k].ng = ng; F.fr[k].flow = F.flow; F.fr[k].cgen = F.cgen;
+    vka_fgt_fg_end(cb, k, (int)ng);
     vk.vkEndCommandBuffer(cb);
     VkPipelineStageFlags st = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
     VkTimelineSemaphoreSubmitInfo ti = {VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO, .waitSemaphoreValueCount = 1, .pWaitSemaphoreValues = &fence};
