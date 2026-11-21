@@ -72,9 +72,9 @@ static const vka_fgprof g_prof = {DM_GAME_FG_MV, DM_GAME_FG_UI_PRE, DM_GAME_FG_U
 static _Atomic int g_told;
 const vka_fgprof *vka_fgprof_get(void) {
     if (!atomic_exchange(&g_told, 1)) {
-        static const char *const fn[] = {"uiflow", "uigate", "static", "staticz", "bothfar", "dither", "cut", "uipick", "uicons", "uismall", "uicap", "uisplit"};
+        static const char *const fn[] = {"uiflow", "uigate", "static", "staticz", "bothfar", "dither", "cut", "uipick", "uicons", "uismall", "uicap", "uisplit", "stfix"};
         char f[128] = ""; size_t n = 0;
-        for (int i = 0; i < 12; i++) if (g_prof.features & (1u << i)) n += (size_t)snprintf(f + n, sizeof f - n, " %s", fn[i]);
+        for (int i = 0; i < 13; i++) if (g_prof.features & (1u << i)) n += (size_t)snprintf(f + n, sizeof f - n, " %s", fn[i]);
         VLOG("[profile] fg: engine %s for this game (fg_mv), pre-UI pass %016llx, UI layer %016llx, rules%s; ratio %g tol %g edge %g fill %d soft %d uisr %d uissupr %d uisinteg %d uispass %d uisguard %d, cut res %g corr %g mv %g of the render width "
              "(a DM_FG_* switch that is set wins)", g_prof.mv ? "validated" : "not validated", (unsigned long long)g_prof.ui_pre, (unsigned long long)g_prof.ui_layer, n ? f : " none",
              g_prof.ratio, g_prof.tol, g_prof.edge, g_prof.fill, g_prof.soft, g_prof.uisr, g_prof.uissupr, g_prof.uisinteg, g_prof.uispass, g_prof.uisguard, g_prof.cut_res, g_prof.cut_corr, g_prof.cut_mv);

@@ -19,7 +19,8 @@
 // splat.comp), DM_FG_MV_UIFLOW (world-anchored labels: C's UI layer with its moving tile groups pasted at time t, fgmv/uq4, utile, ugrp, uref.comp; displays up to the
 // tile grid's 1920x1088), DM_FG_MV_UIGATE (a group moves only with C's vectors about as large as its flow), DM_FG_MV_STATIC (1 half size, 2 quarter: the static candidate,
 // content without its own vectors such as a character's shadow blended unwarped where that explains A and C better, fgmv/stws.comp), DM_FG_MV_STATICZ (not where the
-// field's surface is in front of what A and C show there), DM_FG_MV_BOTHFAR (both sides occluded: the side whose occluder is farther, not C).
+// field's surface is in front of what A and C show there), DM_FG_MV_STFIX (the static candidate also for a screen-fixed additive overlay without vectors: a 3D cursor
+// the camera follows), DM_FG_MV_BOTHFAR (both sides occluded: the side whose occluder is farther, not C).
 // Diagnostics: DM_VK_FG_GPUTIME=<s> ("fg mv gpu:" per pass, "fg mv op gpu:"), DM_FG_MV_OPSYNC=1 (the op pass's timestamps after an encoder sync: a valid op time, it
 // stalls the recording thread each frame), DM_FG_MV_REPLAY=<tag> (a new value runs once): <DM_CTL folder>/fgmv/r<tag>/manifest.txt through the same passes, each pair
 // twice (see mv_replay), DM_FG_MV_REPLAY_DUMP=1.
@@ -59,7 +60,7 @@ static uint32_t g_gen = UINT32_MAX; static int g_want, g_dbg, g_soft;
 static int g_state;   // 0 not tried, 1 ready (pipelines + self-test passed), -1 unavailable
 static float g_ratio, g_tol, g_thr; static int g_fill, g_dither;
 enum { LEV = 1 | 2 | 4 };   // the UI flow shaders' bits (ui.glsl L_*: 1 split over changed-pixel lists, 2 refine over the accepted-tile list, 4 re-pick a workgroup per group)
-static int g_uiflow, g_uigate, g_uirules, g_x17, g_npass, g_uicapn, g_uisr, g_static, g_staticz, g_bothfar, g_opsync;
+static int g_uiflow, g_uigate, g_uirules, g_x17, g_npass, g_uicapn, g_uisr, g_static, g_staticz, g_stfix, g_bothfar, g_opsync;
 static void keys(void) {
     uint32_t g = atomic_load_explicit(&vka_env_gen, memory_order_relaxed);
     if (g == g_gen) return;
@@ -85,7 +86,7 @@ static void keys(void) {
     g_uicapn = VKA_ENV("DM_FG_MV_UICAPN", 384); if (g_uicapn < 1 || g_uicapn > 384) g_uicapn = 384;   // (the tile cap rule's cap: a test hook, fgmv/ui.glsl UICAP)
     g_uisr = VKA_ENV("DM_FG_MV_UISR", P->uisr); if (g_uisr < 1) g_uisr = 1; if (g_uisr > 12) g_uisr = 12;
     g_static = VKA_ENV("DM_FG_MV_STATIC", !!(F & VKA_FGF_STATIC)); if (g_static < 0 || g_static > 2) g_static = 1;
-    g_staticz = VKA_ENV("DM_FG_MV_STATICZ", !!(F & VKA_FGF_STATICZ)); g_bothfar = VKA_ENV("DM_FG_MV_BOTHFAR", !!(F & VKA_FGF_BOTHFAR));
+    g_staticz = VKA_ENV("DM_FG_MV_STATICZ", !!(F & VKA_FGF_STATICZ)); g_stfix = VKA_ENV("DM_FG_MV_STFIX", !!(F & VKA_FGF_STFIX)); g_bothfar = VKA_ENV("DM_FG_MV_BOTHFAR", !!(F & VKA_FGF_BOTHFAR));
     g_opsync = VKA_ENV("DM_FG_MV_OPSYNC", 0);
     if (was != g_want) VLOG("fg mv: frame generation engine %s%s", g_want ? "motion vectors" : "LSFG", env ? " (DM_FG_ENGINE)" : " (the launcher's choice)");
     if (g_want && !was && !P->mv) VRED_ONCE("fg mv: this game's profile has no fg_mv row: the engine was not validated on it (dm/games/README.md, the fg_* keys)");
@@ -151,7 +152,7 @@ typedef struct { int phase, slot, gate, wcap, big; float t, mvx, mvy, kx, ky, sx
 typedef struct { int W, H, big, lev; } pc_rf;
 typedef struct { int phase, gate, W, H; float mvx, mvy, kx, ky, sx, sy; int noa2, lev, x17; } pc_spl;   // noa2: no A2 layer (the rank-2 paste needs it: no split); lev: ui.glsl L_*;
                                                                                                   // x17: the split rule's options, the pass << 8 (usplit.comp)
-typedef struct { int W, H, iw, ih, hw, hh; float t, mvx, mvy, ratio, kx, ky, sx, sy; uint32_t flags; } pc_sw;   // flags: 1 pick, 2 depth gate, 4 quarter, 8 debug
+typedef struct { int W, H, iw, ih, hw, hh; float t, mvx, mvy, ratio, kx, ky, sx, sy; uint32_t flags; } pc_sw;   // flags: 1 pick, 2 depth gate, 4 quarter, 8 debug, 16 pass 2, 32 screen-fixed overlay
 _Static_assert(sizeof(pc_gr) == 56 && sizeof(pc_rf) == 16 && sizeof(pc_spl) == 52 && sizeof(pc_sw) <= 128 && sizeof(pc_re) <= 128,
                "the push constant blocks of fgmv/ugrp.comp, uref.comp, usplit.comp (and every block within the 128-byte minimum limit)");
 static const uint32_t PCS[NP] = {sizeof(pc_op), sizeof(pc_sp), sizeof(pc_re), 4, sizeof(pc_f2), sizeof(pc_q4), sizeof(pc_ti), sizeof(pc_gr), sizeof(pc_rf), sizeof(pc_re), sizeof(pc_sw), sizeof(pc_ti), sizeof(pc_op), sizeof(pc_spl)};
@@ -595,7 +596,7 @@ static void gen_pass(VkCommandBuffer cb, int i, const rgs *r) {
     uint32_t w = r->w, h = r->h; float t = r->t; mimg *sw = g_static == 2 ? &M.swq : &M.swh;
     dsc dw[9] = {{r->aview, g_lin}, {r->cview, g_lin}, {pick ? M.pick.v : M.field.v}, {A->z.v}, {C->z.v}, {A->d.v}, {C->d.v}, {sw->v}, {M.s1.v}};
     pc_sw pw = {(int)w, (int)h, (int)C->w, (int)C->h, (int)sw->im->w, (int)sw->im->h, t, sc[0], sc[1], g_ratio, (float)C->w / (float)w, (float)C->h / (float)h,
-                (float)w / (float)C->w, (float)h / (float)C->h, (pick ? 1u : 0u) | (g_staticz ? 2u : 0u) | (g_static == 2 ? 4u : 0u) | (r->dbg == 6 ? 8u : 0u)};
+                (float)w / (float)C->w, (float)h / (float)C->h, (pick ? 1u : 0u) | (g_staticz ? 2u : 0u) | (g_static == 2 ? 4u : 0u) | (r->dbg == 6 ? 8u : 0u) | (g_stfix ? 32u : 0u)};
     int tw = 16, sp = PSS16; uint32_t nx = (sw->im->w + tw - 1) / tw, ny = (sw->im->h + tw - 1) / tw;
     if (i == 3) { bind(cb, sp, dw, &pw); vk.vkCmdDispatch(cb, (sw->im->w + 13) / 14, (sw->im->h + 13) / 14, 1); return; }   // (pass 1: 14 x 14 tiles)
     pw.flags |= 16u;

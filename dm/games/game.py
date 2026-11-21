@@ -132,7 +132,7 @@ LANGUAGE_CODES = ('ja', 'en-US', 'en-GB', 'fr', 'fr-CA', 'de', 'it', 'es', 'es-4
 
 # The motion-vector frame generator's per-game rows (Android, dm/gfx/vk_android/vka_fgprof.c; dm/games/README.md, the fg_* keys): one value a row.
 # fg_feature rows name the rules the game turns on (bits of DM_GAME_FG_FEATURES); fg_tune <name> <value> rows set a tuning value (DM_GAME_FG_TUNE_<NAME>), each with its range
-FG_FEATURES = ('uiflow', 'uigate', 'static', 'staticz', 'bothfar', 'dither', 'cut', 'uipick', 'uicons', 'uismall', 'uicap', 'uisplit')
+FG_FEATURES = ('uiflow', 'uigate', 'static', 'staticz', 'bothfar', 'dither', 'cut', 'uipick', 'uicons', 'uismall', 'uicap', 'uisplit', 'stfix')
 FG_TUNE = {'ratio': (0.0, 1.0, False), 'tol': (0.0, 255.0, False), 'edge': (1.0, 4.0, False), 'fill': (0, 6, True), 'soft': (0, 1, True), 'uisr': (1, 12, True),
            'uissupr': (1, 2, True), 'uisinteg': (0, 2, True), 'uispass': (1, 3, True),
            'uisguard': (0, 2, True), 'cut_res': (0.0, 255.0, False), 'cut_corr': (0.0, 1.0, False), 'cut_mv': (0.0, 4.0, False)}   # (low, high, integer); cut_mv: a fraction of the render width
@@ -164,7 +164,8 @@ def fg_rows(g):
         feat |= b
     if feat & 3 and not keys['fg_ui_pre']: sys.exit(f'{g.id}: fg_feature uiflow / uigate need the UI layer (fg_ui_pre and fg_ui_layer)')
     if feat & 2 and not feat & 1: sys.exit(f'{g.id}: fg_feature uigate is a rule of uiflow: add fg_feature uiflow')
-    if feat & 8 and not feat & 4: sys.exit(f'{g.id}: fg_feature staticz is a rule of static: add fg_feature static')
+    for i in (3, 12):
+        if feat & (1 << i) and not feat & 4: sys.exit(f'{g.id}: fg_feature {FG_FEATURES[i]} is a rule of static: add fg_feature static')
     for i in (7, 8, 9, 10, 11):
         if feat & (1 << i) and not feat & 2: sys.exit(f'{g.id}: fg_feature {FG_FEATURES[i]} is a rule of uigate: add fg_feature uigate')
     L = [f'#define DM_GAME_FG_MV {int(mv == "on")}', f'#define DM_GAME_FG_UI_PRE 0x{keys["fg_ui_pre"] or "0"}ull', f'#define DM_GAME_FG_UI_LAYER 0x{keys["fg_ui_layer"] or "0"}ull',

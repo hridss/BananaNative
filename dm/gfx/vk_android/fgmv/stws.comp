@@ -3,7 +3,11 @@
 // the static candidate's weight in two passes (vka_fgmv.c).
 // Pass 1 (flags 16 clear): s1 per weight pixel into s1 (R32F; debug flags 8: the depth gate 0 / 1), a 14 x 14 tile from its 16 x 16 region of e, e0 and the
 // vector term (a cell per invocation); pass 2 (flags 16): out = box3(max3 s1) (R8; debug: the gate as 0 / 255), a TS x TS tile from its (TS + 4)^2 region of s1.
-// Box / max clamp to the edge. TS 32, or 16 (glslc -DTS=16)
+// Box / max clamp to the edge. TS 32, or 16 (glslc -DTS=16).
+// flags 32 (DM_FG_MV_STFIX): a screen-fixed additive overlay without vectors of its own (a 3D cursor drawn over a moving floor) also gives the static candidate: with
+// correct surface vectors A(q) = C(q - v) and C(q) = A(q + v); an overlay that adds light keeps both differences positive and alike. sf = smooth((lo - 12) / 12) where
+// lo = min(oA, oC), |oA - oC| <= max(10, 0.3 lo), both full-vector samples in the image and not occluded, and the vector term; then a 3x3 min (isolated specks go)
+// and s1 = max(s1, sf) under the depth gate
 layout(local_size_x = 16, local_size_y = 16) in;
 layout(set = 0, binding = 0) uniform sampler2D ia;
 layout(set = 0, binding = 1) uniform sampler2D ic;
@@ -14,13 +18,13 @@ layout(set = 0, binding = 5, r32f) uniform readonly image2D dza;
 layout(set = 0, binding = 6, r32f) uniform readonly image2D dzc;
 layout(set = 0, binding = 7, r8) uniform writeonly image2D sw;
 layout(set = 0, binding = 8, r32f) uniform image2D s1;
-layout(push_constant) uniform PC { int W, H, iw, ih, hw, hh; float t, mvx, mvy, ratio, kx, ky, sx, sy; uint flags; } pc;   // flags: 1 pick map, 2 depth gate, 4 quarter size, 8 debug, 16 pass 2
+layout(push_constant) uniform PC { int W, H, iw, ih, hw, hh; float t, mvx, mvy, ratio, kx, ky, sx, sy; uint flags; } pc;   // flags: 1 pick map, 2 depth gate, 4 quarter size, 8 debug, 16 pass 2, 32 screen-fixed overlay
 const vec3 LW = vec3(0.2126, 0.7152, 0.0722);
 #ifndef TS
 #define TS 32
 #endif
 const int S1 = 14, T1 = 16, N1 = T1 * T1, T2 = TS + 4, N2 = T2 * T2;
-shared float sh[3 * N1 > 2 * N2 ? 3 * N1 : 2 * N2];   // pass 1: e, e0, the vector term (-1 where the depth gate is 0); pass 2: s1, max3 s1
+shared float sh[4 * N1 > 2 * N2 ? 4 * N1 : 2 * N2];   // pass 1: e, e0, the vector term (-1 where the depth gate is 0), sf; pass 2: s1, max3 s1
 ivec2 o; int T;
 int at(ivec2 g) { g = clamp(g, ivec2(0), ivec2(pc.hw, pc.hh) - 1) - o; return g.y * T + g.x; }   // the local cell of a (clamped) weight pixel
 float smooth1(float x) { x = clamp(x, 0.0, 1.0); return x * x * (3.0 - 2.0 * x); }
@@ -55,6 +59,15 @@ void main() {
                 zg = zt > zl ? 0u : 1u;
             }
             sh[2 * N1 + i] = zg != 0u ? smooth1((vm - 2.0) / 2.0) : -1.0;
+            float sf = 0.0;
+            if ((pc.flags & 32u) != 0u) {   // one full vector each way from q
+                vec2 a1 = q + v, c1 = q - v;
+                bool okA1 = all(greaterThanEqual(a1, vec2(0.0))) && all(lessThanEqual(a1, D - 1.0)) && !(imageLoad(za, near_(a1)).r > lim);
+                bool okC1 = all(greaterThanEqual(c1, vec2(0.0))) && all(lessThanEqual(c1, D - 1.0)) && !(imageLoad(zc, near_(c1)).r > lim);
+                float oA = la0 - dot(textureLod(ic, (c1 + 0.5) / D, 0.0).rgb * 255.0, LW), oC = lc0 - dot(textureLod(ia, (a1 + 0.5) / D, 0.0).rgb * 255.0, LW), lo = min(oA, oC);
+                sf = okA1 && okC1 && abs(oA - oC) <= max(10.0, 0.3 * lo) ? smooth1((lo - 12.0) / 12.0) * smooth1((vm - 2.0) / 2.0) : 0.0;
+            }
+            sh[3 * N1 + i] = sf;
         }
         barrier();
         {
@@ -65,6 +78,11 @@ void main() {
             b = b / 9.0; b0 = b0 / 9.0;
             float vf = sh[2 * N1 + at(g)];
             float s = vf >= 0.0 ? smooth1((b - 2.0 * b0 - 4.0) / 8.0) * vf : 0.0;
+            if ((pc.flags & 32u) != 0u && vf >= 0.0) {   // sf after one 3x3 min
+                float m = 1.0;
+                for (int dy = -1; dy <= 1; dy++) for (int dx = -1; dx <= 1; dx++) m = min(m, sh[3 * N1 + at(g + ivec2(dx, dy))]);
+                s = max(s, m);
+            }
             imageStore(s1, g, vec4((pc.flags & 8u) != 0u ? (vf >= 0.0 ? 1.0 : 0.0) : s));
         }
         return;

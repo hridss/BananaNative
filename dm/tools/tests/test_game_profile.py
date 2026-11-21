@@ -285,7 +285,7 @@ class FrameGen(unittest.TestCase):   # the fg_* rows (the motion-vector frame ge
         sys.path.insert(0, str(REPO / 'dm/games'))
         import game
         h = '\n'.join(game.fg_rows(game.load('04007EF01F8AE000')))
-        for line in ('DM_GAME_FG_MV 1', 'DM_GAME_FG_UI_PRE 0x4e9941d610533734ull', 'DM_GAME_FG_UI_LAYER 0xc478e7c70173f0b8ull', 'DM_GAME_FG_FEATURES 0xfdf'):
+        for line in ('DM_GAME_FG_MV 1', 'DM_GAME_FG_UI_PRE 0x4e9941d610533734ull', 'DM_GAME_FG_UI_LAYER 0xc478e7c70173f0b8ull', 'DM_GAME_FG_FEATURES 0x1fdf'):
             self.assertIn(line, h)
 
     def test_rejected(self):
@@ -295,7 +295,7 @@ class FrameGen(unittest.TestCase):   # the fg_* rows (the motion-vector frame ge
                           ('fg_feature\tuiflow\n', 'need the UI layer'), (self.PRE + self.LAY + 'fg_feature\tuigate\n', 'uigate is a rule of uiflow'),
                           (self.PRE + self.LAY + 'fg_feature\tuiflow\nfg_feature\tuipick\n', 'uipick is a rule of uigate'),
                           (self.PRE + self.LAY + 'fg_feature\tuiflow\nfg_feature\tuismall\n', 'uismall is a rule of uigate'),
-                          ('fg_feature\tstaticz\n', 'staticz is a rule of static'), ('fg_feature\tcut\nfg_feature\tcut\n', 'cut twice'),
+                          ('fg_feature\tstaticz\n', 'staticz is a rule of static'), ('fg_feature\tstfix\n', 'stfix is a rule of static'), ('fg_feature\tcut\nfg_feature\tcut\n', 'cut twice'),
                           ('fg_tune\tratio=0.05\n', 'fg_tune takes <name> <value>'), ('fg_tune\tfill\t7\n', 'fg_tune fill takes a whole number from 0 to 6'),
                           ('fg_tune\tuisinteg\t1\n', '(0 or 2)'), ('fg_tune\ttol\t40\nfg_tune\ttol\t41\n', 'fg_tune tol twice'), ('fg_mv\ton\nfg_mv\toff\n', 'one row at most')):
             rc, out, _ = self.text(rows)

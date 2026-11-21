@@ -89,6 +89,7 @@ DM_FG_MV_REPLAY_DUMP	internal	Diagnostics			text			both						test harness: repla
 DM_FG_MV_SOFT	developer	Performance			text			both			fg_tune				
 DM_FG_MV_STATIC	developer	Performance			text			both			fg_feature				
 DM_FG_MV_STATICZ	developer	Performance			text			both			fg_feature				
+DM_FG_MV_STFIX	developer	Performance			text			both			fg_feature				
 DM_FG_MV_TOL	developer	Performance			text			both			fg_tune				
 DM_FG_MV_UICAP	developer	Performance			text			both			fg_feature				
 DM_FG_MV_UICAPN	internal	Diagnostics			text			both						test harness	

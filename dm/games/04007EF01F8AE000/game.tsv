@@ -47,7 +47,8 @@ fg_ui_pre	4e9941d610533734
 fg_ui_layer	c478e7c70173f0b8
 # The rules turned on here: world-anchored labels and markers (UI flow, with its motion-vector gate), the static candidate (the character's shadow) with its depth
 # gate, the both-occluded rule, the scene cut guard, the gate's three rules for look-alike icons and small moves (battle unit icons), and the tile cap rule
-# (the world map's many place names move more than 128 tiles), the split rule (a place name touching the minimap moves alone). Not the screen-door dither rule (off on this game)
+# (the world map's many place names move more than 128 tiles), the split rule (a place name touching the minimap moves alone), and the screen-fixed overlay rule (the battle
+# cursor, an additive 3D draw without depth or vectors, when the camera follows it). Not the screen-door dither rule (off on this game)
 fg_feature	uiflow
 fg_feature	uigate
 fg_feature	static
@@ -59,6 +60,7 @@ fg_feature	uicons
 fg_feature	uismall
 fg_feature	uicap
 fg_feature	uisplit
+fg_feature	stfix
 # Tuning measured on this game (the engine's core defaults are the same numbers but cut_mv, absolute 250 render px at 1132x638 = 0.220848056537 of the render width).
 # uissupr 2, uispass 3, uisguard 2: the split rule's 5x5 tile support, three passes and the reach-limited guard (battle unit
 # icons near the screen edge on vertical camera pans, whose speed grows down the screen); uisinteg 0: object integrity off (on, it held icons near the right edge back)
