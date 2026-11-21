@@ -69,8 +69,19 @@ DM_ENV_FILE_KEYS	internal	Input			text			both						Mac or iOS only
 DM_ENV_LAUNCH_KEYS	internal	Input			text			both						Mac or iOS only	
 DM_FASTBOOT	developer	Game			text			both							
 DM_FD_LOG	developer	Diagnostics			text			both							
+DM_FG_CUT	developer	Performance			text			both			fg_feature				
+DM_FG_CUT_CORR	developer	Performance			text			both			fg_tune				
+DM_FG_CUT_DLSS	developer	Performance			text			both							
+DM_FG_CUT_LOG	developer	Diagnostics			text			both							
+DM_FG_CUT_MV	developer	Performance			text			both			fg_tune				
+DM_FG_CUT_RES	developer	Performance			text			both			fg_tune				
 DM_FG_ENGINE	developer	Performance			text			both							
 DM_FG_MENU	developer	Performance			text			both							
+DM_FG_UI	developer	Performance			text			both							
+DM_FG_UI_COMP	developer	Performance			text			both			fg_ui_layer				
+DM_FG_UI_PRE	developer	Performance			text			both			fg_ui_pre				
+DM_FG_UI_SNAP	developer	Diagnostics			text			both							
+DM_FG_UI_T2T_LOG	developer	Diagnostics			text			both							
 DM_FIXED_TIME	developer	Game			text			both							
 DM_FONT_DIR	developer	Diagnostics			text			both							
 DM_FORCE_STRICT	developer	Diagnostics			text			both							
@@ -529,6 +540,7 @@ DM_VK_EVENT_PARK_MS	developer	Diagnostics			text			both
 DM_VK_EVENT_WAIT	developer	Graphics			text			both							
 DM_VK_FD_ALIAS	developer	Graphics			text			both							
 DM_VK_FG	developer	Graphics			text			both							
+DM_VK_FG_GPUTIME	developer	Diagnostics			text			both							
 DM_VK_FG_OWNFMT	developer	Diagnostics			text			both							
 DM_VK_FG_REFRESH_CAP	developer	Graphics			text			both							
 DM_VK_FOUT_COMPS	developer	Graphics			text			both							

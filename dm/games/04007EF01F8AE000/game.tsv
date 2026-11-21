@@ -37,6 +37,16 @@ dlss_standin	1
 # Android: the 2560x1440 AV1 movies (50-70 Mbit/s) decode on dav1d frame-parallel, not the phone's hardware decoder: Qualcomm's c2.qti.av1.decoder on the Adreno 740
 # dropped 521 of 1200 frames of NR14_00 (22-23 fps), dav1d frame-parallel plays it and the opening at 30 fps with no drops (dm/games/README.md av1_decoder)
 av1_decoder	dav1d
+# ---- Frame generation (Android: the motion-vector engine, dm/gfx/vk_android/vka_fgprof.c; dm/games/README.md, the fg_* keys) ----
+# The picture without UI is colour target 0 of the tonemap pass (fragment 4e9941d610533734, RGBA8) at its end; the UI layer is the texture the composite draw
+# (fragment c478e7c70173f0b8) samples, put over it by transmittance (out = L.rgb + P.rgb * L.a in linear light)
+fg_ui_pre	4e9941d610533734
+fg_ui_layer	c478e7c70173f0b8
+# The scene cut guard (DM_FG_CUT=repeat), tuned on this game: cut_mv absolute 250 render px at 1132x638 = 0.220848056537 of the render width
+fg_feature	cut
+fg_tune	cut_res	12
+fg_tune	cut_corr	0.5
+fg_tune	cut_mv	0.220848056537
 # ---- Recommended settings (the launcher, Recommend.java; dm/games/README.md recommend) ----
 # Phone's own driver Qualcomm's before 512.800 (driverID 8, VkPhysicalDeviceProperties.driverVersion major 512, minor below 800: the host's own qcom_old rule, vka_dev.c):
 # an installed Turnip (driverID 18, MESA_TURNIP). README.md "Tested devices": on the AYN Thor (Adreno 740) the stock 512.676.53 runs with faults, characters and some

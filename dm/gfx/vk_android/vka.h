@@ -412,6 +412,16 @@ void vka_img_barrier(VkCommandBuffer cb, VkImage img, VkImageAspectFlags aspect,
 // twin), so the result is written sRGB-encoded
 int vka_dlss_fsr3(VkCommandBuffer cb, vka_img *src, VkFormat sfmt, vka_img *dst, int enc, vka_img *depth, vka_img *motion, const p_dlss_t2t *o);   // vka_fsr3.c: FSR 3.1 for DM_VK_DLSS=4; 0 = not done (the caller falls back to FSR 1)
 int vka_dlss_run(VkCommandBuffer cb, const p_dlss *o, int mode, vka_img *s, uint32_t sl, VkFormat sfmt, int sx, int sy, int iw, int ih, vka_img *d, uint32_t dl, int enc, int dx, int dy, int ow, int oh);
+// vka_fgui.c
+int vka_fgui_on(void); void vka_fgui_draw(uint64_t fkey, vka_img *c0); void vka_fgui_tex(uint64_t key, int tid); void vka_fgui_pass_end(VkCommandBuffer cb);
+typedef struct { VkImage pre, layer; VkImageView pre_v, layer_v, mv_v; uint32_t w, h, mw, mh; float mvs[2]; uint64_t sfence, pre_serial, layer_serial, op_q; int has_ui, has_mv; } vka_fgui_frame;
+int vka_fgui_take(uint64_t serial, vka_fgui_frame *u); int vka_fgui_layer(void); int vka_fgui_cut(void); void vka_fgui_dlss(VkCommandBuffer cb, vka_img *m, int iw, int ih, const float *scale);
+int vka_fgui_post(VkCommandBuffer cb, unsigned k, VkImage a, VkImage c, const VkImageView *gen, size_t ng, uint32_t w, uint32_t h, const vka_fgui_frame *u, int layer, int force, int dlss_change, uint64_t count);
+void vka_fgui_post_done(unsigned k); void vka_fgui_post_reset(void);
+void vka_fgui_note_present(uint64_t serial); void vka_fgui_t2t(const vka_img *s, const vka_img *d, int sx, int sy, int dx, int dy, int w, int h, uint32_t flags, const char *path);
+void vka_fgui_pass_begin(uint64_t c0_serial, uint32_t w, uint32_t h); void vka_fgui_draw_log(uint64_t vkey, uint64_t fkey, uint64_t c0_serial);
+int vka_fgui_cutpass(VkCommandBuffer cb, unsigned k, VkImage a, VkImage c, uint32_t w, uint32_t h, const vka_fgui_frame *u, int dlss_change, uint64_t count, VkBuffer *rb, VkDeviceSize *roff);
+VkImageView vka_fgui_view(VkImage img);
 // vka_fgprof.c: the frame generator's per-game profile (game.tsv fg_* rows over the core defaults) and the engine choice
 typedef struct { int mv; uint64_t ui_pre, ui_layer; unsigned features; double ratio, tol, edge, cut_res, cut_corr, cut_mv; int fill, soft, uisr, uissupr, uisinteg, uispass, uisguard; } vka_fgprof;
 enum { VKA_FGF_UIFLOW = 1, VKA_FGF_UIGATE = 2, VKA_FGF_STATIC = 4, VKA_FGF_STATICZ = 8, VKA_FGF_BOTHFAR = 16, VKA_FGF_DITHER = 32, VKA_FGF_CUT = 64, VKA_FGF_UIPICK = 128, VKA_FGF_UICONS = 256,

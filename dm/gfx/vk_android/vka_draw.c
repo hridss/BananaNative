@@ -476,6 +476,7 @@ void vka_rp_end(void) {
     vka_oq_pass_end();   // an occlusion query active in the pass ends inside it
     if (R.classic) vk.vkCmdEndRenderPass(g_cb); else vk.vkCmdEndRendering(g_cb);
     vka_barrier(g_cb);   // the pass's writes before whatever reads them next (copies, the present, the next pass's samples)
+    vka_fgui_pass_end(g_cb);   // the pre-UI / UI layer snapshots at their passes' ends (vka_fgui.c)
     vka_xp_ts(g_cb, 1);
     bcrt_flush();        // block-compressed targets drawn through shadows: their blocks back (bcrt_attach)
     ub_flush();          // inline uniform updates deferred during the pass: copied into placed guest RAM
@@ -708,6 +709,7 @@ static int rp_begin(const p_set_rt *rt, int has_rt, const p_scissor *sc, int has
     g_zdir = 0;
     if (dp) { g_zs.npb++; if (dp->loadOp == VK_ATTACHMENT_LOAD_OP_CLEAR) g_zs.nlc++; for (int k = 0; k < nlate; k++) if (late[k]->asp & VK_IMAGE_ASPECT_DEPTH_BIT) g_zs.ncl++; }
     g_rtl_pass = rtl_size(w, h); g_rtl_d = 0;
+    vka_fgui_pass_begin(n > 0 && has_rt && rt->color[0] ? rt->color[0]->serial : 0, w, h);   // DM_FG_UI_T2T_LOG
     if (g_rtl_pass && rtl_room()) {   // DM_VK_RT_LOG: the pass's targets
         char b[600]; size_t bn = 0;
         for (int i = 0; i < n && bn < sizeof b; i++) if (ca[i].imageView) {
@@ -1439,6 +1441,7 @@ static int stage_writes(const vka_dstate *d, int st, const vka_shader *sh, const
                     tid = 0;
                 } else if (tid) v = vka_tex_id_view_rec(tid, g_cb, r[i].dim, wbf_view_of_binding(storage, r[i].flags, DMSH_VK_BF_RW), &lay);   // (a shader image only read: not a GPU write)
                 if (tid && v) class_note(sh, st, &r[i], tid, storage);
+                if (tid && st == 1) vka_fgui_tex(sh->key, tid);   // the UI composite's layer
                 if (tid) tex_peek(sh->key, st, &r[i], v, storage);
                 // A 2D texture in a 3D or cube slot: what the game leaves bound where a shader's branch does not sample (DKB's materials keep a 1x1 2D texture in their volume slot 12).
                 // It reads as unbound, zeros, as nvn_mtl.m's zero 3D / zero cube fallback does; noted once. Other mismatches are reported
@@ -2710,6 +2713,8 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
 
     PT(7);
     if (g_fs_sub) g_sub_drawn = 1;   // (prepass_draw: its depth reached the draw)
+    vka_fgui_draw(sh[1] ? sh[1]->key : 0, R.nci ? R.cim[0] : NULL);   // the pre-UI pass and the UI composite (vka_fgui.c)
+    vka_fgui_draw_log(mesh ? 0 : sh[0] ? sh[0]->key : 0, sh[1] ? sh[1]->key : 0, R.nci && R.cim[0] ? R.cim[0]->serial : 0);   // DM_FG_UI_T2T_LOG
     // The draw
     uint32_t inst = (uint32_t)((dw ? dw->instances : di->instances) > 0 ? (dw ? dw->instances : di->instances) : 1), binst = d->b.base_instance;
     if (vka_gp_active) vka_gp_note(mesh ? 'm' : 'v', mesh ? sh[7]->key : sh[0] ? sh[0]->key : 0, sh[1] ? sh[1]->key : 0, mesh ? (ind ? 0 : (uint64_t)dw->count) : (uint64_t)(dw ? dw->count : di->count) * inst);
