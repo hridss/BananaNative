@@ -1111,12 +1111,16 @@ static double g_p90_sum; static uint64_t g_p90_n;
 // 20 fps the GPU idles a third of the time, its governor lowers the clock, the frame's GPU time grows to 33-36 ms (Adreno 840) and the game stays at 20 fps for good; a floor
 // aiming at the current period (50 ms, or the 33.3 ms cap the auto floor had) sees that frame on target and never raises the clock. Aiming at the shortest period keeps the
 // clock where the game can step back up. DM_VK_GPU_FLOOR_PERIOD=<ms> (live; default 0 = the shortest period) sets it instead (33.3: the cap before 2026-11-05)
+__attribute__((weak)) int dm_fps_cap_get(void) { return 0; }
 _Atomic int64_t vka_period_min_ns;   // the shortest present period the game asked for (vka_perf.c vka_perf_frame); 0 = none yet
 int64_t vka_floor_period_ns(void) {
     double ms = VKA_ENVF("DM_VK_GPU_FLOOR_PERIOD", 0.0);
     if (ms >= 4 && ms <= 200) return (int64_t)(ms * 1e6);
     int64_t m = atomic_load_explicit(&vka_period_min_ns, memory_order_relaxed), v = 16666667;
-    return m >= 4000000 && m < v ? m : v;
+    int64_t r = m >= 4000000 && m < v ? m : v;
+    int cap = dm_fps_cap_get();
+    if (cap > 0) { int64_t c = 1000000000ll / cap; if (r < c) r = c; }
+    return r;
 }
 void vka_floor_span(uint64_t frame, uint64_t ns) {           // the completion thread: a submission of frame ended ns after the frame began
     unsigned k = frame % FSPAN;
