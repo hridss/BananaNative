@@ -281,6 +281,13 @@ class FrameGen(unittest.TestCase):   # the fg_* rows (the motion-vector frame ge
         self.assertEqual((rc, out), (0, ''))
         self.assertIn('#define DM_GAME_FG_FEATURES 0x383', h)
 
+    def test_fefw_profile(self):   # the game's rows are what the engine ran on before they moved out of the code
+        sys.path.insert(0, str(REPO / 'dm/games'))
+        import game
+        h = '\n'.join(game.fg_rows(game.load('04007EF01F8AE000')))
+        for line in ('DM_GAME_FG_MV 1', 'DM_GAME_FG_UI_PRE 0x4e9941d610533734ull', 'DM_GAME_FG_UI_LAYER 0xc478e7c70173f0b8ull', 'DM_GAME_FG_FEATURES 0xfdf'):
+            self.assertIn(line, h)
+
     def test_rejected(self):
         for rows, msg in (('fg_mv\ton\n', 'needs dlss_standin 1'), ('fg_mv\tyes\n', 'fg_mv must be on or off'), ('fg_repeat\tx\n', 'unknown frame generation key'),
                           (self.PRE, 'go together'), ('fg_ui_pre\t4E9941D610533734\n' + self.LAY, 'fg_ui_pre takes one fragment shader key'),
