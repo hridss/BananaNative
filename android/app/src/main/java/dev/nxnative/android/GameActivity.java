@@ -1427,6 +1427,7 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
         super.onResume();
         GameReturn.homeInRecents(this, false);   // one card in Recents while the game shows: the game's (Home puts its own back when it shows)
         resumedNow = true;   // also before the start: start() can come after the first onResume (the readiness check), and hostSetup() then starts the sensors
+        modeKick();   // frame generation's display mode asked for again (the system may have changed the panel's mode while the game was away)
         if (!started) return;
         Native.lifecycle(3);
         Native.motionRotation(getDisplay().getRotation());
@@ -1439,6 +1440,7 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
         super.onPause();
     }
     @Override protected void onStop() {
+        ui.removeCallbacks(modeTick);
         if (started) { stopped = true; if (!isChangingConfigurations()) hostInBackground = true; Native.lifecycle(1); }
         super.onStop();
     }
@@ -1448,9 +1450,74 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
         if (started) Native.motionRotation(getDisplay().getRotation());
     }
 
-    @Override public void surfaceCreated(SurfaceHolder h) { Native.setSurface(h.getSurface()); }
+    @Override public void surfaceCreated(SurfaceHolder h) { Native.setSurface(h.getSurface()); modeKick(); }
     // The replay letterboxes the game's 16:9 picture into the window (vka_present.c); TouchControls gives the host that rectangle (nxhost_touch_layout) with its own size
-    @Override public void surfaceChanged(SurfaceHolder h, int format, int w, int ht) { Native.setSurface(h.getSurface()); }
+    @Override public void surfaceChanged(SurfaceHolder h, int format, int w, int ht) { Native.setSurface(h.getSurface()); modeKick(); }
+
+    // ---- Frame generation's display mode: while it runs, the window asks for the display mode whose refresh is its output rate (or a whole multiple of it) ----
+    // The surface's own request (vka_present.c frame_rate: ANativeWindow_setFrameRate, with CHANGE_FRAME_RATE_ALWAYS while frame generation runs) did not win everywhere:
+    // on the OnePlus Pad 3 (ColorOS) a return from Home in low brightness left the panel at the launcher's 50 Hz under the window's 60 fps request, frame generation's refresh
+    // cap then made no generated frame (30 fps shown at 20 / 40 ms). The window's preferredDisplayModeId is the app's request to DisplayModeDirector. Set again on each
+    // resume and new surface, checked every 2 s against the swapchain's refresh (Native.displayRate), and asked again at most MODE_TRIES times (logged); given back
+    // (0) when frame generation stops. Only while frame generation runs and DM_VK_FG_KEEP_RATE is on (the host reports no rate otherwise); no system setting is touched
+    private static final int MODE_TRIES = 3;
+    private final float[] dispRate = new float[2];
+    private int modePinned, modeTries, modeLastHz;   // the mode this window asks for (0: none); retries since the last resume / surface; the refresh last logged
+    private final Runnable modeTick = this::modeTick;
+    private void modeKick() { modeTries = 0; modeLastHz = 0; ui.removeCallbacks(modeTick); ui.postDelayed(modeTick, 300); }
+    /** The supported mode at the current mode's resolution whose refresh is the lowest whole multiple (1 %) of want fps; null when none */
+    static Display.Mode modeFor(Display.Mode[] modes, Display.Mode cur, int want) {
+        Display.Mode best = null;
+        if (modes == null || cur == null || want <= 0) return null;
+        for (Display.Mode m : modes) {
+            if (m.getPhysicalWidth() != cur.getPhysicalWidth() || m.getPhysicalHeight() != cur.getPhysicalHeight() || !multipleOf(m.getRefreshRate(), want)) continue;
+            if (best == null || m.getRefreshRate() < best.getRefreshRate()) best = m;
+        }
+        return best;
+    }
+    /** hz is a whole multiple (1, 2, 3...) of fps, within 1 %: frame generation's refresh cap has room for its frames */
+    static boolean multipleOf(float hz, int fps) { float r = hz / fps; int k = Math.round(r); return k >= 1 && Math.abs(r - k) <= 0.01f * k; }
+    private void modeAsk(int id) {
+        WindowManager.LayoutParams lp = getWindow().getAttributes();
+        if (lp.preferredDisplayModeId == id) return;
+        lp.preferredDisplayModeId = id; getWindow().setAttributes(lp);
+    }
+    private void modeTick() {
+        if (stopped) return;   // onResume / the next surface start it again
+        if (!started) { ui.postDelayed(modeTick, 2000); return; }
+        int want = Native.displayRate(dispRate) ? Math.round(dispRate[0]) : 0, hz = Math.round(dispRate[1]);
+        if (want <= 0) {   // frame generation off (or DM_VK_FG_KEEP_RATE=0): the window's mode is the system's again
+            if (modePinned != 0) { modeAsk(0); modePinned = 0; Native.note("[nxlaunch] display mode: frame generation off, the window asks for no mode"); }
+            ui.postDelayed(modeTick, 2000); return;
+        }
+        Display d = getDisplay();
+        Display.Mode m = d == null ? null : modeFor(d.getSupportedModes(), d.getMode(), want);
+        if (m != null && m.getModeId() != modePinned) {
+            modeAsk(m.getModeId()); modePinned = m.getModeId();
+            Native.note(String.format(Locale.ROOT, "[nxlaunch] display mode: %d (%dx%d, %.2f Hz) asked for, frame generation at %d fps; the display is at %.2f Hz, the swapchain at %d Hz",
+                    m.getModeId(), m.getPhysicalWidth(), m.getPhysicalHeight(), m.getRefreshRate(), want, d.getMode().getRefreshRate(), hz));
+        } else if (m == null && modePinned == 0 && modeTries == 0) {
+            modeTries = MODE_TRIES + 1;   // nothing to ask for: once a resume / surface
+            Native.note("[nxlaunch] display mode: no mode at " + want + " fps or a multiple of it at this resolution; the display is at " + hz + " Hz");
+        }
+        if (hz > 0 && hz != modeLastHz) {
+            boolean ok = multipleOf(dispRate[1], want);
+            if (ok && modeLastHz > 0) Native.note("[nxlaunch] display mode: the swapchain is at " + hz + " Hz, frame generation at " + want + " fps has its refreshes");
+            if (!ok && modeTries < MODE_TRIES) {   // not followed (yet): asked again, mode and surface rate, up to MODE_TRIES times
+                modeTries++;
+                Native.note("[nxlaunch] display mode: the swapchain is at " + hz + " Hz under frame generation's " + want + " fps: asked again (" + modeTries + "/" + MODE_TRIES + ")");
+                if (modePinned != 0) { int id = modePinned; modeAsk(0); ui.postDelayed(() -> { if (modePinned == id && !stopped) modeAsk(id); }, 200); }
+                Native.displayRevote();
+                ui.postDelayed(modeTick, 2000); return;   // the same reading counts again after the retry
+            }
+            if (!ok && modeTries == MODE_TRIES) {
+                modeTries++;
+                Native.note("[nxlaunch] display mode: the swapchain stays at " + hz + " Hz after " + MODE_TRIES + " tries; frame generation makes no frames at this refresh");
+            }
+            modeLastHz = hz;
+        }
+        ui.postDelayed(modeTick, 2000);
+    }
     @Override public void surfaceDestroyed(SurfaceHolder h) { Native.setSurface(null); }
 
     private static boolean gamepad(int source) {

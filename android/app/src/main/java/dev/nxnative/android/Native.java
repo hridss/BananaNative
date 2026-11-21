@@ -92,6 +92,11 @@ final class Native {
     /** The overlay's frame rate (nxhost_fps): out[0] game frames a second, out[1] images presented a second, out[2] the game's frame time in ms, out[3] frame generation
      *  (0 off, 1 generating, 2 on and not generating, -1 unavailable), out[4] images per game frame, out[5] GPU ms a game frame (-1: none). False when stale (no present for 2.5 s) or not in this host. */
     static native boolean fps(float[] out);
+    /** The display's rate (nxhost_display_rate): out[0] the frame rate the window asks for while frame generation runs (0: off), out[1] the swapchain's refresh in Hz.
+     *  False: nothing to keep (frame generation off, DM_VK_FG_KEEP_RATE=0, or a host without it) */
+    static native boolean displayRate(float[] out);
+    /** The window's frame rate asked for again at the next present (nxhost_display_revote): a retry when the panel did not follow */
+    static native void displayRevote();
 
     /** The overlay's block for the present to draw into the game's images (nxhost_overlay_set): slot 0 top left (the build tag), 1 top right (the frame rate and the other items);
      *  px a direct buffer with an ARGB_8888 bitmap's pixels (stride bytes a row), null to empty the slot. False: the present does not draw it, the launcher's views show it */

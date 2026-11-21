@@ -220,13 +220,16 @@ final class Overlay {
             s.setSpan(new RelativeSizeSpan(1.3f), s.length() - 1, s.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
             if (fps) s.append(" ");
         }
+        String cap = fps && fresh && rate[3] == 2 ? displayCap(Native.frameGenStatus()) : null;   // on, but the panel's refresh leaves no generated frame
         if (fps) {
             if (!fresh) s.append("-- fps");
+            else if (cap != null) s.append(String.format(Locale.ROOT, "%.0f fps", rate[0]));   // not "30→30": nothing is generated
             else if (rate[3] == 1 || rate[3] == 2) s.append(String.format(Locale.ROOT, "%.0f→%.0f fps", rate[0], rate[1]));
             else s.append(String.format(Locale.ROOT, "%.0f fps", rate[0]));
         }
         if (fps && fresh) line(s, String.format(Locale.ROOT, "%.1f ms", rate[2]));
         if (fps && (rate[3] == 1 || rate[3] == 2)) line(s, Lsfg.label(ctx));
+        if (cap != null) { line(s, "not generating"); line(s, cap); }   // two short lines: the block sits in the bar beside the picture
         if (fps && rate[3] < 0) line(s, "no LSFG");
         if (gpu && fresh && rate[5] >= 0) line(s, String.format(Locale.ROOT, "GPU %.1f ms", rate[5]));
         if (cpu) caps(s);
@@ -241,6 +244,13 @@ final class Overlay {
             }
         }
         return s;   // every line at the overlay's one size (GameActivity.OVERLAY_SP): at 8 sp a smaller second size would no longer read
+    }
+
+    /** "(display at 50 Hz)" from the frame generation status when its refresh cap leaves no generated frame (vka_framegen.c: "not generating (display at 50 Hz): ..."), else null */
+    static String displayCap(String status) {
+        String k = "not generating (display at ";
+        int i = status == null ? -1 : status.indexOf(k), j = i < 0 ? -1 : status.indexOf(')', i);
+        return j < 0 ? null : status.substring(status.indexOf('(', i), j + 1);
     }
 
     /** The text with its colours (the dot's, "low"), so that a change of colour alone counts as a change of the text */

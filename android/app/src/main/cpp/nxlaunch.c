@@ -53,6 +53,8 @@ void nxhost_motion_sens(float factor);
 #pragma weak nxhost_audio_interrupt
 #pragma weak nxhost_audio_route_changed
 #pragma weak nxhost_fps
+#pragma weak nxhost_display_rate
+#pragma weak nxhost_display_revote
 #pragma weak nxhost_overlay_set
 #pragma weak nxhost_overlay_state
 #pragma weak nxhost_framegen_set
@@ -428,6 +430,16 @@ JNIEXPORT jboolean JNICALL Java_dev_nxnative_android_Native_fps(JNIEnv *env, jcl
     (*env)->SetFloatArrayRegion(env, out, 0, n, v);
     return r ? JNI_TRUE : JNI_FALSE;
 }
+
+// The display's rate for the refresh check (nxhost_display_rate): out[0] the window's frame rate while frame generation runs (0: off), out[1] the swapchain's refresh in Hz;
+// false = nothing to keep (or a host without it). displayRevote: the window's frame rate asked for again at the next present
+JNIEXPORT jboolean JNICALL Java_dev_nxnative_android_Native_displayRate(JNIEnv *env, jclass cls, jfloatArray out) {
+    (void)cls; if (!nxhost_display_rate || !out || (*env)->GetArrayLength(env, out) < 2) return JNI_FALSE;
+    float v[2] = {0, 0}; int r = nxhost_display_rate(v, 2);
+    (*env)->SetFloatArrayRegion(env, out, 0, 2, v);
+    return r ? JNI_TRUE : JNI_FALSE;
+}
+JNIEXPORT void JNICALL Java_dev_nxnative_android_Native_displayRevote(JNIEnv *env, jclass cls) { (void)env; (void)cls; if (nxhost_display_revote) nxhost_display_revote(); }
 
 // The overlay's blocks for the present to draw into the game's images (nxhost_overlay_set): px a direct ByteBuffer of stride-byte rows (an ARGB_8888 bitmap's pixels), null
 // empties the slot; false = the present does not draw it (or a host without it): the launcher's views show it. The state: 1 drawn, 0 not yet, -1 not drawn by the present

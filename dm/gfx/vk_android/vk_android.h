@@ -16,6 +16,11 @@ __attribute__((visibility("default"))) int nxhost_vk_selftest(struct ANativeWind
 // out[4] images per game frame, out[5] the GPU's busy time a game frame in ms, averaged over recent frames (-1: no GPU timestamps; only computed when n > 5).
 // n is out's length (at most 6 are written). 1 = fresh numbers, 0 = no present for 2.5 s (the rates are 0 then)
 __attribute__((visibility("default"))) int nxhost_fps(float *out, int n);
+// The display's rate for the launcher's refresh check (vka_present.c, GameActivity): out[0] the frame rate the window asks for while frame generation runs (its output
+// rate; 0 with frame generation off or DM_VK_FG_KEEP_RATE=0), out[1] the swapchain's refresh in Hz (display timing; 0 unknown). n >= 2. 1 = out[0] > 0.
+// nxhost_display_revote: the window's frame rate is asked for again at the next present (a retry when the panel did not follow)
+__attribute__((visibility("default"))) int nxhost_display_rate(float *out, int n);
+__attribute__((visibility("default"))) void nxhost_display_revote(void);
 // Frame generation (Lossless Scaling's LSFG, vka_framegen.c): on / off, images per game frame (2..4), a target output rate (0 = the fixed multiplier), the optical flow's
 // resolution in % of the game's (0 = auto: 100 %), taken from the next frame. The status: 0 off, 1 generating, 2 on and not generating, -1 unavailable; buf gets the reason
 __attribute__((visibility("default"))) void nxhost_framegen_set(int on, int multiplier, int target_rate, int flow_pct);

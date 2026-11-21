@@ -63,7 +63,7 @@ static ANativeWindow *g_win; static VkSurfaceKHR g_surf; static VkSwapchainKHR g
 static VkImage g_simg[MAXIMG]; static VkSemaphore g_sdone[MAXIMG]; static uint32_t g_nimg;
 static struct { VkCommandBuffer cb; VkFence fence; VkSemaphore acq; vka_img *held; int used; } g_fr[NFRAME];
 static VkCommandPool g_ppool; static unsigned g_fi;
-static uint64_t g_refresh_ns, g_last_desired, g_drawable_ns;
+static uint64_t g_refresh_ns, g_last_desired, g_drawable_ns, g_vsync_ns;   // g_vsync_ns: the latest actual present time (display timing)
 static int g_recreate;
 static struct { uint64_t n; double t; } g_pres[PRING];
 static VkSurfaceTransformFlagBitsKHR g_pre = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;   // the swapchain's preTransform
@@ -77,6 +77,8 @@ static VkImageView g_sview[MAXIMG];   // the swapchain images as colour attachme
 static uint32_t g_dev_want_w, g_dev_want_h; static _Atomic int g_dev_on; static int g_win_ew, g_win_eh, g_dev_refused;   // g_dev_refused: the surface took no such extent (not asked again)
 static int g_sview_fsr;   // this swapchain made its views for FSR or a one-pass scaler: a missing view then failed, and a new swapchain would not have it either
 static int g_fps_set; static unsigned g_refresh_n;
+static int g_fg_on;   // frame generation on (present thread): its generated frames follow the panel's refresh (vka_framegen.c), so the refresh is read on while it runs
+static int g_fps_always; static _Atomic int g_revote;   // the window's rate was set with CHANGE_FRAME_RATE_ALWAYS (frame generation); a new request is wanted (frame_rate)
 static _Atomic int g_place_x = 5000, g_place_y = 5000;   // nxhost_picture_place, in 1/10000 of the free space
 void nxhost_picture_place(float x, float y) {
     x = x < 0 ? 0 : x > 1 ? 1 : x; y = y < 0 ? 0 : y > 1 ? 1 : y;
@@ -728,6 +730,7 @@ static int swap_create(void) {
     if (V.display_timing && vk.vkGetRefreshCycleDurationGOOGLE) { VkRefreshCycleDurationGOOGLE rc; if (!vk.vkGetRefreshCycleDurationGOOGLE(V.dev, sw, &rc)) g_refresh_ns = rc.refreshDuration; }
     g_last_desired = 0; g_recreate = 0;
     g_refresh_n = 0;
+    if (g_fg_on) g_fps_set = 0;   // frame generation: the window's frame rate asked for again with the new swapchain (frame_rate), and its refresh read again after it
     VLOG("swapchain %ux%u, %u images, format %d, FIFO, transform %#x (surface %#x%s), refresh %.2f Hz%s", ext.width, ext.height, g_nimg, pick.format, pre, caps.currentTransform,
          rot_rotates(pre) ? ": pre-rotated" : rot_rotates(caps.currentTransform) ? ": the compositor rotates" : "", g_refresh_ns ? 1e9 / g_refresh_ns : 0.0,
          V.display_timing ? ", display timing" : "");
@@ -765,7 +768,7 @@ static void timing_poll(void) {
     if (!V.display_timing || !g_swap || !vk.vkGetPastPresentationTimingGOOGLE) return;
     VkPastPresentationTimingGOOGLE pt[16]; uint32_t n = 16;
     if (vk.vkGetPastPresentationTimingGOOGLE(V.dev, g_swap, &n, pt) < 0) return;
-    for (uint32_t i = 0; i < n; i++) pres_note(pt[i].presentID, pt[i].actualPresentTime / 1e9);
+    for (uint32_t i = 0; i < n; i++) { pres_note(pt[i].presentID, pt[i].actualPresentTime / 1e9); if (pt[i].actualPresentTime > g_vsync_ns) g_vsync_ns = pt[i].actualPresentTime; }
 }
 
 // VK_SUBOPTIMAL_KHR: recreate when the window has a new size, or the surface a new rotation that pre-rotation can follow (the phone turned over: ROTATE_90 ↔ ROTATE_270).
@@ -798,16 +801,38 @@ static void frame_rate(double period) {
         if (fps >= top || !hold || now - top_t > hold) { top = fps; top_t = now; }
         fps = top;
     }
-    if (fps == g_fps_set) return;
-    static int (*set_rate)(ANativeWindow *, float, int8_t); static int looked;   // libnativewindow (API 30), not linked: -landroid does not carry it
-    if (!looked) { looked = 1; void *h = dlopen("libnativewindow.so", RTLD_NOW); if (h) set_rate = (int (*)(ANativeWindow *, float, int8_t))dlsym(h, "ANativeWindow_setFrameRate"); }
-    int r = set_rate ? set_rate(g_win, (float)fps, ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_FIXED_SOURCE) : -1;
-    VLOG("window frame rate %d fps%s", fps, r ? " (not taken)" : "");
-    g_fps_set = fps; g_refresh_n = 1;   // the panel may switch within a few frames
+    // Frame generation on (DM_VK_FG_KEEP_RATE, live, 1): the output rate with CHANGE_FRAME_RATE_ALWAYS (API 31), so the system may also make a mode change that is not
+    // seamless for it. ANativeWindow_setFrameRate's default is ONLY_IF_SEAMLESS (SurfaceFlinger's "OnlySeamless"). On the OnePlus Pad 3 a return from Home in low brightness
+    // left the panel at 50 Hz under the 60 fps request, and frame generation stopped (the refresh cap below has no room at 50 Hz). Asked again when the window, the swapchain,
+    // the strategy or a retry from the launcher (nxhost_display_revote, GameActivity's refresh check) asks for it
+    int always = g_fg_on && VKA_ENV("DM_VK_FG_KEEP_RATE", 1);
+    if (atomic_exchange(&g_revote, 0)) g_fps_set = 0;
+    if (fps == g_fps_set && always == g_fps_always) return;
+    static int (*set_rate)(ANativeWindow *, float, int8_t); static int (*set_rate2)(ANativeWindow *, float, int8_t, int8_t); static int looked;   // libnativewindow (API 30 / 31), not linked: -landroid does not carry it
+    if (!looked) { looked = 1; void *h = dlopen("libnativewindow.so", RTLD_NOW);
+                   if (h) { set_rate = (int (*)(ANativeWindow *, float, int8_t))dlsym(h, "ANativeWindow_setFrameRate");
+                            set_rate2 = (int (*)(ANativeWindow *, float, int8_t, int8_t))dlsym(h, "ANativeWindow_setFrameRateWithChangeStrategy"); } }
+    enum { CFR_ALWAYS = 1 };   // ANATIVEWINDOW_CHANGE_FRAME_RATE_ALWAYS (API 31 headers; 0 is ONLY_IF_SEAMLESS)
+    int r = always && set_rate2 ? set_rate2(g_win, (float)fps, ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_FIXED_SOURCE, CFR_ALWAYS)
+          : set_rate ? set_rate(g_win, (float)fps, ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_FIXED_SOURCE) : -1;
+    VLOG("window frame rate %d fps%s%s", fps, always && set_rate2 ? ", change always (frame generation)" : "", r ? " (not taken)" : "");
+    g_fps_set = fps; g_fps_always = always; g_refresh_n = 1;   // the panel may switch within a few frames
 }
 void vka_present_rates(int *fps, double *hz) { if (fps) *fps = g_fps_set; if (hz) *hz = g_refresh_ns ? 1e9 / (double)g_refresh_ns : 0; }   // the pace line (vka_perf.c)
-static int g_fg_on;   // frame generation on (present thread): its generated frames follow the panel's refresh (vka_framegen.c), so the refresh is read on while it runs
+// The launcher's refresh check (vk_android.h): the window's frame rate while frame generation runs and DM_VK_FG_KEEP_RATE is on (0 otherwise), and the swapchain's refresh
+static _Atomic int g_pub_want; static _Atomic uint32_t g_pub_hz100;   // published by the present thread at each present (refresh_poll)
+int nxhost_display_rate(float *out, int n) {
+    if (!out || n < 2) return 0;
+    out[0] = (float)atomic_load(&g_pub_want); out[1] = atomic_load(&g_pub_hz100) / 100.0f;
+    return out[0] > 0;
+}
+void nxhost_display_revote(void) { atomic_store(&g_revote, 1); }
+static void display_publish(void) {
+    atomic_store(&g_pub_want, g_fg_on && g_fps_always ? g_fps_set : 0);
+    atomic_store(&g_pub_hz100, g_refresh_ns ? (uint32_t)(1e11 / (double)g_refresh_ns + 0.5) : 0);
+}
 static void refresh_poll(void) {
+    display_publish();   // the last reading, for the launcher (nxhost_display_rate)
     if (!V.display_timing || !vk.vkGetRefreshCycleDurationGOOGLE) return;
     // After a window frame rate change every 30 presents until 300; with frame generation on also every 240 after that (the panel may change on its own: LTPO, thermal)
     static unsigned slow;
@@ -1012,7 +1037,13 @@ static int present_one(const pq_item *it) {
         if (g_fg_on && g_refresh_ns && period < g_refresh_ns) period = g_refresh_ns;
         if (g_refresh_ns && (period > g_refresh_ns * 3 / 2 || g_fg_on)) {   // hold each image for its present period: the panel refreshes faster than the game presents
             uint64_t now = now_ns(); want = g_last_desired ? g_last_desired + period : now;
-            if (want < now) want = now;
+            // With frame generation the chain of times sits on the panel's refreshes and at least one refresh ahead. Restarted from "now" (a new refresh after a resume:
+            // the 60 Hz mode asked for in place of 120) it kept that phase; with the present's pre-wait the time sent (half a refresh before) fell within a few ms of a
+            // 60 Hz refresh, and the compositor took two images at one refresh and dropped one: 30 a second on screen for minutes, while 60 were presented
+            if (g_fg_on) {
+                if (g_vsync_ns && want > g_vsync_ns) { uint64_t d = (want - g_vsync_ns) % g_refresh_ns; want = d < g_refresh_ns / 2 ? want - d : want + (g_refresh_ns - d); }
+                while (want < now + g_refresh_ns) want += g_refresh_ns;
+            } else if (want < now) want = now;
             g_last_desired = want; want -= g_refresh_ns / 2;
         } else g_last_desired = 0;
         VkPresentTimeGOOGLE pt = {(uint32_t)it->ticket, want};
