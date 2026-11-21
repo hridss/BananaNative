@@ -135,6 +135,7 @@ PLAT_FN int plat_thread_get_regs(plat_thread_t t, plat_regs_t *r);   // 0 = read
 PLAT_FN void plat_thread_resume(plat_thread_t t);
 // Scheduler state (TH_STATE_* numbering: 1 running, 3 waiting, …; -1 unknown) and CPU time in µs (user + system; -1 unknown)
 PLAT_FN void plat_thread_stack(uint64_t *top, uint64_t *size);   // this thread's stack: its highest address and its size
+PLAT_FN uint64_t plat_va_limit(void);   // the end of the process's user address space (svcQueryMemory reports a reserved block from there: hle_svc.c)
 PLAT_FN int plat_thread_run_state(plat_thread_t t);
 PLAT_FN int64_t plat_thread_cpu_us(plat_thread_t t);
 PLAT_FN int64_t plat_thread_self_system_ns(void);   // this thread's system CPU time

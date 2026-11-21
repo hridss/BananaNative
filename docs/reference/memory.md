@@ -346,6 +346,13 @@ The guest address space, heaps, pools, virtual address memory and the allocators
 - **Found on:** [The Legend of Zelda: Link's Awakening](../../dm/games/01006BB00C6F0000/README.md) (1.1.0).
 - **Check:** the log's `module arena <address> +<size>: N modules back to back in load order` and each module's `base` line.
 
+### `svcQueryMemory` walks the whole guest process
+
+- **Symptom:** the SDK's module enumeration keeps calling `svcQueryMemory` after it has seen the last module and the game stays before `nnMain`.
+- **Cause:** the SDK advances from address zero by each block's reported size. Outside the guest reservation the host reported one free 4 KiB page per query, so the walk kept going page by page across the host address space.
+- **Fix:** outside the guest reservation, report each free span up to the adjacent loaded module, front patch area, current stack or guest reservation. Borrowed ranges still split the result. Inactive NROs are free until loaded. At the host's user address limit (`plat_va_limit`: `MACH_VM_MAX_ADDRESS` on Apple; on Android the power of two above the highest mapping in `/proc/self/maps`, the kernel's 39- or 48-bit space), report a reserved block whose end wraps to zero, as Horizon does at its process limit.
+- **Found on:** [Hitman Absolution, PR #3023](https://github.com/seedds/nxnative/pull/3023) (v131072, SDK 22.2.0). After the [loader lookup fix](services.md#the-sdk-rejects-a-module-that-svcquerymemory-finds), the old map was still scanning at the 10 s cutoff. With the free spans and reserved tail, the same SDK completes both list passes.
+
 ### `MapPhysicalMemory` in 16 KB host pages
 
 - **Symptom:** `MapPhysicalMemory` faults on part of a page.
