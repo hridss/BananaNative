@@ -27,6 +27,13 @@ Finding, keying and translating shaders (`dm/gfx/tools/shader_split.py`, `dmsh_b
 - **Found on:** [FINAL FANTASY X/X-2 HD Remaster](../../dm/games/0100BC300CB48000/README.md); base and both supplied DLC packs yield 5,752 unique shaders.
 - **Check:** `test_vbf.py` covers raw and zlib blocks, shared/missing members, truncation, unaligned effects, loose shader keys and inconsistent lengths. All 5,752 programs translate on the Mac.
 
+### NXSD single-stage shader containers
+
+- **Symptom:** the shader split finds no shaders while loose RomFS files start with `NXSD`; a build stops with `[RED] the shader split found no shaders in main or the RomFS`.
+- **Cause:** NXSD version `0x100` stores a table of 24-byte descriptors, then fixed `0x880`-byte NVN control sections and variable-sized code areas in separate regions. The splitter did not recognize the container. Each descriptor names one control and code section; control `+0x704` gives its code length.
+- **Fix:** `shader_split.py` recognizes the magic independently of the filename. Before copying shader code, it checks the header and makes sure the descriptors cover both regions without duplicate controls, overlapping code or unclaimed bytes. It reads the stages from the code headers, checks each control/code pair through the shared NVN validator, and uses the existing separable-program input cover.
+- **Found on:** TETRIS THE GRAND MASTER 4 -ABSOLUTE EYE- (no profile), reported by ralph303 in [issue #743](https://github.com/seedds/nxnative/issues/743), with the layout and original reader in [their source commit](https://github.com/ralph303/nxnative/commit/f6347e7faa3b011cb652ce3e788e070929438da8). Other NXSD versions and layouts remain unsupported; recognizing its shaders does not establish gameplay support.
+
 ### A file no reader reads
 
 - **Symptom:** the shader split stops on one archive with a Python traceback (an `IndexError` or `struct.error` naming no file), or a reader's `[RED]` line about a format it does not know, and nothing is written; the NSP script loses the build at the split.
