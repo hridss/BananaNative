@@ -169,10 +169,12 @@ class Registry(unittest.TestCase):
         # area; 0x400000, 0x2000000 and 0x40000000, the alignments of the 4 MB, 32 MB and 1 GB classes; as movz or orr from wzr) with the reviewed one (62 MB; SDK 20's 2 MB) in the same register
         m = MODS[REPO / 'dm/tools/sdk_patches.py']
         words = {m.node_area: ({'08fca752', '09fca752', 'e8230b32', 'e9230b32'}, {'087ca052', '097ca052'}),
-                 m.alignment: ({'0808a052', 'e8030a32', '0b40a052', 'eb030732', '0a00a852', 'ea030232'}, {'0804a052', '0b04a052', '0a04a052'})}
+                 m.alignment: ({'0808a052', 'e8030a32', '0b40a052', 'eb030732', '0a00a852', 'ea030232'}, {'0804a052', '0b04a052', '0a04a052'}),
+                 # the older VammManager (SDK 3.5.1, 4.4.0): its 1 GB node area (orr from wzr) → 64 MB, its 1 GB class alignment → 32 MB
+                 m.old_vamm: ({'e9030232', 'ea030232'}, {'0980a052', '0a80a052', '0a40a052'})}
         for rule in m.MATCH_CUTS['sdk']:
             old_words, new_words = words[rule['name']]
-            for delta, old, new, why in rule['cuts']:
+            for delta, old, new, why in [c for fn in rule.get('functions', [rule]) for c in fn['cuts']]:
                 self.assertIn(old, old_words, why); self.assertIn(new, new_words, why)
                 self.assertEqual(int(old[:2], 16) & 31, int(new[:2], 16) & 31, why)
 
@@ -189,7 +191,7 @@ class Registry(unittest.TestCase):
         sdk = {bid for g in game.all_games() for bid, m in builds_of(g).items() if m == 'sdk'}
         m = MODS[REPO / 'dm/tools/sdk_patches.py']
         self.assertFalse(getattr(m, 'OBS', {}) or getattr(m, 'FRAME_STEP', {}) or getattr(m, 'STUBS', {}))
-        for bid in m.CUTS: self.assertIn(bid, sdk, f'sdk_patches.py: {bid} is no sdk build of any profile')
+        for bid in getattr(m, 'CUTS', {}): self.assertIn(bid, sdk, f'sdk_patches.py: {bid} is no sdk build of any profile')
 
 
 class ExternalRegistry(unittest.TestCase):
