@@ -8,25 +8,52 @@ Since v0.1.4 the app offers a newer release at start (**Update** or **Later**), 
 
 An update keeps the app's storage, so your saves, packs and copied games stay.
 
-### Big updates and small fixes (0.3.42)
+### Back up saves before updating
 
-Every release says what kind it is in its notes: **major** (new things, the default), **hotfix** (a small fix, optional) or **critical** (a small fix everyone should take). Settings > **Updates** > **Small fix updates** decides what the app offers when it starts. Turn it off and the app offers only major and critical releases; the next major release always carries every small fix before it, so nothing is lost by skipping them. **Check for updates** always shows the newest release of any kind.
+Settings > **Updates** > **Back up saves before updating** (on by default): before an update installs, the app copies every save that changed since its last backup to `save-backups/<title ID>/` next to your games, outside the app's storage, and says how many games it backed up. Saves that did not change, and games never played, are skipped. A save of a game that is running is skipped too, and named. When a backup cannot go outside the app's storage (All files access is off, or a game copied into the app or a `.nup` used where it is), the app says so before updating and offers **Open settings**, **Update without backup** or **Cancel**. If a backup fails, it names the game and the reason and offers **Update anyway** or **Cancel**. Backups are never deleted by the app.
+
+### Update channels: Stable and Hotfix
+
+Every release says what kind it is in its notes: **major** (the weekly release with new things, the default), **hotfix** (a small fix between weekly releases, optional) or **critical** (a small fix everyone should take). Settings > **Updates** > **Update channel** decides which releases the app offers:
+
+- **Stable:** the weekly releases and critical fixes. Small fixes are skipped; the next weekly release always carries every small fix before it, so nothing is lost.
+- **Hotfix:** every release, also the small fixes between the weekly ones. Pick it when a fix you are waiting for comes out as a hotfix.
+- **Preview:** everything on Hotfix, plus early builds of bigger changes (a new shader version, a large engine change) about a week before they reach Stable. A preview may break a game: pick it only if you want to test, and report what you find. Preview releases are tagged `vX.Y.Z-preview`; the release X.Y.Z that follows is offered to you as a normal update. Leaving Preview takes you back at the next weekly release; your saves stay as they are.
+
+The check at start and **Check for updates** both follow the channel. When an update of your channel is waiting (you tapped **Later**), Home's Settings button shows a dot until you open Settings, and **Check for updates** names the version there; a critical fix keeps its dot until you install it. When another channel has something newer, the **Update channel** row names it (for example "v0.3.51 is out on the Hotfix channel"); nothing changes until you pick that channel. The **Update channel** list shows, under each channel, what it offers and the version it would bring you now (after the app's check at start). Picking **Preview** asks first. When the channel you pick has a newer version, its release page opens right away, so you read what it is before you tap **Update**; **Later** keeps the new channel without installing. Release pages say **Small fix** for a hotfix, **Preview build** for a preview and **Important fix** for a critical fix. On Stable, when only a newer small fix is out, **Check for updates** says so and names its version. **Stable is the default.** If you never changed the older **Small fix updates** switch (0.3.42 to 0.3.45), you are on Stable from this version on. If you did change it, the app keeps your choice: on is Hotfix, off is Stable.
+
+Going back to an older version is not offered in the app: Android installs an older version only after the app is uninstalled, which removes the app's storage (your saves and packs) unless you back up the saves first. See [Going back to an older version](Going-Back-to-an-Older-Version), and the release notes of each version for what changed.
 
 ## After an app update
 
 A new version may come with new shaders. What you see depends on what changed:
 
 - **No shader changes:** the pack's shaders are taken over at once.
-- **Some shaders changed:** the card says **Ready · updating shaders ...** with the count and time left. Only the changed shaders are translated, in the background, from your dump on the phone, and you can keep playing with the old shaders meanwhile.
+- **Some shaders changed:** the card says **Ready · updating shaders ...** with the count and time left. Only the changed shaders are translated, in the background, from your dump on the phone, and you can keep playing with the old shaders meanwhile. Pause stops it. When more than a quarter of a game's shaders changed and the game plays on its older shaders, nothing starts by itself: the card says **Ready · update** and the game's page offers the update (below).
 - **A quick check first:** when an update changes how shaders are made, the app first checks a sample of a game's existing shaders in the background. If they come out the same, nothing is rebuilt and a short **Shaders up to date** note appears. While it runs, the game's tile shows a small ring and its page has a **Checking shaders** card with a bar and **Skip**. A skipped check is not asked again for 7 days (or until the app updates); the page then shows **Shader check skipped**, and tapping it checks again. The game plays throughout.
 - **The app cannot update them itself:** the card says **Ready · update** and the game plays as before. Open the game's page: a small **Shaders can be updated** row has an **Update shaders** button (or its button reads **Prepare shaders**, or **Storage > Prepare again**). The update is optional. A pack made on a computer can be made again there and imported instead ([First start and Prepare](First-Start-and-Prepare)).
 - **A small optional row (0.3.40):** when your pack's shaders come from an older version of the app that this version still plays, and the game is a Switch 2 title, the game's page shows a small row, **Shaders: older, built while playing**, with **Update shaders** and **Not now**, instead of the big card (also when the older shaders come from other shader tables). **Not now** hides it for that game until the shaders change again. The game plays either way.
+
+- **Game code updates keep your shaders:** when only the game's code needs rewriting (**Ready · game code update ...**, or **Prepare again**), the app rewrites the code and keeps the pack's shaders. If those shaders are from an older version, Prepare asks first: **Prepare again** rewrites the code only, and **Also build all shaders now** is there, recommended for smoother play. You can play right after the code is done.
+
+Building shaders is always your choice while the game can play without them (on its older shaders, or building them as you play). Only a game with no shaders it can play, and no live shader building for it, needs them first (**Shaders needed**).
 
 Shader updates can take a long time on a phone for games with many shaders (for example all 8,161 of Pokémon Pokopia `0400A3A01EE4C000` in the worst case); keep the phone charged.
 
 ## Shaders built while you play (0.3.40)
 
 A game that asks for a shader your pack lacks gets it built on the phone while you play, with a **Building shaders (N)** label. See [Live shader building](Live-Shader-Building).
+
+## What is new in 0.3.50
+
+[Release notes](https://git.eden-emu.dev/moceure/BananaNative/releases/tag/v0.3.50). The first weekly release, a major update: install it over any earlier version or update in the app. Games, packs, saves and settings are kept. Shaders do not change; the app rewrites each game's code once in the background (**Ready · game code update ...** on the card; the game plays meanwhile).
+
+- **Update channels:** Stable (the default), Hotfix and Preview ([above](#update-channels-stable-and-hotfix)). The channel list shows what each would bring you now; a dot on Home's Settings button tells you an update waits.
+- **Saves backed up before every in-app update** ([Back up saves before updating](#back-up-saves-before-updating)); new page [Going back to an older version](Going-Back-to-an-Older-Version).
+- **Startup log off by default:** one "starting…" line until the first frame; Settings > Display > Show startup log brings the log back.
+- **Rename game** in a game's long-press menu on Home; Traditional Chinese for the launcher; shortcut icons use the game's cover.
+- **Fixes:** a crash on Qualcomm's driver with Classic render passes on; saves written safely before they replace the old one; one task per game; frame generation, in-game menu, controller and packing changes from this week's pull requests.
+- **Known issues:** Ocarina of Time is slow on Turnip drivers; Mario Kart World: play on Turnip.
 
 ## What is new in 0.3.44
 

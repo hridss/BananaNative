@@ -1,6 +1,6 @@
 # Settings: Performance
 
-The settings that change how fast a game runs and how sharp it looks: frame rate cap, resolution, upscaler, dynamic resolution, GPU driver, frame generation and the Advanced rows. Most are on the **Performance** tab of a game's page; the same choices exist globally under **Settings > Defaults for all games** (a closed group; tap it to open). For what to try in what order, see [Getting higher FPS](Getting-Higher-FPS).
+The settings that change how fast a game runs and how sharp it looks: frame rate cap, resolution, upscaler, dynamic resolution, keeping the GPU clock up after menus, GPU driver, frame generation and the Advanced rows. Most are on the **Performance** tab of a game's page; the same choices exist globally under **Settings > Defaults for all games** (a closed group; tap it to open). For what to try in what order, see [Getting higher FPS](Getting-Higher-FPS).
 
 <!-- TODO screenshot: a game page, Performance tab, Picture and Speed sections -->
 
@@ -29,8 +29,8 @@ Not every game shows every row. A row appears only when the game's profile has t
 - **What to expect:** the row appears only for a game whose network the app can replace (it is learned the first time the game runs) and not at all for a game with Resolution presets unless Tester settings are on. Changes apply from the next frame in the in-game panel.
 - **Default:** SGSR 1.
 - **FSR sharpness** (shown only with FSR 1): Off, Softer, Soft, Default, Max. Default: Default.
-- **A game on the DLSS stand-in** (Fire Emblem: Fortune's Weave, Star Fox, Fast Fusion) has its own Upscaler list instead: **GSR 2 (smooth images)**, **FSR 1 (sharp, fast)**, **Bilinear (fastest, softest)**, **FSR 3.1 (sharp, steady)**, with **Motion clarity** and a sharpness row where the mode has them. Fire Emblem: Fortune's Weave recommends FSR 3.1 on any phone.
-- **Screen scaling** (a game on the DLSS stand-in, under its Upscaler): how the finished picture is scaled to the screen.
+- **A game on the DLSS stand-in** (Fire Emblem: Fortune's Weave, Star Fox, Fast Fusion) has **Game upscaler (DLSS)** instead, the stand-in for the console's DLSS: **GSR 2 (smooth images)**, **FSR 1 (sharp, fast)**, **Bilinear (fastest, softest)**, **FSR 3.1 (sharp, steady)**, with **Motion clarity** and a sharpness row where the mode has them. Fire Emblem: Fortune's Weave recommends FSR 3.1 on any phone.
+- **Screen scaling** (a game on the DLSS stand-in, right under its Game upscaler): how the finished picture is scaled to the screen.
   - **Nearest neighbor**, **Bilinear**, **Bicubic** (sharper than Bilinear, one cheap pass), **FSR 1** (with **Screen sharpness**: Off, Softer, Soft, Default, Max), **SGSR 1** (Qualcomm's, one pass), **Device (power saving)** (the phone's display hardware scales the picture: the least GPU work).
   - **Default:** follows the Upscaler choice in Settings, so **SGSR 1** unless you changed it (FSR 1 stays FSR 1, Bilinear and Native give Bilinear, Nearest neighbor gives Nearest neighbor). SGSR 1 and Device each use a few watts less than FSR 1 on a tablet.
   - **What to expect:** changes apply from the next frame in the in-game panel (Display tab). Bicubic, SGSR 1 and FSR 1 only act when the picture is enlarged; on a screen smaller than the game's picture they look like Bilinear. With Device, the overlay's text is drawn by the app instead of the game's picture; switching to or from Device rebuilds the picture's buffer (a short pause).
@@ -68,6 +68,12 @@ Not every game shows every row. A row appears only when the game's profile has t
 - **When to toggle:** on a game that drops frames in heavy scenes; off if you want a steady sharp picture.
 - **What to expect:** only Donkey Kong Bananza has this lever. Hidden for a game with Resolution presets unless Tester settings are on (Ocarina of Time's **Quality** is the game's own dynamic resolution).
 - **Default:** 40 % to 100 %.
+
+### Keep GPU clock up
+- **What it does:** changes what the app tells Android about each frame's work, so the phone's system does not lower the GPU's top clock while you sit in a menu or a loading screen. On some phones (seen on an AYN Odin 3, Adreno 830, with Qualcomm's own driver) the system lowered it in a menu and kept it low when play began, and the game stayed at a low frame rate (Ocarina of Time at 20 fps in 1 of 6 starts).
+- **When to toggle:** turn it on if a game sometimes starts play at a low frame rate after a menu and stays there, while other starts of the same save run well.
+- **What to expect:** the GPU runs at a higher clock in menus and quiet scenes (about 570 to about 990 MHz in a menu on the Odin 3), so the phone runs warmer and uses more battery. On phones whose system does not do this it changes little.
+- **Default:** off, for every game.
 
 ### GPU driver
 - **What it does:** picks the Vulkan driver for this game: **System (the phone's own driver)**, or an installed one such as Turnip. First entry is **Default** (the one from Settings) or **Recommended (…)**. Applies at the next start. See [GPU drivers](GPU-Drivers).

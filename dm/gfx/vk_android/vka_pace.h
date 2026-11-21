@@ -75,4 +75,11 @@ static inline void vkpace_reset(vkpace *p, uint64_t now, uint64_t f, uint64_t dr
     memset(p->itv, 0, sizeof p->itv); p->ng = p->ns = 0;
     p->t0 = now; p->f0 = f; p->draws0 = draws; p->rec0 = rec; p->cpu0 = cpu;
 }
+// The share of the game's shortest period the ADPF reports aim at (vka_perf.c span_pct; 0 = the old reports, the present period against itself with the GPU time): set, the
+// DM_VK_ADPF_SPAN value (-1 unset) wins, clamped to 0..100; unset, 100 when the performance hint session is the GPU clock floor (floor_adpf), or with any_floor
+// (DM_VK_ADPF_SPAN_ANY=1, opt-in: more heat in menus) when any floor is on (floor_on: the queue hint, KGSL or ADPF), else 0
+static inline int vkpace_span_pct(int set, int any_floor, int floor_on, int floor_adpf) {
+    int p = set >= 0 ? set : (any_floor ? floor_on : floor_adpf) ? 100 : 0;
+    return p <= 0 ? 0 : p > 100 ? 100 : p;
+}
 #endif

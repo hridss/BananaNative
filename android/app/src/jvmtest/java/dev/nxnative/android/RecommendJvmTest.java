@@ -24,6 +24,7 @@ public final class RecommendJvmTest {
 
     public static void main(String[] args) throws Exception {
         Map<String, String> honor = Readiness.facts(new String(Files.readAllBytes(Paths.get(args[0])), StandardCharsets.UTF_8));
+        check(Recommend.showsCustom(true, 0) && Recommend.showsCustom(false, 2) && !Recommend.showsCustom(false, 0), "Custom shows when picked (kept per game) or a recommended setting is changed");
         check(Recommend.known(honor) && "8".equals(honor.get("driver.id")), "the tested phone's facts: " + honor.get("driver.id"));
 
         // Parsing: rows as build.gradle writes them; malformed rows and matches on names are skipped

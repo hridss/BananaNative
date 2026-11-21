@@ -1157,13 +1157,7 @@ static void vib_send(const uint32_t *handles, const dm_vibration *values, int n)
     }
     dm_haptics_send(updates, count);
 }
-// The app's rumble setting with an output sink installed, as the console's system setting: not whether a controller has connected yet (a game that asks once at boot,
-// before a Bluetooth pad connects, would keep "not permitted" for the session). Sends still need a routed output (vib_targets)
-HLE_FORCE("_ZN2nn3hid20IsVibrationPermittedEv", "vibration permission: the app's rumble setting with an output sink installed", unsigned, h_hid_VibPermit, void) {
-    unsigned on = dm_haptics_enabled() != 0;
-    if (getenv("DM_RUMBLE_LOG")) { static _Atomic int was = -1; if (atomic_exchange(&was, (int)on) != (int)on) LOG("rumble: IsVibrationPermitted -> %u", on); }
-    return on;
-}
+HLE_FORCE("_ZN2nn3hid20IsVibrationPermittedEv", "vibration permission: enabled and an output available", unsigned, h_hid_VibPermit, void) { return dm_haptics_available() != 0; }
 // Games can cache handles once at startup, before GameController routes the pad's haptics (Unicorn Overlord kept an empty answer and sent every value to handle 0).
 // On Horizon handles are computed from npad id and style (libnx _hidGetVibrationDeviceHandles); vib_send checks for an output at each send.
 HLE_FORCE("_ZN2nn3hid25GetVibrationDeviceHandlesEPNS0_21VibrationDeviceHandleEiRKjNS_4util10BitFlagSetILi32ENS0_12NpadStyleTagEEE", "vibration devices of the connected controller",

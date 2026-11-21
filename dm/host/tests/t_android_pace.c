@@ -50,6 +50,13 @@ int main(void) {
     for (int i = 0; i < VKP_N + 50; i++) vkpace_gpu(&p, 10, 10);
     CHECK(p.ng == VKP_N && p.ns == VKP_N, "bounded: %d %d", p.ng, p.ns);
 
+    // the ADPF reports' span share (vkpace_span_pct): off by default unless the session is the floor; DM_VK_ADPF_SPAN_ANY=1 with any floor; DM_VK_ADPF_SPAN wins, clamped
+    CHECK(vkpace_span_pct(-1, 0, 1, 0) == 0, "the KGSL or queue-hint floor alone: the old reports");
+    CHECK(vkpace_span_pct(-1, 0, 1, 1) == 100, "the session is the floor: the span");
+    CHECK(vkpace_span_pct(-1, 1, 1, 0) == 100 && vkpace_span_pct(-1, 1, 1, 1) == 100, "DM_VK_ADPF_SPAN_ANY=1: the span with any floor");
+    CHECK(vkpace_span_pct(-1, 1, 0, 0) == 0 && vkpace_span_pct(-1, 0, 0, 0) == 0, "no floor (DM_VK_GPU_FLOOR=0): the old reports either way");
+    CHECK(vkpace_span_pct(0, 1, 1, 1) == 0 && vkpace_span_pct(60, 0, 0, 0) == 60 && vkpace_span_pct(250, 0, 1, 0) == 100, "DM_VK_ADPF_SPAN wins, clamped");
+
     if (fails) { printf("t_android_pace: %d failed\n", fails); return 1; }
     printf("t_android_pace: ok\n");
     return 0;

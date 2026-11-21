@@ -149,6 +149,10 @@ void vka_qtrace_dump(void) {
         case QT_SLOT: VLOG("qtrace -%.2f ms: pool table slot %u of binding %u now holds view %p instead of %p (written at %s)", ms, e->b, e->a, (const void *)e->w, (const void *)(uintptr_t)e->x,
                            e->q == 1 ? "a binding" : "a submission's start"); break;
         case QT_SUBMIT_ERR: VLOG("qtrace -%.2f ms: submission %llu: a submit returned %d", ms, f, (int)e->a); break;
+        case QT_GATE_OPEN: VLOG("qtrace -%.2f ms: gate %llu (submission %llu) opened by %s after %.2f ms (the GPU idle before it %s%.2f ms; the driver's calls %.2f ms; its event holds %u)", ms, x, f,
+                                q == 0 ? "its event" : q == 1 ? "a CPU wait" : "its time", e->a / 1e3, e->b == UINT32_MAX ? "not yet" : "", e->b == UINT32_MAX ? 0.0 : e->b / 1e3, e->c / 1e3, e->d); break;
+        case QT_GATE_SUB: if (e->b) VLOG("qtrace -%.2f ms: submission %llu, which waits for gate %llu, handed to the queue (%d)", ms, f, x, (int)e->a);
+                          else VLOG("qtrace -%.2f ms: a part that waits for gate %llu handed to the queue (%d)", ms, x, (int)e->a); break;
         default: break;
         }
     }

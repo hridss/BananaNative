@@ -171,5 +171,9 @@ public final class SaveZipJvmTest {
         check(!GameFile.saveGone("/sd/saves/A", true, true) && !GameFile.saveGone(null, false, true) && !GameFile.saveGone("/sd/saves/A", false, false),
                 "there, not picked, or not to be told without access: not gone");
         check(GameFile.saveGoneText("A").equals("The save folder A is gone. Use the app's save, or pick the folder again."), "the save sentence");
+        // a save folder the app cannot use (made or replaced outside it): the start stops instead of playing an empty folder of its own
+        check(GameFile.saveLocked(true, false, true) && GameFile.saveLocked(true, true, false) && GameFile.saveLocked(true, false, false), "there, not listable or not writable: locked");
+        check(!GameFile.saveLocked(true, true, true) && !GameFile.saveLocked(false, false, false), "usable, or not there (made by the start): not locked");
+        check(GameFile.saveLockedText("/sd/saves/A").startsWith("The save folder /sd/saves/A is there, but this app cannot read or write it") && GameFile.saveLockedText("A").contains("Import save"), "the locked sentence");
     }
 }

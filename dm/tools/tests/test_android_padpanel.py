@@ -27,12 +27,17 @@ class Wiring(unittest.TestCase):
             self.assertIn(s, t)
 
     def test_menu(self):
-        # Back and the controller's combination open the in-game menu (Eden's drawer) first; a tab picked there opens the panel on it
+        # Back and the controller's combination open the in-game menu (Eden's drawer): a side menu whose section shows beside it in the same drawer, no tab bar;
+        # Back goes one level up (a section to the menu, the menu to the game); the menu offers Resume while the game is paused
         a = (JAVA / 'GameActivity.java').read_text()
         self.assertIn('panel.back()', a)
+        self.assertIn('boolean paused()', a)
         t = (JAVA / 'SidePanel.java').read_text()
-        for s in ('void openMenu()', 'void back()', 'showPage(k)', 'isOpen() { return open || menuOpen; }'):
+        for s in ('void openMenu()', 'void back() { if (open) showMenu(); else if (menuOpen) close(); else openMenu(); }', 'showPage(k)',
+                  'isOpen() { return open || menuOpen; }', 'R.string.game_resume_the_game', 'boolean stacked()'):
             self.assertIn(s, t)
+        for gone in ('tabBar(', 'tabs.addView'):
+            self.assertNotIn(gone, t)
 
     def test_settings(self):
         self.assertIn('R.array.arr_pad_open', open(JAVA / 'MainActivity.java', encoding='utf-8').read(), 'the launcher shows the translated names of PadPanel.OPEN_NAMES')

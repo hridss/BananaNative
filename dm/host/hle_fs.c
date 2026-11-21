@@ -136,7 +136,7 @@ static const char *envdir(const char *var, const char *rel, char *buf, size_t n)
 }
 
 // Steps that end in a failed write: test injection DM_TEST_FS_FAILAT=<point>[:<count>][,...] -- in a save transaction, mountclone (clone the work directory at mount),
-// reclone (reclone after a refused commit), guestname (write the guest name after a rename), renameback (rename rollback) fail with ENOSPC for the first <count> times (default 1),
+// reclone (reclone after a refused commit), commitsync (fsync of a commit's new version), guestname (write the guest name after a rename), renameback (rename rollback) fail with ENOSPC for the first <count> times (default 1),
 // to check "no exit, committed version unchanged, next commit works" (tests/t_fs.c 6). Without the variable it costs one getenv
 static int dm_fs_test_fail(const char *pt) {
     static char spec[256]; static int cnt[8]; const char *e = getenv("DM_TEST_FS_FAILAT"); if (!e || !e[0]) return 0;
@@ -149,6 +149,31 @@ static int dm_fs_test_fail(const char *pt) {
 }
 static int in_txn_dir(const char *hp) { return save_txn_from_path(hp); }
 static int rm_tree(const char *p);
+// Commit durability. A commit's new version is a fresh copy (.new); the swap that makes it the save is a rename (or, on shared storage, a journal of renames whose marker
+// is fsynced). Without the copy's data on the storage first, a power loss or a forced restart (the phone held off, a kernel reset) after the swap could leave the save as
+// files of the right names and sizes with their data never written: zeros, or nothing. So every file and folder of .new is fsynced before the swap, and the folder holding
+// the save after it. A filesystem that cannot sync (EINVAL, ENOTSUP, EROFS) is taken as it is; a file whose fsync fails otherwise (EIO, ENOSPC) refuses the commit
+static int sync_ok(int r) { return !r || errno == EINVAL || errno == ENOTSUP || errno == EROFS; }
+static void sync_one(const char *p) { int fd = open(p, O_RDONLY | O_DIRECTORY | O_CLOEXEC); if (fd >= 0) { fsync(fd); close(fd); } }   // a folder: best effort
+static void sync_dir_of(const char *p) { char d[1100]; snprintf(d, sizeof d, "%s", p); char *s = strrchr(d, '/'); if (s && s != d) { *s = 0; sync_one(d); } else sync_one(s ? "/" : "."); }
+static int sync_tree(const char *p) {
+    struct stat st; if (lstat(p, &st)) return -1;
+    if (S_ISLNK(st.st_mode)) return 0;
+    if (!S_ISDIR(st.st_mode)) { int fd = open(p, O_RDONLY | O_CLOEXEC); if (fd < 0) return -1; int r = fsync(fd), e = errno; close(fd); errno = e; return sync_ok(r) ? 0 : -1; }
+    DIR *d = opendir(p); if (!d) return -1;
+    struct dirent *e; char c[1100]; int rc = 0;
+    while (!rc && (e = readdir(d))) {
+        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
+        if (snprintf(c, sizeof c, "%s/%s", p, e->d_name) >= (int)sizeof c) { errno = ENAMETOOLONG; rc = -1; break; }
+        rc = sync_tree(c);
+    }
+    int er = errno; closedir(d); sync_one(p); errno = er; return rc;
+}
+// Whether a save swap journal (plat_rename_swap's file-level fallback: <save>.pend1 / .pend2) stands beside the save
+static int swap_journal_left(const char *b) {
+    char m[1100]; snprintf(m, sizeof m, "%s.pend1", b); if (!access(m, F_OK)) return 1;
+    snprintf(m, sizeof m, "%s.pend2", b); return !access(m, F_OK);
+}
 // Reads and checks a RomFS image's header and index; NULL (and a red line) when it is not a complete image. A NUP container package
 // ("<file>.nup[:<selector>]", nup_image.h, android/NUP.md) opens as an image too
 static romfs_img *img_open(const char *path) {
@@ -252,7 +277,10 @@ static Result mount_ex(const char *name, const char *dir, int ro, int txn, int s
         plat_swap_recover(dir);   // a commit killed inside the file-level swap that stands in for RENAME_EXCHANGE on shared storage is finished (plat_rename_swap)
         mkdir(dir, 0755);
         const char *why = NULL;
-        if (!access(work, F_OK) && rm_tree(work)) why = "cannot clear the work directory left over from last time";
+        // A journal the recovery could not finish (its [RED] line says why) still names <save>.new: clearing that copy below would leave the save as the half-swapped
+        // mix for good. Both stay as they are, and the save mounts read-only
+        if (swap_journal_left(dir)) { errno = EBUSY; why = "an unfinished save swap journal is left beside it (the line above says why; the save and its .new are kept as they are)"; }
+        else if (!access(work, F_OK) && rm_tree(work)) why = "cannot clear the work directory left over from last time";
         else if (!access(neu, F_OK) && rm_tree(neu)) why = "cannot clear the .new left over from last time";
         else if (dm_fs_test_fail("mountclone") || plat_clone_tree(dir, work))   // ENOTSUP: HFS+ and exFAT can neither clone nor swap directories (RENAME_SWAP), so no transaction can work on them
             why = errno == ENOTSUP ? "the save folder's filesystem cannot clone directories (save transactions need APFS: set DM_SAVE to a folder on an APFS volume)" : "cloning the work directory failed";
@@ -870,10 +898,17 @@ static Result commit_mount_locked(int i, int *notify_error) {
     }
     char neu[1100]; snprintf(neu, sizeof neu, "%s.new", g_mnt[i].commit);
     Result r = RES_OK;
-    if (!access(neu, F_OK) && rm_tree(neu)) { commit_err_log(neu, COMMIT_ERR_CLEAR, errno); r = RES_FAIL; }
+    if (swap_journal_left(g_mnt[i].commit)) plat_swap_recover(g_mnt[i].commit);   // a swap an earlier commit of this run left part way: finished first, never its .new cleared
+    if (swap_journal_left(g_mnt[i].commit)) { LOG("[RED] save commit: an unfinished save swap journal is left beside %s: refused, the save and its .new are kept for the next start's recovery", g_mnt[i].commit); r = RES_FAIL; }
+    else if (!access(neu, F_OK) && rm_tree(neu)) { commit_err_log(neu, COMMIT_ERR_CLEAR, errno); r = RES_FAIL; }
     else if (plat_clone_tree(g_mnt[i].dir, neu)) { commit_err_log(neu, COMMIT_ERR_CLONE, errno); r = RES_FAIL; }
-    else if (plat_rename_swap(neu, g_mnt[i].commit)) { commit_err_log(neu, COMMIT_ERR_SWAP, errno); rm_tree(neu); r = RES_FAIL; }
-    else rm_tree(neu);                                                  // the old version that was swapped out
+    else if (dm_fs_test_fail("commitsync") || sync_tree(neu)) { LOG("[RED] save commit: the new version %s could not be written to the storage (fsync errno=%d; committed version unchanged)", neu, errno); rm_tree(neu); r = RES_FAIL; }
+    else if (plat_rename_swap(neu, g_mnt[i].commit)) {
+        int e = errno;
+        if (swap_journal_left(g_mnt[i].commit)) LOG("[RED] save commit: the file-level swap stopped part way errno=%d: %s and its journal are kept, the next start (or commit) finishes it", e, neu);
+        else { commit_err_log(neu, COMMIT_ERR_SWAP, e); rm_tree(neu); }
+        r = RES_FAIL;
+    } else { sync_dir_of(g_mnt[i].commit); sync_one(g_mnt[i].commit); rm_tree(neu); }   // the swap on the storage before the old version (swapped out into .new) goes
     // Timing readouts (integer microseconds, no floating point): how long the clone + atomic swap took; how long in total from this transaction's first save write to the end of the commit (the game writing files + the commit; 0 = no save write in this transaction)
     static int n; if (r == RES_OK) { commit_err_clear(neu); uint64_t tc2 = plat_clock_ns(CLOCK_MONOTONIC);
         LOG("save commit #%d: %s swapped atomically into %s (%d save writes so far) (clone + swap %llu us, since this transaction's first write %llu us)", ++n, g_mnt[i].dir, g_mnt[i].commit, atomic_load(&g_save_writes),

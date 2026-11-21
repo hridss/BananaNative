@@ -11,6 +11,9 @@ import java.io.File;
  * writable &lt;pack&gt; &lt;temp|-&gt;                                          → "writable true|false" (ShaderLibs.layerWritable)
  * import &lt;lib&gt; &lt;title ID&gt; &lt;current&gt; &lt;abi&gt; &lt;compat|-&gt; &lt;inputs|-&gt;     → "import ok v-&lt;V&gt;" or "import &lt;why not&gt;" (ShaderLibs.importProblem)
  * legacy &lt;dump 0|1&gt;                                                  → ShaderLibs.legacyWarning
+ * need &lt;covered&gt; &lt;older plays&gt; &lt;code&gt; &lt;shaders&gt; (0|1 each)            → "need &lt;ShaderState.Need&gt;" (ShaderState.need)
+ * autodelta &lt;delta&gt; &lt;total&gt; &lt;plays meanwhile 0|1&gt;                       → "autodelta true|false" (ShaderLibs.autoDelta)
+ * skip &lt;covered&gt; &lt;older library&gt; &lt;redoes code&gt; &lt;pack plays now&gt;      → "skip true|false" (ShaderState.canSkipShaders)
  * </pre>
  */
 public final class ShaderStateJvmTest {
@@ -37,6 +40,15 @@ public final class ShaderStateJvmTest {
             }
             case "legacy":
                 System.out.println(ShaderLibs.legacyWarning(a[1].equals("1")));
+                break;
+            case "need":
+                System.out.println("need " + ShaderState.need(a[1].equals("1"), a[2].equals("1"), a[3].equals("1"), a[4].equals("1")));
+                break;
+            case "autodelta":
+                System.out.println("autodelta " + ShaderLibs.autoDelta(Integer.parseInt(a[1]), Integer.parseInt(a[2]), a[3].equals("1")));
+                break;
+            case "skip":
+                System.out.println("skip " + ShaderState.canSkipShaders(a[1].equals("1"), a[2].equals("1"), a[3].equals("1"), a[4].equals("1")));
                 break;
             default:
                 throw new IllegalArgumentException(a[0]);

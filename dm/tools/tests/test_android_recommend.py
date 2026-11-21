@@ -45,6 +45,16 @@ class Wiring(unittest.TestCase):
         self.assertIn('skipLayersOf(g), recommendOf(g)', g, 'the column after skip_layers (Profile column 24)')
         self.assertIn('p.recommend = c.length > 24 ? c[24] : "";', (SRC / 'Profile.java').read_text(encoding='utf-8'))
 
+    def test_custom_choice_is_kept(self):
+        """#516: Custom on the Recommended / Custom card is a stored per-game choice (it is not lost on leaving the page, an update or Prepare again), cleared by Recommended and by Reset"""
+        prefs = (SRC / 'Prefs.java').read_text(encoding='utf-8')
+        gs = (SRC / 'GameSettings.java').read_text(encoding='utf-8')
+        self.assertIn('"custom_card"};', prefs, 'Reset to defaults clears it')
+        self.assertIn('e.remove(gameKey("custom_card", titleId));', prefs, 'Recommended clears it')
+        self.assertIn('custom = Prefs.customPicked(a, id)', gs)
+        self.assertIn('Prefs.customPicked(a, id, true)', gs)
+        self.assertIn('Recommend.showsCustom(custom, n)', gs)
+
     def test_value_lists_agree(self):
         """build.gradle, dm/tools/recommend.py and Recommend.java take the same values, in the order of the launcher's own lists (the index is what is stored)"""
         g = GRADLE.read_text(encoding='utf-8')

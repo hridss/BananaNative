@@ -251,6 +251,7 @@ In the order they block. Line numbers are those of `dm/gfx/vk_android/vka_tex.c`
 
 ## Found on this game
 
+- [A GPU hang or lost device in warm play (Android, open)](../../../docs/reference/rendering.md#a-gpu-hang-or-lost-device-in-warm-play-android-open): #159 (Turnip v32, 0.3.23): `-4` at once after a queue-6 compute submission at frame 23,405, the fast-fault shape (no gate); open.
 - [Cached dirty-range lookups with overlapping pools](../../../docs/reference/nvn-objects.md#cached-dirty-range-lookups-with-overlapping-pools): sparse-texture lookup locality motivated the cache; the overlapping-pool missed writes are reproduced by CPU fixtures, not attributed to a gameplay image.
 - [RAM saver also trims the texture cache and the finest texture level](../../../docs/reference/memory.md#ram-saver-also-trims-the-texture-cache-and-the-finest-texture-level-android): issue #406 (lmkd kill, images 2.0-2.4 GiB with `tex_soft on` already): the saver now also keeps an eighth of RAM free in the texture cache and caps it at a quarter of RAM. Not run on a phone.
 - [The aarch64 Linux host finds no Vulkan loader on a distribution without the Vulkan -dev package](../../../docs/reference/rendering.md#the-aarch64-linux-host-finds-no-vulkan-loader-on-a-distribution-without-the-vulkan--dev-package): the first run on ArmadaOS (AYN Thor), Fedora-based (2026-11-17, resolved).

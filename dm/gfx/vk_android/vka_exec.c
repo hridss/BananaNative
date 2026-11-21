@@ -588,6 +588,7 @@ void vka_exec_hang_report(uint64_t fence) {
     if (g_slot_ts[k]) VRED("GPU hang: the submission being recorded (frame %llu) had handed %u parts to the queue, %u of them seen finished", (unsigned long long)g_slot_frame[k],
                            g_slot_parts[k] - 1, g_part_seen);
     vka_qtrace_dump();   // the scheduler's and the submissions' last events (vka_worker.c, DM_VK_QS_TRACE)
+    void vka_crumbs_dump(void); vka_crumbs_dump();   // how far the GPU got (DM_VK_CRUMBS)
 }
 
 // Where a submission's recording time goes besides its draws, for the pace line (vka_exec_phases, cumulative ns): mtl_sub_begin (the slot's fence, the segment joins,
@@ -638,6 +639,10 @@ void vka_rp_sub_begin(void) {
     int cont = g_sub_cont; g_sub_cont = 0;
     uint64_t tb0 = now_ns();
     vka_perf_thread(0); vka_ctl_sub();
+    // DM_VK_PART_SERIAL=1 (live; a diagnostic, slow): the queue idle before each submission and each continuation of one is recorded, so the GPU never runs while the
+    // replay thread records: a lost device that goes with it is a race between the host's writes while recording (descriptor tables, scratch, uploads, placement) and
+    // the GPU's reads; one that stays lies in the commands themselves
+    if (VKA_ENV("DM_VK_PART_SERIAL", 0) && vka_ok() && !vka_hung()) vka_queue_idle();
     atomic_store_explicit(&g_rec_tid, gettid(), memory_order_relaxed); replay_nice();
     { uint64_t f = g_job_frame_set ? g_job_frame : g_frame; if (atomic_load(&g_fstart_f[f % 64]) != f) { atomic_store(&g_fstart[f % 64], now_ns()); atomic_store(&g_fstart_f[f % 64], f); } }
     g_npost = 0; g_rc_rec = 0; g_cb = VK_NULL_HANDLE;
@@ -668,7 +673,7 @@ void vka_rp_sub_begin(void) {
     uint64_t done = vka_done();
     for (unsigned i = 0; i < NSLOT; i++) if (g_slot_ts[i] && g_slot[i].fence <= done) gpu_slot_done(i);
     g_cb = g_slot[k].cb;
-    vk.vkResetCommandBuffer(g_cb, 0);
+    vk.vkResetCommandBuffer(g_cb, vka_cb_reset_flags());
     VkCommandBufferBeginInfo bi = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
     vk.vkBeginCommandBuffer(g_cb, &bi);
     vka_gbar_cb(g_cb);   // the game's barriers between dispatches (vka_gbar.c) follow this command buffer
@@ -688,6 +693,7 @@ void vka_rp_sub_begin(void) {
     vka_gp_sub_begin(g_cb, g_frame);
     vka_enc_start(g_cb);
     vka_barrier(g_cb);   // the host's writes to guest memory before this submission (made available by the submit), and earlier submissions' writes
+    vka_crumb(g_cb, CR_PART_BEGIN, 0);
     if (!cont) { uint64_t tp0 = now_ns(); vka_tex_prepare(g_cb); g_t_prep += now_ns() - tp0;
                  vka_barrier(g_cb); }   // the re-uploads of CPU-written textures before the submission's draws read them
     vka_draw_sub_begin(g_cb, k);
@@ -712,11 +718,12 @@ static void part_submit(const void *a) {   // the part ends and goes to the queu
     cal_submit(pa.q);
     VkSemaphore gs = vka_gate_sem(); VkPipelineStageFlags gst = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
     if (!r) r = vka_submit(cb, 0, pa.gate && gs ? 1 : 0, &gs, &pa.gate, &gst, VK_NULL_HANDLE);
+    if (pa.gate) vka_qtrace(QT_GATE_SUB, 0, 0, pa.gate, (uint32_t)r, 0, 0, 0, NULL);   // (the part that waits for the gate: its hand-over, against the gate's opening)
     if (r) { static _Atomic int n; if (atomic_fetch_add(&n, 1) < 4) VRED("part of a submission: %d", r); vka_qtrace(QT_SUBMIT_ERR, 0, 0, 0, (uint32_t)r, 0, 0, 0, NULL); }
 }
 static void part_begin(const void *a) {
     part_arg pa; memcpy(&pa, a, sizeof pa); VkCommandBuffer cb = pa.cb;
-    vk.vkResetCommandBuffer(cb, 0);
+    vk.vkResetCommandBuffer(cb, vka_cb_reset_flags());
     VkCommandBufferBeginInfo bi = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
     vk.vkBeginCommandBuffer(cb, &bi);
     if (pa.q != UINT32_MAX) qf.write(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, g_qp, pa.q);
@@ -736,6 +743,54 @@ static void parts_peek(unsigned k) {
     }
 }
 static uint64_t g_cur_fence;   // (below)
+// ---------- GPU breadcrumbs ----------
+// Mario Kart World 1.8.0 on Turnip V39 lost the device loading into the race with GPU waits on; the driver has no VK_EXT_device_fault, and the GPU-wait trace shows the
+// scheduler right to the end, so which command faulted was not known. DM_VK_CRUMBS (restart; default 0 = off): at every part's start and end of a submission (1), and
+// before every dispatch and after every render pass (2), the GPU writes the next number into a host-visible ring (a full barrier before the fill: everything recorded
+// before it has finished when it lands; a barrier to the host after it); the CPU keeps what each number stands for (the submission, its queue, the part, the dispatch's
+// shader key, the pass's size). When a GPU hang is declared the ring is read straight from memory (no driver call: the device is lost) and the last number the GPU wrote
+// and the ones recorded after it are printed (vka_exec_hang_report): the fault lies in what was recorded between the last one written and the next. Level 2 costs two
+// barriers a dispatch and a pass (timing changes; the barriers order nothing the game needs)
+enum { CRUMB_N = 4096 };
+typedef struct { uint64_t fence, q, key, frame; uint32_t kind, part; } crumb_t;
+static crumb_t g_crumb[CRUMB_N]; static uint32_t g_crumb_id; static uint64_t g_crumb_fence; static vka_span g_crumb_buf; static int g_crumb_lv = -1;   // g_crumb_fence: the fence of the submission being committed (sub_commit clears g_cur_fence first)
+int vka_crumbs_level(void) {
+    if (g_crumb_lv < 0) {
+        const char *e = getenv("DM_VK_CRUMBS"); int lv = e && *e ? atoi(e) : 0;
+        if (lv > 0 && !vka_static(CRUMB_N * 4, 4, &g_crumb_buf)) lv = 0;
+        if (lv > 0) { memset(g_crumb_buf.ptr, 0, CRUMB_N * 4); VLOG("GPU breadcrumbs: level %d (%s; DM_VK_CRUMBS)", lv, lv >= 2 ? "each part, dispatch and render pass" : "each part of a submission"); }
+        g_crumb_lv = lv;
+    }
+    return g_crumb_lv;
+}
+void vka_crumb(VkCommandBuffer cb, int kind, uint64_t key) {   // outside a render pass (a fill may not be in one)
+    if (!cb || vka_hung() || vka_crumbs_level() < (kind == CR_DISPATCH || kind == CR_PASS_END ? 2 : 1)) return;
+    uint32_t id = ++g_crumb_id; if (!id) id = ++g_crumb_id;
+    unsigned k = (g_slot_i - 1) % NSLOT;
+    g_crumb[id % CRUMB_N] = (crumb_t){g_cur_fence ? g_cur_fence : g_crumb_fence, S.serial, key, g_job_frame_set ? g_job_frame : g_frame, (uint32_t)kind, g_slot_parts[k]};
+    VkMemoryBarrier b0 = {VK_STRUCTURE_TYPE_MEMORY_BARRIER, .srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT, .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT};
+    vk.vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &b0, 0, NULL, 0, NULL);
+    vk.vkCmdFillBuffer(cb, g_crumb_buf.buf, g_crumb_buf.off + (VkDeviceSize)(id % CRUMB_N) * 4, 4, id);
+    VkMemoryBarrier b1 = {VK_STRUCTURE_TYPE_MEMORY_BARRIER, .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT, .dstAccessMask = VK_ACCESS_HOST_READ_BIT};
+    vk.vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &b1, 0, NULL, 0, NULL);
+}
+static void crumb_line(const char *what, uint32_t id) {
+    static const char *const kn[] = {"?", "part start", "part end", "before a dispatch of", "after a render pass of", "past the GPU wait for the CPU of gate"};
+    const crumb_t *c = &g_crumb[id % CRUMB_N]; char k[48] = "";
+    if (c->kind == CR_DISPATCH) snprintf(k, sizeof k, " %016llx", (unsigned long long)c->key);
+    else if (c->kind == CR_PASS_END) snprintf(k, sizeof k, " %ux%u", (unsigned)(c->key >> 32), (unsigned)c->key);
+    else if (c->kind == CR_GATE) snprintf(k, sizeof k, " %llu", (unsigned long long)c->key);
+    VRED("GPU hang: breadcrumb %u (%s): %s%s, submission %llu (queue serial %llu, frame %llu), part %u", id, what, c->kind < 6 ? kn[c->kind] : "?", k,
+         (unsigned long long)c->fence, (unsigned long long)c->q, (unsigned long long)c->frame, c->part);
+}
+void vka_crumbs_dump(void) {
+    if (g_crumb_lv <= 0 || !g_crumb_id) return;
+    const volatile uint32_t *m = (const volatile uint32_t *)g_crumb_buf.ptr; uint32_t last = 0, lo = g_crumb_id > CRUMB_N ? g_crumb_id - CRUMB_N + 1 : 1;
+    for (uint32_t i = 0; i < CRUMB_N; i++) { uint32_t v = m[i]; if (v >= lo && v <= g_crumb_id && v > last) last = v; }
+    VRED("GPU hang: breadcrumbs (DM_VK_CRUMBS=%d): the GPU wrote up to %u of %u recorded; the fault lies after the last one written", g_crumb_lv, last, g_crumb_id);
+    for (uint32_t i = last > 4 ? last - 4 : 1; i <= last && last; i++) if (i >= lo) crumb_line(i == last ? "the last written" : "written", i);
+    for (uint32_t i = last + 1, n = 0; i <= g_crumb_id && n < 24; i++, n++) crumb_line(m[i % CRUMB_N] == i ? "written out of order" : "not reached", i);
+}
 static void chunk(void) {
     unsigned k = (g_slot_i - 1) % NSLOT;
     parts_peek(k);
@@ -753,6 +808,7 @@ static void chunk(void) {
     if (VKA_ENV("DM_VK_PARTLOG", 0)) { char zb[400]; vka_rp_zstats(zb, sizeof zb);
         VLOG("part %u of the submission of frame %llu ended at %.3f s: %llu draws%s", part, (unsigned long long)g_frame, now_ns() / 1e9, (unsigned long long)(g_stat_draws - g_chunk_d0), zb); }
     vka_gbar_settle(g_cb);   // a game barrier left pending (vka_gbar.c), in this part: it covers the parts after it
+    vka_crumb(g_cb, CR_PART_END, 0);
     vka_up_flush(); vka_up_throttle();   // the upload batch goes first: the part may use what it made (vka_dev.c "Upload batches")
     // With the encoder the part's end, its submit and the next part's reset and begin are made on its thread, in order with the calls before: the replay thread goes on
     if (vka_enc_call(part_submit, &pe, sizeof pe)) { vka_enc_call(part_begin, &pb, sizeof pb); vka_enc_switch(next); }
@@ -760,6 +816,7 @@ static void chunk(void) {
     vka_qtrace(QT_PART, S.serial, g_cur_fence, 0, part, 0, 0, 0, NULL);
     g_cb = next; vka_gbar_cb(g_cb);
     vka_draw_cb_switch(g_cb); vka_gp_part(g_cb);
+    vka_crumb(g_cb, CR_PART_BEGIN, 0);
     g_chunk_d0 = g_stat_draws; g_n_chunks++;
 }
 // DM_VK_CHUNK_PASS=n (live; default 600, 0 = off): a pass that has had n draws in the part in progress is also ended there and the part submitted; the next draw opens it again over the
@@ -818,7 +875,7 @@ uint64_t vka_rp_sub_commit(uint64_t reserved) { uint64_t t0 = now_ns(), f = sub_
 // The worker's commit with qs_commit's timeline value (0: no signal: its effects wait for the commit that signals past its fence)
 uint64_t vka_rp_sub_commit_sig(uint64_t reserved, uint64_t signal) { uint64_t t0 = now_ns(), f = sub_commit(reserved, 1, signal); g_t_commit += now_ns() - t0; return f; }
 static uint64_t sub_commit(uint64_t reserved, int has_sig, uint64_t signal) {
-    uint64_t fence = reserved ? reserved : vka_fence_next(); g_cur_fence = 0;
+    uint64_t fence = reserved ? reserved : vka_fence_next(); g_cur_fence = 0; g_crumb_fence = fence;
     {   // (diagnostic) g_post and g_carry have no lock: one thread commits
         static _Atomic(void *) tp; void *me = __builtin_thread_pointer(), *was = NULL;
         if (!atomic_compare_exchange_strong(&tp, &was, me) && was != me) { static _Atomic int k; if (atomic_fetch_add(&k, 1) < 4) VRED("submission commit on another thread than the first (fence %llu, signal %llu)", (unsigned long long)fence, (unsigned long long)signal); atomic_store(&tp, me); }
@@ -844,6 +901,7 @@ static uint64_t sub_commit(uint64_t reserved, int has_sig, uint64_t signal) {
     vka_tex_pfb_commit(g_cb, fence);   // the texture IDs its shaders read through the pool: copied out for the host (the barrier below) and cleared
     VkMemoryBarrier mb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER, .srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT, .dstAccessMask = VK_ACCESS_HOST_READ_BIT | VK_ACCESS_HOST_WRITE_BIT};
     vk.vkCmdPipelineBarrier(g_cb, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
+    vka_crumb(g_cb, CR_PART_END, 0);
     uint64_t tc0 = now_ns();
     vka_enc_stop();   // every call made: the command buffer is complete
     g_t_cm_enc += now_ns() - tc0;
@@ -861,7 +919,9 @@ static uint64_t sub_commit(uint64_t reserved, int has_sig, uint64_t signal) {
     unsigned ks = (g_slot_i - 1) % NSLOT;
     if (!signal && !g_slot[ks].vf) { VkFenceCreateInfo fi = {VK_STRUCTURE_TYPE_FENCE_CREATE_INFO}; if (vk.vkCreateFence(V.dev, &fi, NULL, &g_slot[ks].vf)) g_slot[ks].vf = VK_NULL_HANDLE; }
     if (g_slot_ts[ks]) cal_submit(ks * QPS + 2 * (g_slot_parts[ks] - 1) + 1);
-    if (!r) r = vka_submit_fence(g_cb, signal, !signal ? g_slot[ks].vf : VK_NULL_HANDLE, gate_take());
+    uint64_t gt = gate_take();
+    if (!r) r = vka_submit_fence(g_cb, signal, !signal ? g_slot[ks].vf : VK_NULL_HANDLE, gt);
+    if (gt) vka_qtrace(QT_GATE_SUB, S.serial, fence, gt, (uint32_t)r, 1, 0, 0, NULL);
     if (!r && !signal && g_slot[ks].vf) g_slot[ks].vf_on = 1;   // (no fence made: the slot waits for the timeline, as a signalled one)
     g_t_cm_sub += now_ns() - tc1;
     g_hrec[fence % NHREC].sub_ns = now_ns();
@@ -1726,6 +1786,7 @@ void vka_rp_gate(uint64_t g, VkEvent ev) {
         vka_rp_end();
         gate_ev_arg ga = {g_cb, ev};
         if (!vka_enc_call(gate_ev_wait, &ga, sizeof ga)) gate_ev_wait(&ga);
+        vka_crumb(g_cb, CR_GATE, g);   // DM_VK_CRUMBS: the GPU got past the gate's semaphore and its event (warm-play losses at a gate: which of the two held it)
     }
 }
 void vka_rp_exec(const uint8_t *handle, uint64_t fence) { if (fence) g_cur_fence = fence; if (handle) { g_pk = NULL; g_nxret = 0; exec(handle, 0); } }

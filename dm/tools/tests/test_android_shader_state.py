@@ -63,6 +63,24 @@ class Wiring(unittest.TestCase):
         # not a dump: no card that says the update starts by itself
         self.assertIn('problem.playable && !problem.prepare', ma)
 
+    def test_optional_shaders_wiring(self):
+        """Ondevice.checked decides with ShaderState.need; a code update of a pack that plays keeps its library (code only, shaders recommended); an automatic update
+        never starts a whole Prepare or a large delta, nor a job the player paused"""
+        od = read(J / 'ondevice/java/dev/nxnative/android/Ondevice.java'); ma = read(MAIN / 'MainActivity.java'); pack = read(MAIN / 'Pack.java')
+        checked = od[od.index('void checked(Found f'):od.index('void askPrepare(')]
+        self.assertIn('ShaderState.need(onLayer, older, code, shaders)', checked)
+        self.assertNotIn('Pack.libraryOf(pd) == null) {', checked, 'the old rule: code only only for a covered pack with no library')
+        self.assertIn('if (start) { adopt(r, pd, true, false); return; }', checked)
+        self.assertIn('PrepareText.recommendText(minutes, builds)', checked)
+        self.assertIn('if (card && need == ShaderState.Need.CODE_AND_SHADERS) return;', checked)
+        self.assertIn('if (card && s.equals("paused") && "user".equals(j.reason())) return;', checked)
+        self.assertIn('if (!Pack.deltaAutomatic(packDir, titleId) || !autoTried.add(dump.getPath())) return;', od)
+        self.assertIn('ShaderState.canSkipShaders(', od); self.assertIn('j.redoesCode()', od)
+        self.assertIn('Ondevice.prepareShaders(this, new File(g.gameDir), true)', ma)
+        self.assertIn('!Pack.deltaAutomatic(new File(g.packDir), g.titleId)', ma)
+        self.assertIn('&& !deltaAutomatic(dir, titleId)', pack)
+        self.assertIn('j.o.put("redo_code", code);', read(J / 'ondevice/java/dev/nxnative/android/Job.java'))
+
     def test_prepare_is_a_ring_on_the_tile(self):   # the job shows as the tile's ring in every state, its details in the sheet; no wide card in the game list
         ma, od = read(MAIN / 'MainActivity.java'), read(J / 'ondevice/java/dev/nxnative/android/Ondevice.java')
         for s in ('TILE_RUNNING', 'TILE_QUEUED', 'TILE_PAUSED', 'TILE_FAILED', 'TILE_DONE'): self.assertIn(s, od); self.assertIn(s, ma, s)
@@ -123,6 +141,42 @@ class Jvm(unittest.TestCase):
         row, note = self.java('ondemand', 0).split('\t')
         self.assertNotIn('Build all', row + note, 'not a dump: no Build all on its page'); self.assertIn('Import a library', row); self.assertIn('Import a library', note)
         self.assertIn('Storage \u203a Prepare again', self.java('legacy', 1)); self.assertNotIn('Prepare', self.java('legacy', 0)); self.assertIn('Import a library', self.java('legacy', 0))
+
+    def test_need(self):
+        """Shaders are the player's choice whenever the game plays without them; required only when nothing plays (no library the host plays, the layer does not cover it).
+        The trigger (2026-11-21): a code update of Fire Emblem Fortune's Weave (`04007EF01F8AE000`) whose pack held only older libraries translated all 16,888 shaders"""
+        n = lambda covered, older, code, shaders: self.java('need', covered, older, code, shaders)
+        for c in (0, 1):
+            for o in (0, 1):
+                self.assertEqual(n(c, o, 0, 0), 'need NOTHING')
+                self.assertEqual(n(c, o, 1, 0), 'need CODE_ONLY')
+        self.assertEqual(n(1, 0, 1, 1), 'need CODE_SHADERS_OPTIONAL', 'covered, no library: code only, shaders offered')
+        self.assertEqual(n(0, 1, 1, 1), 'need CODE_SHADERS_OPTIONAL', 'an older library plays: a code update keeps it (the bug)')
+        self.assertEqual(n(1, 1, 1, 1), 'need CODE_SHADERS_OPTIONAL')
+        self.assertEqual(n(1, 0, 0, 1), 'need SHADERS_OPTIONAL')
+        self.assertEqual(n(0, 1, 0, 1), 'need SHADERS_OPTIONAL')
+        self.assertEqual(n(0, 0, 1, 1), 'need CODE_AND_SHADERS', 'nothing plays: the shaders are required')
+        self.assertEqual(n(0, 0, 0, 1), 'need SHADERS')
+
+    def test_auto_delta(self):
+        """A delta update starts by itself when nothing plays meanwhile (required anyway), or when it is small (a quarter of the set at most); otherwise it is an offer"""
+        a = lambda d, t, p: self.java('autodelta', d, t, p)
+        self.assertEqual(a(-1, 22852, 0), 'autodelta false', 'no manifest row: never by itself')
+        self.assertEqual(a(-1, 22852, 1), 'autodelta false')
+        self.assertEqual(a(22396, 22852, 0), 'autodelta true', 'nothing plays: as before')
+        self.assertEqual(a(22396, 22852, 1), 'autodelta false', 'plays meanwhile, nearly the whole set: an offer')
+        self.assertEqual(a(2322, 22852, 1), 'autodelta true', 'the 2026-11-03 translator change: small')
+        self.assertEqual(a(5713, 22852, 1), 'autodelta true'); self.assertEqual(a(5714, 22852, 1), 'autodelta false')
+        self.assertEqual(a(0, 22852, 1), 'autodelta true')
+
+    def test_skip_shaders(self):
+        """Finish without shaders: when the game plays without the set and the job makes something the pack lacks"""
+        k = lambda c, o, r, p: self.java('skip', c, o, r, p)
+        self.assertEqual(k(1, 0, 1, 0), 'skip true', 'a whole Prepare of a covered game')
+        self.assertEqual(k(0, 1, 1, 1), 'skip true', 'a code update of a pack with an older library')
+        self.assertEqual(k(1, 1, 0, 1), 'skip false', 'a shaders-only update of a pack that plays: just pause it')
+        self.assertEqual(k(1, 0, 0, 0), 'skip true', 'covered, the pack does not play yet')
+        self.assertEqual(k(0, 0, 1, 0), 'skip false', 'nothing plays without the shaders')
 
     def test_layer_writable(self):
         """The pack's shaders/layer, else the temporary folder's shader_layer; nothing is made by the check"""

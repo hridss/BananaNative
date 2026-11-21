@@ -76,7 +76,7 @@ These are in the Advanced group, collapsed. None is measured on every game.
 | **Frame generation floor** | generated frames look bad when the game runs slowly | 30 fps |
 | **Skipped-work notice** | the notice "Part of the picture is not drawn" appears and you want it off (0) or only for larger gaps | 5 % |
 
-Rows that a launcher control sets (**Frame rate cap**, **Instanced draws**, **Classic render passes**, **Background pipelines**, **RAM saver**, **Motion sensitivity**, **Full vegetation**, **Game language**, **GPU timing**, **GPU driver**, **Rumble**) are described on [Settings: Performance](Settings-Performance), [Settings: Game](Settings-Game) and [Settings: Controls](Settings-Controls).
+Rows that a launcher control sets (**Frame rate cap**, **Keep GPU clock up**, **Instanced draws**, **Classic render passes**, **Background pipelines**, **RAM saver**, **Motion sensitivity**, **Full vegetation**, **Game language**, **GPU timing**, **GPU driver**, **Rumble**) are described on [Settings: Performance](Settings-Performance), [Settings: Game](Settings-Game) and [Settings: Controls](Settings-Controls).
 
 ## Developer switches new in 0.3.40
 

@@ -46,7 +46,6 @@
 #       Mac host), each a VNVN record with one code area and control section (frostbite.py), see frostbite_jobs and frostbite_shaders
 #   · PDAT (the engine with the namespace phx, Kirby Air Riders): flatbuffer records tagged PMAP, zstd frames in the .dat archives, each holding a program's control sections and code areas, see pdat_jobs and pdat_shaders
 #   · Unreal Engine 3 (Batman: Arkham Knight): shader records in its global shader cache (BMSG) and in the packages (the combined shader cache), whose compressed chunks are Oodle blocks decoded by the game's own decoder in the Mac host, see ue3_body and ue3_shaders
-#   · IPK (Ubisoft's UbiArt, Rayman Legends: Definitive Edition v7, Just Dance 2022 v5): whole GLSLC outputs in the .fxb effect files of bundle_*.ipk (zlib entries), see ipk_shaders
 # Code area: 0x30 header + (graphics) 0x50 SPH + instructions; header magic 0x12345678 for graphics, 0x12345679 for compute. The control section starts with 0x98761234, +0x704 = code area length,
 #   +0x700 = start of the c1 constant segment within the code area; for compute +0x748 thread group xyz (u32 ×3), +0x754 shared memory bytes (checked one by one against PC reflection on D2R's 22 compute shaders).
 # Stage: BNSH uses the stage slot; BAHS uses bits 10..13 of SPH word 0 (1 vertex 2 hull 3 domain 4 geometry 5 pixel), and a compute header means compute.
@@ -1050,52 +1049,6 @@ def pkz_shaders(path, rel, ents, out):
             else: red(f'/{rel}/{name}: compression {comp!r} is not known')
             if len(d) != usz: red(f'/{rel}/{name}: {len(d)} bytes decoded, the entry says {usz}')
             scan_blob(d, f'/{rel}/{name}', out)
-
-UBIART_IPK = bytes.fromhex('50ec12ba')
-def ipk_shaders(path, rel, out):
-    """A UbiArt IPK archive (Rayman Legends: Definitive Edition, version 7, 0x38-byte header, directory then name; Just Dance 2022, version 5, 0x30-byte header, name then directory).
-    Big-endian: magic 0x50EC12BA, version, platform, +0xc base offset (the data start), +0x10 file count; entries from the header end: u32 offset count, u32 size, u32 compressed size
-    (0: stored), u64 time, u64 offset × count (from the base), two u32+string fields, u32 CRC/path_id, u32 flags/0. Compressed entries are zlib. The shaders are whole GLSLC outputs in the
-    engine's .fxb effect files (enginedata/shaders/compiled/nx: renderpct, afterfx, font, movie, …); shaders_dev/ holds a development build of the same effects with other keys, which
-    the game does not ask for. Only the .fxb entries are read: the .ckd cooked assets hold none"""
-    label = f'/{rel}'
-    with open(path, 'rb') as f:
-        h = f.read(0x30)
-        if len(h) < 0x30: red(f'{label}: {len(h)} bytes, shorter than a UbiArt IPK header (0x30)')
-        ver, _plat, base, n = struct.unpack_from('>IIII', h, 4)
-        if ver not in (5, 7): red(f'{label}: UbiArt IPK version {ver} (only versions 5 and 7 are read)')
-        hdr_len = 0x30 if ver == 5 else 0x38
-        if hdr_len > 0x30:
-            h += f.read(hdr_len - 0x30)
-            if len(h) < hdr_len: red(f'{label}: {len(h)} bytes, shorter than a UbiArt IPK header ({hdr_len:#x})')
-        t = f.read(max(base - hdr_len, 0))
-        if base < hdr_len or len(t) != base - hdr_len: red(f'{label}: the IPK header puts its data at {base:#x}, outside the file')
-        p = 0
-        for i in range(n):
-            try:
-                noff, size, csize = struct.unpack_from('>III', t, p); p += 20
-                if p + 8 * noff > len(t): raise struct.error('offset list truncated')
-                off = struct.unpack_from('>Q', t, p)[0] if noff else 0; p += 8 * noff
-                l1 = struct.unpack_from('>I', t, p)[0]
-                if p + 4 + l1 > len(t): raise struct.error('entry string 1 truncated')
-                s1 = t[p + 4:p + 4 + l1].decode('latin1'); p += 4 + l1
-                l2 = struct.unpack_from('>I', t, p)[0]
-                if p + 4 + l2 + 8 > len(t): raise struct.error('entry string 2 or trailer truncated')
-                s2 = t[p + 4:p + 4 + l2].decode('latin1'); p += 4 + l2 + 8
-                d, fname = (s2, s1) if ver == 5 else (s1, s2)
-                name = f'{d}/{fname}' if d and not d.endswith('/') else d + fname
-            except struct.error: red(f'{label}: entry {i} of {n} runs past the IPK table ({len(t) + hdr_len:#x} bytes): not the layout of a version {ver} archive')
-            if not name.endswith('.fxb') or '/shaders_dev/' in '/' + name: continue
-            f.seek(base + off); b = f.read(csize or size)
-            if len(b) != (csize or size): red(f'{label}/{name}: the entry at {base + off:#x} runs past the end of the archive')
-            if csize:
-                try: b = zlib.decompress(b)
-                except zlib.error as e: red(f'{label}/{name}: invalid zlib stream ({e})')
-            if len(b) != size: red(f'{label}/{name}: {len(b)} bytes decoded, the entry says {size}')
-            found = []
-            scan_blob(b, f'{label}/{name}', found)
-            if not found: found = glslc_shaders(b, f'{label}/{name}', need=False)
-            out += found
 
 CPK = b'CPK '
 def cpk_jobs(files, parts=64, names=None):
@@ -2458,7 +2411,6 @@ def ue_legacy_jobs(files, parts=64, mains=()):
     and the update's *_0_P.pak) and version 11 paks without shader code archives (OCTOPATH TRAVELER II: Majesty-Switch.pak, 3.3 GB). The engine mounts them all as one view, and a patch pak
     (name ending in _P.pak) wins over the others for the same path. Only the newest copy of each path is scanned. With IoStore on (Mario & Luigi: Brothership) the cooked packages are the export bundles
     of the containers beside such a pak, the pak holding only the global shader cache of the shaders: those chunks are scanned too, the newest copy of each chunk ID (uepak.mount_order).
-    A v9 pak can supply a global shader cache and shared shader archives together. Only the inline files go to this scan, and a v9 pak can also lead to inline IoStore bundles with an empty index.
     A pak whose index is encrypted (Little Nightmares II: Helios-Switch.pak, version 8, every entry encrypted too) is opened with the AES key from mains, the ExeFS main of every version
     (uepak.Keys), and its jobs carry the key: (UE_LEGACY, names, key). An encrypted container (DRAGON BALL Sparking! ZERO: every pakchunk*-Switch.utoc, the index of the pak beside each
     encrypted too) is read with the key that opens that pak, else the first key found, and its jobs carry it: (UE_IO, chunks, key).
@@ -2476,8 +2428,7 @@ def ue_legacy_jobs(files, parts=64, mains=()):
     for p, r in sorted(paks, key=lambda x: (x[1].endswith('_P.pak'), x[1])):   # patch paks last, so they replace; one view per pak folder (one per version given)
         try:   # all of a pak's names or none: a patch pak read halfway would still replace the base pak's files
             keys[p] = key_of(p); pk = uepak.Pak(p, keys[p])
-            view.update({(os.path.dirname(p), pak_path(pk.mount, name)): (p, r, name, pk.entry(name)['raw']) for name in pk.files
-                         if pk.version != 9 or not name.endswith('.ushaderbytecode')})   # a mixed v9 pak's archives go through uepak.job
+            view.update({(os.path.dirname(p), pak_path(pk.mount, name)): (p, r, name, pk.entry(name)['raw']) for name in pk.files})
         except (OSError, ValueError) as e: print(f'[RED] /{r}: the pak cannot be read ({e}); its shaders are left out', flush=True)
     chunks, taken, folders = {}, {p for p, _ in paks}, {os.path.dirname(p) for p, _ in paks}
     for p, r in sorted(((p, r) for p, r in files if p.endswith('.utoc') and os.path.dirname(p) in folders), key=lambda x: uepak.mount_order(x[0])):
@@ -3436,9 +3387,6 @@ def scan_file_in(args):
         return rel, uniq_keys(found), var_pairs(found), trees
     if head[:4] == NLG_DICT:
         nlg_shaders(path, '/' + rel, found)
-        return rel, uniq_keys(found), var_pairs(found), trees
-    if head[:4] == UBIART_IPK:   # a UbiArt IPK archive (ipk_shaders): its .fxb effect files, without reading the rest
-        ipk_shaders(path, rel, found)
         return rel, uniq_keys(found), var_pairs(found), trees
     if head[:8] in (IDRK, PDRK):
         idrk_shaders(path, '/' + rel, found)

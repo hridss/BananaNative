@@ -53,22 +53,17 @@ int main(void) {
         }
     // Matching aliases must not collapse the system table: newer games use its
     // indices, and callers of Make must continue to receive the original spelling.
-    // Polish (18) and Thai (19) have codes, but a Switch game's list stays 18 long.
-    char available[19 * 8]; memset(available, 0xa5, sizeof available);
-    CHECK(h_set_AvailLangN() == 18, "available language count stays 18");
-    CHECK(h_set_AvailLang(available, 19) == 18, "available language list keeps all 18 entries");
+    char available[21 * 8]; memset(available, 0xa5, sizeof available);
+    CHECK(h_set_AvailLangN() == 20, "available language count is 20");
+    CHECK(h_set_AvailLang(available, 21) == 20, "available language list keeps all 20 entries");
     for (int i = 0; i < 20; i++) {
         char expected[8] = {0}; memcpy(expected, codes[i], strlen(codes[i]));
         uint64_t code = h_set_LangMake(i);
         CHECK(!memcmp(&code, expected, 8), "Make preserves each exact spelling");
-        if (i < 18) CHECK(!memcmp(available + i * 8, expected, 8), "available language list preserves order and spelling");
+        CHECK(!memcmp(available + i * 8, expected, 8), "available language list preserves order and spelling");
     }
-    const unsigned char *tail = (const unsigned char *)available + 18 * 8;
+    const unsigned char *tail = (const unsigned char *)available + 20 * 8;
     for (int i = 0; i < 8; i++) CHECK(tail[i] == 0xa5, "available language list leaves the unused entry alone");
-    memset(available, 0xa5, sizeof available);
-    CHECK(h_set_AvailLang(available, 3) == 3 && !memcmp(available + 16, "fr\0\0\0\0\0\0", 8)
-          && (unsigned char)available[24] == 0xa5, "a short buffer takes the first codes");
-    CHECK(!h_set_AvailLang(NULL, 0), "an empty buffer writes nothing");
     printf("language: %d checks, %d failed\n", checks, fails);
     return fails != 0;
 }

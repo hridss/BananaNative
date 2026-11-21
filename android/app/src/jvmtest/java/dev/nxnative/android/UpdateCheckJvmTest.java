@@ -232,6 +232,54 @@ public final class UpdateCheckJvmTest {
         eq(null, UpdateCheck.pick(Arrays.asList(fix), cur, true), "small fixes off: a hotfix alone is not offered");
         eq("v0.4.2", UpdateCheck.pick(Arrays.asList(crit, fix, major), cur, true).tag(), "small fixes off: a critical one still is");
         eq("v0.4.1", UpdateCheck.pickAll(Arrays.asList(Arrays.asList(fix), null), cur, false).tag(), "pickAll with small fixes on");
+        // update channels (Settings > Updates > Update channel): the older switch's choice carries over; Stable skips hotfixes, Hotfix takes every release
+        eq("stable", UpdateCheck.channel("stable", null), "a stored channel");
+        eq("hotfix", UpdateCheck.channel("hotfix", false), "a stored channel wins over the older switch");
+        eq("stable", UpdateCheck.channel(null, false), "small fixes off before channels: Stable");
+        eq("hotfix", UpdateCheck.channel(null, true), "small fixes on before channels: Hotfix");
+        eq(UpdateCheck.DEFAULT_CHANNEL, UpdateCheck.channel(null, null), "never chosen: the default");
+        eq("stable", UpdateCheck.DEFAULT_CHANNEL, "the default is Stable: weekly releases and critical fixes; hotfixes are opt-in");
+        eq(UpdateCheck.DEFAULT_CHANNEL, UpdateCheck.channel("nightly", null), "an unknown stored value: the default");
+        eq(true, UpdateCheck.skipsHotfix("stable"), "Stable skips hotfixes");
+        // the Preview channel: previews are vX.Y.Z-preview tags (apps up to 0.3.45 read only vX.Y.Z, so they never see one); only Preview offers them
+        UpdateCheck.Release pre = new UpdateCheck.Release("v0.4.3-preview", false, false, "Update type: major\n", Arrays.asList(apk("v0.4.3-preview")));
+        UpdateCheck.Release rel3 = new UpdateCheck.Release("v0.4.3", false, false, "", Arrays.asList(apk("v0.4.3")));
+        eq("preview", UpdateCheck.kind(pre), "the tag decides, whatever the notes say");
+        eq(null, UpdateCheck.tagVersion("v0.4.3-preview"), "an older app's tag reader skips a preview");
+        eq("preview", UpdateCheck.channel("preview", null), "a stored Preview channel");
+        eq("v0.4.2", UpdateCheck.pick(Arrays.asList(pre, crit, fix, major), cur, false, "stable").tag(), "Stable: no preview");
+        eq("v0.4.2", UpdateCheck.pick(Arrays.asList(pre, crit, fix, major), cur, false, "hotfix").tag(), "Hotfix: no preview");
+        eq("v0.4.3-preview", UpdateCheck.pick(Arrays.asList(pre, crit, fix, major), cur, false, "preview").tag(), "Preview: the preview");
+        eq("0.4.3-preview", UpdateCheck.pick(Arrays.asList(pre), cur, false, "preview").label(), "its label keeps the suffix");
+        eq("v0.4.3", UpdateCheck.pick(Arrays.asList(pre, rel3), cur, false, "preview").tag(), "a tie: the release wins over its preview");
+        int[] p3 = UpdateCheck.appVersion("0.4.3-preview");
+        eq(true, UpdateCheck.previewApp("0.4.3-preview"), "a preview build");
+        eq(false, UpdateCheck.previewApp("0.4.3"), "a release build");
+        eq("v0.4.3", UpdateCheck.pick(Arrays.asList(pre, rel3), p3, true, "stable").tag(), "the preview app is offered the release of its version");
+        eq(null, UpdateCheck.pick(Arrays.asList(pre), p3, true, "preview"), "the preview app is not offered itself");
+        eq(null, UpdateCheck.pick(Arrays.asList(rel3), UpdateCheck.appVersion("0.4.3"), false, "preview"), "the release app is not offered its own version");
+        eq(true, UpdateCheck.offers("preview", "hotfix") && UpdateCheck.offers("preview", "critical"), "Preview takes every kind");
+        // Settings' rows and Home's dot: what another channel offers beyond the player's own pick, and when the dot shows
+        List<List<UpdateCheck.Release>> ws = Arrays.asList(Arrays.asList(pre, crit, fix, major));
+        UpdateCheck.Update ownS = UpdateCheck.pickAll(ws, cur, false, "stable");
+        eq("v0.4.3-preview", UpdateCheck.elsewhere(ws, cur, false, "stable", ownS).tag(), "Stable: the preview lies beyond");
+        eq("preview", UpdateCheck.channelFor(UpdateCheck.elsewhere(ws, cur, false, "stable", ownS).release), "named as the Preview channel's");
+        eq(null, UpdateCheck.elsewhere(ws, cur, false, "preview", UpdateCheck.pickAll(ws, cur, false, "preview")), "Preview: nothing beyond");
+        List<List<UpdateCheck.Release>> np = Arrays.asList(Arrays.asList(crit, fix, major));
+        eq(null, UpdateCheck.elsewhere(np, cur, false, "stable", UpdateCheck.pickAll(np, cur, false, "stable")), "nothing beyond when the channels agree");
+        eq("hotfix", UpdateCheck.channelFor(fix), "a hotfix is the Hotfix channel's");
+        eq("stable", UpdateCheck.channelFor(major), "a major release is Stable's");
+        eq(false, UpdateCheck.dot(null, ""), "no update, no dot");
+        UpdateCheck.Update pm = UpdateCheck.pick(Arrays.asList(major), cur, false, "stable");
+        eq(true, UpdateCheck.dot(pm, ""), "a new update: the dot");
+        eq(false, UpdateCheck.dot(pm, pm.tag()), "seen in Settings: no dot");
+        UpdateCheck.Update pc = UpdateCheck.pick(Arrays.asList(crit), cur, false, "stable");
+        eq(true, UpdateCheck.dot(pc, pc.tag()), "a critical update keeps its dot until installed");
+        eq(false, UpdateCheck.skipsHotfix("hotfix"), "Hotfix takes them");
+        eq("v0.4.2", UpdateCheck.pick(Arrays.asList(crit, fix, major), cur, UpdateCheck.skipsHotfix("stable")).tag(), "Stable: a critical fix");
+        eq("v0.4.0", UpdateCheck.pick(Arrays.asList(fix, major), cur, UpdateCheck.skipsHotfix("stable")).tag(), "Stable: the weekly release, not the hotfix after it");
+        eq("v0.4.1", UpdateCheck.pick(Arrays.asList(fix, major), cur, UpdateCheck.skipsHotfix("hotfix")).tag(), "Hotfix: the hotfix");
+        eq(null, UpdateCheck.pick(Arrays.asList(fix), UpdateCheck.appVersion("0.4.0"), UpdateCheck.skipsHotfix("stable")), "Stable on the weekly release: a hotfix after it is not offered");
         // the experimental Android 12 build's asset (..-android12.apk) is taken only by that build, and the other apps never take it, whatever the order
         UpdateCheck.Asset a12 = new UpdateCheck.Asset("banana-native-v0.1.4-android12.apk", "https://github.com/moceure/BananaNative/releases/download/v0.1.4/banana-native-v0.1.4-android12.apk", 123456789, "sha256:" + HEX);
         eq("banana-native-v0.1.4.apk", UpdateCheck.apk(rel("v0.1.4", false, false, a12, apk("v0.1.4"))).name, "a normal app skips the android12 asset even when it is listed first");

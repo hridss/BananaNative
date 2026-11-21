@@ -84,8 +84,13 @@ final class ExitWatch {
         if (owned) append(recordFile, "log=" + log.getName() + "\n");
     }
 
-    /** The player stopped the game (Stop, Back at a start that cannot go on): no notice */
-    static void stopped() { if (owned && recordFile != null) append(recordFile, "state=stopped\n"); }
+    /** The player stopped the game (Stop, Back at a start that cannot go on, the game's screen gone for good): no notice. Written once per process */
+    private static boolean stoppedOnce;
+    static synchronized void stopped() {
+        if (stoppedOnce) return;
+        stoppedOnce = true;
+        if (owned && recordFile != null) append(recordFile, "state=stopped\n");
+    }
 
     /** An end the game's screen told the player about itself (a screen restored into a new process): the launcher does not tell it again */
     static void shown(Context c) { append(record(c), "shown=1\n"); }

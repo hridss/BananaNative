@@ -12,12 +12,8 @@ void dm_thread_enter(uint64_t entry, uint64_t arg, uint64_t sp) { (void)entry; (
 #endif
 void *guest_sym(const char *name) { (void)name; return NULL; }
 module_t *module_of(const void *p) { (void)p; return NULL; }
-#ifdef __APPLE__
 #include <mach/mach_time.h>
 uint64_t now_ns(void) { static mach_timebase_info_data_t tb; if (!tb.denom) mach_timebase_info(&tb); return mach_absolute_time() * tb.numer / tb.denom; }
-#else   // the same tests built for Android (NDK clang, run through adb)
-uint64_t now_ns(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (uint64_t)t.tv_sec * 1000000000ull + (uint64_t)t.tv_nsec; }
-#endif
 uint64_t guest_ns(void) { return now_ns(); }
 int dm_detclock_enabled(void) { return 0; }
 __thread _Atomic int dm_host_work;   // referenced by hle_thread.c; in the host it is defined in hle_nvn.c

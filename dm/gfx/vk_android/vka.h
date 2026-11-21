@@ -37,7 +37,7 @@
     X(vkCmdPipelineBarrier) X(vkCmdCopyBuffer) X(vkCmdUpdateBuffer) X(vkCmdFillBuffer) X(vkCmdCopyBufferToImage) X(vkCmdCopyImageToBuffer) \
     X(vkCmdCopyImage) X(vkCmdBlitImage) X(vkCmdResolveImage) X(vkCmdClearColorImage) X(vkCmdClearDepthStencilImage) X(vkCmdClearAttachments) \
     X(vkCmdBeginRendering) X(vkCmdEndRendering) X(vkCmdBeginRenderPass) X(vkCmdEndRenderPass) X(vkCreateRenderPass) X(vkCreateFramebuffer) \
-    X(vkCreateDescriptorSetLayout) X(vkCreateDescriptorPool) X(vkAllocateDescriptorSets) X(vkUpdateDescriptorSets) \
+    X(vkCreateDescriptorSetLayout) X(vkCreateDescriptorPool) X(vkDestroyDescriptorPool) X(vkAllocateDescriptorSets) X(vkUpdateDescriptorSets) \
     X(vkCreateSwapchainKHR) X(vkDestroySwapchainKHR) X(vkGetSwapchainImagesKHR) X(vkAcquireNextImageKHR) X(vkQueuePresentKHR) \
     X(vkGetRefreshCycleDurationGOOGLE) X(vkGetPastPresentationTimingGOOGLE) \
     X(vkCreateShaderModule) X(vkDestroyShaderModule) X(vkCreatePipelineLayout) X(vkDestroyPipelineLayout) X(vkDestroyDescriptorSetLayout) X(vkDestroyPipeline) X(vkCreatePipelineCache) X(vkGetPipelineCacheData) \
@@ -69,6 +69,11 @@ static inline double vka_env_c(vka_envc *c, const char *key, double def) {
 }
 #define VKA_ENVF(key, def) ({ static vka_envc c_; vka_env_c(&c_, key, def); })
 #define VKA_ENV(key, def) ((int)VKA_ENVF(key, def))
+// The reset of the replay's own command buffers (submission parts, upload batches): DM_VK_CB_RELEASE=1 (live, off by default; an experiment) hands their memory back to the
+// driver at each reset (VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT), and vka_draw.c then keeps one descriptor pool a submission slot. Without it a command buffer and a
+// slot's pools keep the most a submission ever took (an area load's), as Vulkan allows: the A/B for docs/reference/memory.md "Heap blocks and driver maps that grow at each
+// area change (Android)", whose owner is not proven
+static inline VkCommandBufferResetFlags vka_cb_reset_flags(void) { return VKA_ENV("DM_VK_CB_RELEASE", 0) ? VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT : 0; }
 int vka_env_str(const char *key, char *out, size_t n);   // a string switch as live control sees it (1 = set); not cached: for switches read rarely
 // A thread that calls the driver's shader compiler (vkCreate*Pipelines: prewarm, the asynchronous and optimizer threads, the replay worker) is started with the stack of a
 // process's main thread, VKA_COMPILER_STACK: Android's default for a pthread is about 1 MiB, and a compiler that recurses over a long chain of dependent instructions can
@@ -198,11 +203,15 @@ int vka_worker_cpu_wait(uint64_t fence);    // vka_worker.c: a CPU thread is abo
 void vka_worker_cpu_wait_end(int was);      // ... and is no longer blocked (was: what vka_worker_cpu_wait returned)
 uint64_t vka_worker_cpu_blocked(void);       // the highest fence CPU threads block on now (0: none)
 // The GPU-wait trace (vka_worker.c, DM_VK_QS_TRACE): the last events of the queue scheduler and the submissions, printed when a GPU hang is declared
-enum { QT_SUB = 1, QT_PARK, QT_PASS, QT_RELEASE, QT_GATE, QT_FORCE, QT_SIGNAL, QT_COMMIT, QT_PART, QT_LAND, QT_PRESENT, QT_CPU_WAIT, QT_SUBMIT_ERR, QT_SLOT };
+enum { QT_SUB = 1, QT_PARK, QT_PASS, QT_RELEASE, QT_GATE, QT_FORCE, QT_SIGNAL, QT_COMMIT, QT_PART, QT_LAND, QT_PRESENT, QT_CPU_WAIT, QT_SUBMIT_ERR, QT_SLOT, QT_GATE_OPEN, QT_GATE_SUB };
 void vka_tex_slot_counts(uint64_t *writes, uint64_t *changes);   // vka_tex.c: pool table slot writes, and of them changes of a slot's view
 void vka_qtrace(int kind, uint64_t q, uint64_t fence, uint64_t x, uint32_t a, uint32_t b, uint32_t c, uint32_t d, const volatile void *w);
 int vka_qtrace_on(void);
 void vka_qtrace_dump(void);
+// GPU breadcrumbs (vka_exec.c, DM_VK_CRUMBS): the GPU writes a number into host memory at each point; after a lost device the last number written says how far it got
+enum { CR_PART_BEGIN = 1, CR_PART_END, CR_DISPATCH, CR_PASS_END, CR_GATE };   // (CR_GATE: past a gate's wait, level 1)
+void vka_crumb(VkCommandBuffer cb, int kind, uint64_t key);
+int vka_crumbs_level(void);
 void vka_after(uint64_t fence, void (*fn)(void *), void *arg);   // deferred destruction: fn(arg) once fence is done
 
 // Host-visible scratch memory for one submission (uploads, deswizzled texels, readbacks); valid until the submission's fence
@@ -549,6 +558,8 @@ uint64_t vka_stamp(void);   // a new stamp, never 0 and never given twice
 void vka_dstate_reset(vka_dstate *d);
 int vka_classic_rp(void);   // DM_VK_CLASSIC_RP: the game's passes as VkRenderPasses with imageless framebuffers (vka_draw.c)
 VkRenderPass vka_rp_compat(const VkFormat *cf, uint32_t n, VkFormat df, VkFormat sf, uint32_t samples);   // a render pass pipelines of those targets are made against
+void vka_rp_refused(VkRenderPass rp, VkResult r);   // the driver refused a whole pipeline made against rp: not given to later pipelines (vka_rplist.h)
+void vka_rp_crash_note(uint64_t rp);   // the crash report's line on a render pass being begun (signal handler)
 int vka_state_op(vka_dstate *d, uint32_t op, const void *a);   // 1 = a state record, taken
 // The render pass the draws of a submission go into: opened at a draw, closed by anything that is not a draw or state (vka_rp_end), and by a new SET_RT
 void vka_draw_sub_begin(VkCommandBuffer cb, unsigned slot);    // the slot's per-draw descriptor sets are free again (its last fence is done)

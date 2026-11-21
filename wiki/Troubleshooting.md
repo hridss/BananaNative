@@ -45,6 +45,7 @@ You do not need to read the log. These lines help us, and an issue is easier to 
 | **Add game** on a dump with no `updates/` does not offer Prepare | Known in some versions: only a pack made on a Mac worked; report your version and see [First start and Prepare](First-Start-and-Prepare). |
 | The picture is wrong or the game crashes | Try the other GPU driver ([GPU drivers](GPU-Drivers)). |
 | The phone gets hot and fps drops | Let it cool; a phone cooler helps ([Heat and battery](Heat-and-Battery)). |
+| The frame rate stays low after a menu or a loading screen, while other starts of the same save run fine | Turn on **Keep GPU clock up** (the game's page > Performance > Speed; applies at the next start). The phone runs warmer with it on ([Settings: Performance](Settings-Performance#keep-gpu-clock-up)). |
 | The first start is slow or black | Normal for some games while the GPU driver builds its cache ([Playing](Playing#first-starts-can-be-slow)). |
 | "Game file gone" or "Save folder gone" | See [Saves and storage](Saves-and-Storage). |
 | A `.nup` stops right after boot with a "cannot be used as a NUP package" error | Reported on v0.2.2 for games with DLC (add-on) mounts; update the app and report if it persists. |

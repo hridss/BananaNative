@@ -161,6 +161,13 @@ public final class PrepareTextJvmTest {
         check(PrepareText.needsPreparing(true, false, false).contains("cannot be read"), "unreadable pack");
         check(PrepareText.needsPreparing(false, false, false).startsWith("No pack yet"), "no pack");
 
+        // An optional shader build (ShaderState.need): recommended, with the time and the charger, and the player told the game plays now
+        String rec = PrepareText.recommendText("about 9-40 minutes", true);
+        plain(rec, "recommend, layer");
+        check(rec.startsWith("Recommended: build all shaders now") && rec.contains("(about 9-40 minutes, best on the charger)") && rec.contains("You can play now; missing shaders are built as you play."), "recommend, layer: " + rec);
+        rec = PrepareText.recommendText("about 1-2 minutes", false);
+        check(rec.contains("about 1-2 minutes") && rec.endsWith("You can play now on the older shaders.") && !rec.contains("built as you play"), "recommend, older library: " + rec);
+
         System.out.println("ok " + n);
     }
 }

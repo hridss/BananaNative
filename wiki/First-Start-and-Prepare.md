@@ -4,7 +4,7 @@ Each game is prepared once into a **pack**: its code rewritten for Android and i
 
 ## Phone only
 
-Since 0.3.40 a Switch 2 game's Prepare can skip the shaders: the game starts at once and the app builds the shaders it needs while you play ([Live shader building](Live-Shader-Building)). A full shader Prepare stays available.
+Since 0.3.40 a Switch 2 game's Prepare can skip the shaders: the game starts at once and the app builds the shaders it needs while you play ([Live shader building](Live-Shader-Building)). A full shader Prepare stays available. Prepare asks for shaders only when the game could not play without them; otherwise building them is offered as **Recommended**, never forced.
 
 1. **Copy your dump** to the phone, for example to `Switch2/DonkeyKongBananza`.
 2. [Install the app](Installation) and allow **All files access** (or skip it, see [Saves and storage](Saves-and-Storage#storage-access)).

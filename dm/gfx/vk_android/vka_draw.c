@@ -15,6 +15,7 @@
 #include "vka_memu_abi.h"
 #include "vka_prepass.h"
 #include "vka_wbfollow.h"
+#include "vka_rplist.h"
 #include <math.h>
 #include <stdio.h>
 #include <stddef.h>
@@ -166,6 +167,10 @@ void vka_draw_sub_begin(VkCommandBuffer cb, unsigned slot) {
     g_vin_skip = VKA_ENV("DM_VK_VIN_SKIP", 1);
     g_vattr_clear = VKA_ENV("DM_VK_VATTR_CLEAR", 1);
     for (int i = 0; i < g_ndp[g_slot]; i++) vk.vkResetDescriptorPool(V.dev, g_dp[g_slot][i], 0);   // the slot's last submission is done (mtl_sub_begin waited for it)
+    if (vka_cb_reset_flags() && g_ndp[g_slot] > 1 && vk.vkDestroyDescriptorPool) {   // DM_VK_CB_RELEASE (vka.h): the pools a large submission added go back to the driver
+        for (int i = 1; i < g_ndp[g_slot]; i++) vk.vkDestroyDescriptorPool(V.dev, g_dp[g_slot][i], NULL);
+        g_ndp[g_slot] = 1;
+    }
     g_cur_dp[g_slot] = 0;
     vka_pso_save(0);
     static int ph; VkImageView placeholder(uint8_t dim, int storage);
@@ -325,13 +330,16 @@ int vka_classic_rp(void) {   // decided once, after the device is made (V.imagel
     return on > 0;
 }
 typedef struct { VkFormat cf[8]; uint32_t n; VkFormat ds; uint32_t d, s, samples, clear; } rpkey;   // clear: bit i colour i, bit 8 depth, bit 9 stencil
+_Static_assert(sizeof(rpkey) <= VKRL_KEYMAX, "rpkey fits the render pass list's key");
 // Every shape's render pass is kept for the run (the pipelines made against it hold no reference, but each pass begun with it does until its fence): the list grows, so a
-// shape past any cap never makes a new VkRenderPass per pass (the 256-entry array this was did, and leaked one at each)
-typedef struct { rpkey k; VkRenderPass rp; } rpent;
-static rpent *g_rpc; static int g_nrpc, g_rpcap; static pthread_mutex_t g_rpmu = PTHREAD_MUTEX_INITIALIZER;
-static VkRenderPass rp_obtain(const rpkey *k) {
+// shape past any cap never makes a new VkRenderPass per pass (the 256-entry array this was did, and leaked one at each). Passes and pipelines take separate objects of
+// the same shape (vka_rplist.h: use VKRL_PASS or VKRL_PIPE), so a render pass the driver was given in a pipeline create it refused is never begun; DM_VK_RP_SHARED=1
+// (read once) gives pipelines the passes' objects, as before 2026-11-21 (the A/B for Qualcomm's crash in vkCmdBeginRenderPass after refused pipelines)
+static vkrl g_rpl; static pthread_mutex_t g_rpmu = PTHREAD_MUTEX_INITIALIZER;
+static VkRenderPass rp_obtain(const rpkey *k, int use) {
     pthread_mutex_lock(&g_rpmu);
-    for (int i = 0; i < g_nrpc; i++) if (!memcmp(&g_rpc[i].k, k, sizeof *k)) { VkRenderPass r = g_rpc[i].rp; pthread_mutex_unlock(&g_rpmu); return r; }
+    VkRenderPass have = (VkRenderPass)vkrl_find(&g_rpl, use, k, sizeof *k);
+    if (have) { pthread_mutex_unlock(&g_rpmu); return have; }
     VkAttachmentDescription at[9]; VkAttachmentReference cr[8], dr; uint32_t na = 0;
     VkSampleCountFlagBits sc = (VkSampleCountFlagBits)(k->samples ? k->samples : 1);
     for (uint32_t i = 0; i < k->n; i++) {
@@ -350,17 +358,38 @@ static VkRenderPass rp_obtain(const rpkey *k) {
     VkRenderPass r = VK_NULL_HANDLE; VkResult e = vk.vkCreateRenderPass(V.dev, &ci, NULL, &r);
     if (e) { VRED_ONCE("vkCreateRenderPass %d", e); r = VK_NULL_HANDLE; }
     else {
-        if (g_nrpc == g_rpcap) { int nc = g_rpcap ? 2 * g_rpcap : 64; rpent *n = realloc(g_rpc, (size_t)nc * sizeof *n); if (n) { g_rpc = n; g_rpcap = nc; } }
-        if (g_nrpc < g_rpcap) { g_rpc[g_nrpc].k = *k; g_rpc[g_nrpc++].rp = r; } else VRED_ONCE("render pass list: out of memory");
-        if ((g_nrpc & (g_nrpc - 1)) == 0 && g_nrpc >= 256) VLOG("classic render passes: %d shapes", g_nrpc);
+        if (!vkrl_add(&g_rpl, use, k, sizeof *k, (uint64_t)r)) VRED_ONCE("render pass list: out of memory");
+        if ((g_rpl.n & (g_rpl.n - 1)) == 0 && g_rpl.n >= 256) VLOG("classic render passes: %d shapes", g_rpl.n);
     }
     pthread_mutex_unlock(&g_rpmu);
     return r;
 }
 VkRenderPass vka_rp_compat(const VkFormat *cf, uint32_t n, VkFormat df, VkFormat sf, uint32_t samples) {
+    static int shared = -1; if (shared < 0) shared = VKA_ENV("DM_VK_RP_SHARED", 0) != 0;
     rpkey k; memset(&k, 0, sizeof k);
     if (n > 8) n = 8; memcpy(k.cf, cf, n * sizeof *cf); k.n = n; k.ds = df ? df : sf; k.d = df != 0; k.s = sf != 0; k.samples = samples ? samples : 1;
-    return rp_obtain(&k);
+    return rp_obtain(&k, shared ? VKRL_PASS : VKRL_PIPE);
+}
+// The driver refused a whole graphics pipeline made against rp (vka_pso.c full_pipeline): rp is retired for later pipelines of its shape (vka_rplist.h). One line per
+// render pass, the first 16
+void vka_rp_refused(VkRenderPass rp, VkResult r) {
+    if (!rp) return;
+    pthread_mutex_lock(&g_rpmu);
+    int first = vkrl_refused(&g_rpl, (uint64_t)rp); vkrl_ent *x = vkrl_of(&g_rpl, (uint64_t)rp); int pipe = x && x->use == VKRL_PIPE; uint32_t nref = g_rpl.refused, nret = g_rpl.retired;
+    pthread_mutex_unlock(&g_rpmu);
+    static _Atomic int n;
+    if (first && atomic_fetch_add(&n, 1) < 16)
+        VLOG("classic render passes: a pipeline made against render pass %#llx was refused (%d): %s (%u refusals, %u render passes retired so far)", (unsigned long long)(uint64_t)rp, r,
+             pipe ? "that render pass is no longer given to pipelines (passes never begin it)" : "passes begin that render pass (DM_VK_RP_SHARED=1)", nref, nret);
+}
+// For the crash report (vka_enc.c crash_note, in the signal handler: no lock, read only): what the list knows of a render pass the encoder was beginning
+void vka_rp_crash_note(uint64_t rp) {
+    const vkrl_ent *x = NULL;
+    for (int i = 0; i < g_rpl.n; i++) if (g_rpl.e[i].rp == rp) { x = &g_rpl.e[i]; break; }
+    if (!x) { fprintf(stderr, "[dm] fault render pass: %#llx is not in the classic render pass list (%d)\n", (unsigned long long)rp, g_rpl.n); return; }
+    const rpkey *k = (const rpkey *)x->key;
+    fprintf(stderr, "[dm] fault render pass: %#llx, %s object, %u colour (%d %d %d %d), depth/stencil %d, samples %u, clears %#x; pipelines refused against it %u; in the run %u refused, %u retired\n",
+            (unsigned long long)rp, x->use == VKRL_PIPE ? "pipeline" : "pass", k->n, k->cf[0], k->cf[1], k->cf[2], k->cf[3], k->ds, k->samples, k->clear, x->refused, g_rpl.refused, g_rpl.retired);
 }
 typedef struct { VkImageCreateFlags fl; VkImageUsageFlags u; uint32_t w, h, nl, nvf; VkFormat vf[6]; } fbatt;
 typedef struct { VkRenderPass rp; uint32_t w, h, layers, na; fbatt a[9]; } fbkey;
@@ -451,6 +480,7 @@ void vka_rp_end(void) {
     bcrt_flush();        // block-compressed targets drawn through shadows: their blocks back (bcrt_attach)
     ub_flush();          // inline uniform updates deferred during the pass: copied into placed guest RAM
     R.on = 0; vka_tex_feedback(NULL, NULL, 0);
+    vka_crumb(g_cb, CR_PASS_END, (uint64_t)R.area.extent.width << 32 | R.area.extent.height);   // DM_VK_CRUMBS=2
     if (vka_nan_on()) vka_nan_pass(g_cb, R.cim, R.clv, R.cl0, R.nci);
 }
 static void rt_peek(const char *what, int i, const tex_t *t, const vka_img *im, uint32_t lv, uint32_t l0, uint32_t nl);   // DM_VK_TEX_PEEK
@@ -658,7 +688,7 @@ static int rp_begin(const p_set_rt *rt, int has_rt, const p_scissor *sc, int has
             fk.a[na] = fb_att(s_im[8], s_lv[8], s_nl[8], k.ds); views[na] = da.imageView;
             cv[na].depthStencil.depth = da.clearValue.depthStencil.depth; cv[na++].depthStencil.stencil = sa.clearValue.depthStencil.stencil;
         }
-        VkRenderPass rp = rp_obtain(&k);
+        VkRenderPass rp = rp_obtain(&k, VKRL_PASS);
         fk.rp = rp; fk.w = w; fk.h = h; fk.layers = layers; fk.na = na;
         VkFramebuffer fb = rp ? fb_obtain(&fk) : VK_NULL_HANDLE;   // (none only when the driver refused one: the pass falls back to dynamic rendering, logged red)
         if (fb) {
@@ -3256,6 +3286,7 @@ void vka_dispatch(vka_dstate *d, const p_dispatch *dp) {
     if (skip) { vka_barrier(g_cb); g_dispatches++; return; }
     if (vka_gp_active) vka_gp_note('c', sh[5]->key, 0, dp->ind ? 0 : (uint64_t)(dp->x > 0 ? dp->x : 0) * (uint64_t)(dp->y > 0 ? dp->y : 0) * (uint64_t)(dp->z > 0 ? dp->z : 0));
     vka_rw_pre(g_cb);   // DM_VK_RANGE_WATCH
+    vka_crumb(g_cb, CR_DISPATCH, sh[5]->key);   // DM_VK_CRUMBS=2
     vk.vkCmdBindPipeline(g_cb, VK_PIPELINE_BIND_POINT_COMPUTE, p);
     if (dp->ind) vk.vkCmdDispatchIndirect(g_cb, ib, io);
     else if (dp->x > 0 && dp->y > 0 && dp->z > 0) {

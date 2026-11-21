@@ -1504,6 +1504,7 @@ static void maps_tick(int *line_due) {
              m.total, mx, pct, m.placed, nseg, npieced, inseg, m.guest - m.placed, m.total - m.guest, m.out_kgsl,
              nvn_dirty_block_bytes() ? "blocks of " : "pages of ", nvn_dirty_block_bytes() ? nvn_dirty_block_bytes() >> 10 : (size_t)getpagesize() >> 10, scan_ms,
              (unsigned long long)atomic_load(&g_um_kept), (unsigned long long)atomic_load(&g_um_n));
+        void vka_hostmem_log(void); vka_hostmem_log();   // the live Vulkan objects and the heap beside the maps (vka_hostmem.c): who holds the scudo blocks and kgsl maps
         last_line_ns = now; last_step = step; *line_due = 0;
     }
     maps_hist_log(&m, pct, step, hist_pct, now);

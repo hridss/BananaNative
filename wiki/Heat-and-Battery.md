@@ -27,7 +27,8 @@ Fewer frames and fewer pixels mean less work, which tends to mean less heat. The
 2. **A lower resolution** or the **Performance** preset; **Full vegetation off** (Ocarina of Time).
 3. **Do not run frame generation** if the phone is already hot: it adds GPU work.
 4. **Turn the overlay's battery and CPU items on while you test**, so you can see when it starts to throttle.
-5. **Take the phone out of a case** or let it cool between sessions; hot phones also slow the first-start pipeline build ([Getting higher FPS](Getting-Higher-FPS#before-you-start)).
+5. **Leave Keep GPU clock up off** (a game's page, Performance tab, Speed) unless a game needs it: on, the GPU stays at a higher clock in menus ([Settings: Performance](Settings-Performance#keep-gpu-clock-up)).
+6. **Take the phone out of a case** or let it cool between sessions; hot phones also slow the first-start pipeline build ([Getting higher FPS](Getting-Higher-FPS#before-you-start)).
 
 ## Observations from the logs
 

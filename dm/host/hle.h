@@ -35,7 +35,7 @@ void guest_clock_read_wait(void);     // A guest read of the system counter: wai
 // Forced takeover: even if the SDK module has a definition, all references to that symbol at load time (JUMP_SLOT/GLOB_DAT/ABS64) are resolved to the host implementation.
 // Used only for the service-layer nn:: (service clients of fs/oe/aoc/pctl...); the SDK's libc++ and nn::os internals do not go into this table.
 // Every entry must state the reason for the takeover; an entry in the table that no module references makes loading report a failure and abort (a wrong list must fail loudly).
-typedef struct { const char *name; void *fn; const char *why; const char *to; } hle_force_ent;   // to: a guest alias (HLE_FORCE_ALIAS below), fn NULL
+typedef struct { const char *name; void *fn; const char *why; } hle_force_ent;
 #define HLE_FORCE(mangled, why, ret, cname, ...)                                                   \
     static ret cname(__VA_ARGS__);                                                                \
     PLAT_TABLE(swforce) static const hle_force_ent hle_force_##cname = {mangled, (void *)cname, why}; \
@@ -49,14 +49,6 @@ typedef struct { const char *name; void *fn; const char *why; const char *to; } 
             "    adrp x16, " PLAT_ASM_PAGE(cname) "\n    add x16, x16, " PLAT_ASM_PAGEOFF(cname) "\n    b " PLAT_ASM_SYM(dm_bigstack_enter) "\n"); \
     PLAT_TABLE(swforce) static const hle_force_ent hle_force_##cname = {mangled, (void *)(uintptr_t)cname##_bs, why}; \
     static ret cname(__VA_ARGS__)
-// A guest alias: every reference to mangled binds to the loaded modules' own definition of target instead, as if the module had imported target. No host code runs and no
-// signature is restated, so the alias holds for every SDK that defines both. For a hardware class whose constructor the host takes over to build the SDK's software class in the
-// same memory: its members, called directly rather than through the vtable, go to the software class's members of the same signature (hle_codec.c). A target no loaded module
-// defines leaves the reference bound as it would be without the entry, with a red line; a target that is itself taken over stops loading (force_init)
-#define HLE_FORCE_ALIAS(mangled, target, why) HLE_FORCE_ALIAS_(mangled, target, why, __COUNTER__)
-#define HLE_FORCE_ALIAS_(mangled, target, why, n) HLE_FORCE_ALIAS__(mangled, target, why, n)
-#define HLE_FORCE_ALIAS__(mangled, target, why, n) \
-    PLAT_TABLE(swforce) static const hle_force_ent hle_force_alias_##n = {mangled, NULL, why, target}
 // The game's call site inside a HLE_FORCE_BIG implementation: pass __builtin_return_address(0), which after a stack switch is the entry's own (hle_bigstack.c)
 void *dm_bigstack_caller(void *ra);
 

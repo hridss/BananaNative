@@ -523,6 +523,27 @@ int main(void) {
               "deduped log: cannot_clear=%d still_failing=%d cleared=%d (expected 1, 1, 1)", n_cannot, n_still, n_cleared);
     }
 
+    printf("⑪ commit durability, and a save swap journal left part way\n");
+    {   char neu[1200], m1[1200], nf[1300], cmd2[1300]; g_nmnt = 0;
+        snprintf(neu, sizeof neu, "%s.new", save); snprintf(m1, sizeof m1, "%s.pend1", save); snprintf(nf, sizeof nf, "%s/a", neu); snprintf(p, sizeof p, "%s/a", save);
+        CHECK(h_fs_MountSave("save", NULL) == RES_OK && !g_mnt[0].ro, "mount the save");
+        setenv("DM_TEST_FS_FAILAT", "commitsync:1", 1);
+        CHECK(write_save("save:/a", "synced") == RES_OK && h_fs_Commit("save") == RES_FAIL, "a commit whose new version cannot be synced to the storage is refused");
+        CHECK(same(p, "pending") && access(neu, F_OK) != 0, "the committed a is unchanged and the unsynced .new is gone");
+        unsetenv("DM_TEST_FS_FAILAT");
+        CHECK(h_fs_Commit("save") == RES_OK && same(p, "synced"), "the next commit (the work directory still holds a=synced) goes through");
+        // a journal (the Android fallback swap's marker) beside the save that recovery could not finish: its .new is the only whole copy of the new version
+        mkdir(neu, 0755); put(nf, "journal"); put(m1, neu);
+        CHECK(write_save("save:/a", "blocked") == RES_OK && h_fs_Commit("save") == RES_FAIL, "a commit with a journal left beside the save is refused");
+        CHECK(same(nf, "journal") && !access(m1, F_OK) && same(p, "synced"), "the journal's .new, its marker and the save are kept as they are");
+        g_nmnt = 0;
+        CHECK(h_fs_MountSave("save", NULL) == RES_OK && g_mnt[0].ro, "a mount with the journal left mounts the save read-only");
+        CHECK(same(nf, "journal") && !access(m1, F_OK), "and keeps the .new and the marker (they were cleared before)");
+        CHECK(read_fs("save:/a", got, sizeof got) && !strcmp(got, "synced"), "the save still reads (a = %s)", got);
+        unlink(m1); snprintf(cmd2, sizeof cmd2, "rm -rf '%s'", neu); system(cmd2); g_nmnt = 0;
+        CHECK(h_fs_MountSave("save", NULL) == RES_OK && !g_mnt[0].ro && write_save("save:/a", "after") == RES_OK && h_fs_Commit("save") == RES_OK && same(p, "after"), "with the journal gone the save is writable and commits again");
+    }
+
     char cmd[1200]; snprintf(cmd, sizeof cmd, "rm -rf '%s'", root); system(cmd);
     printf("== %d checks, %d failed ==\n", checks, fails);
     return fails != 0;

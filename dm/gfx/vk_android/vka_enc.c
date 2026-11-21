@@ -19,6 +19,7 @@
 #include <string.h>
 #include <time.h>
 #include <errno.h>
+#include <stdio.h>
 
 #define ENC_FNS(X) \
     X(vkCmdPipelineBarrier) X(vkCmdCopyBuffer) X(vkCmdUpdateBuffer) X(vkCmdFillBuffer) X(vkCmdCopyBufferToImage) X(vkCmdCopyImageToBuffer) \
@@ -434,12 +435,36 @@ static _Atomic uint32_t g_tail_every = 16384;
 static uint64_t g_kn[E_N], g_kt[E_N], g_ktn[E_N];
 static _Atomic int g_enc_tid;
 int vka_enc_tid(void) { return atomic_load_explicit(&g_enc_tid, memory_order_relaxed); }
+// The crash report's line for a fault on the encoder thread (dm_fault_explain_register; in the signal handler): which call it was making, and for vkCmdBeginRenderPass
+// the render pass, framebuffer and views (vka_draw.c vka_rp_crash_note: what the classic render pass list knows of it). Qualcomm's driver on Android 13 crashed in
+// vkCmdBeginRenderPass after refused pipelines (docs/reference/rendering.md "Classic render passes crashed Qualcomm's driver in vkCmdBeginRenderPass after refused
+// pipelines"); the report said only an address in the driver
+static const hdr *_Atomic g_cur;   // the record the encoder thread is making (with g_running)
+#define ENC_NAME(f) #f,
+static const char *const g_enc_name[E_N] = {"wrap", "call", ENC_FNS(ENC_NAME)};
+static void crash_note(void *addr) {
+    (void)addr;
+    int tid = atomic_load_explicit(&g_enc_tid, memory_order_relaxed);
+    if (!tid || gettid() != tid) return;
+    int id = atomic_load_explicit(&g_running, memory_order_relaxed); const hdr *h = atomic_load_explicit(&g_cur, memory_order_relaxed);
+    if (id < 0 || !h) { fprintf(stderr, "[dm] fault encoder: on the encoder thread between calls\n"); return; }
+    fprintf(stderr, "[dm] fault encoder: on the encoder thread in %s (record %d)\n", id < E_N ? g_enc_name[id] : "?", id);
+    if (id == E_vkCmdBeginRenderPass) {
+        const r_rpb *r = (const r_rpb *)h;
+        fprintf(stderr, "[dm] fault encoder: vkCmdBeginRenderPass render pass %#llx framebuffer %#llx area %ux%u at %d,%d, %u clear values, %u views (imageless: %s)\n",
+                (unsigned long long)(uint64_t)r->rb.renderPass, (unsigned long long)(uint64_t)r->rb.framebuffer, r->rb.renderArea.extent.width, r->rb.renderArea.extent.height,
+                r->rb.renderArea.offset.x, r->rb.renderArea.offset.y, r->rb.clearValueCount, r->ab.sType ? r->ab.attachmentCount : 0u, r->ab.sType ? "yes" : "no");
+        for (uint32_t i = 0; r->ab.sType && i < r->ab.attachmentCount && i < 9; i++) fprintf(stderr, "[dm] fault encoder:   view %u %#llx\n", i, (unsigned long long)(uint64_t)r->ab.pAttachments[i]);
+        vka_rp_crash_note((uint64_t)r->rb.renderPass);
+    }
+}
 static inline uint64_t enc_cnt(void) { uint64_t v; __asm__ volatile("mrs %0, cntvct_el0" : "=r"(v)); return v; }
 #define KADD(a, i, v) __atomic_store_n(&(a)[i], (a)[i] + (v), __ATOMIC_RELAXED)
 static void *enc_main(void *arg) {
     (void)arg; pthread_setname_np(pthread_self(), "vk-enc"); vka_fp_host("vk-enc");
     vka_perf_thread(-8);   // the ADPF session and the replay thread's priority
     atomic_store(&g_enc_tid, gettid());
+    { static int reg; if (!reg) { reg = 1; dm_fault_explain_register(crash_note); } }   // (one encoder thread per run; a restarted one does not add it again)
     uint64_t t = 0, tpub = 0; unsigned samp = 0;
     for (;;) {
         uint64_t h = atomic_load_explicit(&g_head, memory_order_acquire);
@@ -465,7 +490,7 @@ static void *enc_main(void *arg) {
             const hdr *r = (const hdr *)(g_ring + t % RING);
             if (r->id != E_WRAP) {
                 uint32_t id = r->id < E_N ? r->id : 0; KADD(g_kn, id, 1);
-                atomic_store_explicit(&g_running, (int)r->id, memory_order_relaxed);
+                atomic_store_explicit(&g_cur, r, memory_order_relaxed); atomic_store_explicit(&g_running, (int)r->id, memory_order_relaxed);
                 if (++samp >= 16) { samp = 0; uint64_t c0 = enc_cnt(); run(r); KADD(g_kt, id, enc_cnt() - c0); KADD(g_ktn, id, 1); } else run(r);
                 atomic_store_explicit(&g_running, -1, memory_order_relaxed);
             }

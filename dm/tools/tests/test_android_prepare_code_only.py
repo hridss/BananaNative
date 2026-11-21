@@ -64,7 +64,8 @@ class Wiring(unittest.TestCase):
     def test_dialog_texts(self):
         s = (MAIN / 'PrepareText.java').read_text(encoding='utf-8')
         self.assertIn('Also build all shaders now', s)
-        self.assertIn('builds shaders while you play; this builds the whole set now', s)
+        self.assertIn('Recommended: build all shaders now for smoother play', s)
+        self.assertIn('You can play now; missing shaders are built as you play.', s)
 
 
 if __name__ == '__main__':

@@ -334,8 +334,8 @@ static void t_vibration(void) {
     g_mode = 1; ids((uint32_t[]){0, 1, NPAD_HANDHELD}, 3); dm_pad_players(3);
     CHECK(!h_hid_VibPermit() && !h_hid_VibHandles(h, 2, &id, STYLE_FULLKEY), "no sink: no vibration devices");
     dm_haptics_init(vibration_sink, 1);
-    CHECK(h_hid_VibPermit() && h_hid_VibHandles(h, 2, &id, STYLE_FULLKEY) == 2,
-          "rumble on with no controller routed: permitted, and the startup handles do not wait for a routed output");
+    CHECK(!h_hid_VibPermit() && h_hid_VibHandles(h, 2, &id, STYLE_FULLKEY) == 2,
+          "startup handles do not wait for a routed haptics output");
     CHECK(h_hid_VibMounted(&h[0]) && h_hid_VibMounted(&h[1]) && h_hid_VibMountedOunce(&h[0]) && h_hid_VibMountedOunce(&h[1]), "no routed output yet: both channels are mounted");
     h_hid_VibInfo(info, &h[0]); CHECK(info[0] == 1 && info[1] == 1, "left motor answers before routing");
     h_hid_VibInfo(info, &h[1]); CHECK(info[0] == 1 && info[1] == 2, "right motor answers before routing");
@@ -381,7 +381,7 @@ static void t_vibration(void) {
     CHECK(!h_hid_VibMounted(&(uint32_t){3}) && h_hid_VibMounted(&h[0]), "mounted follows the connected controller's style");
     CHECK(!h_hid_VibMountedOunce(&(uint32_t){3}) && h_hid_VibMountedOunce(&h[0]), "Ounce mounted follows the connected controller's style");
     dm_haptics_route(1, 0);
-    CHECK(h_hid_VibPermit(), "disconnecting controllers does not change the vibration setting");
+    CHECK(!h_hid_VibPermit(), "disconnecting the last output disables vibration");
     dm_haptics_init(vibration_sink, 0); dm_haptics_route(0, 1);
     CHECK(!h_hid_VibPermit() && !h_hid_VibHandles(h, 2, &id, STYLE_HANDHELD), "rumble disabled: no vibration devices");
 }

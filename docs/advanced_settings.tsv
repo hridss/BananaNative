@@ -289,6 +289,14 @@ DM_NVN_ZBLOCK	developer	Diagnostics			text			both
 DM_NVN_ZSKIP	developer	Graphics			text			both							
 DM_OE_SCRIPT	developer	Diagnostics			text			both							
 DM_ONLINE	developer	Game			text			both							
+DM_OODLE_ADB	developer	Packing			text			both							
+DM_OODLE_ADB_DIR	developer	Packing			text			both							
+DM_OODLE_ADB_FORWARD	developer	Packing			text			both							
+DM_OODLE_ADB_MODULES	developer	Packing			text			both							
+DM_OODLE_ADB_NET	developer	Packing			text			both							
+DM_OODLE_ADB_SERIAL	developer	Packing			text			both							
+DM_OODLE_ADB_TIMEOUT	developer	Packing			text			both							
+DM_OODLE_ADB_TRACE	developer	Packing			text			both							
 DM_OODLE_HOST	internal	Diagnostics			text			both						Mac or iOS only	
 DM_OODLE_JOB	developer	Diagnostics			text			both							
 DM_OODLE_MODULES	internal	Diagnostics			text			both						Mac or iOS only	
@@ -468,6 +476,7 @@ DM_VK_ADPF	developer	Graphics			text			both
 DM_VK_ADPF_GPU	developer	Graphics			text			both							
 DM_VK_ADPF_PIPELINE	developer	Graphics			text			both							
 DM_VK_ADPF_SPAN	developer	Diagnostics			text			both							
+DM_VK_ADPF_SPAN_ANY	advanced	Performance	Keep GPU clock up		toggle			game		Game settings > Keep GPU clock up					
 DM_VK_AFF_ALL	developer	Diagnostics			text			both							
 DM_VK_AFF_REPLAY	developer	Diagnostics			text			both							
 DM_VK_BANDS	developer	Graphics			text			both							
@@ -478,10 +487,12 @@ DM_VK_BIGIMG_MB	developer	Diagnostics			text			both
 DM_VK_BIND_LOG	developer	Diagnostics			text			both							
 DM_VK_BISECT	developer	Diagnostics			text			both							
 DM_VK_CAPTURE	internal	Diagnostics			text			both						Mac or iOS only	
+DM_VK_CB_RELEASE	developer	Diagnostics			text			both							
 DM_VK_CHUNK	developer	Graphics			text			both							
 DM_VK_CHUNK_PASS	developer	Graphics			text			both							
 DM_VK_CLASSIC_RP	advanced	Performance	Classic render passes		toggle			game		Game settings > Classic render passes					
 DM_VK_COALESCE_PCT	developer	Graphics			text			both							
+DM_VK_CRUMBS	developer	Diagnostics			text			both							
 DM_VK_CS_ASYNC	developer	Graphics			text			both							
 DM_VK_CS_SHARED_OVER	developer	Diagnostics			text			both							
 DM_VK_CS_WAIT_MS	developer	Graphics			text			both							
@@ -571,6 +582,7 @@ DM_VK_GW_SORT_KEEP	developer	Graphics			text			both
 DM_VK_HANG_EXIT	developer	Graphics			text			both							
 DM_VK_HANG_S	developer	Graphics			text			both							
 DM_VK_HOOKDIR	developer	Diagnostics			text			both							
+DM_VK_HOSTMEM	developer	Diagnostics			text			both							
 DM_VK_IMGMEM	developer	Memory			text			both							
 DM_VK_IMG_DIAG	developer	Diagnostics			text			both							
 DM_VK_IMG_LIMIT_MB	advanced	Memory	Texture cache limit	the game is killed for memory (lower it) or textures keep reloading (raise it)	number	512..8192 MiB|1024,2048,3072,4096	Measured from free memory	both	Too high a limit lets Android kill the game.						
@@ -627,6 +639,7 @@ DM_VK_NANSCAN_STEP	developer	Diagnostics			text			both
 DM_VK_NDSR	developer	Graphics			text			both							
 DM_VK_NDSR_INPUT	developer	Graphics			text			both							
 DM_VK_NDSR_SHARP	developer	Graphics			text			both							
+DM_VK_OBJCOUNT	developer	Diagnostics			text			both							
 DM_VK_OCCLUSION	developer	Graphics			text			both							
 DM_VK_ONE_LANE	developer	Graphics			text		The game profile's one-lane shaders with Qualcomm's driver, none with others	both							
 DM_VK_ONE_LANE_BASE	developer	Graphics			text			both							
@@ -635,6 +648,7 @@ DM_VK_OVERLAY	developer	Graphics			text			both
 DM_VK_PACE_LOG	developer	Diagnostics			text			both							
 DM_VK_PACE_PROF	developer	Diagnostics			text			both							
 DM_VK_PARTLOG	developer	Diagnostics			text			both							
+DM_VK_PART_SERIAL	developer	Diagnostics			text			both							
 DM_VK_PASS_CLEARS	developer	Graphics			text			both							
 DM_VK_PASS_KEEP	developer	Graphics			text			both							
 DM_VK_PCACHE	developer	Diagnostics			text			both							
@@ -695,6 +709,7 @@ DM_VK_REMAP_SPV	internal	Diagnostics			text			both						test harness
 DM_VK_REPLAY_NICE	developer	Graphics			text			both							
 DM_VK_ROWS	developer	Graphics			text			both							
 DM_VK_RP_AREA	developer	Graphics			text			both							
+DM_VK_RP_SHARED	developer	Graphics			text			both							
 DM_VK_RT_LOG	developer	Diagnostics			text			both							
 DM_VK_RT_LOG_LINES	developer	Diagnostics			text			both							
 DM_VK_SB_PEEK	developer	Diagnostics			text			both							

@@ -102,6 +102,14 @@ Each game's note says what is known and what is open ([games table](dm/games/REA
 most help: see the issues marked
 [help wanted](https://github.com/moceure/BananaNative/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22).
 
+## Contributors
+
+Thank you to everyone whose pull requests are part of Banana Native:
+
+<!-- contributors:start -->
+[1982tito](https://git.eden-emu.dev/1982tito), [aidankinzett](https://git.eden-emu.dev/aidankinzett), [Amost-](https://github.com/Amost-), [blasteryui](https://git.eden-emu.dev/blasteryui), [casual-goon](https://git.eden-emu.dev/casual-goon), [Cer0-D](https://github.com/Cer0-D), [cr1stian](https://git.eden-emu.dev/cr1stian), [dopper](https://git.eden-emu.dev/dopper), [drew2388](https://git.eden-emu.dev/drew2388), [endSly](https://git.eden-emu.dev/endSly), [FrenklinFish](https://git.eden-emu.dev/FrenklinFish), [huahuahuahuahuahuahuahua](https://github.com/huahuahuahuahuahuahuahua), [iH8Ecchi](https://git.eden-emu.dev/iH8Ecchi), [inazuma2k8](https://git.eden-emu.dev/inazuma2k8), [ishtiaq156](https://github.com/ishtiaq156), [ligne12](https://github.com/ligne12), [loganrennick](https://git.eden-emu.dev/loganrennick), [lsmsmx](https://github.com/lsmsmx), [miol7s.h](https://git.eden-emu.dev/miol7s.h), [mleo2003](https://github.com/mleo2003), [MOHAMM3DX](https://git.eden-emu.dev/MOHAMM3DX), [nebadasSwifty](https://git.eden-emu.dev/nebadasSwifty), [nevercholt](https://git.eden-emu.dev/nevercholt), [Omnicrash](https://git.eden-emu.dev/Omnicrash), [parsifal295](https://github.com/parsifal295), [racerx](https://git.eden-emu.dev/racerx), [Raphix91](https://github.com/Raphix91), [sabogalc](https://git.eden-emu.dev/sabogalc), [ts-miller](https://git.eden-emu.dev/ts-miller), [v0lumehi](https://github.com/v0lumehi), [vscunha](https://git.eden-emu.dev/vscunha), [Wick3dPhant0m](https://git.eden-emu.dev/Wick3dPhant0m), [wraphs](https://git.eden-emu.dev/wraphs)
+<!-- contributors:end -->
+
 ## Licence and credits
 
 The Android app is **GPL-3.0-or-later** as a whole ([android/NOTICE.md](android/NOTICE.md)), because it includes frame

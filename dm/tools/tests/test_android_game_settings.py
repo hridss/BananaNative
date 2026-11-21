@@ -30,10 +30,20 @@ class GameSettingsPage(unittest.TestCase):
                      'driver(a, g, again)', 'gpuTiming(a, g, again)', 'language(a, g, again)', 'xbox(a, g, again)', 'PadMapUi.forGame(a, g, again)', 'env(a, g, again)',
                      'Prefs.resetGame(a, id)', 'Prefs.backToRecommended(a, id)'):
             self.assertIn(call, self.gs, f'{call}: its row is gone')
-        for setter in ('fullVegetation', 'skipLayers', 'hold60', 'decouple', 'instancedDraws', 'classicPasses', 'psoAsync', 'ramSaver', 'pauseOnReturn', 'pinThreads'):
+        for setter in ('fullVegetation', 'skipLayers', 'hold60', 'decouple', 'instancedDraws', 'classicPasses', 'keepGpuUp', 'psoAsync', 'ramSaver', 'pauseOnReturn', 'pinThreads'):
             self.assertIn(f'Prefs.{setter}(a, id, on)', self.gs, f'{setter}: its switch is gone')
         self.assertIn('Prefs.rumbleOwn(a, id, ', self.gs)
         self.assertIn('Prefs.gameOption(a, id, opt.env, checked)', self.gs, "the profile's options")
+
+    def test_keep_gpu_clock_up(self):   # PR 472's ADPF rule as a player switch: off by default (heat), on passes DM_VK_ADPF_SPAN_ANY=1, in Speed, cleared by Reset to defaults
+        prefs = (SRC / 'Prefs.java').read_text(encoding='utf-8')
+        self.assertIn('static boolean keepGpuUp(Context c, String titleId) { return of(c).getBoolean(gameKey("vk_adpf_span_any", titleId), false); }', prefs, 'off by default')
+        self.assertRegex(prefs, r'GAME_SETTINGS = \{[^}]*"vk_adpf_span_any"', 'Reset to defaults clears it')
+        act = (SRC / 'GameActivity.java').read_text(encoding='utf-8')
+        self.assertIn('if (Prefs.keepGpuUp(this, id)) env.add("DM_VK_ADPF_SPAN_ANY=1");', act, 'only the switch on passes the env line')
+        self.assertNotIn('DM_VK_ADPF_SPAN=', act, 'the launcher never sets the share itself')
+        self.assertRegex(self.gs, r'speed\.add\(new Ui\.Setting\(a, "[^"]+", "Keep GPU clock up", null\)\.toggle\(a, Prefs\.keepGpuUp\(a, id\)', 'a Speed row on the Performance tab')
+        self.assertIn('the phone runs warmer', self.gs, 'the row says the cost')
 
     def test_short_titles(self):
         t = titles(self.gs)

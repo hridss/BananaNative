@@ -9,6 +9,7 @@
 // stretch and 94-98 ms after 2.6 s of idle GPU: its clock follows load). DM_VK_ADPF_GPU=0 (live) reports CPU time only
 #if defined(__ANDROID__)
 #include "vka.h"
+#include "vka_pace.h"
 #include <dlfcn.h>
 #include <stdlib.h>
 #include <sys/resource.h>
@@ -105,15 +106,17 @@ void vka_perf_thread(int nice) {
 // replay thread's time, GPU its busy time; the target p % of the period, at most 33.3 ms (so a game the controller dropped to 20 fps still aims at 30: with the 50 ms
 // period as target the session would lower the clocks until the frame took 50 ms and keep it there). Each frame is reported once. Not phone-checked (STUTTER-TEST.md)
 // Since 2026-11-05 the period is the game's shortest (vka_dev.c vka_floor_period_ns: 16.7 ms unless the game asked for less, or DM_VK_GPU_FLOOR_PERIOD), not the current
-// one capped at 33.3 ms: at 30 fps a frame the controller could only take back to 60 fps once it fits in a vsync. Unset (-1), DM_VK_ADPF_SPAN is 100 whenever a GPU clock
-// floor is on (vka_floor_on: VK_QCOM_queue_perf_hint, the KGSL constraint or this session) and 0 with DM_VK_GPU_FLOOR=0. Before 2026-11-18 it was 100 only when the session
-// was the floor, and with the queue hint or KGSL the reports went against the present period with the frame's GPU time. On a host-DCVS Adreno (830, System Driver v800.72)
+// one capped at 33.3 ms: at 30 fps a frame the controller could only take back to 60 fps once it fits in a vsync. Unset (-1), DM_VK_ADPF_SPAN is 100 when this session
+// is the GPU clock floor (vka_floor_adpf) and 0 otherwise: with the queue hint or KGSL the reports go against the present period with the frame's GPU time. With
+// DM_VK_ADPF_SPAN_ANY=1 (live, default 0; Game settings > Keep GPU clock up) it is 100 whenever any GPU clock floor is on (vka_floor_on: VK_QCOM_queue_perf_hint,
+// the KGSL constraint or this session), and 0 with DM_VK_GPU_FLOOR=0 either way (vkpace_span_pct, vka_pace.h). PR 472 made that the default on 2026-11-18; since 2026-11-21 it
+// is opt-in again, because it keeps the GPU clock higher in menus and idle scenes for every game (572 -> 986 MHz in a menu on the Odin 3): more heat and power. On a host-DCVS Adreno (830, System Driver v800.72)
 // the system caps the GPU from userspace (kgsl-3d0 max_pwrlevel: level 5, 734 MHz, a few seconds after launch, with or without this session) and moves that cap with these
 // reports: 0.3 ms of GPU time against 16.7 ms in a menu walked it down to 389-525 MHz in 5 of 6 runs, and when the game's frames began there it took 39 ms of GPU time, the
 // controller went to 20 fps, and 39 against the new 50 ms target read as on target, so the cap never rose (OoT, 1 run of 6 stuck at 734 MHz for good). The floor itself
 // held: KGSL's "highest" is the cap. Against the shortest period the same frame reads 2-3 times over target (docs/reference/frame-rate.md "The GPU stays at a low clock
 // after a menu: the system's cap, moved by the ADPF reports")
-static int span_pct(void) { int vka_floor_on(void); int p = VKA_ENV("DM_VK_ADPF_SPAN", -1); if (p < 0) p = vka_floor_on() ? 100 : 0; return p <= 0 ? 0 : p > 100 ? 100 : p; }
+static int span_pct(void) { int vka_floor_on(void), vka_floor_adpf(void); return vkpace_span_pct(VKA_ENV("DM_VK_ADPF_SPAN", -1), VKA_ENV("DM_VK_ADPF_SPAN_ANY", 0), vka_floor_on(), vka_floor_adpf()); }
 static int64_t span_target(double period_s, int pct) { (void)period_s; int64_t vka_floor_period_ns(void); return vka_floor_period_ns() * pct / 100; }
 uint64_t vka_floor_span_of(uint64_t f); uint64_t vka_frame_start_ns(uint64_t f); uint64_t now_ns(void);
 static void pace_tick(double period_s);
@@ -168,7 +171,6 @@ void vka_perf_frame(double period_s) {
 // a frame that cannot fit (the span, the recording or the GPU time over the period of the next faster interval) from one held by the clocks: the floor, ADPF, the thermal
 // status (AThermal_getCurrentThermalStatus: 0 none, 1 light, 2 moderate, 3 severe, 4 critical) and the CPU and GPU clocks (cpufreq policies, KGSL: now / cap). The window's rate and the
 // panel's refresh show whether the panel runs below the game's rate (vka_present.c frame_rate, DM_VK_FRAME_RATE_HOLD)
-#include "vka_pace.h"
 void vka_worker_waits(uint64_t *room_ns, uint64_t *sub_ns); uint64_t vka_worker_sub_cpu(void); void mtl_stats(uint64_t *passes, uint64_t *draws);
 const char *vka_floor_state(int *pct, int *res); void vka_present_rates(int *fps, double *hz);
 static int pace_thermal(float *headroom) {   // the thermal status (-1: not available) and the headroom (NaN when the platform has none)

@@ -135,7 +135,8 @@ static int init_once(void) {
     VkApplicationInfo ai = {VK_STRUCTURE_TYPE_APPLICATION_INFO, .pApplicationName = "nxnative", .pEngineName = "nxnative", .apiVersion = VK_API_VERSION_1_3};
     VkInstanceCreateInfo ici = {VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, .pApplicationInfo = &ai, .enabledExtensionCount = niext, .ppEnabledExtensionNames = iext,
                                 .enabledLayerCount = nlayer, .ppEnabledLayerNames = &layer};
-    VkResult r = vk.vkCreateInstance(&ici, NULL, &V.inst);
+    const VkAllocationCallbacks *vka_hostmem_callbacks(void);   // DM_VK_HOSTMEM=1: the driver's host memory counted (vka_hostmem.c); NULL otherwise
+    VkResult r = vk.vkCreateInstance(&ici, vka_hostmem_callbacks(), &V.inst);
     if (r) { VRED("vkCreateInstance %d", r); return 0; }
 #define I(f) vk.f = (PFN_##f)vk.vkGetInstanceProcAddr(V.inst, #f);
     VKA_INSTANCE_FNS(I)
@@ -258,10 +259,11 @@ static int init_once(void) {
     VkDeviceQueueCreateInfo qci = {VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO, .queueFamilyIndex = V.qf, .queueCount = 1, .pQueuePriorities = &prio};
     VkDeviceCreateInfo dci = {VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, .pNext = &f2, .queueCreateInfoCount = 1, .pQueueCreateInfos = &qci, .enabledExtensionCount = ndext, .ppEnabledExtensionNames = dext};
     void vka_kgsl_before(int has_ext), vka_kgsl_after(int has_hint); vka_kgsl_before(x_ph);   // the kernel contexts the device's queue gets (the KGSL floor below)
-    if ((r = vk.vkCreateDevice(V.pd, &dci, NULL, &V.dev))) { VRED("vkCreateDevice %d", r); return 0; }
+    if ((r = vk.vkCreateDevice(V.pd, &dci, vka_hostmem_callbacks(), &V.dev))) { VRED("vkCreateDevice %d", r); return 0; }
 #define D(f) vk.f = (PFN_##f)vk.vkGetDeviceProcAddr(V.dev, #f);
     VKA_DEVICE_FNS(D)
 #undef D
+    void vka_hostmem_install(void); vka_hostmem_install();   // the live objects counted (vka_hostmem.c): first, so the wrappers below call through it
     fp_wrap_compiles();
     vka_shader_pfb_hook();   // (over the FPCR wrapper: the module it makes is the rewritten one)
     if (!vk.vkMapMemory2KHR) vk.vkMapMemory2KHR = (PFN_vkMapMemory2KHR)vk.vkGetDeviceProcAddr(V.dev, "vkMapMemory2");   // core in 1.4
@@ -647,6 +649,7 @@ static pthread_mutex_t g_gmu = PTHREAD_MUTEX_INITIALIZER; static pthread_cond_t 
 static pthread_cond_t g_gidle = PTHREAD_COND_INITIALIZER; static _Atomic int g_gate_pend;   // signaled at each opening; gates added and not yet opened (vka_gate_drain)
 static _Atomic uint64_t g_gate_nw, g_gate_nc, g_gate_nt, g_gate_ns;
 static _Atomic int g_gate_hold;   // the host's own stalls of the present path under way (vka_gate_host_stall, below)
+static _Atomic uint64_t g_gate_call_t, g_gate_last_g, g_gate_last_t; static _Atomic int g_gate_last_why;   // an opening inside the driver's calls since (0: none); the last opened
 static int gate_pred(uint32_t cur, uint32_t mode, uint32_t target) { return mode == 0 ? cur == target : (uint32_t)(cur - target) < 0x80000000u; }
 VkSemaphore vka_gate_sem(void) { return g_gate_up > 0 ? g_gate_sem : VK_NULL_HANDLE; }
 static void gate_ban_locked(const volatile uint32_t *w) {
@@ -658,11 +661,15 @@ int vka_gate_banned(const volatile uint32_t *w) {
 }
 static void gate_open_locked(int why) {   // the oldest gate opens (why: 0 its word, 1 a CPU wait, 2 its time)
     gate_t *x = &g_gate[g_gate_out % NGATE];
+    uint64_t tc = now_ns(); atomic_store(&g_gate_call_t, tc);
     if (x->ev && !vka_hung()) { VkResult re = vk.vkSetEvent(V.dev, x->ev); if (re) VRED_ONCE("gate event set %llu: %d", (unsigned long long)x->g, re); }   // (before the semaphore: the GPU reaches the event's wait only after it)
     VkSemaphoreSignalInfo si = {VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO, .semaphore = g_gate_sem, .value = x->g};
     VkResult r = vka_hung() ? VK_SUCCESS : vk.vkSignalSemaphore(V.dev, &si);
     if (r) VRED_ONCE("gate semaphore signal %llu: %d", (unsigned long long)x->g, r);
-    uint64_t t = now_ns(); g_gate_ns += t > x->t0 ? t - x->t0 : 0;
+    uint64_t t = now_ns(); g_gate_ns += t > x->t0 ? t - x->t0 : 0; atomic_store(&g_gate_call_t, 0);
+    // The GPU-wait trace (vka_worker.c): which rule opened it, how long it held, since when the GPU had done the work before it, the driver calls' time
+    vka_qtrace(QT_GATE_OPEN, (uint64_t)why, x->fence, x->g, (uint32_t)((tc - x->t0) / 1000), x->t_idle ? (uint32_t)((tc - x->t_idle) / 1000) : UINT32_MAX, (uint32_t)((t - tc) / 1000), *x->w, x->w);
+    atomic_store(&g_gate_last_g, x->g); atomic_store(&g_gate_last_t, t); atomic_store(&g_gate_last_why, why);
     if (why == 0) g_gate_nw++; else if (why == 1) g_gate_nc++; else g_gate_nt++;
     if (why == 2) gate_ban_locked(x->w);   // (a CPU wait opens it for that frame only)
     g_gate_out++;
@@ -691,6 +698,32 @@ static void gate_poll_locked(void) {
         }
         break;
     }
+}
+// At a GPU hang (hang_declare): the gates' state, so a loss at a gate says which link held. Ocarina of Time's warm-play losses (Forgejo #409 umbrella: #419 #521 #211
+// #450 on Qualcomm's driver, #59 on PanVK) each came with the frame's queue-1 submission gated and a CPU thread blocked on that gated submission's fence, the GPU done
+// with nothing after the gated part, and the loss when the kernel's GPU timeout ran out (2.0 s on KGSL, 10 s on PanVK; the host's own 6 s on an older system driver).
+// Whether the gate had opened (and by which rule), or was still closed and why its rules did not open it, was not in the logs: this prints it. The gate lock is only
+// tried: a gate thread stuck inside the driver holds it (said so, and read without it)
+void vka_gate_hang_report(void) {
+    if (g_gate_up <= 0) return;
+    int locked = 0; for (int i = 0; i < 50 && !(locked = !pthread_mutex_trylock(&g_gmu)); i++) usleep(1000);
+    uint64_t now = now_ns(), call = atomic_load(&g_gate_call_t), lt = atomic_load(&g_gate_last_t);
+    VRED("GPU hang: gates: %llu made, %llu opened (by their event %llu, by a CPU wait %llu, by their time %llu), %llu pending; the last opened: gate %llu by %s %.1f ms before%s%s",
+         (unsigned long long)g_gate_val, (unsigned long long)g_gate_out, (unsigned long long)g_gate_nw, (unsigned long long)g_gate_nc, (unsigned long long)g_gate_nt,
+         (unsigned long long)(g_gate_in - g_gate_out), (unsigned long long)atomic_load(&g_gate_last_g),
+         (const char *[]){"its event", "a CPU wait", "its time"}[atomic_load(&g_gate_last_why) % 3], lt && now > lt ? (now - lt) / 1e6 : -1.0,
+         locked ? "" : "; the gate lock is held (read without it)", call ? "; an opening is inside the driver's vkSetEvent / vkSignalSemaphore" : "");
+    if (call && now > call) VRED("GPU hang: that opening has been in the driver for %.1f ms", (now - call) / 1e6);
+    for (uint64_t i = g_gate_out, n = 0; i < g_gate_in && n < 4; i++, n++) {
+        const gate_t *x = &g_gate[i % NGATE]; int ban = 0; for (int b = 0; b < g_ngban; b++) ban |= g_gban[b] == x->w;   // (vka_gate_banned takes the lock)
+        VRED("GPU hang: gate %llu (submission %llu) pending: its event %p wants %s %u and holds %u; made %.1f ms before; the GPU had done the work before it (fence %llu, done %llu) %s%.1f ms; "
+             "CPU threads block on fence %llu%s; host stall %d; its time %.0f ms%s",
+             (unsigned long long)x->g, (unsigned long long)x->fence, (const void *)x->w, x->mode ? ">=" : "==", x->value, *x->w, (now - x->t0) / 1e6,
+             (unsigned long long)x->pre, (unsigned long long)vka_done(), x->t_idle ? "for " : "not yet: ", x->t_idle ? (now - x->t_idle) / 1e6 : 0.0,
+             (unsigned long long)vka_worker_cpu_blocked(), x->t_cpu ? " (the CPU-wait rule's 2 ms running)" : "", atomic_load(&g_gate_hold), x->park / 1e6,
+             ban ? "; its word is banned" : "");
+    }
+    if (locked) pthread_mutex_unlock(&g_gmu);
 }
 // The host's own stalls of the present path (vka_gate_host_stall): the game's thread waits for the present thread (vka_present_reserve, 8 frames in flight), so while
 // that thread does long work of the host's (frame generation's chain, vka_framegen.c rebuild: 327 ms at 2560x1440 on the Adreno 740) the CPU cannot reach the signal a
@@ -823,6 +856,7 @@ static void hang_declare(uint64_t want, uint64_t at, double s, const char *what)
     VRED("GPU hang: %s; fence %llu not reached in %.1f s (the timeline at %llu, %llu handed to the queue, %llu reserved): nothing more is submitted, every fence reads as done",
          what, (unsigned long long)want, s, (unsigned long long)at, (unsigned long long)vka_fence_queued(), (unsigned long long)vka_fence_last());
     vka_exec_hang_report(at + 1);
+    vka_gate_hang_report();   // (the gates' state: whether one held the GPU)
     if (!strstr(what, "-4")) vka_exec_hang_parts();   // (the device still answers: which parts the GPU started and finished)
     if (strstr(what, "-4") && !atomic_exchange(&g_fault_reported, 1)) fault_report();   // (a lost device: the driver may know where the GPU faulted)
     if (!VKA_ENV("DM_VK_HANG_EXIT", 1)) { VRED("GPU hang: DM_VK_HANG_EXIT=0, the game runs on without the GPU"); return; }
@@ -1019,7 +1053,7 @@ VkCommandBuffer vka_up_begin(void) {
         unsigned k = g_unext % NUP;   // (16 slots: the backpressure below keeps them mostly done)
         if (g_ub[k].val && !up_wait(g_ub[k].val)) return VK_NULL_HANDLE;   // (its batch still runs: the caller records into the submission)
         g_unext++;
-        vk.vkResetCommandBuffer(g_ub[k].cb, 0);
+        vk.vkResetCommandBuffer(g_ub[k].cb, vka_cb_reset_flags());
         VkCommandBufferBeginInfo bi = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
         if (vk.vkBeginCommandBuffer(g_ub[k].cb, &bi)) return VK_NULL_HANDLE;
         g_ui = (int)k;
@@ -1351,7 +1385,7 @@ static int floor_top(void) { int s = VKA_ENV("DM_VK_GPU_FLOOR", 100); return s <
 // the game could run at. Before 2026-11-05 there was no floor at all there: on Turnip DKB stayed at 20 fps with 33-36 ms of GPU time a frame, as the system driver did with
 // DM_VK_GPU_FLOOR=0. It has no level: DM_VK_GPU_FLOOR > 0 turns it on, 0 off, as does DM_VK_GPU_FLOOR_ADPF=0 (live); DM_VK_ADPF_SPAN set explicitly decides the reports. On the Adreno 840 with Turnip it did not raise the GPU clock (282-646 MHz, mean 380; 2026-11-05)
 int vka_floor_adpf(void) { return !V.perf_hint && !g_kg_n && floor_top() > 0 && VKA_ENV("DM_VK_GPU_FLOOR_ADPF", 1); }
-int vka_floor_on(void) { return floor_top() > 0 && (V.perf_hint || g_kg_n || vka_floor_adpf()); }   // any GPU clock floor (vka_perf.c: the ADPF reports then aim at the shortest period)
+int vka_floor_on(void) { return floor_top() > 0 && (V.perf_hint || g_kg_n || vka_floor_adpf()); }   // any GPU clock floor (vka_perf.c: with DM_VK_ADPF_SPAN_ANY=1 the ADPF reports then aim at the shortest period)
 int vka_floor_tail_add(void) { if (floor_mode() != 2) return 0; atomic_fetch_add(&g_tail_n, 1); return 1; }   // vka_exec.c, a submission with draws: 1 = counted
 void vka_floor_commit(int counted) { if (counted) floor_set_(floor_top(), 1, 0); }   // before that submission is handed to the queue
 void vka_floor_done(int counted) {     // the completion thread, that submission done

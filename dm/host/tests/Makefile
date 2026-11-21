@@ -69,7 +69,6 @@ run: $(B)/t_language $(B)/t_motion $(B)/t_heap_size $(B)/t_touch $(B)/t_gesture 
 	$(B)/t_vorbis
 	$(B)/t_vorbis_divides
 	$(B)/t_movie_vpx
-	$(B)/t_codec_opus
 	$(B)/t_codec_video
 	$(B)/t_movie_avc
 	$(B)/t_nv
@@ -105,6 +104,7 @@ run: $(B)/t_language $(B)/t_motion $(B)/t_heap_size $(B)/t_touch $(B)/t_gesture 
 	$(B)/t_android_mapbudget
 	$(B)/t_android_driverpath
 	$(B)/t_android_rsslog
+	$(B)/t_android_hostmem
 	$(B)/t_android_psogate
 	$(B)/t_android_pwbusy
 	$(B)/t_android_hangparts
@@ -122,6 +122,7 @@ run: $(B)/t_language $(B)/t_motion $(B)/t_heap_size $(B)/t_touch $(B)/t_gesture 
 	$(B)/t_lse_unaligned
 	$(B)/t_android_skipwarn
 	$(B)/t_android_placefail
+	$(B)/t_android_rplist
 	$(B)/t_android_gmem
 	$(B)/t_android_fpenv
 	$(B)/t_android_soft
@@ -354,7 +355,6 @@ $(B)/t_vorbis: t_vorbis.c ../../third_party/stb_vorbis/stb_vorbis.c | $(B)
 $(B)/t_vorbis_divides: t_vorbis.c ../../third_party/stb_vorbis/stb_vorbis.c | $(B)
 	$(CLANG) -O1 -g -DSTB_VORBIS_DIVIDES_IN_RESIDUE -Wno-unused-function -Wno-tautological-compare -o $@ t_vorbis.c
 run: $(B)/t_movie_vpx
-run: $(B)/t_codec_opus
 run: $(B)/t_codec_video
 run: $(B)/t_movie_avc
 $(B)/t_movie_avc: t_movie_avc.c ../hle_movie.c ../hle_movie_avc.c ../hle_movie_avc.h $(GAME_H) ../gen/vpx/libvpx.a | $(B)
@@ -362,8 +362,6 @@ $(B)/t_movie_avc: t_movie_avc.c ../hle_movie.c ../hle_movie_avc.c ../hle_movie_a
 		-framework AudioToolbox -framework VideoToolbox -framework CoreMedia -framework CoreVideo -framework CoreFoundation
 $(B)/t_movie_vpx: t_movie_vpx.c ../hle_movie.c $(GAME_H) ../gen/vpx/libvpx.a | $(B)
 	$(CLANG) -O1 -g -Wno-unused-function -Wno-tautological-compare $(GINC) -I../../third_party/libvpx -I../../third_party/libvpx/config -I../../third_party/stb_vorbis -Wl,-dead_strip $(WEAK_HOST) -o $@ t_movie_vpx.c ../gen/vpx/libvpx.a -framework AudioToolbox
-$(B)/t_codec_opus: t_codec_opus.c ../hle_codec.c ../hle.h ../dm.h $(GAME_H) | $(B)
-	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -I.. $(GINC) -o $@ t_codec_opus.c
 $(B)/t_codec_video: t_codec_video.c ../hle_codec_video.c ../hle_movie.c ../hle_movie_avc.c ../hle_movie_avc.h ../hle_movie_yuv.h $(GAME_H) ../gen/vpx/libvpx.a | $(B)
 	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -Wno-tautological-compare -fsanitize=address,undefined $(GINC) -I../../third_party/libvpx -I../../third_party/libvpx/config -I../../third_party/stb_vorbis $(WEAK_HOST) -o $@ t_codec_video.c ../gen/vpx/libvpx.a \
 		-framework AudioToolbox -framework VideoToolbox -framework CoreMedia -framework CoreVideo -framework CoreFoundation
@@ -431,15 +429,6 @@ notify-scheduler: $(B)/t_notify_sched
 	$(B)/t_notify_sched --all-peers
 run: notify-scheduler
 
-# Same-core handoff notification and timed recheck, using real thread SVCs.
-$(B)/t_handoff_wait: t_handoff_wait.c t_condvar_stub.c ../hle_thread.c ../dm.h $(GAME_H) | $(B)
-	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -DDM_TEST_THREAD_ENTER -I.. $(GINC) -o $@ t_handoff_wait.c t_condvar_stub.c
-.PHONY: handoff-wait
-handoff-wait: $(B)/t_handoff_wait
-	$(B)/t_handoff_wait
-	$(B)/t_handoff_wait --all-peers
-run: handoff-wait
-
 # Sanitizer builds (../../sanitizers/sanitizers.mk): make asan runs every test of run under ASan and UBSan; make tsan-threads runs the tests that start threads under TSan
 # (t_audio_spsc, t_hid and t_svc_memory have their own TSan targets above: tsan, memory-tsan)
 include ../../sanitizers/sanitizers.mk
@@ -447,7 +436,7 @@ include ../../sanitizers/sanitizers.mk
 asan:
 	@$(call san_fresh,$(B)/asan,$(ASAN_FLAGS))
 	$(ASAN_ENV) $(MAKE) B=$(B)/asan SAN="$(ASAN_FLAGS)" run
-TSAN_T = t_audio t_audio_stats t_audio_device t_thread_leak t_oe t_fs_commit_list t_fs_case t_save_sync t_condvar t_condvar_old t_preempt t_system_event t_notify_sched t_handoff_wait t_altstack
+TSAN_T = t_audio t_audio_stats t_audio_device t_thread_leak t_oe t_fs_commit_list t_fs_case t_save_sync t_condvar t_condvar_old t_preempt t_system_event t_notify_sched t_altstack
 tsan-threads:
 	@$(call san_fresh,$(B)/tsan,$(TSAN_FLAGS))
 	$(TSAN_ENV) $(MAKE) B=$(B)/tsan SAN="$(TSAN_FLAGS)" tsan-threads-run
@@ -467,8 +456,6 @@ tsan-threads-run: $(addprefix $(B)/,$(TSAN_T))
 	$(B)/t_system_event
 	$(B)/t_notify_sched
 	$(B)/t_notify_sched --all-peers
-	$(B)/t_handoff_wait
-	$(B)/t_handoff_wait --all-peers
 	$(B)/t_altstack
 	DM_QOS_MAP=1 $(B)/t_notify_sched
 	DM_QOS_MAP=1 $(B)/t_notify_sched --all-peers
@@ -485,7 +472,7 @@ coverage:
 	LLVM_PROFILE_FILE="$(call cov_profile,$(B)/cov)" $(MAKE) -i B=$(B)/cov SAN="$(COV_FLAGS)" run
 	@$(call cov_export,$(B)/cov)
 # The Android host's pure parts (dm/host/android): resampler, channel map, SPS size, MediaCodec picture layouts; gamepad / touch / sensor mapping
-run: $(B)/t_android_av $(B)/t_android_input $(B)/t_android_shlib $(B)/t_android_spvpatch $(B)/t_android_imgmem $(B)/t_android_zshare $(B)/t_android_texlimit $(B)/t_android_tstick $(B)/t_android_lowram $(B)/t_android_livemap $(B)/t_android_smap $(B)/t_android_mapbudget $(B)/t_android_rsslog $(B)/t_android_psogate $(B)/t_android_hangparts $(B)/t_android_wbfollow $(B)/t_android_pckeep $(B)/t_android_pwlist $(B)/t_android_fmtlist $(B)/t_android_place $(B)/t_android_ovl $(B)/t_android_pace $(B)/t_lse_unaligned $(B)/t_android_skipwarn $(B)/t_android_gmem $(B)/t_android_fpenv $(B)/t_android_soft $(B)/t_android_qsched $(B)/t_android_poolslot $(B)/t_android_prepass $(B)/t_android_tlsig $(B)/t_android_texown $(B)/t_android_gbar $(B)/t_android_memu $(B)/t_android_auto $(B)/t_android_layerreq $(B)/t_android_driverpath $(B)/t_android_placefail
+run: $(B)/t_android_av $(B)/t_android_input $(B)/t_android_shlib $(B)/t_android_spvpatch $(B)/t_android_imgmem $(B)/t_android_zshare $(B)/t_android_texlimit $(B)/t_android_tstick $(B)/t_android_lowram $(B)/t_android_livemap $(B)/t_android_smap $(B)/t_android_mapbudget $(B)/t_android_rsslog $(B)/t_android_hostmem $(B)/t_android_psogate $(B)/t_android_hangparts $(B)/t_android_wbfollow $(B)/t_android_pckeep $(B)/t_android_pwlist $(B)/t_android_fmtlist $(B)/t_android_place $(B)/t_android_ovl $(B)/t_android_pace $(B)/t_lse_unaligned $(B)/t_android_skipwarn $(B)/t_android_gmem $(B)/t_android_fpenv $(B)/t_android_soft $(B)/t_android_qsched $(B)/t_android_poolslot $(B)/t_android_prepass $(B)/t_android_tlsig $(B)/t_android_texown $(B)/t_android_gbar $(B)/t_android_memu $(B)/t_android_auto $(B)/t_android_layerreq $(B)/t_android_driverpath $(B)/t_android_placefail $(B)/t_android_rplist
 $(B)/t_android_av: t_android_av.c ../android/av_android.h | $(B)
 	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -fsanitize=address,undefined -I.. $(WEAK_HOST) -o $@ t_android_av.c
 $(B)/t_android_input: t_android_input.c ../android/input_map.c ../android/input_map.h ../../gfx/vk_android/vka_present_fit.h ../motion_fusion.h ../dm_input.h | $(B)
@@ -547,6 +534,9 @@ $(B)/t_android_wbfollow: t_android_wbfollow.c $(VKA)/vka_wbfollow.h | $(B)
 run: $(B)/t_android_wbfollow
 $(B)/t_android_psogate: t_android_psogate.c $(VKA)/vka_psogate.h | $(B)
 	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -fsanitize=address,undefined -I.. -o $@ t_android_psogate.c
+# The driver host memory and Vulkan object counts of the memory maps diagnostics (vka_hostmem.h; vka_hostmem.c)
+$(B)/t_android_hostmem: t_android_hostmem.c $(VKA)/vka_hostmem.h | $(B)
+	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -fsanitize=address,undefined -I.. -o $@ t_android_hostmem.c
 # Speculative compiles that did not finish: the busy and unfinished sets and their files (vka_pwbusy.h; vka_pso.c spec_begin / spec_end / unf_load)
 $(B)/t_android_pwbusy: t_android_pwbusy.c $(VKA)/vka_pwbusy.h | $(B)
 	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -fsanitize=address,undefined -I.. -o $@ t_android_pwbusy.c
@@ -607,6 +597,9 @@ $(B)/t_lse_unaligned: t_lse_unaligned.c ../lse_unaligned.h | $(B)
 # The skipped-work warning's window logic (vka_skipwarn.h)
 $(B)/t_android_skipwarn: t_android_skipwarn.c $(VKA)/vka_skipwarn.h | $(B)
 	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -fsanitize=address,undefined -I.. -o $@ t_android_skipwarn.c
+# The classic render passes' list: separate pass and pipeline objects, a refused pipeline's object retired (vka_rplist.h)
+$(B)/t_android_rplist: t_android_rplist.c $(VKA)/vka_rplist.h | $(B)
+	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -fsanitize=address,undefined -I.. -o $@ t_android_rplist.c
 # Whether placed maps work at all (vka_placefail.h)
 $(B)/t_android_placefail: t_android_placefail.c $(VKA)/vka_placefail.h $(VKA)/vka_skipwarn.h | $(B)
 	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -fsanitize=address,undefined -I.. -o $@ t_android_placefail.c

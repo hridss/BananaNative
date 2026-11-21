@@ -43,10 +43,12 @@ Which games recommend what is on each game's page in [Games](Games).
 | Section | Row | What it is |
 |---|---|---|
 | Updates | **Check for updates** | shows the version; see [Updates](Updates) |
-| Updates | **Small fix updates** | on: the app offers small fix releases when it starts; off: only big (major) and critical updates; see [Updates](Updates#big-updates-and-small-fixes-0342) |
+| Updates | **Update channel** | **Stable** (weekly releases and critical fixes, the default), **Hotfix** (also the small fixes between the weekly ones) or **Preview** (also early builds of bigger changes, for testers); see [Updates](Updates#update-channels-stable-and-hotfix) |
+| Updates | **Back up saves before updating** | on (default): before an in-app update installs, every changed save is copied to `save-backups/<title ID>/` next to your games, outside the app's storage; see [Updates](Updates#back-up-saves-before-updating) |
 | Updates | **Player wiki** | opens this wiki in the browser; the same button is in Home's header, left of Settings |
-| Appearance | **Language** (the app's own language: Spanish, Turkish, Chinese, French, Arabic, Polish, Korean, Ukrainian, German, Italian; machine translated, not yet reviewed; "System default" follows the phone), **Theme** (light, dark or the phone's), **Background**, **Home layout** (sideways tiles, a grid with names, or a list), **UI sounds**, **My sound** | the launcher's look: bananas, your own picture, a tick when the focus moves |
+| Appearance | **Language** (the app's own language: Spanish, Turkish, Chinese (Simplified and Traditional), French, Arabic, Polish, Korean, Ukrainian, German, Italian; machine translated, not yet reviewed; "System default" follows the phone), **Theme** (light, dark or the phone's), **Background**, **Home layout** (sideways tiles, a grid with names, or a list), **UI sounds**, **My sound** | the launcher's look: bananas, your own picture, a tick when the focus moves |
 | Display | **Overlay** | the text over the game: [Settings: Performance](Settings-Performance#overlay) |
+| Display | **Show startup log** | on: the boot log shows over the black screen until the game draws its first frame; off: one "starting" line instead. Crashes still show either way, and the log is always saved ([Troubleshooting](Troubleshooting)). Default off |
 | Display | **Screen rotation** | [Settings: Controls](Settings-Controls) |
 | Controls | **On-screen controls**, **Show / hide button**, **Controller: in-game panel**, **Rumble**, **Xbox button label swap**, **Button mapping** | [Settings: Controls](Settings-Controls) |
 | Defaults for all games (closed group; tap to open; each game's page can override them) | **Resolution**, **Frame rate cap**, **Use fast cores**, **Upscaler**, **FSR sharpness**, **Dynamic resolution** | [Settings: Performance](Settings-Performance) |

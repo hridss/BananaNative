@@ -83,6 +83,7 @@ Keyboard in a window: J K U I are A B X Y, WASD the left stick, Shift + arrows t
 - [The present's scaling of the window to the screen](../../../docs/reference/frame-rate.md#the-presents-scaling-of-the-window-to-the-screen-one-pass-or-the-displays-own-scaler): FSR 1 at the present on every image, generated frames included; the Screen scaling row (Bicubic, SGSR 1, Device).
 - [An update's code beside another release's RomFS](../../../docs/reference/packing.md#an-updates-code-beside-another-releases-romfs-a-null-read-at-the-first-game-frame-forgejo-417): #417, `base/romfs` under 131072's code at the first game frame; the profile's `romfs_check` on `Fs.bin.zst` now refuses another release (likely cause, not proven).
 - [A skipped compute dispatch of work the game does once stays undone](../../../docs/reference/rendering.md#a-skipped-compute-dispatch-of-work-the-game-does-once-stays-undone-android): a black sky in the first dialogue after the opening on a cold start (Thor, Turnip T30), right after a restart.
+- [A code update of a pack with an older library forced the whole shader build](../../../docs/reference/shaders.md#a-code-update-of-a-pack-with-an-older-library-forced-the-whole-shader-build-android): the launcher offered only 16,888 shaders for a code update (resolved, not run on a phone yet).
 
 ## Android
 

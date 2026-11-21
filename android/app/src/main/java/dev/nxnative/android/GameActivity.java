@@ -3,6 +3,7 @@ package dev.nxnative.android;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Context;
+import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.content.res.Configuration;
 import android.graphics.Color;
@@ -100,6 +101,13 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
         setShowWhenLocked(true);
         setTurnScreenOn(true);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        // A screen created for another game in a process whose host runs one (RunGuard): it shows the running game, with the same "stop it first" as onNewIntent,
+        // never Native.load of the other title or attach() to a host that is not the one asked for
+        Intent otherAsked = null;
+        if (RunGuard.otherRunning(hostRunning, runIntent != null ? runIntent.getStringExtra("title_id") : null, getIntent().getStringExtra("title_id"))) {
+            otherAsked = getIntent();
+            setIntent(runIntent);
+        }
         // This game's own host (libnxhost_<title ID>.so, with its profile compiled in): a game this APK has no profile for gets a sentence, not a crash
         String id = String.valueOf(getIntent().getStringExtra("title_id"));
         // The run's exit record and the uncaught-exception handler (ExitWatch): first, so even a failure below reaches the launcher's notice. A new record only for a new run
@@ -197,7 +205,7 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
         // The host starts once per process. A screen created again while it runs (Android recreated the activity: "Don't keep activities", a font or language
         // change while in the background) takes its window over; a screen restored into a new process (Android ended the old one while it was in the background)
         // has no game to show: the game was stopped, and the user starts it again
-        if (hostRunning) attach();
+        if (hostRunning) { attach(); if (otherAsked != null) otherRunning(otherAsked); }
         else if (saved == null) start();
         else {
             String why = ExitWatch.restoredCause(this);   // what Android said about the end, told here once (the launcher does not tell it again)
@@ -255,8 +263,13 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
     private boolean overlayOn() { return !clean && (overlayEnv != null ? overlayEnv : Prefs.overlay(this)); }
 
     private boolean logOverlayVisible() {
-        return !clean && ((!drawing && Prefs.startupLog(this)) || failed || TouchControls.showLog(this));
+        return !clean && (!drawing || failed || TouchControls.showLog(this));
     }
+
+    /** The overlay shows the log's tail (Show startup log, the touch controls' log switch, or a failure); otherwise, until the first frame, one "starting" line */
+    private boolean fullLog() { return failed || Prefs.startupLog(this) || TouchControls.showLog(this); }
+    /** The game's name for the "starting" line */
+    private String bootName = "";
 
     /** The panel's one-tap clean picture: stats, tag, log, touch controls and the panel arrow, saved as one flag. The overlay and log settings are left
      *  alone (the host's present stops drawing because overlayOn() is false); Back / Home still opens the menu and the panel from it, where the same button restores them. */
@@ -430,6 +443,9 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
             File root = game.getAbsoluteFile().getParentFile();
             for (String x : new String[] {".old", ".pend1", ".pend2"})   // a commit was interrupted: the host finishes it at mount (plat_swap_recover), before anything is migrated or seeded
                 if (new File(dir.getPath() + x).exists()) { saveHow = "recovering"; return dir; }
+            // A save folder that is there but the app cannot list or write (made or replaced outside the app) stops the start: the fallback below would play an
+            // empty folder instead, and the real save would look deleted (issues 428, 451)
+            if (GameFile.saveLocked(dir.isDirectory(), dir.list() != null, dir.canWrite())) throw new SaveLocked(GameFile.saveLockedText(dir.getPath()));
             if (!dir.isDirectory() && !dir.mkdirs() || !dir.canWrite()) throw new IOException("cannot create " + dir);
             if (chosen != null) { saveHow = isEmpty(dir) ? "chosen, new" : "chosen"; return dir; }
             if (!isEmpty(dir)) { saveHow = "existing"; return dir; }
@@ -438,6 +454,7 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
             if (!isEmpty(seed)) { copyTree(seed, dir); saveHow = "seeded"; return dir; }
             return dir;
         } catch (IOException | RuntimeException e) {
+            if (e instanceof SaveLocked) throw (SaveLocked) e;
             saveNote = "save folder " + dir + " unusable (" + e.getMessage() + "), using the app's private folder";
             saveHow = isEmpty(priv) ? "new" : "existing";
             return mkdirs(priv);
@@ -466,6 +483,12 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
             default:   // the app has a save already, or there is none to copy
                 return app;
         }
+    }
+
+    /** A save folder the app cannot use (GameFile.saveLocked): the start stops with its sentence, never falling back to another folder */
+    private static final class SaveLocked extends IOException {
+        private static final long serialVersionUID = 1L;
+        SaveLocked(String m) { super(m); }
     }
 
     private static boolean isEmpty(File d) { String[] l = d.list(); return l == null || l.length == 0; }
@@ -548,6 +571,7 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
         if (xb == 2) env.add("DM_PAD_LABELLED=2");
         if (Prefs.instancedDraws(this, id)) env.add("DM_VK_INSTANCE=1");   // Game settings › Instanced draws
         if (Prefs.classicPasses(this, id)) env.add("DM_VK_CLASSIC_RP=1");   // Game settings › Classic render passes
+        if (Prefs.keepGpuUp(this, id)) env.add("DM_VK_ADPF_SPAN_ANY=1");   // Game settings › Keep GPU clock up (off: the ADPF reports keep the span only for the ADPF floor)
         if (!Prefs.layerBuild(this, id)) env.add("DM_VK_LAYER=0");   // Game settings › Shaders while playing off: no run-time shader layer (the game then needs a library, as before)
         if (Prefs.skipLayersGame(id) && Prefs.skipLayers(this, id)) env.add("DM_VK_SKIP_FS=" + Prefs.skipLayersKeys(id));   // Game settings › Speedhack: Turn off hidden layers
         if (Prefs.fp16(this, id)) { env.add("TU_DEBUG=fp16"); env.add("FD_MESA_DEBUG=fp16"); }   // Game settings › Fast FP16 shader math
@@ -758,6 +782,7 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
 
     private void start() {
         String id = getIntent().getStringExtra("title_id"), name = getIntent().getStringExtra("name");
+        bootName = name != null && !name.isEmpty() ? name : String.valueOf(id);
         File game = new File(getIntent().getStringExtra("game")), packDir = new File(getIntent().getStringExtra("pack"));
         File files = getExternalFilesDir(null);
         try {
@@ -887,6 +912,7 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
             // Read once the game has run a while (the host finds the game's limiter after it starts); the in-game panel updates it too
             ui.postDelayed(this::noteOwnRate, 30000);
             hostRunning = true;
+            runIntent = new Intent(getIntent());
             if ("java".equals(testCrash)) { Native.note("[RED] DM_TEST_CRASH=java: an exception on the main thread in 10 s"); ExitWatch.testCrash(ui); }   // =native: nxlaunch.c
             if (readinessLine != null) Native.note(readinessLine + (triedAnyway ? "; the player chose Try anyway" : ""));   // the readiness check (readinessHold)
             Native.note("[nxlaunch] game: " + game + (nupFd >= 0 ? " (.nup used where it is, descriptor " + nupFd + ")" : Nup.isNup(game) ? " (.nup)" : " (folder)") + ", DM_ROMFS " + romfs
@@ -920,7 +946,7 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
             input = Native.hasInput();
             started = true;
             hostSetup();
-            overlay.setText(Tx.s(R.string.game_name_starting_log, name, log));
+            overlay.setText(fullLog() ? Tx.s(R.string.game_name_starting_log, name, log) : Tx.s(R.string.game_name_starting, bootName));
             ui.postDelayed(this::tail, 500);
             ui.postDelayed(this::fpsTick, 500);
         } catch (IOException | RuntimeException e) {
@@ -930,6 +956,8 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
 
     /** Native.start returned 0 in this process: the game runs (until the process ends), and a new screen attaches to it instead of starting it */
     private static boolean hostRunning;
+    /** The intent of the screen that started the host: a screen created in this process for another game shows this one instead (RunGuard) */
+    private static Intent runIntent;
     /** The run's DM_VK_STRETCH (Game settings › Display, the in-game panel) and DM_VK_PICTURE_SIZE, as the host has them now, for a screen that attaches to the running game */
     private static boolean runStretch;
     private static int runPictureSize = PictureFit.SIZE_MAX;
@@ -1041,11 +1069,30 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
                 .setPositiveButton(android.R.string.ok, (d, w) -> end()).setCancelable(false).show();
     }
 
-    private void end() {
-        ExitWatch.stopped();
+    void end() {
+        ExitWatch.stopped();   // first, as before: the launcher never takes this end for an unexpected one
         backToFrontend();
-        finish();
-        // On its own handler: onDestroy clears ui's callbacks
+        finishAndRemoveTask();   // the game's own task (taskAffinity <application ID>.game) leaves Recents with it
+        endProcess();   // now, not at onDestroy: Android may hold a finishing screen's destroy until the next one is idle
+    }
+
+    /** Stop (the in-game panel): as the player asked, the game ends with its screen */
+    void stop() {
+        Native.note("stopped by the user");
+        end();
+    }
+
+    /**
+     * The game ends with its screen: end() (Stop, Back at a start that cannot go on) and onDestroy of a screen that goes for good (RunGuard.endsProcess: any
+     * other finish, such as its task removed from Recents or a system finish). The process ends as Stop always ended it, so no host runs on without a screen
+     * (holding the save's lock and its memory, and catching the next Play of another game: Native.load refuses it). Saves are as safe as at Stop: each commit is
+     * journaled by the host (plat_android.c) and recovered at the next start (SaveStore.recover). Home's card comes back to Recents (GameReturn.homeInRecents)
+     * for a frontend's game, whose end shows no Home to do it. Twice (end(), then its onDestroy) is harmless
+     */
+    private void endProcess() {
+        ExitWatch.stopped();   // once per process: the player's end, not one to tell as unexpected
+        GameReturn.homeInRecents(this, true);
+        // On its own handler: onDestroy clears ui's callbacks. The delay lets Android take the finish first, as end() always did
         new Handler(Looper.getMainLooper()).postDelayed(() -> android.os.Process.killProcess(android.os.Process.myPid()), 300);
     }
 
@@ -1055,7 +1102,7 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
     /**
      * The screen goes (Stop, or Android recreating the activity while the game runs, which then attaches a new one): what hostSetup registered is let go, and the
      * overlay and log loops stop, so a screen created again does not double them (two deviceAdded per pad, two route resets per change) or keep this one alive.
-     * The game itself is left as it is: onStop has suspended it
+     * A screen recreated leaves the game as it is (onStop has suspended it); a screen that goes for good ends the process (endProcess)
      */
     private Runnable lsfgFollow;   // stops Lsfg.follow (frame generation's choices following the screen while the game runs)
 
@@ -1073,7 +1120,9 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
             if (focus != null) audio.abandonAudioFocusRequest(focus);
             if (route != null) { audio.unregisterAudioDeviceCallback(route); route = null; }
         }
+        boolean ends = RunGuard.endsProcess(isFinishing(), isChangingConfigurations());
         super.onDestroy();
+        if (ends) endProcess();
     }
 
     /** Play on another game while this one runs reaches this activity (singleTask, the same :game process): this game stays, and the user is told to stop it first */
@@ -1081,6 +1130,11 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
         super.onNewIntent(i);
         String want = i.getStringExtra("title_id"), have = getIntent().getStringExtra("title_id");
         if (want == null || want.equals(have)) return;
+        otherRunning(i);
+    }
+
+    /** Another game asked for (i) while this one runs: this game stays, and the user is told to stop it first */
+    private void otherRunning(Intent i) {
         new AlertDialog.Builder(this).setTitle(Tx.s(R.string.err_name_is_running, getIntent().getStringExtra("name")))
                 .setMessage(Tx.s(R.string.err_stop_it_first_then_start, i.getStringExtra("name")))
                 .setPositiveButton(android.R.string.ok, null).show();
@@ -1191,7 +1245,7 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
             String[] lines = text.split("\n");
             StringBuilder s = new StringBuilder();
             for (int i = Math.max(from > 0 ? 1 : 0, lines.length - 8); i < lines.length; i++) s.append(lines[i]).append('\n');
-            overlay.setText(s.toString().trim());
+            overlay.setText(fullLog() ? s.toString().trim() : Tx.s(R.string.game_name_starting, bootName));
         } catch (IOException ignored) { /* next time */ }
         ui.postDelayed(this::tail, 1000);
     }
@@ -1287,7 +1341,7 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
             if (order != null && order.plays(d.getKey()) && d.getValue().length > 0) Native.axes(d.getKey(), d.getValue(), new float[d.getValue().length]);
     }
 
-    /** The in-game panel's Pause */
+    /** The in-game menu's Pause */
     void pause() {
         if (!started || paused) return;
         paused = true;
@@ -1298,7 +1352,11 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
         pausedView.setVisibility(View.VISIBLE);
     }
 
-    private void unpause() {
+    /** The game is paused (the in-game menu offers Resume instead of Pause) */
+    boolean paused() { return paused; }
+
+    /** Continues a paused game: a tap on Paused, A or Start, or the in-game menu's Resume */
+    void unpause() {
         if (!paused) return;
         paused = false;
         pausedView.setVisibility(View.GONE);
@@ -1367,6 +1425,7 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
     }
     @Override protected void onResume() {
         super.onResume();
+        GameReturn.homeInRecents(this, false);   // one card in Recents while the game shows: the game's (Home puts its own back when it shows)
         resumedNow = true;   // also before the start: start() can come after the first onResume (the readiness check), and hostSetup() then starts the sensors
         if (!started) return;
         Native.lifecycle(3);
@@ -1520,7 +1579,7 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
 
 
     /**
-     * Back (the phone's button or its edge swipe) opens the in-game menu (SidePanel.openMenu: Pause, the panel's tabs, Stop) and closes the menu or the panel;
+     * Back (the phone's button or its edge swipe) opens the in-game menu (SidePanel.openMenu: Pause or Resume, the four sections, Stop) and goes one level up in it (SidePanel.back);
      * while the controller applet's join screen shows, it cancels that
      */
     @SuppressWarnings("deprecation")

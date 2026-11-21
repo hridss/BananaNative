@@ -618,6 +618,7 @@ static VkPipeline full_pipeline(pstate *P, vka_shader *const sh[VKA_NSTAGE], con
     if (r) { p = VK_NULL_HANDLE; g_nfail++; } else { g_ngfx++; g_made++; if (!how) g_frame_made++; }
     g_create_ms += ms_; if (!how) g_create_ns += dns;   // made in the background or by prewarm: not the frame's time
     pthread_mutex_unlock(&g_mu);
+    if (r < 0) vka_rp_refused(P->ci.renderPass, r);   // classic render passes: that render pass is given to no later pipeline (VK_NULL_HANDLE with dynamic rendering: nothing)
     if (!how && !r && ms_ > 1000) vka_pso_save(2);   // a slow one on the frame path: saved within seconds, not at the next submission (see vka_pso_save)
     const vka_shader *pre = P->mesh ? sh[7] : sh[0];   // the vertex shader, or a mesh pipeline's mesh shader
     if (r) {   // every stage named: a geometry or tessellation shader in the pipeline is as likely to be the one the driver's compiler refused (DKB's terrain pipeline, 2026-11-07)
@@ -1427,6 +1428,7 @@ static gval *gfx_obtain(const gkey_full *fk, uint64_t h, size_t len, vka_shader 
             VkResult r = vk.vkCreateGraphicsPipelines(V.dev, g_pc, 1, &P->ci, NULL, &p);
             uint64_t dns = now_ns() - t0;
             if (r != VK_SUCCESS) p = VK_NULL_HANDLE;
+            if (r < 0) vka_rp_refused(P->ci.renderPass, r);   // (a refusal, not VK_PIPELINE_COMPILE_REQUIRED)
             pthread_mutex_lock(&g_mu);
             if (p) { g_ngfx++; g_made++; g_frame_made++; g_probe_hit++; g_create_ms += dns / 1e6; } else { g_probe_miss++; g_probe_miss_ns += dns; }
             g_create_ns += dns;
@@ -1466,6 +1468,7 @@ static void gfx_build(gval *g, size_t len, vka_shader *const sh[VKA_NSTAGE], con
             VkResult r = vk.vkCreateGraphicsPipelines(V.dev, g_pc, 1, &P->ci, NULL, &p);
             build_end(bs);
             P->ci.flags &= ~VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT;
+            if (r < 0) vka_rp_refused(P->ci.renderPass, r);   // (a refusal, not VK_PIPELINE_COMPILE_REQUIRED)
             uint64_t dns = now_ns() - t0;
             if (r == VK_SUCCESS && p) { pthread_mutex_lock(&g_mu); g_ngfx++; g_made++; g_frame_made++; g_probe_hit++; g_create_ms += dns / 1e6; g_create_ns += dns; pthread_mutex_unlock(&g_mu); }
             else {

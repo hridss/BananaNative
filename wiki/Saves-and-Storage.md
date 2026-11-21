@@ -30,6 +30,7 @@ A game's save is in `Android/data/<app>/files/saves/<title ID>` (and its device 
 - **Back up saves** (game's ... button): copies the save into a new folder named by date and time and checks every file. Without All files access, or for a copied game or a `.nup`, it exports a `.zip` to a place you pick and checks it; a copy also stays in the app's storage (deleted with the app's data).
 - **Restore saves**: lists the backups the app can see, newest first. Before replacing anything the app backs up the current save (a backup ending in `-before-restore`), so a restore can be undone.
 - **Import save**: takes **A .zip (from Back up saves, or a zipped save folder)** or **A save folder**. The current save is backed up first; a file that cannot be read as a save changes nothing.
+- **Before an app update:** with Settings > **Updates** > **Back up saves before updating** on (the default) and All files access allowed, the app backs up every changed save of every game and user first (backups ending in `-before-update`). See [Updates](Updates#back-up-saves-before-updating).
 - **Save folder gone:** if a folder you picked was deleted or moved, the card says **Save folder gone**; choose **Use the app's save** or **Pick the folder** again.
 
 ## Moving saves
@@ -40,7 +41,7 @@ A game's save is in `Android/data/<app>/files/saves/<title ID>` (and its device 
 
 ## What uninstalling deletes
 
-The app's data, `Android/data/<app>/files`, holds `saves/`, `packs/` and `games/` (copied games). On uninstall Android asks whether to keep it; if you don't, all of it is deleted. Kept either way: your dumps and `.nup` files, and save backups made with All files access in `save-backups/<title ID>/`. **Back up your saves before uninstalling.**
+The app's data, `Android/data/<app>/files`, holds `saves/`, `packs/` and `games/` (copied games). On uninstall Android asks whether to keep it; if you don't, all of it is deleted. Kept either way: your dumps and `.nup` files, and save backups made with All files access in `save-backups/<title ID>/`. **Back up your saves before uninstalling.** Going back to an older version: [Going back to an older version](Going-Back-to-an-Older-Version).
 
 ## Packs
 

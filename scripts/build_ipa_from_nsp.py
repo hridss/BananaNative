@@ -475,9 +475,8 @@ def check_versions_aarch64(dirs, logs, g, name):   # every extracted version of 
 
 def survey_nros(folder):
     """{name: path} of the NRO files the survey's manifest pass copied into folder. Files only: The Binding of Isaac: Afterbirth+ keeps its two NROs in a RomFS folder
-    that is itself named `.nro`, which rglob('*.nro') matches too, and the survey then read a folder as a module (IsADirectoryError). AppleDouble `._<name>.nro` sidecars,
-    which macOS writes on an exFAT or FAT drive, are no modules either"""
-    return {p.name: p for p in sorted(Path(folder).rglob('*.nro')) if not p.name.startswith('._') and p.is_file()}
+    that is itself named `.nro`, which rglob('*.nro') matches too, and the survey then read a folder as a module (IsADirectoryError)"""
+    return {p.name: p for p in sorted(Path(folder).rglob('*.nro')) if p.is_file()}
 
 
 def survey(dump, app, fam, repo, py, env):
@@ -2083,7 +2082,7 @@ def parse_args(argv):
     ap.add_argument('--mac-sign', help='--platform mac-app: the codesign identity for the app, e.g. "Developer ID Application: <name> (<team>)" (default: the MAC_SIGN setting, else ad-hoc)')
     ap.add_argument('--team-id', help='Apple developer team ID (default: TEAM_ID setting, DM_TEAM_ID environment, or saved Xcode selection)')
     ap.add_argument('--xcode-workspace', help='workspace collecting prepared games (default: NxNative.xcworkspace beside the dump folder; use with --prepare-xcode)')
-    ap.add_argument('-l', '--language', help='game language, a code or a name: ja, fr, de, es, it, nl, pt, ru, ko, zh-Hans, zh-Hant, en-GB, fr-CA, es-419, pt-BR, pl, th, Japanese, ... (default: the LANGUAGE setting, else English); '
+    ap.add_argument('-l', '--language', help='game language, a code or a name: ja, fr, de, es, it, nl, pt, ru, ko, zh-Hans, zh-Hant, en-GB, fr-CA, es-419, pt-BR, Japanese, ... (default: the LANGUAGE setting, else English); '
                     'it must be one the game supports, which the console lists')
     ap.add_argument('--keep-extracted', action=argparse.BooleanOptionalAction, help='keep the extracted game files after the IPA is built, for the next build (default: the KEEP_EXTRACTED setting, on)')
     ap.add_argument('--work-dir', help='the game\'s build folder, used as it is (default: the WORK_DIR setting, else <title ID>_build in the dump folder); the extracted files, shader cache and temporary files live there, and the IPA or Mac app defaults to the folder holding it')
