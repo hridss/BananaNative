@@ -23,6 +23,7 @@ __attribute__((visibility("default"))) void nxhost_framegen_set(int on, int mult
 // DLL, performance (the status says so). Taken from the next frame (the chain is made again)
 __attribute__((visibility("default"))) void nxhost_framegen_quality(int quality);
 __attribute__((visibility("default"))) int nxhost_framegen_status(char *buf, int n);
+__attribute__((visibility("default"))) void nxhost_framegen_engine(int mv);   // vka_fgprof.c: the launcher's engine choice while the game runs (1 Native FG, 0 LSFG)
 // Where the letterboxed picture sits in the window's free space, never scaled or cropped: x 0 = left, 1 = right; y 0 = top, 1 = bottom (as the user sees it); 0.5 = centred,
 // the default. Taken from the next present; values outside 0..1 are clamped
 __attribute__((visibility("default"))) void nxhost_picture_place(float x, float y);

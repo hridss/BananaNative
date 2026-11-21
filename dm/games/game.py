@@ -130,6 +130,56 @@ def scene_args(g):
 # nn::settings::LanguageCode of the console's 18 languages (hle_oe.c dm_lang_code; the launcher's GameLanguage.CODES)
 LANGUAGE_CODES = ('ja', 'en-US', 'en-GB', 'fr', 'fr-CA', 'de', 'it', 'es', 'es-419', 'nl', 'pt', 'pt-BR', 'ru', 'ko', 'zh-Hans', 'zh-Hant', 'pl', 'th')
 
+# The motion-vector frame generator's per-game rows (Android, dm/gfx/vk_android/vka_fgprof.c; dm/games/README.md, the fg_* keys): one value a row.
+# fg_feature rows name the rules the game turns on (bits of DM_GAME_FG_FEATURES); fg_tune <name> <value> rows set a tuning value (DM_GAME_FG_TUNE_<NAME>), each with its range
+FG_FEATURES = ('uiflow', 'uigate', 'static', 'staticz', 'bothfar', 'dither', 'cut', 'uipick', 'uicons', 'uismall', 'uicap', 'uisplit')
+FG_TUNE = {'ratio': (0.0, 1.0, False), 'tol': (0.0, 255.0, False), 'edge': (1.0, 4.0, False), 'fill': (0, 6, True), 'soft': (0, 1, True), 'uisr': (1, 12, True),
+           'uissupr': (1, 2, True), 'uisinteg': (0, 2, True), 'uispass': (1, 3, True),
+           'uisguard': (0, 2, True), 'cut_res': (0.0, 255.0, False), 'cut_corr': (0.0, 1.0, False), 'cut_mv': (0.0, 4.0, False)}   # (low, high, integer); cut_mv: a fraction of the render width
+
+
+def fg_rows(g):
+    """the fg_* rows as game_profile.h lines (validated): none of them, no lines (the core defaults, vka_fgprof.c)"""
+    rows = [(k, v) for k, v in g.rows if k.startswith('fg_')]
+    known = ('fg_mv', 'fg_ui_pre', 'fg_ui_layer', 'fg_feature', 'fg_tune')
+    for k, v in rows:
+        if k not in known: sys.exit(f'{g.id}: unknown frame generation key {k} (one of {", ".join(known)})')
+    if not rows: return []
+    for k in ('fg_mv', 'fg_ui_pre', 'fg_ui_layer'):
+        if len(g.values(k)) > 1: sys.exit(f'{g.id}: {k}: one row at most')
+    mv = g.get('fg_mv', 'off')
+    if mv not in ('on', 'off'): sys.exit(f'{g.id}: fg_mv must be on or off: {mv}')
+    if mv == 'on' and g.get('dlss_standin', '0') != '1': sys.exit(f'{g.id}: fg_mv on needs dlss_standin 1 (the engine reads the DLSS op\'s depth and motion vectors)')
+    keys = {}
+    for k in ('fg_ui_pre', 'fg_ui_layer'):
+        r = g.values(k)
+        if r and (len(r[0]) != 1 or not re.fullmatch(r'[0-9a-f]{16}', r[0][0])): sys.exit(f'{g.id}: {k} takes one fragment shader key of 16 lowercase hex digits: {r[0]}')
+        keys[k] = r[0][0] if r else ''
+    if bool(keys['fg_ui_pre']) != bool(keys['fg_ui_layer']): sys.exit(f'{g.id}: fg_ui_pre and fg_ui_layer go together (the picture without UI and the UI layer put over it)')
+    feat = 0
+    for r in g.values('fg_feature'):
+        if len(r) != 1 or r[0] not in FG_FEATURES: sys.exit(f'{g.id}: fg_feature takes one of {", ".join(FG_FEATURES)}: {r}')
+        b = 1 << FG_FEATURES.index(r[0])
+        if feat & b: sys.exit(f'{g.id}: fg_feature {r[0]} twice')
+        feat |= b
+    if feat & 3 and not keys['fg_ui_pre']: sys.exit(f'{g.id}: fg_feature uiflow / uigate need the UI layer (fg_ui_pre and fg_ui_layer)')
+    if feat & 2 and not feat & 1: sys.exit(f'{g.id}: fg_feature uigate is a rule of uiflow: add fg_feature uiflow')
+    if feat & 8 and not feat & 4: sys.exit(f'{g.id}: fg_feature staticz is a rule of static: add fg_feature static')
+    for i in (7, 8, 9, 10, 11):
+        if feat & (1 << i) and not feat & 2: sys.exit(f'{g.id}: fg_feature {FG_FEATURES[i]} is a rule of uigate: add fg_feature uigate')
+    L = [f'#define DM_GAME_FG_MV {int(mv == "on")}', f'#define DM_GAME_FG_UI_PRE 0x{keys["fg_ui_pre"] or "0"}ull', f'#define DM_GAME_FG_UI_LAYER 0x{keys["fg_ui_layer"] or "0"}ull',
+         f'#define DM_GAME_FG_FEATURES {feat:#x}']
+    seen = set()
+    for r in g.values('fg_tune'):
+        if len(r) != 2 or r[0] not in FG_TUNE: sys.exit(f'{g.id}: fg_tune takes <name> <value>, the name one of {", ".join(FG_TUNE)}: {r}')
+        if r[0] in seen: sys.exit(f'{g.id}: fg_tune {r[0]} twice')
+        seen.add(r[0]); lo, hi, whole = FG_TUNE[r[0]]
+        ok = re.fullmatch(r'\d+' if whole else r'\d+(\.\d+)?', r[1]) is not None and lo <= float(r[1]) <= hi
+        if r[0] == 'uisinteg' and ok: ok = r[1] in ('0', '2')
+        if not ok: sys.exit(f'{g.id}: fg_tune {r[0]} takes {"a whole number" if whole else "a number"} from {lo:g} to {hi:g}{" (0 or 2)" if r[0] == "uisinteg" else ""}: {r[1]}')
+        L.append(f'#define DM_GAME_FG_TUNE_{r[0].upper()} {r[1]}')   # (the row's text: the host's double is the one strtod reads from it)
+    return L
+
 
 def header(g):
     """the host's game_profile.h: the profile constants the host uses, as macros"""
@@ -398,6 +448,7 @@ def header(g):
         if len(r) != 1 or not re.fullmatch(r'[0-9a-f]{16}', r[0]): sys.exit(f'{g.id}: subgroup_one_lane takes one shader key of 16 lowercase hex digits: {r}')
         sol.append(f'0x{r[0]}ull')
     if len(sol) > 16: sys.exit(f'{g.id}: subgroup_one_lane: at most 16 keys')
+    fgl = fg_rows(g)   # the motion-vector frame generator's rows (vka_fgprof.c), Android
     api = g.get('device_api', '55.15')   # the NVN API major.minor version nvnDeviceGetInteger reports (hle_nvn.c)
     if not re.fullmatch(r'\d+\.\d+', api): sys.exit(f'{g.id}: device_api must be major.minor: {api}')
     src = f'dm/games/{g.id}' if g.dir.parent == HERE else str(g.dir)
@@ -467,6 +518,7 @@ def header(g):
          '#define DM_GAME_RENDER_QUALITY {' + ', '.join(map(str, rq)) + '}', f'#define DM_GAME_RENDER_DEFAULT_OUT {q(aw or "1920x1080")}',
          '#define DM_GAME_RT_POOL {' + (', '.join(rtp) or '{"", "", 0, 0, 0, 0, {0}, {0}, {0}, 0}') + '}', f'#define DM_GAME_NRT_POOL {len(rtp)}',
          '#define DM_GAME_RES_LEVELS {' + (', '.join(rlv) or '{"", 0, 0, 0, {{0, 0}}}') + '}', f'#define DM_GAME_NRES_LEVELS {len(rlv)}',
+         *fgl,
          *([f'#define DM_GAME_NVN_API_MAJOR {api.split(".")[0]}', f'#define DM_GAME_NVN_API_MINOR {api.split(".")[1]}'] if g.get('device_api', '') else []),   # without the key: by the SDK version (hle_nvn.c nvn_api)
          '']
     return '\n'.join(L)

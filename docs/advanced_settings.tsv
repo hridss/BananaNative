@@ -69,6 +69,8 @@ DM_ENV_FILE_KEYS	internal	Input			text			both						Mac or iOS only
 DM_ENV_LAUNCH_KEYS	internal	Input			text			both						Mac or iOS only	
 DM_FASTBOOT	developer	Game			text			both							
 DM_FD_LOG	developer	Diagnostics			text			both							
+DM_FG_ENGINE	developer	Performance			text			both							
+DM_FG_MENU	developer	Performance			text			both							
 DM_FIXED_TIME	developer	Game			text			both							
 DM_FONT_DIR	developer	Diagnostics			text			both							
 DM_FORCE_STRICT	developer	Diagnostics			text			both							

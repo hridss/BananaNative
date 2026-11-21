@@ -251,6 +251,51 @@ class LowRam(unittest.TestCase):
         self.assertIn("below the profile's app_pool (1 MiB)", out)
 
 
+class FrameGen(unittest.TestCase):   # the fg_* rows (the motion-vector frame generator, vka_fgprof.c): one value a row, each checked; none of them, no lines
+    PRE, LAY = 'fg_ui_pre\t4e9941d610533734\n', 'fg_ui_layer\tc478e7c70173f0b8\n'
+
+    def text(self, rows):
+        with tempfile.TemporaryDirectory() as d:
+            Path(d, ID).mkdir()
+            (Path(d, ID) / 'game.tsv').write_text(TSV + rows)
+            out = Path(d, ID) / 'game.h'
+            r = subprocess.run([sys.executable, str(GAME), 'header', ID, str(out)], env={**os.environ, 'DM_GAMES_DIR': d}, capture_output=True, text=True)
+            return r.returncode, (r.stderr + r.stdout).strip(), out.read_text() if out.exists() else ''
+
+    def test_none_no_lines(self):
+        rc, out, h = self.text('')
+        self.assertEqual((rc, out), (0, ''))
+        self.assertNotIn('DM_GAME_FG_', h)
+
+    def test_valid(self):
+        rc, out, h = self.text('dlss_standin\t1\nfg_mv\ton\n' + self.PRE + self.LAY + 'fg_feature\tuiflow\nfg_feature\tuigate\nfg_feature\tcut\n'
+                               'fg_tune\tratio\t0.05\nfg_tune\tcut_mv\t0.220848056537\n')
+        self.assertEqual((rc, out), (0, ''))
+        for line in ('#define DM_GAME_FG_MV 1', '#define DM_GAME_FG_UI_PRE 0x4e9941d610533734ull', '#define DM_GAME_FG_UI_LAYER 0xc478e7c70173f0b8ull',
+                     '#define DM_GAME_FG_FEATURES 0x43', '#define DM_GAME_FG_TUNE_RATIO 0.05', '#define DM_GAME_FG_TUNE_CUT_MV 0.220848056537'):
+            self.assertIn(line, h)
+
+    def test_ui_rules(self):   # the three UI-flow rules of the motion-vector gate: bits 7, 8, 9
+        rc, out, h = self.text('dlss_standin\t1\nfg_mv\ton\n' + self.PRE + self.LAY + 'fg_feature\tuiflow\nfg_feature\tuigate\nfg_feature\tuipick\nfg_feature\tuicons\n'
+                               'fg_feature\tuismall\n')
+        self.assertEqual((rc, out), (0, ''))
+        self.assertIn('#define DM_GAME_FG_FEATURES 0x383', h)
+
+    def test_rejected(self):
+        for rows, msg in (('fg_mv\ton\n', 'needs dlss_standin 1'), ('fg_mv\tyes\n', 'fg_mv must be on or off'), ('fg_repeat\tx\n', 'unknown frame generation key'),
+                          (self.PRE, 'go together'), ('fg_ui_pre\t4E9941D610533734\n' + self.LAY, 'fg_ui_pre takes one fragment shader key'),
+                          (self.PRE + self.LAY + 'fg_ui_blend\ttransmittance\n', 'unknown frame generation key'), ('fg_feature\tuiflow,static\n', 'fg_feature takes one of'),
+                          ('fg_feature\tuiflow\n', 'need the UI layer'), (self.PRE + self.LAY + 'fg_feature\tuigate\n', 'uigate is a rule of uiflow'),
+                          (self.PRE + self.LAY + 'fg_feature\tuiflow\nfg_feature\tuipick\n', 'uipick is a rule of uigate'),
+                          (self.PRE + self.LAY + 'fg_feature\tuiflow\nfg_feature\tuismall\n', 'uismall is a rule of uigate'),
+                          ('fg_feature\tstaticz\n', 'staticz is a rule of static'), ('fg_feature\tcut\nfg_feature\tcut\n', 'cut twice'),
+                          ('fg_tune\tratio=0.05\n', 'fg_tune takes <name> <value>'), ('fg_tune\tfill\t7\n', 'fg_tune fill takes a whole number from 0 to 6'),
+                          ('fg_tune\tuisinteg\t1\n', '(0 or 2)'), ('fg_tune\ttol\t40\nfg_tune\ttol\t41\n', 'fg_tune tol twice'), ('fg_mv\ton\nfg_mv\toff\n', 'one row at most')):
+            rc, out, _ = self.text(rows)
+            self.assertNotEqual(rc, 0, rows)
+            self.assertIn(msg, out, rows)
+
+
 class SkipLayers(unittest.TestCase):   # skip_layers (DM_VK_SKIP_FS through the launcher's Speedhack): keys found to be visible elsewhere stay out
     def test_oot_castle_town_material_out(self):
         sys.path.insert(0, str(REPO / 'dm/games')); sys.path.insert(0, str(REPO / 'dm/tools'))

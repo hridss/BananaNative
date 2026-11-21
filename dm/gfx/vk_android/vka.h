@@ -412,6 +412,11 @@ void vka_img_barrier(VkCommandBuffer cb, VkImage img, VkImageAspectFlags aspect,
 // twin), so the result is written sRGB-encoded
 int vka_dlss_fsr3(VkCommandBuffer cb, vka_img *src, VkFormat sfmt, vka_img *dst, int enc, vka_img *depth, vka_img *motion, const p_dlss_t2t *o);   // vka_fsr3.c: FSR 3.1 for DM_VK_DLSS=4; 0 = not done (the caller falls back to FSR 1)
 int vka_dlss_run(VkCommandBuffer cb, const p_dlss *o, int mode, vka_img *s, uint32_t sl, VkFormat sfmt, int sx, int sy, int iw, int ih, vka_img *d, uint32_t dl, int enc, int dx, int dy, int ow, int oh);
+// vka_fgprof.c: the frame generator's per-game profile (game.tsv fg_* rows over the core defaults) and the engine choice
+typedef struct { int mv; uint64_t ui_pre, ui_layer; unsigned features; double ratio, tol, edge, cut_res, cut_corr, cut_mv; int fill, soft, uisr, uissupr, uisinteg, uispass, uisguard; } vka_fgprof;
+enum { VKA_FGF_UIFLOW = 1, VKA_FGF_UIGATE = 2, VKA_FGF_STATIC = 4, VKA_FGF_STATICZ = 8, VKA_FGF_BOTHFAR = 16, VKA_FGF_DITHER = 32, VKA_FGF_CUT = 64, VKA_FGF_UIPICK = 128, VKA_FGF_UICONS = 256,
+       VKA_FGF_UISMALL = 512, VKA_FGF_UICAP = 1024, VKA_FGF_UISPLIT = 2048 };
+const vka_fgprof *vka_fgprof_get(void); int vka_fgprof_engine(int *from_env), vka_fgprof_fallback(void);   // fallback: Native FG picked, LSFG runs (no fg_mv row)
 int vka_dlss_scale(VkCommandBuffer cb, VkImageView in, int sx, int sy, int iw, int ih, uint32_t tw, uint32_t th, vka_img *d, uint32_t dl, int dx, int dy, int ow, int oh, int enc);   // a scaled copy, sRGB-encoded with enc
 int vka_dlss_scale_alpha(VkCommandBuffer cb, VkImageView in, int sx, int sy, int iw, int ih, uint32_t tw, uint32_t th, VkImageView alpha_in, float jx, float jy, int aw, int ah, uint32_t atw, uint32_t ath, vka_img *d, uint32_t dl, int dx, int dy, int ow, int oh, int enc);
 int vka_dlss_ready(void);   // the stand-in's pipelines are made (vka_dlss_scale can run)
