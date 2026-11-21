@@ -1,0 +1,11 @@
+// SPDX-License-Identifier: MIT
+#version 450
+// the start-up self-test of 32-bit image atomics (vka_fgmv.c atom_test): 32768 invocations, each an atomic max of a hashed value into a hashed texel
+// of a 64x64 R32UI image; the CPU checks every texel against the same hashes
+layout(local_size_x = 256) in;
+layout(set = 0, binding = 0, r32ui) uniform uimage2D img;
+uint h1(uint n) { n ^= n >> 16; n *= 0x7feb352du; n ^= n >> 15; n *= 0x846ca68bu; n ^= n >> 16; return n; }
+void main() {
+    uint n = gl_GlobalInvocationID.x, t = h1(n) & 4095u, v = h1(n ^ 0x9e3779b9u) | 1u;
+    imageAtomicMax(img, ivec2(int(t & 63u), int(t >> 6)), v);
+}

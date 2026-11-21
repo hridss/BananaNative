@@ -1,0 +1,157 @@
+// SPDX-License-Identifier: MIT
+#version 450
+#extension GL_GOOGLE_include_directive : require
+// the UI flow's per-tile stage (vka_fgmv.c, DM_FG_MV_UIFLOW), one workgroup a 32x32 tile. cov = the sum of its 8x8 Q4 cells of C, s0 = the sum of
+// |QC4 - QA4| over them. cov 0: inactive. 20 s0 < cov: static alone (candidate 0). Else the hierarchical search on the tile's 3x3-tile window: SAD of Q16 (6x6 cells)
+// for d16 in [-r, r]^2, the 2 best; then SAD of Q4 (24x24 cells) for d4 in 4 d16 + [-3, 3]^2 (|d4| <= 48 per axis), the best is the candidate. Cells off the arrays
+// read 0. Every argmin: the smaller SAD, then the smaller dy^2 + dx^2, then the smaller dy, then the smaller dx (all integer)
+layout(local_size_x = 256) in;
+layout(set = 0, binding = 0, std430) buffer UI { uint u[]; };
+layout(push_constant) uniform PC { int slot, sr; } pc;   // slot: C's Q4 / Q16 slot (A's is the other); sr: the Q16 search radius (12, at most 12) | 256: the blocked form,
+                                                          // | 512: the tiles listed by the classify pass only
+// The same integer sums and argmins in two passes. The classify pass (this file built with UCLS: 4 tiles a workgroup of 256, no search memory)
+// clears the tiles' words, writes every tile's cov and s0, the inactive and static-alone tiles' results, and lists the tiles to search (O_SL, the count in C_IND + 19
+// as indirect arguments); the search pass runs a workgroup per listed tile in the blocked form: each thread a row of 5 Q16 offsets / 7 Q4 offsets, the cells in registers
+#include "ui.glsl"
+#ifndef UCLS
+shared uint sc16[36], sa16[900], sc4[576], sa4[2][900];
+shared uint r1[256], r2[256]; shared int rd[256];
+shared uint scov, ss0, s98[98];
+uint q4(int s, int y, int x) { return y >= 0 && x >= 0 && y < Q4H && x < Q4W ? u[O_Q4 + s * Q4W * Q4H + y * Q4W + x] : 0u; }
+uint q16(int s, int y, int x) { return y >= 0 && x >= 0 && y < Q16H && x < Q16W ? u[O_Q16 + s * Q16W * Q16H + y * Q16W + x] : 0u; }
+bool less(uint a1, uint a2, uint b1, uint b2) { return a1 < b1 || (a1 == b1 && a2 < b2); }
+// the argmin of (r1, r2) over the workgroup; the winner's rd
+int reduce(uint k1, uint k2, int id, int li) {
+    r1[li] = k1; r2[li] = k2; rd[li] = id;
+    barrier();
+    for (int s = 128; s > 0; s >>= 1) {
+        if (li < s && less(r1[li + s], r2[li + s], r1[li], r2[li])) { r1[li] = r1[li + s]; r2[li] = r2[li + s]; rd[li] = rd[li + s]; }
+        barrier();
+    }
+    int w = rd[0];
+    barrier();
+    return w;
+}
+#endif
+#ifdef UCLS
+shared uint qcov[4], qs0[4];
+uint q4(int s, int y, int x) { return y >= 0 && x >= 0 && y < Q4H && x < Q4W ? u[O_Q4 + s * Q4W * Q4H + y * Q4W + x] : 0u; }
+void main() {
+    int li = int(gl_LocalInvocationIndex), q = li >> 6, l = li & 63, tx = 4 * int(gl_WorkGroupID.x) + q, ty = int(gl_WorkGroupID.y), ti = ty * NTX + tx;
+    int sC = pc.slot, sA = 1 - pc.slot;
+    if (l == 0) { qcov[q] = 0u; qs0[q] = 0u; }
+    if (li == 0 && gl_WorkGroupID.x == 0u && gl_WorkGroupID.y == 0u) { u[O_CNT + C_IND + 20] = 1u; u[O_CNT + C_IND + 21] = 1u; }
+    if (l == 1) u[O_GCN + ti] = 0u; if (l == 3) u[O_GS0 + ti] = 0u; if (l == 4) u[O_GM1 + ti] = NONE; if (l == 5) u[O_GM2 + ti] = NONE; if (l == 6) u[O_GD + ti] = 0u;
+    if (l == 7) u[O_GSZ + ti] = 0u; if (l == 8) u[O_GF + ti] = 0u; if (l == 9) u[O_GVM + ti] = 0u; if (l == 10) u[O_GSTAT + ti] = 0u; if (l == 11) u[O_MV + ti] = 0u;
+    if (l == 12) u[O_GE + ti] = 0x7F800000u; if (l == 13) u[O_GEP + ti] = 0x7F800000u; if (l == 14) u[O_GRP + ti] = 0u; if (l == 15) u[O_GSM + ti] = 0u;
+    if (l == 2) { u[O_HK + ti] = NONE; u[O_HK + NT + ti] = NONE; if (ti < 4096 - 2 * NT) u[O_HK + 2 * NT + ti] = NONE; }
+    barrier();
+    { int y = 8 * ty + (l >> 3), x = 8 * tx + (l & 7); uint c = q4(sC, y, x), a = q4(sA, y, x); atomicAdd(qcov[q], c); atomicAdd(qs0[q], c > a ? c - a : a - c); }
+    barrier();
+    if (l == 0) {
+        uint cov = qcov[q], s0 = qs0[q]; u[O_TILE + ti * 4] = cov; u[O_TILE + ti * 4 + 1] = s0;
+        if (cov == 0u || 20u * s0 < cov) { u[O_TILE + ti * 4 + 2] = pk(ivec2(0)); u[O_TILE + ti * 4 + 3] = cov == 0u ? 0u : 1u; }
+        else u[O_SL + atomicAdd(u[O_CNT + C_IND + 19], 1u)] = uint(ti);
+    }
+}
+#else
+void main() {
+    bool listed = (pc.sr & 512) != 0;
+    int li = int(gl_LocalInvocationIndex), ti = listed ? int(u[O_SL + gl_WorkGroupID.x]) : int(gl_WorkGroupID.y) * NTX + int(gl_WorkGroupID.x), tx = ti % NTX, ty = ti / NTX;
+    int sC = pc.slot, sA = 1 - pc.slot;
+    if (li == 0) { scov = 0u; ss0 = 0u; }
+    // the tile's words of the per-group arrays and the hash table, cleared for ugrp.comp's phase 0 (which runs as one workgroup)
+    bool fast = (pc.sr & 256) != 0;
+    uint cov, s0;
+    if (listed) { cov = u[O_TILE + ti * 4]; s0 = u[O_TILE + ti * 4 + 1]; if (li >= 128 && li < 226) s98[li - 128] = 0u; }
+    else {
+    if (fast) {
+        if (li == 1) u[O_GCN + ti] = 0u; if (li == 3) u[O_GS0 + ti] = 0u; if (li == 4) u[O_GM1 + ti] = NONE; if (li == 5) u[O_GM2 + ti] = NONE; if (li == 6) u[O_GD + ti] = 0u;
+        if (li == 7) u[O_GSZ + ti] = 0u; if (li == 8) u[O_GF + ti] = 0u; if (li == 9) u[O_GVM + ti] = 0u; if (li == 10) u[O_GSTAT + ti] = 0u; if (li == 11) u[O_MV + ti] = 0u;
+        if (li == 12) u[O_GE + ti] = 0x7F800000u; if (li == 13) u[O_GEP + ti] = 0x7F800000u; if (li == 14) u[O_GRP + ti] = 0u; if (li == 15) u[O_GSM + ti] = 0u;
+        if (li >= 128 && li < 226) s98[li - 128] = 0u;
+    } else if (li == 1) { u[O_GCN + ti] = 0u; u[O_GS0 + ti] = 0u; u[O_GM1 + ti] = NONE; u[O_GM2 + ti] = NONE; u[O_GD + ti] = 0u; u[O_GSZ + ti] = 0u; u[O_GF + ti] = 0u; u[O_GVM + ti] = 0u; u[O_GSTAT + ti] = 0u; u[O_MV + ti] = 0u;
+                 u[O_GE + ti] = 0x7F800000u; u[O_GEP + ti] = 0x7F800000u; u[O_GRP + ti] = 0u; u[O_GSM + ti] = 0u; }
+    if (li == 2) { u[O_HK + ti] = NONE; u[O_HK + NT + ti] = NONE; if (ti < 4096 - 2 * NT) u[O_HK + 2 * NT + ti] = NONE; }
+    barrier();
+    if (li < 64) {
+        int y = 8 * ty + (li >> 3), x = 8 * tx + (li & 7); uint c = q4(sC, y, x), a = q4(sA, y, x);
+        atomicAdd(scov, c); atomicAdd(ss0, c > a ? c - a : a - c);
+    }
+    barrier();
+    cov = scov; s0 = ss0;
+    if (cov == 0u || 20u * s0 < cov) {
+        if (li == 0) { u[O_TILE + ti * 4] = cov; u[O_TILE + ti * 4 + 1] = s0; u[O_TILE + ti * 4 + 2] = pk(ivec2(0)); u[O_TILE + ti * 4 + 3] = cov == 0u ? 0u : 1u; }
+        return;
+    }
+    }
+    int R = clamp(pc.sr & 255, 1, 12), N = 2 * R + 1;
+    // Q16: C's 6x6 window at (2(ty-1), 2(tx-1)), A's 30x30 region around it
+    int y16 = 2 * (ty - 1), x16 = 2 * (tx - 1);
+    if (li < 36) sc16[li] = q16(sC, y16 + li / 6, x16 + li % 6);
+    for (int i = li; i < 900; i += 256) sa16[i] = q16(sA, y16 - 12 + i / 30, x16 - 12 + i % 30);
+    barrier();
+    uint b1 = NONE, b2 = NONE, c1 = NONE, c2 = NONE; int bi = -1, ci = -1;   // this thread's best two (key1 sad, key2 order)
+    if (fast) {   // a thread: dy and 5 consecutive dx (the keys are distinct, so the best two do not depend on the order)
+        int G = (N + 4) / 5;
+        if (li < N * G) {
+            int dy = li / G - R, dx0 = (li % G) * 5 - R; uint sd[5] = uint[5](0u, 0u, 0u, 0u, 0u);
+            for (int j = 0; j < 6; j++) {
+                uint cr[6], ar[10]; int ab = (j + dy + 12) * 30 + dx0 + 12;
+                for (int i = 0; i < 6; i++) cr[i] = sc16[j * 6 + i];
+                for (int i = 0; i < 10; i++) ar[i] = sa16[min(ab + i, 899)];   // (past the row only for dx > R, not used)
+                for (int e = 0; e < 5; e++) for (int i = 0; i < 6; i++) { uint c = cr[i], a = ar[e + i]; sd[e] += c > a ? c - a : a - c; }
+            }
+            for (int e = 0; e < 5; e++) {
+                int dx = dx0 + e; if (dx > R) break;
+                int p = (dy + R) * N + dx + R; uint sad = sd[e];
+                uint k2 = uint(dy * dy + dx * dx) * 625u + uint(dy + 12) * 25u + uint(dx + 12);
+                if (less(sad, k2, b1, b2)) { c1 = b1; c2 = b2; ci = bi; b1 = sad; b2 = k2; bi = p; }
+                else if (less(sad, k2, c1, c2)) { c1 = sad; c2 = k2; ci = p; }
+            }
+        }
+    } else
+    for (int p = li; p < N * N; p += 256) {
+        int dy = p / N - R, dx = p % N - R; uint sad = 0u;
+        for (int j = 0; j < 6; j++) for (int i = 0; i < 6; i++) { uint c = sc16[j * 6 + i], a = sa16[(j + dy + 12) * 30 + i + dx + 12]; sad += c > a ? c - a : a - c; }
+        uint k2 = uint(dy * dy + dx * dx) * 625u + uint(dy + 12) * 25u + uint(dx + 12);
+        if (less(sad, k2, b1, b2)) { c1 = b1; c2 = b2; ci = bi; b1 = sad; b2 = k2; bi = p; }
+        else if (less(sad, k2, c1, c2)) { c1 = sad; c2 = k2; ci = p; }
+    }
+    int w1 = reduce(b1, b2, bi, li);
+    bool took = bi == w1;
+    int w2 = reduce(took ? c1 : b1, took ? c2 : b2, took ? ci : bi, li);
+    ivec2 d16[2] = ivec2[2](ivec2(w1 % N - R, w1 / N - R), ivec2(w2 % N - R, w2 / N - R));   // (x, y)
+    // Q4: C's 24x24 window at (8(ty-1), 8(tx-1)); A's 30x30 around 4 d16 for both
+    int y4 = 8 * (ty - 1), x4 = 8 * (tx - 1);
+    for (int i = li; i < 576; i += 256) sc4[i] = q4(sC, y4 + i / 24, x4 + i % 24);
+    for (int i = li; i < 1800; i += 256) { int k = i / 900, j = i % 900; sa4[k][j] = q4(sA, y4 + 4 * d16[k].y - 3 + j / 30, x4 + 4 * d16[k].x - 3 + j % 30); }
+    barrier();
+    // 98 positions, each by two threads (rows 0..11 and 12..23; integer sums, so the split is exact)
+    uint k1 = NONE, k2 = NONE; int id = -1;
+    int pp = li % 98, hf = li / 98;
+    if (fast) {   // a thread: one row j of C's window against A's row j + ey, all 7 ex (the row partial sums added into s98: integers, exact in any order)
+        for (int w = li; w < 336; w += 256) {
+            int k = w / 168, r = w % 168, ey = r / 24, j = r % 24; uint ac[7] = uint[7](0u, 0u, 0u, 0u, 0u, 0u, 0u), cr[24], ar[30];
+            for (int i = 0; i < 24; i++) cr[i] = sc4[j * 24 + i];
+            for (int i = 0; i < 30; i++) ar[i] = sa4[k][(j + ey) * 30 + i];
+            for (int i = 0; i < 24; i++) for (int e = 0; e < 7; e++) { uint c = cr[i], a = ar[i + e]; ac[e] += c > a ? c - a : a - c; }
+            for (int e = 0; e < 7; e++) atomicAdd(s98[k * 49 + ey * 7 + e], ac[e]);
+        }
+    } else if (li < 196) {
+        int k = pp / 49, e = pp % 49, ey = e / 7 - 3, ex = e % 7 - 3; uint sad = 0u;
+        for (int j = 12 * hf; j < 12 * hf + 12; j++) for (int i = 0; i < 24; i++) { uint c = sc4[j * 24 + i], a = sa4[k][(j + ey + 3) * 30 + i + ex + 3]; sad += c > a ? c - a : a - c; }
+        r1[li] = sad;
+    }
+    barrier();
+    if (li < 98) {
+        int k = li / 49, e = li % 49, ey = e / 7 - 3, ex = e % 7 - 3; ivec2 d = 4 * d16[k] + ivec2(ex, ey);
+        if (abs(d.x) <= 48 && abs(d.y) <= 48) {
+            k1 = fast ? s98[li] : r1[li] + r1[li + 98]; k2 = uint(d.y * d.y + d.x * d.x) * 9409u + uint(d.y + 48) * 97u + uint(d.x + 48); id = int(pk(d));
+        }
+    }
+    barrier();
+    int w = reduce(k1, k2, id, li);
+    if (li == 0) { u[O_TILE + ti * 4] = cov; u[O_TILE + ti * 4 + 1] = s0; u[O_TILE + ti * 4 + 2] = uint(w); u[O_TILE + ti * 4 + 3] = 2u; atomicAdd(u[O_CNT + C_SEARCHED], 1u); }
+}
+#endif

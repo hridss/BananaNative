@@ -1,0 +1,27 @@
+// SPDX-License-Identifier: MIT
+#version 450
+#extension GL_GOOGLE_include_directive : require
+// depth-priority forward splat of frame C's dilated motion vectors to the generated frame's time t (render size, vka_fgmv.c). Each texel of C moves
+// by (1 - t) of its vector (the vector points from C to A) and claims the 2x2 texels at the floor of its new place; the nearest one wins: one 32-bit atomic max of
+// (depth code << ishift | texel index, the host's layout; equal codes: the larger index). 0 = nothing (the depth code is at least 1). A texel in the op pass's dither region
+// (DF = 1, all 0 with DM_FG_MV_DITHER=0) claims only the texel at the floor (1x1)
+layout(local_size_x = 16, local_size_y = 16) in;
+layout(set = 0, binding = 0, r32f) uniform readonly image2D od;
+layout(set = 0, binding = 1, rg16f) uniform readonly image2D ov;
+layout(set = 0, binding = 2, r32ui) uniform uimage2D key;
+layout(set = 0, binding = 3, r8ui) uniform readonly uimage2D df;
+layout(push_constant) uniform PC { int iw, ih; float t, mvx, mvy; uint cshift; int coff, cmax; uint ishift, imask; } pc;
+#include "key.glsl"
+void main() {
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    if (p.x >= pc.iw || p.y >= pc.ih) return;
+    vec2 m = imageLoad(ov, p).xy * vec2(pc.mvx, pc.mvy);
+    vec2 q = clamp(vec2(p) + (1.0 - pc.t) * m, vec2(-4.0), vec2(float(pc.iw) + 4.0, float(pc.ih) + 4.0));
+    ivec2 b = ivec2(floor(q));
+    uint k = zcode(imageLoad(od, p).r, pc.cshift, pc.coff, pc.cmax) << pc.ishift | uint(p.y * pc.iw + p.x);
+    int n = imageLoad(df, p).r != 0u ? 0 : 1;
+    for (int dy = 0; dy <= n; dy++) for (int dx = 0; dx <= n; dx++) {
+        ivec2 c = b + ivec2(dx, dy);
+        if (c.x >= 0 && c.y >= 0 && c.x < pc.iw && c.y < pc.ih) imageAtomicMax(key, c, k);
+    }
+}

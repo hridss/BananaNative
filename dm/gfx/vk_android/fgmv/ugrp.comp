@@ -1,0 +1,428 @@
+// SPDX-License-Identifier: MIT
+#version 450
+#extension GL_GOOGLE_include_directive : require
+// the UI flow's group stages (vka_fgmv.c, DM_FG_MV_UIFLOW). Groups = 8-connected components of the active tiles (a group's id: its smallest tile index =
+// its first tile in raster order). A group of more than 128 tiles ("big") can never move (moving it overflows the 128-tile cap, and then nothing moves): its stages run
+// in a second pass (big = 1) only when a small group is kept, else it is left as it is (the result is the same: no tile moves either way). With the tile cap rule (R_CAP)
+// a big group never moves and its pass never runs; the cap is UICAP tiles, kept by a deterministic partial keep instead of the whole-frame cliff: the kept groups in the
+// order of their first tile stay kept while the running sum of their sizes is <= UICAP, the ones after are dropped (state 7, counters C_PARTU / C_PARTT).
+// Phase 0 (one workgroup): labels (big 0); the distinct candidates of each group; one work item per (member tile, candidate of its group) of the pass's groups.
+// Phase 3 (many workgroups): each candidate's sum over the members of the tile SAD of Q4 (the tile's own 8x8 cells).
+// Phase 4: per group the best candidate d4 by the order rule (SAD, d^2, dy, dx), accepted when it is not 0 and 5 sum SAD < 2 sum s0 (small moves: always for
+//   max(|d4y|, |d4x|) <= 1); uref.comp then scores the full-res flows 4 d4 + [-2, 2]^2 (and 0) per member tile, dispatched indirectly over the accepted tiles' box.
+// Phase 6 (MV-consistent pick, before phase 4's accept): a group of at most 64 tiles whose d4 is inconsistent with C's vectors (e(4 d4) > lim(4 d4), below) gets the
+//   distinct q4-rounded gate-sample vectors (|d| <= 48, not yet candidates; more than 32: no re-pick) as extra candidates and is re-picked by the order rule among the
+//   non-zero consistent ones (none: d4 stays).
+// Phase 1: the best full-res flow f (order rule); final accept 5 SAD(f) < 2 SAD(0) and max(|fy|, |fx|) >= 6 (small moves: 2 <= max < 6 also with e(f) <= 2); the MV gate
+//   (gate on): kept only when 4 vmax >= max(|fy|, |fx|), vmax = the largest |component| of C's dilated vectors (display px) at 36 display positions a member tile
+//   (y = 32 ty - 24 + 16 j, x likewise, in the picture); then (consistent rule) only when e(f) <= lim(f). e(f) = the smallest max(|vy - fy|, |vx - fx|) over those
+//   samples, lim(f) = max(8, max(|fy|, |fx|) / 2). Then (the last pass) phase 5's work: more than 128 moving tiles: none move (overflow); the tiles' flows. The big pass's
+//   dispatches are indirect: no workgroups unless a small group is kept and a big group exists.
+// Phase 2 (per generated frame, t; 8 workgroups): the paste shifts s = floor((1 - t) f + 0.5), each destination tile's sources (the moving tiles in raster order
+//   whose shifted 32x32 rectangle overlaps it); more than 8: none move (overflow; each workgroup's verdict in its flag, resolve2.comp combines them into C_ON).
+//   More than wcap work items: none move (counter)
+layout(local_size_x = 256) in;
+layout(set = 0, binding = 0, std430) coherent buffer UI { uint u[]; };
+layout(set = 0, binding = 1, rg16f) uniform readonly image2D mv;   // C's dilated vectors (raw)
+layout(push_constant) uniform PC { int phase, slot, gate, wcap, big; float t, mvx, mvy, kx, ky, sx, sy; int capn, lev; } pc;   // gate: the R_* bits (ui.glsl); capn: the tile cap (R_CAP, <= UICAP)
+#include "ui.glsl"
+shared uint lab[NT];
+shared uint chg[3], sh_n, sh_m, scnt[4];
+shared uint part[256];
+shared uint mi[UICAP], mr[UICAP];   // phase 2: the moving tiles (raster order) and their destination tile rectangles (at most 128 without the tile cap rule)
+shared uint sbb[4], srl;        // phase 4: the accepted tiles' box (rows, columns); their number (L_RLIST)
+shared uint smt[64], smn, snc, sns, sx1, sx2, sbm[2][296], scd[96], ssd[96], sce[96];   // phase 6: members, bitmaps of (dy, dx), candidates: key, SAD, e(4 d)
+#define INF uintBitsToFloat(0x7F800000u)
+float lim(ivec2 f) { return max(8.0, 0.5 * float(max(abs(f.x), abs(f.y)))); }
+// a gate sample: C's dilated vector at display (x, y) (render row ry = grow(y)) in display px (each product rounded: no contraction into the differences below)
+int grow(int y) { return int((float(y) + 0.5) * pc.ky); }   // (the render row of display row y)
+vec2 gsample(int ry, int x) {
+    int rx = int((float(x) + 0.5) * pc.kx);
+    vec2 r = imageLoad(mv, ivec2(rx, ry)).xy; precise float vx = r.x * pc.mvx, vy = r.y * pc.mvy; vx = vx * pc.sx; vy = vy * pc.sy;
+    return vec2(vx, vy);
+}
+float emax(vec2 v, ivec2 f) { precise float e = max(abs(v.y - float(f.y)), abs(v.x - float(f.x))); return e; }
+uint okey(ivec2 d) { return uint(d.y * d.y + d.x * d.x) * 9409u + uint(d.y + 48) * 97u + uint(d.x + 48); }   // (the order rule's tie keys)
+ivec2 unkey(uint k2) { uint r = k2 % 9409u; return ivec2(int(r % 97u) - 48, int(r / 97u) - 48); }   // (x, y)
+void sync() { memoryBarrierBuffer(); memoryBarrierShared(); barrier(); }
+bool isact(int i) { return u[O_TILE + i * 4 + 3] != 0u; }
+ivec2 cand(int i) { return upk(u[O_TILE + i * 4 + 2]); }
+int fdiv(int a, int b) { return a >= 0 ? a / b : -((-a + b - 1) / b); }   // floor division
+bool inpass(uint g) { return (u[O_GSZ + g] > 128u) == (pc.big != 0); }    // a group of this pass
+bool skip() { return u[O_CNT + C_CAP] != 0u || (pc.big != 0 && u[O_CNT + C_NEEDBIG] == 0u); }
+// exclusive prefix sum of v over tiles (per thread 8 contiguous tiles), the total in sh_n
+void scan_tiles(int li, inout uint v[8]) {
+    uint s = 0u; for (int k = 0; k < 8; k++) { uint x = v[k]; v[k] = s; s += x; }
+    part[li] = s; barrier();
+    for (int o = 1; o < 256; o <<= 1) { uint x = li >= o ? part[li - o] : 0u; barrier(); part[li] += x; barrier(); }   // (inclusive, in log steps)
+    uint ex = part[li] - s; if (li == 255) sh_n = part[255];
+    barrier();
+    for (int k = 0; k < 8; k++) v[k] += ex;
+}
+uint tsad4(int i, ivec2 d) {   // tile i's own 8x8 Q4 cells of C against A at + d (cells off the array: 0)
+    int ty = i / NTX, tx = i % NTX, sC = pc.slot, sA = 1 - pc.slot; uint s = 0u;
+    for (int j = 0; j < 8; j++) for (int k = 0; k < 8; k++) {
+        int y = 8 * ty + j, x = 8 * tx + k; uint c = u[O_Q4 + sC * Q4W * Q4H + y * Q4W + x];
+        int ay = y + d.y, ax = x + d.x; uint a = ay >= 0 && ax >= 0 && ay < Q4H && ax < Q4W ? u[O_Q4 + sA * Q4W * Q4H + ay * Q4W + ax] : 0u;
+        s += c > a ? c - a : a - c;
+    }
+    return s;
+}
+void labels(int li) {
+    // (the per-group arrays and the hash table were cleared by utile.comp)
+    if (li < 4) scnt[li] = 0u;
+    for (int i = li; i < NT; i += 256) { bool a = isact(i); lab[i] = a ? uint(i) : NONE; }
+    barrier();
+    for (int i = li; i < NT; i += 256) if (lab[i] != NONE) atomicAdd(scnt[0], 1u);
+    if (li == 0) { chg[0] = chg[1] = chg[2] = 0u; }
+    barrier();
+    // each active tile takes the smallest label of its active 8-neighbours and of its label's tile, until nothing changes (values only fall, all within the component)
+    for (int it = 0; it < 4096; it++) {
+        if (li == 0) chg[(it + 1) % 3] = 0u;
+        for (int i = li; i < NT; i += 256) {
+            uint m = lab[i]; if (m == NONE) continue;
+            int ty = i / NTX, tx = i % NTX;
+            for (int dy = -1; dy <= 1; dy++) for (int dx = -1; dx <= 1; dx++) {
+                int y = ty + dy, x = tx + dx; if (y < 0 || x < 0 || y >= NTY || x >= NTX) continue;
+                uint n = lab[y * NTX + x]; if (n < m) m = n;
+            }
+            m = min(m, lab[m]);
+            if (m < lab[i]) { lab[i] = m; chg[it % 3] = 1u; }
+        }
+        barrier();
+        if (chg[it % 3] == 0u) break;
+    }
+    barrier();
+    // groups, their sizes and s0 sums; the distinct (group, candidate) entries
+    for (int i = li; i < NT; i += 256) {
+        uint g = lab[i]; u[O_LAB + i] = g; if (g == NONE) continue;
+        if (g == uint(i)) atomicAdd(scnt[1], 1u);
+        atomicAdd(u[O_GSZ + g], 1u); atomicAdd(u[O_GS0 + g], u[O_TILE + i * 4 + 1]);
+        ivec2 d = cand(i); uint key = g << 14 | uint(d.y + 48) << 7 | uint(d.x + 48);
+        uint h = (key * 2654435761u) >> 20;
+        for (int n = 0; n < 4096; n++) {
+            uint prev = atomicCompSwap(u[O_HK + h], NONE, key);
+            if (prev == NONE) { uint e = atomicAdd(scnt[2], 1u); u[O_EK + e] = key; atomicAdd(u[O_GCN + g], 1u); break; }
+            if (prev == key) break;
+            h = (h + 1u) & 4095u;
+        }
+    }
+    sync();
+    if (li == 0) { u[O_CNT + C_ACTIVE] = scnt[0]; u[O_CNT + C_GROUPS] = scnt[1]; u[O_CNT + C_NE] = scnt[2]; }
+    // entries ordered by group: starts (prefix over groups), then a scatter
+    uint v[8];
+    for (int k = 0; k < 8; k++) { int i = li * 8 + k; v[k] = i < NT ? u[O_GCN + i] : 0u; }
+    scan_tiles(li, v);
+    for (int k = 0; k < 8; k++) { int i = li * 8 + k; if (i < NT) { u[O_GST + i] = v[k]; u[O_GCU + i] = v[k]; } }
+    sync();
+    uint ne = scnt[2];
+    for (uint e = uint(li); e < ne; e += 256u) { uint g = u[O_EK + e] >> 14; uint pos = atomicAdd(u[O_GCU + g], 1u); u[O_SE + pos] = e; u[O_ES + e] = 0u; }
+    for (int g = li; g < NT; g += 256) if (lab[g] == uint(g) && u[O_GSZ + g] > 128u) atomicAdd(scnt[3], 1u);
+    sync();
+    if (li == 0) u[O_CNT + C_BIGS] = scnt[3];
+    sync();
+}
+void phase0(int li) {
+    if (pc.big == 0) labels(li);
+    else { if (skip()) return; for (int i = li; i < NT; i += 256) lab[i] = u[O_LAB + i]; sync(); }
+    // work items: per active tile of a group of this pass, one per entry of its group
+    uint v[8];
+    for (int k = 0; k < 8; k++) { int i = li * 8 + k; uint g = i < NT ? lab[i] : NONE; v[k] = g != NONE && inpass(g) ? u[O_GCN + g] : 0u; }
+    scan_tiles(li, v);
+    for (int k = 0; k < 8; k++) { int i = li * 8 + k; if (i < NT) u[O_WO + i] = v[k]; }
+    if (li == 0) {
+        u[O_WO + NT] = sh_n; u[O_CNT + (pc.big != 0 ? C_WBIG : C_W)] = sh_n; bool cap = sh_n > uint(pc.wcap); if (cap) u[O_CNT + C_CAP] = 1u;
+        int b = O_CNT + C_IND + (pc.big != 0 ? 13 : 16); u[b] = cap ? 0u : min(64u, (sh_n + 255u) / 256u); u[b + 1] = 1u; u[b + 2] = 1u;   // phase 3 (grid-stride: any count)
+    }
+}
+void phase3() {   // the work items (many workgroups): each adds its tile's SAD to its entry
+    if (skip()) return;
+    uint W = u[O_WO + NT], st = gl_NumWorkGroups.x * 256u;
+    for (uint w = gl_GlobalInvocationID.x; w < W; w += st) {
+        int lo = 0, hi = NT - 1;   // the tile: the last with WO <= w
+        while (lo < hi) { int mid = (lo + hi + 1) >> 1; if (u[O_WO + mid] <= w) lo = mid; else hi = mid - 1; }
+        uint g = u[O_LAB + lo], e = u[O_SE + u[O_GST + g] + (w - u[O_WO + lo])], key = u[O_EK + e];
+        ivec2 d = ivec2(int(key & 127u) - 48, int((key >> 7) & 127u) - 48);
+        atomicAdd(u[O_ES + e], tsad4(lo, d));
+    }
+}
+void accept4(int li) {   // the accept at Q4 and the refine's indirect arguments (the box of the accepted groups' tiles)
+    bool sm = (pc.gate & R_SMALL) != 0;
+    bool rl = (pc.lev & L_RLIST) != 0 && pc.big == 0;   // (L_RLIST: the refine over the list of the accepted tiles, O_RFL)
+    if (li < 4) sbb[li] = (li & 1) == 0 ? NONE : 0u;
+    if (li == 0) srl = 0u;
+    for (int g = li; g < NT; g += 256) {
+        if (lab[g] != uint(g) || !inpass(uint(g))) continue;
+        ivec2 d = unkey(u[O_GM2 + g]);
+        if (d != ivec2(0) && (5u * u[O_GM1 + g] < 2u * u[O_GS0 + g] || (sm && max(abs(d.x), abs(d.y)) <= 1))) {
+            u[O_GD + g] = 1u << 31 | pk(d);
+            for (int k = 0; k < 26; k++) u[O_GREF + g * 26 + k] = 0u;
+        } else if (d != ivec2(0) && u[O_GRP + g] != 0u) u[O_GSTAT + g] = 4u;
+    }
+    sync();
+    for (int i = li; i < NT; i += 256) {
+        uint g = lab[i]; if (g == NONE || !inpass(g) || u[O_GD + g] == 0u) continue;
+        uint ty = uint(i / NTX), tx = uint(i % NTX); atomicMin(sbb[0], ty); atomicMax(sbb[1], ty); atomicMin(sbb[2], tx); atomicMax(sbb[3], tx);
+        if (rl) u[O_RFL + atomicAdd(srl, 1u)] = uint(i);
+    }
+    barrier();
+    if (li == 0 && sbb[0] != NONE) { int b = O_CNT + C_IND + (pc.big != 0 ? 5 : 0); u[b] = rl ? srl : sbb[3] - sbb[2] + 1u; u[b + 1] = rl ? 1u : sbb[1] - sbb[0] + 1u; u[b + 2] = 1u; u[b + 3] = sbb[2]; u[b + 4] = sbb[0]; }
+}
+void phase4(int li) {   // per group: the best candidate and the accept at Q4
+    if (skip()) return;
+    for (int i = li; i < NT; i += 256) lab[i] = u[O_LAB + i];
+    uint ne = u[O_CNT + C_NE];
+    sync();
+    for (uint e = uint(li); e < ne; e += 256u) { uint g = u[O_EK + e] >> 14; if (inpass(g)) atomicMin(u[O_GM1 + g], u[O_ES + e]); }
+    sync();
+    for (uint e = uint(li); e < ne; e += 256u) {
+        uint key = u[O_EK + e], g = key >> 14; if (!inpass(g) || u[O_ES + e] != u[O_GM1 + g]) continue;
+        int dy = int((key >> 7) & 127u) - 48, dx = int(key & 127u) - 48;
+        atomicMin(u[O_GM2 + g], okey(ivec2(dx, dy)));
+    }
+    sync();
+    if ((pc.gate & R_PICK) == 0 || pc.big != 0) accept4(li);   // (else after phase 6)
+}
+void moving(int li) {   // more than 128 moving tiles: none move (overflow); else the tiles' flows (lab loaded). Tile cap rule: the partial keep (above), no overflow.
+                        // Split rule: the kept sub-groups (usplit.comp; at their first kept tile, O_SUF) are units with the groups
+    bool spl = (pc.gate & R_SPLIT) != 0;
+    if (li == 0) sh_m = 0u;
+    sync();
+    if ((pc.gate & R_CAP) != 0 || spl) {
+        uint v[8], z[8];   // per thread 8 contiguous tiles: the kept units starting there (a group's id is its first tile), their sizes, the exclusive running sum
+        for (int k = 0; k < 8; k++) {
+            int g = li * 8 + k; z[k] = g < NT && u[O_GSTAT + g] == 2u ? u[O_GSZ + g] : 0u;
+            if (spl && g < NT && u[O_SUF + g] != 0u) z[k] += u[sgb(u[O_SUF + g] - 1u) + SG_KT];
+            v[k] = z[k];
+        }
+        scan_tiles(li, v);
+        uint tot = sh_n;
+        if ((pc.gate & R_CAP) != 0) {
+            for (int k = 0; k < 8; k++) {
+                int g = li * 8 + k; if (z[k] == 0u) continue;
+                if (v[k] + z[k] <= uint(pc.capn)) atomicAdd(sh_m, z[k]);
+                else {
+                    atomicAdd(u[O_CNT + C_PARTU], 1u); atomicAdd(u[O_CNT + C_PARTT], z[k]);
+                    if (u[O_GSTAT + g] == 2u) { u[O_GSTAT + g] = 7u; atomicAdd(u[O_CNT + C_MOVG], 0xFFFFFFFFu); }
+                    else u[sgb(u[O_SUF + g] - 1u) + SG_WHY] = 9u;   // (a split unit: partial)
+                }
+            }
+        } else if (li == 0) sh_m = tot;   // (split without the cap: the 128-tile cliff over groups and sub-groups together)
+        sync();
+    } else {
+        for (int g = li; g < NT; g += 256) if (u[O_GSTAT + g] == 2u) atomicAdd(sh_m, u[O_GSZ + g]);
+        sync();
+    }
+    uint M = sh_m; bool over = M > ((pc.gate & R_CAP) != 0 ? uint(pc.capn) : 128u);
+    if (li == 0) { u[O_CNT + C_MOVED] = M; u[O_CNT + C_OVER] = over ? 1u : 0u; }
+    if (!over) for (int i = li; i < NT; i += 256) { uint g = lab[i]; u[O_MV + i] = g != NONE && u[O_GSTAT + g] == 2u ? u[O_GF + g] : 0u; }
+    if (spl) {   // the split tiles of the surviving sub-groups (flags 16 split, 32 R2 kept only there)
+        for (int i = li; i < NT; i += 256) {
+            uint fl = u[O_SFL + i]; if ((fl & 8u) == 0u) continue;
+            int sg = sgb(u[O_SLB + i]); uint why = u[sg + SG_WHY];
+            if (!over && why == 0u) { u[O_MV + i] = u[sg + SG_F]; u[O_SFL + i] = fl | 16u; atomicAdd(u[O_CNT + C_STILES], 1u); if ((fl & 32u) != 0u) atomicAdd(u[O_CNT + C_SR2], 1u); }
+            else u[O_SFL + i] = fl & ~32u;
+        }
+    }
+}
+void phase1(int li) {
+    if (skip()) return;
+    bool rul = (pc.gate & (R_PICK | R_CONS | R_SMALL)) != 0, sm = (pc.gate & R_SMALL) != 0, cons = (pc.gate & R_CONS) != 0;
+    for (int i = li; i < NT; i += 256) lab[i] = u[O_LAB + i];
+    for (int g = li; g < NT; g += 256) {
+        uint gd = u[O_GD + g]; if (gd == 0u || !inpass(uint(g))) continue;
+        ivec2 d4 = upk(gd & 0xFFFFu); uint bs = NONE; ivec2 bf = ivec2(0); int bd = 0;
+        for (int k = 0; k < 25; k++) {
+            ivec2 f = 4 * d4 + ivec2(k % 5 - 2, k / 5 - 2); uint s = u[O_GREF + g * 26 + k]; int dd = f.x * f.x + f.y * f.y;
+            if (s < bs || (s == bs && (dd < bd || (dd == bd && (f.y < bf.y || (f.y == bf.y && f.x < bf.x)))))) { bs = s; bf = f; bd = dd; }
+        }
+        bool acc = 5u * bs < 2u * u[O_GREF + g * 26 + 25]; int fm = max(abs(bf.x), abs(bf.y));
+        if (acc && fm >= 6) u[O_GF + g] = pkf(bf);
+        else if (acc && sm && fm >= 2) { u[O_GF + g] = pkf(bf); u[O_GSM + g] = 1u; }   // (the small band: e(f) decides below)
+        else if (u[O_GRP + g] != 0u) u[O_GSTAT + g] = acc ? 6u : 5u;
+    }
+    sync();
+    if (pc.gate != 0) for (int i = li; i < NT; i += 256) {   // the MV gate's samples
+        uint g = lab[i]; if (g == NONE || u[O_GF + g] == 0u || !inpass(g)) continue;
+        int ty = i / NTX, tx = i % NTX; float m = 0.0, e = INF; ivec2 f = upkf(u[O_GF + g]);
+        if (!rul) for (int j = 0; j < 6; j++) {   // (the gate alone: vmax only)
+            int y = 32 * ty - 24 + 16 * j; if (y < 0 || y > 1079) continue;
+            int ry = int((float(y) + 0.5) * pc.ky);
+            for (int k = 0; k < 6; k++) {
+                int x = 32 * tx - 24 + 16 * k; if (x < 0 || x > 1919) continue;
+                int rx = int((float(x) + 0.5) * pc.kx);
+                vec2 r = imageLoad(mv, ivec2(rx, ry)).xy; float vx = r.x * pc.mvx, vy = r.y * pc.mvy; vx = vx * pc.sx; vy = vy * pc.sy;
+                m = max(m, max(abs(vx), abs(vy)));
+            }
+        } else for (int j = 0; j < 6; j++) {
+            int y = 32 * ty - 24 + 16 * j; if (y < 0 || y > 1079) continue;
+            int ry = grow(y);
+            for (int k = 0; k < 6; k++) {
+                int x = 32 * tx - 24 + 16 * k; if (x < 0 || x > 1919) continue;
+                vec2 v = gsample(ry, x); m = max(m, max(abs(v.x), abs(v.y))); e = min(e, emax(v, f));
+            }
+        }
+        atomicMax(u[O_GVM + g], floatBitsToUint(m)); if (rul) atomicMin(u[O_GE + g], floatBitsToUint(e));
+    }
+    sync();
+    for (int g = li; g < NT; g += 256) {
+        uint gf = u[O_GF + g]; if (gf == 0u || !inpass(uint(g))) continue;
+        ivec2 f = upkf(gf); int fm = max(abs(f.x), abs(f.y)); float e = uintBitsToFloat(u[O_GE + g]);
+        if (u[O_GSM + g] != 0u && !(e <= 2.0)) { u[O_GSTAT + g] = u[O_GRP + g] != 0u ? 6u : 0u; continue; }
+        bool keep = pc.gate == 0 || 4.0 * uintBitsToFloat(u[O_GVM + g]) >= float(fm);
+        uint st = !keep ? 1u : cons && !(e <= lim(f)) ? 3u : 2u;
+        u[O_GSTAT + g] = st;
+        if (st == 2u) { atomicAdd(u[O_CNT + C_MOVG], 1u); if (pc.big == 0 && u[O_CNT + C_BIGS] != 0u && (pc.gate & R_CAP) == 0) u[O_CNT + C_NEEDBIG] = 1u; if (u[O_GSM + g] != 0u) atomicAdd(u[O_CNT + C_SMALL], 1u); }
+        else { atomicAdd(u[O_CNT + C_VETO], 1u); atomicAdd(u[O_CNT + (st == 1u ? C_VGATE : C_VCONS)], 1u); }
+    }
+    sync();
+    bool last = pc.big != 0 || u[O_CNT + C_NEEDBIG] == 0u;   // (the big pass runs only when a small group is kept and a big group exists, never with the tile cap rule)
+    if (pc.big == 0 && li == 0) { int b = O_CNT + C_IND + 10; u[b] = last ? 0u : 1u; u[b + 1] = 1u; u[b + 2] = 1u; }
+    if (last && (pc.gate & R_SPLIT) == 0) moving(li);   // (with the split rule: usplit.comp, then phase 5)
+}
+void repick(int li, uint pi) {   // phase 6: the re-pick of listed group pi (lab loaded; each group reads and writes only its own words, and the counters)
+    uint g = u[O_PL + pi]; ivec2 ds = unkey(u[O_GM2 + g]);
+    barrier();
+    if (li == 0) { smn = 0u; snc = 0u; sns = 0u; sx1 = NONE; sx2 = NONE; }
+    for (int w = li; w < 592; w += 256) sbm[w / 296][w % 296] = 0u;
+    if (li < 96) sce[li] = 0x7F800000u;
+    barrier();
+    for (int i = li; i < NT; i += 256) if (lab[i] == uint(g)) smt[atomicAdd(smn, 1u)] = uint(i);
+    barrier();
+    int n = int(smn), ns = n * 36;
+    vec2 sv[9]; bool so[9];   // this thread's samples
+    for (int q = 0; q < 9; q++) {
+        int sI = li + 256 * q; so[q] = false; sv[q] = vec2(0.0); if (sI >= ns) continue;
+        int i = int(smt[sI / 36]), y = 32 * (i / NTX) - 24 + 16 * ((sI % 36) / 6), x = 32 * (i % NTX) - 24 + 16 * (sI % 6);
+        if (y < 0 || y > 1079 || x < 0 || x > 1919) continue;
+        sv[q] = gsample(grow(y), x); so[q] = true;
+    }
+    // the candidates (bitmap 0) and the seeds (bitmap 1), by (dy + 48) * 97 + dx + 48
+    uint ne = u[O_GCN + g], e0 = u[O_GST + g];
+    for (uint c = uint(li); c < ne; c += 256u) {
+        uint en = u[O_SE + e0 + c], key = u[O_EK + en] & 16383u, b = (key >> 7) * 97u + (key & 127u); scd[c] = key; ssd[c] = u[O_ES + en]; atomicOr(sbm[0][b >> 5], 1u << (b & 31u));
+    }
+    for (int q = 0; q < 9; q++) if (so[q]) {
+        vec2 fq = floor(sv[q] * 0.25 + 0.5);
+        if (abs(fq.x) <= 48.0 && abs(fq.y) <= 48.0) { uint b = uint(int(fq.y) + 48) * 97u + uint(int(fq.x) + 48); atomicOr(sbm[1][b >> 5], 1u << (b & 31u)); }
+    }
+    barrier();
+    for (int w = li; w < 296; w += 256) { uint m = sbm[1][w] & ~sbm[0][w]; sbm[1][w] = m; if (m != 0u) atomicAdd(sns, uint(bitCount(m))); }
+    barrier();
+    uint nn = sns;
+    if (nn > 32u) { if (li == 0) { u[O_GRP + g] = 1u << 30 | nn; atomicAdd(u[O_CNT + C_POVER], 1u); } return; }
+    for (int w = li; w < 296; w += 256) for (uint m = sbm[1][w]; m != 0u; m &= m - 1u) {
+        uint bi = uint(w) * 32u + uint(findLSB(m)), p = ne + atomicAdd(snc, 1u); scd[p] = (bi / 97u) << 7 | (bi % 97u); ssd[p] = 0u;
+    }
+    barrier();
+    int nt = int(ne + nn);
+    for (int w = li; w < n * int(nn); w += 256) {   // the seeds' group SAD of Q4
+        uint key = scd[int(ne) + w / n]; atomicAdd(ssd[int(ne) + w / n], tsad4(int(smt[w % n]), ivec2(int(key & 127u) - 48, int(key >> 7) - 48)));
+    }
+    for (int c = 0; c < nt; c++) {   // e(4 d) of every candidate
+        uint key = scd[c]; ivec2 f = 4 * ivec2(int(key & 127u) - 48, int(key >> 7) - 48); float ec = INF;
+        for (int q = 0; q < 9; q++) if (so[q]) ec = min(ec, emax(sv[q], f));
+        if (ec < INF) atomicMin(sce[c], floatBitsToUint(ec));
+    }
+    barrier();
+    for (int c = li; c < nt; c += 256) {
+        uint key = scd[c]; ivec2 d = ivec2(int(key & 127u) - 48, int(key >> 7) - 48);
+        if (d != ivec2(0) && uintBitsToFloat(sce[c]) <= lim(4 * d)) atomicMin(sx1, ssd[c]);
+    }
+    barrier();
+    for (int c = li; c < nt; c += 256) {
+        uint key = scd[c]; ivec2 d = ivec2(int(key & 127u) - 48, int(key >> 7) - 48);
+        if (d != ivec2(0) && ssd[c] == sx1 && uintBitsToFloat(sce[c]) <= lim(4 * d)) atomicMin(sx2, okey(d));
+    }
+    barrier();
+    if (li == 0 && sx1 != NONE) { u[O_GRP + g] = 1u << 31 | pk(ds); u[O_GM1 + g] = sx1; u[O_GM2 + g] = sx2; atomicAdd(u[O_CNT + C_REPICK], 1u); }
+}
+void phase6(int li) {   // the MV-consistent pick (one workgroup, after phase 4's pick), then phase 4's accept
+    if (skip()) return;
+    for (int i = li; i < NT; i += 256) lab[i] = u[O_LAB + i];
+    if (li == 0) smn = 0u;
+    sync();
+    for (int i = li; i < NT; i += 256) {   // e(4 d4) of the groups that can re-pick (their samples, per member tile)
+        uint g = lab[i]; if (g == NONE || u[O_GSZ + g] > 64u) continue;
+        ivec2 f4 = 4 * unkey(u[O_GM2 + g]); if (f4 == ivec2(0)) continue;
+        int ty = i / NTX, tx = i % NTX; float e = INF;
+        for (int j = 0; j < 6; j++) {
+            int y = 32 * ty - 24 + 16 * j; if (y < 0 || y > 1079) continue;
+            int ry = grow(y);
+            for (int k = 0; k < 6; k++) { int x = 32 * tx - 24 + 16 * k; if (x < 0 || x > 1919) continue; e = min(e, emax(gsample(ry, x), f4)); }
+        }
+        atomicMin(u[O_GEP + g], floatBitsToUint(e));
+    }
+    sync();
+    for (int g = li; g < NT; g += 256) {   // the inconsistent ones, listed (any order: each group's re-pick is its own)
+        if (lab[g] != uint(g) || u[O_GSZ + g] > 64u) continue;
+        ivec2 f4 = 4 * unkey(u[O_GM2 + g]); if (f4 == ivec2(0) || uintBitsToFloat(u[O_GEP + g]) <= lim(f4)) continue;
+        u[O_PL + atomicAdd(smn, 1u)] = uint(g);
+    }
+    sync();
+    uint npl = smn;
+    if ((pc.lev & L_REPAR) != 0) {   // (L_REPAR: a workgroup per listed group, phase 7, then the accept, phase 8)
+        if (li == 0) { int b = O_CNT + C_IND + 28; u[b] = npl; u[b + 1] = 1u; u[b + 2] = 1u; }
+        return;
+    }
+    for (uint pi = 0u; pi < npl; pi++) repick(li, pi);
+    sync();
+    accept4(li);
+}
+void phase7(int li) {   // (L_REPAR) phase 6's re-pick of one listed group, a workgroup each (dispatched indirectly: C_IND + 28)
+    if (skip()) return;
+    for (int i = li; i < NT; i += 256) lab[i] = u[O_LAB + i];
+    sync();
+    repick(li, gl_WorkGroupID.x);
+}
+void phase8(int li) {   // (L_REPAR) phase 6's accept after the re-picks
+    if (skip()) return;
+    for (int i = li; i < NT; i += 256) lab[i] = u[O_LAB + i];
+    sync();
+    accept4(li);
+}
+void phase5(int li) {   // (folded into phase 1's last pass; kept for a separate dispatch)
+    if (u[O_CNT + C_CAP] != 0u) return;
+    for (int i = li; i < NT; i += 256) lab[i] = u[O_LAB + i];
+    moving(li);
+}
+void verdict(uint wg, uint v) { atomicAnd(u[O_CNT + C_FL], ~(3u << (2u * wg))); atomicOr(u[O_CNT + C_FL], v << (2u * wg)); }   // (only this workgroup's 2 bits)
+void phase2(int li) {   // 8 workgroups, one destination tile a thread; each builds the moving list itself (the same in all); its verdict into C_FL
+    uint wg = gl_WorkGroupID.x;
+    if (u[O_CNT + C_CAP] != 0u || u[O_CNT + C_OVER] != 0u || u[O_CNT + C_MOVED] == 0u) { if (li == 0) verdict(wg, 1u); return; }
+    if (li == 0) sh_m = 0u;
+    uint v[8];
+    for (int k = 0; k < 8; k++) { int i = li * 8 + k; v[k] = i < NT && u[O_MV + i] != 0u ? 1u : 0u; }
+    scan_tiles(li, v);
+    uint nm = sh_n;
+    for (int k = 0; k < 8; k++) {
+        int i = li * 8 + k; if (i >= NT) continue; uint m = u[O_MV + i];
+        if (m != 0u) {
+            ivec2 f = upkf(m);
+            precise float px = (1.0 - pc.t) * float(f.x) + 0.5, py = (1.0 - pc.t) * float(f.y) + 0.5;
+            ivec2 s = ivec2(int(floor(px)), int(floor(py)));
+            uint shv = uint(s.y + 512) << 10 | uint(s.x + 512);
+            int y0 = 32 * (i / NTX) + s.y, x0 = 32 * (i % NTX) + s.x;   // the rectangle's destination tiles
+            mi[v[k]] = uint(i); mr[v[k]] = uint(max(0, fdiv(y0, 32))) | uint(max(-1, min(NTY - 1, fdiv(y0 + 31, 32))) + 1) << 8 | uint(max(0, fdiv(x0, 32))) << 16 | uint(max(-1, min(NTX - 1, fdiv(x0 + 31, 32))) + 1) << 24;   // (last + 1)
+            if (wg == 0u) { u[O_ML + v[k]] = uint(i); u[O_SH + i] = shv; }
+        }
+    }
+    barrier();
+    int d = int(wg) * 256 + li;
+    if (d < NT) {
+        int dty = d / NTX, dtx = d % NTX; uint n = 0u;
+        for (uint j = 0u; j < nm; j++) {
+            uint r = mr[j]; int a0 = int(r & 255u), a1 = int((r >> 8) & 255u), b0 = int((r >> 16) & 255u), b1 = int(r >> 24);
+            if (dty >= a0 && dty < a1 && dtx >= b0 && dtx < b1) { if (n < 8u) u[O_DL + d * 8 + int(n)] = mi[j]; n++; }
+        }
+        u[O_DN + d] = min(n, 8u);
+        if (n > 8u) atomicOr(sh_m, 1u);
+        if (n > 0u) atomicMax(u[O_CNT + C_SRCMX], n);
+    }
+    barrier();
+    if (li == 0) verdict(wg, sh_m != 0u ? 2u : 0u);
+}
+void main() {
+    int li = int(gl_LocalInvocationIndex);
+    if (pc.phase == 0) phase0(li); else if (pc.phase == 1) phase1(li); else if (pc.phase == 2) phase2(li); else if (pc.phase == 3) phase3(); else if (pc.phase == 4) phase4(li); else if (pc.phase == 6) phase6(li); else if (pc.phase == 7) phase7(li); else if (pc.phase == 8) phase8(li); else phase5(li);
+}

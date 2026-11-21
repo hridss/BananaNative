@@ -51,10 +51,11 @@ static void keys(void) {
     const vka_fgprof *FP = vka_fgprof_get();
     g_kpre = vka_env_str("DM_FG_UI_PRE", b, sizeof b) ? strtoull(b, NULL, 16) : FP->ui_pre;
     g_kcomp = vka_env_str("DM_FG_UI_COMP", b, sizeof b) ? strtoull(b, NULL, 16) : FP->ui_layer;
-    int layer = vka_env_str("DM_FG_UI", b, sizeof b) && !strcmp(b, "layer");
+    int layer = vka_env_str("DM_FG_UI", b, sizeof b) && !strcmp(b, "layer"), mv = vka_fgmv_wanted();
+    if (mv) layer = 1;   // the motion-vector engine runs on the picture without UI
     int was = g_on, wl = g_lay, wc = g_cut;
     g_on = (layer || VKA_ENV("DM_FG_UI_SNAP", 0)) && g_kpre && g_kcomp; g_lay = layer && g_on;
-    g_cut = vka_env_str("DM_FG_CUT", b, sizeof b) ? !strcmp(b, "repeat") : 0;
+    g_cut = vka_env_str("DM_FG_CUT", b, sizeof b) ? !strcmp(b, "repeat") : mv && (FP->features & VKA_FGF_CUT);
     g_log = VKA_ENV("DM_FG_UI_T2T_LOG", 0);
     if (g_on != was) VLOG("fg ui: snapshots %s (pre-UI pass fragment %016llx, UI composite fragment %016llx)", g_on ? "on" : "off", (unsigned long long)g_kpre, (unsigned long long)g_kcomp);
     if (g_lay != wl) VLOG("fg ui: frame generation under the UI %s", g_lay ? "on (DM_FG_UI=layer)" : "off");
@@ -170,7 +171,7 @@ static void win_map(uint64_t serial) {
     for (uint64_t q = g_dn; q > 0 && q + NS > g_dn + 1; q--) { unsigned k = (unsigned)((q - 1) % NS); if (M[k].n == q - 1 && M[k].ok && M[k].frame == fr) { mq = q; break; } }
     unsigned i = 0; while (i < NW && Wm[i].serial != serial) i++;
     if (i == NW) i = g_wi++ % NW;
-    Wm[i].serial = serial; Wm[i].pre_q = pq; Wm[i].mv_q = mq;
+    Wm[i].serial = serial; Wm[i].pre_q = pq; Wm[i].mv_q = mq; Wm[i].op_q = vka_fgmv_op_q(fr);   // the frame's op pass (vka_fgmv.c)
     pthread_mutex_unlock(&g_mu);
     static int told; if (!told && (pq || mq)) { told = 1; VLOG("fg ui: window texture serial %llu written in frame %llu: snapshot %llu, motion vectors %llu", (unsigned long long)serial, (unsigned long long)fr, (unsigned long long)pq, (unsigned long long)mq); }
 }

@@ -1,0 +1,126 @@
+// SPDX-License-Identifier: MIT
+#version 450
+// the pass at the DLSS op (vka_fgmv.c), once per game frame at render size: the depth (raw), the 3x3 nearest-depth dilation of the motion vectors
+// (the vector and depth of the nearest texel, reversed Z: the largest value; the centre first, then the 8 neighbours in row order, strictly greater replaces), and the distance to the nearest depth edge
+// (edge: the 3x3 depth ratio max/min > 1.15 and the texel's depth > 1e-4), exact Euclidean within 5 render px, clamped at 5, stored as floor(d * 51 + 0.5) (R8: E / 255 = d / 5).
+// flags 1 (DM_FG_MV_DITHER, default on): the game's screen-door dither on near geometry (2x2-texel ordered cells) shows in the depth as a checkerboard of near and far texels;
+// a texel whose row and column both hold >= 3 depth transitions (ratio > 1.15) among the 8 edges within -4..+3, or >= 2 on one edge parity and none on the other in both,
+// marks the 5x5 around it as a dither region (DF = 1): there the texel keeps its own depth and vector (no dilation), and the splat claims one texel instead of 2x2.
+// flags 2 (always set by the host): the edge distance from a row pass and a column pass (the same exact minimum), and a tile with no edge within 5 px of it stores 5 at once
+// Built with OPTAB (the host's pipeline with the dither rule on): the dither test counts the depth transitions in bit masks made once per
+// tile (a row's, a column's; the same tests, so the same counts), and the 5x5 region test is a row OR then a column OR (the same OR). Without OPTAB: the plain form
+layout(local_size_x = 16, local_size_y = 16) in;
+layout(set = 0, binding = 0) uniform sampler2D zin;        // the game's depth (depth aspect) or an R32F copy (replay)
+layout(set = 0, binding = 1) uniform sampler2D mvin;       // the game's motion vectors (raw RG16F)
+layout(set = 0, binding = 2, r32f) uniform writeonly image2D oz;     // raw depth
+layout(set = 0, binding = 3, r32f) uniform writeonly image2D od;     // dilated depth
+layout(set = 0, binding = 4, rg16f) uniform writeonly image2D ov;    // dilated motion vector (raw)
+layout(set = 0, binding = 5, r8) uniform writeonly image2D oe;       // edge distance / 5
+layout(set = 0, binding = 6, r8ui) uniform writeonly uimage2D of;    // dither region 0 / 1
+layout(push_constant) uniform PC { int iw, ih; float thr, zmin; uint flags; } pc;
+const int R = 6, T = 16 + 2 * R, TE = T - 2, TI = 20;   // the tile and its apron: 5 for the distance search, 1 for the edge test; 6 for the dither test (4 along, 2 grown)
+shared float sz[T * T];
+shared uint se[TE * TE];
+shared uint si[TI * TI];        // the dither test per texel of the tile +-2
+shared int sg[TE * 16];         // the row pass: |dx| to the nearest edge texel within 5 (6: none)
+shared uint anyEdge;
+#ifdef OPTAB
+shared uint sbh[T], sbv[T], sr[TI * 16];   // bit x of sbh[y]: the transition (x, y)-(x + 1, y), bit y of sbv[x]: (x, y)-(x, y + 1), both texels in the image; sr: the OR of si over 5 columns
+#endif
+float zat(ivec2 p) { if (p.x < 0 || p.y < 0 || p.x >= pc.iw || p.y >= pc.ih) return -1.0; float z = texelFetch(zin, p, 0).r; return isnan(z) ? 0.0 : z; }
+bool inimg(ivec2 p) { return p.x >= 0 && p.y >= 0 && p.x < pc.iw && p.y < pc.ih; }
+const float DR = 1.15;
+bool trans(float za, float zb) { return zb > za * DR || za > zb * DR; }
+void main() {
+    ivec2 o = ivec2(gl_WorkGroupID.xy) * 16 - R; uint li = gl_LocalInvocationIndex;
+    if (li == 0u) anyEdge = 0u;
+#ifdef OPTAB
+    if (li < uint(T)) { sbh[li] = 0u; sbv[li] = 0u; }
+#endif
+    for (uint i = li; i < uint(T * T); i += 256u) sz[i] = zat(o + ivec2(int(i) % T, int(i) / T));
+    barrier();
+    for (uint i = li; i < uint(TE * TE); i += 256u) {
+        int x = int(i) % TE + 1, y = int(i) / TE + 1;
+        float c = sz[y * T + x], mx = -1.0, mn = 1e30;
+        uint e = 0u;
+        if (c >= 0.0) {
+            for (int dy = -1; dy <= 1; dy++) for (int dx = -1; dx <= 1; dx++) { float v = sz[(y + dy) * T + x + dx]; if (v >= 0.0) { mx = max(mx, v); mn = min(mn, v); } }
+            e = (mx / max(mn, 1e-6) > pc.thr && c > pc.zmin) ? 1u : 0u;
+        }
+        se[i] = e;
+        if (e != 0u) atomicOr(anyEdge, 1u);
+    }
+    bool dith = (pc.flags & 1u) != 0u, sep = (pc.flags & 2u) != 0u;
+#ifdef OPTAB
+    if (dith) {
+        for (uint i = li; i < uint(T * T); i += 256u) {
+            int x = int(i) % T, y = int(i) / T; ivec2 p = o + ivec2(x, y);
+            if (x + 1 < T && inimg(p) && inimg(p + ivec2(1, 0)) && trans(sz[y * T + x], sz[y * T + x + 1])) atomicOr(sbh[y], 1u << x);
+            if (y + 1 < T && inimg(p) && inimg(p + ivec2(0, 1)) && trans(sz[y * T + x], sz[(y + 1) * T + x])) atomicOr(sbv[x], 1u << y);
+        }
+        barrier();
+        for (uint i = li; i < uint(TI * TI); i += 256u) {
+            int x = int(i) % TI + 4, y = int(i) / TI + 4; ivec2 p = o + ivec2(x, y); uint iso = 0u;
+            if (inimg(p)) {
+                // the 8 edges x - 4 .. x + 3 (y - 4 .. y + 3); even: the edge's image coordinate is even
+                uint hb = (sbh[y] >> uint(x - 4)) & 255u, vb = (sbv[x] >> uint(y - 4)) & 255u;
+                uint he = ((o.x + x - 4) & 1) == 0 ? 0x55u : 0xAAu, ve = ((o.y + y - 4) & 1) == 0 ? 0x55u : 0xAAu;
+                int h0 = bitCount(hb & he), h1 = bitCount(hb) - h0, v0 = bitCount(vb & ve), v1 = bitCount(vb) - v0;
+                iso = ((h0 + h1 >= 3 && v0 + v1 >= 3) || (max(h0, h1) >= 2 && min(h0, h1) == 0 && max(v0, v1) >= 2 && min(v0, v1) == 0)) ? 1u : 0u;
+            }
+            si[i] = iso;
+        }
+    }
+#else
+    if (dith) {
+        for (uint i = li; i < uint(TI * TI); i += 256u) {   // window texel (x, y) in [4, 23]^2 = the tile +-2
+            int x = int(i) % TI + 4, y = int(i) / TI + 4; ivec2 p = o + ivec2(x, y); uint iso = 0u;
+            if (inimg(p)) {
+                int h0 = 0, h1 = 0, v0 = 0, v1 = 0;
+                for (int k = -4; k <= 3; k++) {
+                    int xa = x + k, ya = y + k; ivec2 pa = o + ivec2(xa, y), pb = o + ivec2(x, ya);   // the edge index is the left (top) texel's image x (y)
+                    if (inimg(pa) && inimg(pa + ivec2(1, 0)) && trans(sz[y * T + xa], sz[y * T + xa + 1])) { if ((pa.x & 1) == 0) h0++; else h1++; }
+                    if (inimg(pb) && inimg(pb + ivec2(0, 1)) && trans(sz[ya * T + x], sz[(ya + 1) * T + x])) { if ((pb.y & 1) == 0) v0++; else v1++; }
+                }
+                iso = ((h0 + h1 >= 3 && v0 + v1 >= 3) || (max(h0, h1) >= 2 && min(h0, h1) == 0 && max(v0, v1) >= 2 && min(v0, v1) == 0)) ? 1u : 0u;
+            }
+            si[i] = iso;
+        }
+    }
+#endif
+    barrier();
+#ifdef OPTAB
+    if (dith) {
+        for (uint i = li; i < uint(TI * 16); i += 256u) { int r = int(i) / 16, c = int(i) % 16; uint v = 0u; for (int j = 0; j < 5; j++) v |= si[r * TI + c + j]; sr[i] = v; }
+        barrier();
+    }
+#endif
+    bool noedge = sep && anyEdge == 0u;   // (uniform: read after the barrier)
+    if (sep && !noedge) {
+        for (uint i = li; i < uint(TE * 16); i += 256u) {
+            int r = int(i) / 16, c = int(i) % 16, m = 6;
+            for (int dx = -5; dx <= 5; dx++) if (se[r * TE + c + 5 + dx] != 0u) m = min(m, abs(dx));
+            sg[i] = m;
+        }
+        barrier();
+    }
+    ivec2 l = ivec2(gl_LocalInvocationID.xy), p = o + R + l;
+    if (p.x >= pc.iw || p.y >= pc.ih) return;
+    int c = (l.y + R) * T + l.x + R;
+    uint df = 0u;
+#ifdef OPTAB
+    if (dith) for (int j = 0; j < 5; j++) df |= sr[(l.y + j) * 16 + l.x];
+#else
+    if (dith) for (int dy = -2; dy <= 2; dy++) for (int dx = -2; dx <= 2; dx++) df |= si[(l.y + 2 + dy) * TI + l.x + 2 + dx];
+#endif
+    float best = sz[c]; ivec2 bo = ivec2(0);
+    if (df == 0u) for (int dy = -1; dy <= 1; dy++) for (int dx = -1; dx <= 1; dx++) { if (dx == 0 && dy == 0) continue; float v = sz[c + dy * T + dx]; if (v > best) { best = v; bo = ivec2(dx, dy); } }
+    vec2 m = texelFetch(mvin, p + bo, 0).xy;
+    if (any(isnan(m)) || any(isinf(m))) m = vec2(0.0);
+    int d2 = 1000;
+    if (!sep) { for (int dy = -5; dy <= 5; dy++) for (int dx = -5; dx <= 5; dx++) if (se[(l.y + R - 1 + dy) * TE + l.x + R - 1 + dx] != 0u) d2 = min(d2, dx * dx + dy * dy); }
+    else if (!noedge) { for (int dy = -5; dy <= 5; dy++) { int g = sg[(l.y + 5 + dy) * 16 + l.x]; d2 = min(d2, g * g + dy * dy); } }
+    float d = min(sqrt(float(d2)), 5.0);
+    imageStore(oz, p, vec4(sz[c])); imageStore(od, p, vec4(best)); imageStore(ov, p, vec4(m, 0.0, 0.0)); imageStore(oe, p, vec4(floor(d * 51.0 + 0.5) / 255.0));
+    imageStore(of, p, uvec4(df));
+}

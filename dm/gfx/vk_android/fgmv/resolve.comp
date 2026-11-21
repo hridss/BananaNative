@@ -1,0 +1,89 @@
+// SPDX-License-Identifier: MIT
+#version 450
+// the generated frame at display size (vka_fgmv.c), fused with the UI composite. Per pixel q: the field's vector and depth from the nearest of its 2x2
+// render texels (the largest depth, first in row order); A sampled at q + t v and C at q - (1 - t) v (display px, pixel index = centre) by Catmull-Rom (9 bilinear
+// taps); a side is out when its place is off the picture or its own frame's depth there (nearest texel) is more than 5 % nearer than the field's; both in and their
+// luma within 40: the t blend, else C; one in: that one. Both in and within 5 render px of a depth edge (soft5): per-side weight smoothstep(edge distance / 5) x its t weight.
+// Then frame C's UI layer over it (out = L + G * L.a in linear light, sRGB stored). Repeat (a cut, or no motion data): C itself under its layer
+layout(local_size_x = 16, local_size_y = 16) in;
+layout(set = 0, binding = 0) uniform sampler2D ia;                  // A (display, UNORM view of the sRGB bits, linear, clamp)
+layout(set = 0, binding = 1) uniform sampler2D ic;                  // C
+layout(set = 0, binding = 2, rg32ui) uniform readonly uimage2D field;
+layout(set = 0, binding = 3, r32f) uniform readonly image2D za;     // A's raw depth
+layout(set = 0, binding = 4, r32f) uniform readonly image2D zc;     // C's raw depth
+layout(set = 0, binding = 5) uniform sampler2D ea;                  // A's edge distance (R8, d / 5; linear)
+layout(set = 0, binding = 6) uniform sampler2D ec;                  // C's
+layout(set = 0, binding = 7, rgba8) uniform readonly image2D layer; // C's UI layer
+layout(set = 0, binding = 8, rgba8) uniform writeonly image2D gen;
+layout(set = 0, binding = 9, std430) readonly buffer Result { float rs[]; };   // the cut guard's decision (rs[0] > 0.5: cut)
+layout(push_constant) uniform PC {
+    int W, H, iw, ih;
+    float t, mvx, mvy, ratio;
+    float tol, feather, ew, eh;   // feather: 0 = off; else a side's weight fades to the other over its last <feather> display px before the border;
+                                  // ew, eh: the op images' size when larger than the size in use iw x ih (else 0)
+    uint flags;   // 1 UI layer over it, 2 repeat C, 4 the cut guard's decision applies, 8 soft band on; debug view (bits 8..11): 1 state, 2 vectors, 3 edge distance C, 4 no UI; 0x10000 binding 2 is the pick map
+} pc;
+const vec3 LW = vec3(0.2126, 0.7152, 0.0722);
+vec3 dec(vec3 c) { return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c)); }
+vec3 enc(vec3 l) { l = clamp(l, 0.0, 1.0); return mix(l * 12.92, 1.055 * pow(l, vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), l)); }
+// The edge distance's coordinates of display px x (its images sampled in their iw x ih corner when larger)
+vec2 ecoord(vec2 x, vec2 D, vec2 Rz) { vec2 u = (x + 0.5) / D; return pc.ew > 0.0 ? u * (Rz / vec2(pc.ew, pc.eh)) : u; }
+vec3 cr9(sampler2D s, vec2 x, vec2 sz) {   // Catmull-Rom at pixel index coordinates x (clamped to the picture), 9 bilinear taps
+    x = clamp(x, vec2(0.0), sz - 1.0);
+    vec2 i = floor(x), f = x - i;
+    vec2 w0 = f * (-0.5 + f * (1.0 - 0.5 * f)), w1 = 1.0 + f * f * (-2.5 + 1.5 * f), w2 = f * (0.5 + f * (2.0 - 1.5 * f)), w3 = f * f * (-0.5 + 0.5 * f);
+    vec2 w12 = w1 + w2, o12 = w2 / w12;
+    vec2 t0 = (i - 0.5) / sz, t3 = (i + 2.5) / sz, t12 = (i + 0.5 + o12) / sz;
+    vec3 r = (textureLod(s, vec2(t0.x, t0.y), 0.0).rgb * w0.x + textureLod(s, vec2(t12.x, t0.y), 0.0).rgb * w12.x + textureLod(s, vec2(t3.x, t0.y), 0.0).rgb * w3.x) * w0.y
+           + (textureLod(s, vec2(t0.x, t12.y), 0.0).rgb * w0.x + textureLod(s, vec2(t12.x, t12.y), 0.0).rgb * w12.x + textureLod(s, vec2(t3.x, t12.y), 0.0).rgb * w3.x) * w12.y
+           + (textureLod(s, vec2(t0.x, t3.y), 0.0).rgb * w0.x + textureLod(s, vec2(t12.x, t3.y), 0.0).rgb * w12.x + textureLod(s, vec2(t3.x, t3.y), 0.0).rgb * w3.x) * w3.y;
+    return clamp(r, 0.0, 1.0);
+}
+vec4 st(vec3 c) { return vec4(floor(c * 255.0 + 0.5) / 255.0, 1.0); }   // an explicitly rounded store (the UNORM conversion is then exact)
+void main() {
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    if (p.x >= pc.W || p.y >= pc.H) return;
+    vec2 D = vec2(pc.W, pc.H), Rz = vec2(pc.iw, pc.ih), S = D / Rz, K = Rz / D, q = vec2(p);
+    bool rep = (pc.flags & 2u) != 0u || ((pc.flags & 4u) != 0u && rs[0] > 0.5);
+    uint dbg = (pc.flags >> 8) & 15u;
+    vec3 G;
+    if (rep) G = texelFetch(ic, p, 0).rgb;
+    else {
+        vec2 r = (q + 0.5) * K - 0.5;
+        ivec2 i0 = clamp(ivec2(floor(r)), ivec2(0), ivec2(Rz) - 1), i1 = min(i0 + 1, ivec2(Rz) - 1);
+        ivec2 cand[4] = ivec2[4](i0, ivec2(i1.x, i0.y), ivec2(i0.x, i1.y), i1);
+        uvec2 f0 = imageLoad(field, cand[0]).xy; float zt = uintBitsToFloat(f0.y); uint vb = f0.x;
+        if ((pc.flags & 0x10000u) == 0u)   // (else binding 2 is the fill's pick map: the 2x2's result at (x0, y0) already, fill2.comp)
+            for (int k = 1; k < 4; k++) { uvec2 f = imageLoad(field, cand[k]).xy; float z = uintBitsToFloat(f.y); if (z > zt) { zt = z; vb = f.x; } }
+        vec2 v = unpackHalf2x16(vb) * vec2(pc.mvx, pc.mvy) * S;
+        vec2 a = q + pc.t * v, c = q - (1.0 - pc.t) * v;
+        bool inA = all(greaterThanEqual(a, vec2(0.0))) && all(lessThanEqual(a, D - 1.0)), inC = all(greaterThanEqual(c, vec2(0.0))) && all(lessThanEqual(c, D - 1.0));
+        vec3 sa = cr9(ia, a, D), sc = cr9(ic, c, D);
+        ivec2 xa = clamp(ivec2(floor((a + 0.5) * K)), ivec2(0), ivec2(Rz) - 1), xc = clamp(ivec2(floor((c + 0.5) * K)), ivec2(0), ivec2(Rz) - 1);
+        float lim = zt * pc.ratio + 1e-6;   // (ratio = 1.05)
+        bool okA = inA && !(imageLoad(za, xa).r > lim), okC = inC && !(imageLoad(zc, xc).r > lim);
+        float la = dot(sa * 255.0, LW), lc = dot(sc * 255.0, LW);
+        bool agree = abs(la - lc) < pc.tol;
+        float wb = pc.t, wC = (okA && okC) ? (agree ? wb : 1.0) : (okC ? 1.0 : (okA ? 0.0 : 1.0));
+        float dnA = 1.0, dnC = 1.0;
+        if ((pc.flags & 8u) != 0u) {   // soft5: E / 255 = d / 5 (a band of 5 render px)
+            dnA = textureLod(ea, ecoord(a, D, Rz), 0.0).r; dnC = textureLod(ec, ecoord(c, D, Rz), 0.0).r;
+            if (okA && okC && (dnA < 0.998 || dnC < 0.998)) {
+                float xA = clamp(dnA, 0.0, 1.0), xC = clamp(dnC, 0.0, 1.0), sA = xA * xA * (3.0 - 2.0 * xA), sC = xC * xC * (3.0 - 2.0 * xC);
+                float gA = sA * (1.0 - wb), gC = sC * wb, tot = gA + gC;
+                wC = tot > 1e-3 ? gC / max(tot, 1e-6) : (dnC >= dnA ? 1.0 : 0.0);
+            }
+        }
+        if (pc.feather > 0.0 && okA && okC) {
+            float bA = min(min(a.x, D.x - 1.0 - a.x), min(a.y, D.y - 1.0 - a.y)), bC = min(min(c.x, D.x - 1.0 - c.x), min(c.y, D.y - 1.0 - c.y));
+            float xA = clamp(bA / pc.feather, 0.0, 1.0), xC = clamp(bC / pc.feather, 0.0, 1.0), fA = xA * xA * (3.0 - 2.0 * xA), fC = xC * xC * (3.0 - 2.0 * xC);
+            wC = wC * fC + (1.0 - wC) * (1.0 - fA);
+        }
+        G = sa * (1.0 - wC) + sc * wC;
+        if (dbg == 1u) G = vec3(okA && !okC ? 1.0 : 0.0, okC && !okA ? 1.0 : 0.0, okA && okC ? (agree ? 1.0 : 0.4) : 0.0) * (0.35 + 0.65 * G.g);
+        else if (dbg == 2u) G = clamp(vec3(0.5 + v / 64.0, zt > 0.0 ? 0.5 : 0.0), 0.0, 1.0);
+        else if (dbg == 3u) G = vec3(dnC);
+    }
+    if ((pc.flags & 1u) != 0u && dbg != 4u) { vec4 L = imageLoad(layer, p); G = enc(dec(L.rgb) + dec(G) * L.a); }
+    imageStore(gen, p, st(G));
+}

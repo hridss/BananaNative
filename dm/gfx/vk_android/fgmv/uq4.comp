@@ -1,0 +1,32 @@
+// SPDX-License-Identifier: MIT
+#version 450
+#extension GL_GOOGLE_include_directive : require
+// the UI flow's coverage pyramid of one UI layer (vka_fgmv.c, DM_FG_MV_UIFLOW): coverage c = 255 - alpha (integer); Q4 = the sum over 4x4 display px
+// (480 x 272: past the display zero), Q16 = the sum over 4x4 Q4 cells (120 x 68), into the buffer's slot pc.slot. One thread a Q4 cell, a workgroup 4x4 Q16 cells.
+// pc.store: the layer is also copied into keep (the next pair's A layer; the copy and the pyramid in one pass)
+layout(local_size_x = 16, local_size_y = 16) in;
+layout(set = 0, binding = 0, rgba8) uniform readonly image2D layer;
+layout(set = 0, binding = 1, std430) buffer UI { uint u[]; };
+layout(set = 0, binding = 2, rgba8) uniform writeonly image2D keep;
+layout(push_constant) uniform PC { int slot, W, H, store; } pc;
+#include "ui.glsl"
+shared uint s4[256], cv[4096];   // cv: the workgroup's 64x64 display px coverage (read row by row, so neighbouring threads touch neighbouring px)
+void main() {
+    ivec2 c = ivec2(gl_GlobalInvocationID.xy), o = ivec2(gl_WorkGroupID.xy) * 64; int li = int(gl_LocalInvocationIndex);
+    for (int k = 0; k < 16; k++) {
+        int j = li + 256 * k; ivec2 p = o + ivec2(j & 63, j >> 6); uint v = 0u;
+        if (p.x < pc.W && p.y < pc.H) { vec4 l = imageLoad(layer, p); v = 255u - uint(l.a * 255.0 + 0.5); if (pc.store != 0) imageStore(keep, p, l); }
+        cv[j] = v;
+    }
+    barrier();
+    ivec2 l4 = ivec2(gl_LocalInvocationID.xy) * 4; uint s = 0u;
+    if (c.y * 4 < pc.H) for (int j = 0; j < 4; j++) for (int i = 0; i < 4; i++) s += cv[(l4.y + j) * 64 + l4.x + i];
+    u[O_Q4 + pc.slot * Q4W * Q4H + c.y * Q4W + c.x] = s; s4[li] = s;
+    barrier();
+    if (li < 16) {
+        ivec2 l = ivec2(li & 3, li >> 2); uint t = 0u;
+        for (int j = 0; j < 4; j++) for (int i = 0; i < 4; i++) t += s4[(l.y * 4 + j) * 16 + l.x * 4 + i];
+        ivec2 q = ivec2(gl_WorkGroupID.xy) * 4 + l;
+        u[O_Q16 + pc.slot * Q16W * Q16H + q.y * Q16W + q.x] = t;
+    }
+}

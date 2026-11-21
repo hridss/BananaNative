@@ -1,0 +1,92 @@
+// SPDX-License-Identifier: MIT
+#version 450
+// the static candidate's weight in two passes (vka_fgmv.c).
+// Pass 1 (flags 16 clear): s1 per weight pixel into s1 (R32F; debug flags 8: the depth gate 0 / 1), a 14 x 14 tile from its 16 x 16 region of e, e0 and the
+// vector term (a cell per invocation); pass 2 (flags 16): out = box3(max3 s1) (R8; debug: the gate as 0 / 255), a TS x TS tile from its (TS + 4)^2 region of s1.
+// Box / max clamp to the edge. TS 32, or 16 (glslc -DTS=16)
+layout(local_size_x = 16, local_size_y = 16) in;
+layout(set = 0, binding = 0) uniform sampler2D ia;
+layout(set = 0, binding = 1) uniform sampler2D ic;
+layout(set = 0, binding = 2, rg32ui) uniform readonly uimage2D field;   // the pick map (flags 1) or the field
+layout(set = 0, binding = 3, r32f) uniform readonly image2D za;
+layout(set = 0, binding = 4, r32f) uniform readonly image2D zc;
+layout(set = 0, binding = 5, r32f) uniform readonly image2D dza;
+layout(set = 0, binding = 6, r32f) uniform readonly image2D dzc;
+layout(set = 0, binding = 7, r8) uniform writeonly image2D sw;
+layout(set = 0, binding = 8, r32f) uniform image2D s1;
+layout(push_constant) uniform PC { int W, H, iw, ih, hw, hh; float t, mvx, mvy, ratio, kx, ky, sx, sy; uint flags; } pc;   // flags: 1 pick map, 2 depth gate, 4 quarter size, 8 debug, 16 pass 2
+const vec3 LW = vec3(0.2126, 0.7152, 0.0722);
+#ifndef TS
+#define TS 32
+#endif
+const int S1 = 14, T1 = 16, N1 = T1 * T1, T2 = TS + 4, N2 = T2 * T2;
+shared float sh[3 * N1 > 2 * N2 ? 3 * N1 : 2 * N2];   // pass 1: e, e0, the vector term (-1 where the depth gate is 0); pass 2: s1, max3 s1
+ivec2 o; int T;
+int at(ivec2 g) { g = clamp(g, ivec2(0), ivec2(pc.hw, pc.hh) - 1) - o; return g.y * T + g.x; }   // the local cell of a (clamped) weight pixel
+float smooth1(float x) { x = clamp(x, 0.0, 1.0); return x * x * (3.0 - 2.0 * x); }
+ivec2 near_(vec2 x) { return clamp(ivec2(floor((x + 0.5) * vec2(pc.kx, pc.ky))), ivec2(0), ivec2(pc.iw, pc.ih) - 1); }
+void main() {
+    int li = int(gl_LocalInvocationIndex);
+    if ((pc.flags & 16u) == 0u) {
+        o = ivec2(gl_WorkGroupID.xy) * S1 - 1; T = T1;
+        vec2 D = vec2(pc.W, pc.H);
+        {
+            int i = li; ivec2 h = clamp(o + ivec2(i % T1, i / T1), ivec2(0), ivec2(pc.hw, pc.hh) - 1);
+            vec2 q = (pc.flags & 4u) != 0u ? 4.0 * vec2(h) + 1.5 : 2.0 * vec2(h) + 0.5;
+            vec2 r = (q + 0.5) * vec2(pc.kx, pc.ky) - 0.5;
+            ivec2 i0 = clamp(ivec2(floor(r)), ivec2(0), ivec2(pc.iw, pc.ih) - 1), i1 = min(i0 + 1, ivec2(pc.iw, pc.ih) - 1);
+            uvec2 f0 = imageLoad(field, i0).xy; float zt = uintBitsToFloat(f0.y); uint vb = f0.x;
+            if ((pc.flags & 1u) == 0u) {
+                ivec2 cand[3] = ivec2[3](ivec2(i1.x, i0.y), ivec2(i0.x, i1.y), i1);
+                for (int k = 0; k < 3; k++) { uvec2 f = imageLoad(field, cand[k]).xy; float z = uintBitsToFloat(f.y); if (z > zt) { zt = z; vb = f.x; } }
+            }
+            vec2 v = unpackHalf2x16(vb) * vec2(pc.mvx, pc.mvy); v = v * vec2(pc.sx, pc.sy);
+            vec2 a = q + pc.t * v, c = q - (1.0 - pc.t) * v;
+            bool inA = all(greaterThanEqual(a, vec2(0.0))) && all(lessThanEqual(a, D - 1.0)), inC = all(greaterThanEqual(c, vec2(0.0))) && all(lessThanEqual(c, D - 1.0));
+            precise float lim = zt * pc.ratio + 1e-6;
+            bool okA = inA && !(imageLoad(za, near_(a)).r > lim), okC = inC && !(imageLoad(zc, near_(c)).r > lim);
+            float la = dot(textureLod(ia, (a + 0.5) / D, 0.0).rgb * 255.0, LW), lc = dot(textureLod(ic, (c + 0.5) / D, 0.0).rgb * 255.0, LW);
+            float la0 = dot(textureLod(ia, (q + 0.5) / D, 0.0).rgb * 255.0, LW), lc0 = dot(textureLod(ic, (q + 0.5) / D, 0.0).rgb * 255.0, LW);
+            sh[i] = okA && okC ? abs(la - lc) : 0.0; sh[N1 + i] = abs(la0 - lc0); float vm = sqrt(v.x * v.x + v.y * v.y);
+            uint zg = 1u;
+            if ((pc.flags & 2u) != 0u) {
+                ivec2 n = near_(q); float zq = max(imageLoad(dza, n).r, imageLoad(dzc, n).r);
+                precise float zl = zq * pc.ratio + 1e-6;
+                zg = zt > zl ? 0u : 1u;
+            }
+            sh[2 * N1 + i] = zg != 0u ? smooth1((vm - 2.0) / 2.0) : -1.0;
+        }
+        barrier();
+        {
+            ivec2 l = ivec2(li % T1, li / T1), g = o + l;
+            if (l.x < 1 || l.y < 1 || l.x > S1 || l.y > S1 || g.x >= pc.hw || g.y >= pc.hh) return;
+            float b = 0.0, b0 = 0.0;
+            for (int dy = -1; dy <= 1; dy++) for (int dx = -1; dx <= 1; dx++) { int j = at(g + ivec2(dx, dy)); b += sh[j]; b0 += sh[N1 + j]; }
+            b = b / 9.0; b0 = b0 / 9.0;
+            float vf = sh[2 * N1 + at(g)];
+            float s = vf >= 0.0 ? smooth1((b - 2.0 * b0 - 4.0) / 8.0) * vf : 0.0;
+            imageStore(s1, g, vec4((pc.flags & 8u) != 0u ? (vf >= 0.0 ? 1.0 : 0.0) : s));
+        }
+        return;
+    }
+    o = ivec2(gl_WorkGroupID.xy) * TS - 2; T = T2;
+    for (int i = li; i < N2; i += 256) sh[i] = imageLoad(s1, clamp(o + ivec2(i % T2, i / T2), ivec2(0), ivec2(pc.hw, pc.hh) - 1)).r;
+    barrier();
+    for (int i = li; i < N2; i += 256) {   // max3 on the cells 1..TS + 2
+        int x = i % T2, y = i / T2; if (x < 1 || y < 1 || x > TS + 2 || y > TS + 2) continue;
+        ivec2 g = clamp(o + ivec2(x, y), ivec2(0), ivec2(pc.hw, pc.hh) - 1);
+        float m = 0.0;
+        for (int dy = -1; dy <= 1; dy++) for (int dx = -1; dx <= 1; dx++) m = max(m, sh[at(g + ivec2(dx, dy))]);
+        sh[N2 + i] = m;
+    }
+    barrier();
+    for (int k = 0; k < TS * TS / 256; k++) {
+        ivec2 h = o + 2 + ivec2(li % TS, li / TS + (256 / TS) * k);
+        if (h.x >= pc.hw || h.y >= pc.hh) continue;
+        float s = 0.0;
+        for (int dy = -1; dy <= 1; dy++) for (int dx = -1; dx <= 1; dx++) s += sh[N2 + at(h + ivec2(dx, dy))];
+        s = s / 9.0;
+        float o8 = (pc.flags & 8u) != 0u ? (sh[at(h)] > 0.5 ? 255.0 : 0.0) : floor(s * 255.0 + 0.5);
+        imageStore(sw, h, vec4(o8 / 255.0));
+    }
+}

@@ -1411,6 +1411,7 @@ static void dlss_eval(const p_dlss *o) {
                  ct->d.format, s->f.vk, in_srgb ? "sRGB: read decoded" : "linear", ot->d.format, d->f.vk, enc ? "sRGB: written encoded" : "linear", o->flags,
                  o->flags & 1 ? "HDR" : "LDR", o->flags & 0x40 ? "on" : "off", o->pre_exposure); }
     }
+    if (vka_fgmv_wanted()) vka_fgmv_op(g_cb, o);   // the motion-vector frame generator's op pass (any mode), with the whole op record (vka_fgmv.c)
     if (mode == 4) {   // FSR 3.1 (vka_fsr3.c): its inputs as a copy record's rectangles; FSR 1 / bilinear when it cannot run
         p_dlss_t2t f = {0};
         f.c.src = ct; f.c.dst = ot; f.c.sr = (NVNcopyRegion){sx, sy, 0, iw, ih, 1}; f.c.dr = (NVNcopyRegion){dx, dy, 0, ow, oh, 1};

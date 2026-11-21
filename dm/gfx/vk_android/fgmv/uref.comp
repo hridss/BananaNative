@@ -1,0 +1,36 @@
+// SPDX-License-Identifier: MIT
+#version 450
+#extension GL_GOOGLE_include_directive : require
+// the UI flow's full-res refine (vka_fgmv.c, DM_FG_MV_UIFLOW), one workgroup a tile of a group accepted at Q4 (ugrp.comp phase 0, flow d4): the tile's
+// SAD of coverage (255 - alpha) of C's layer against A's at + f for the 25 flows f = 4 d4 + [-2, 2]^2 and f = 0 (A off the picture: 0), added into its group's sums.
+// Dispatched indirectly over the bounding box of the accepted groups' tiles (ugrp.comp phase 4 writes it; none accepted: no workgroups)
+layout(local_size_x = 256) in;
+layout(set = 0, binding = 0, rgba8) uniform readonly image2D la;
+layout(set = 0, binding = 1, rgba8) uniform readonly image2D lc;
+layout(set = 0, binding = 2, std430) buffer UI { uint u[]; };
+layout(push_constant) uniform PC { int W, H, big, lev; } pc;   // big: the pass of the groups of more than 128 tiles (ugrp.comp); lev: ui.glsl L_* (L_RLIST: over
+                                                               // the list of the accepted tiles, a workgroup each, not their box)
+#include "ui.glsl"
+shared uint ra[1296], ra0[1024], rc[1024], acc[26];
+uint cv(vec4 l) { return 255u - uint(l.a * 255.0 + 0.5); }
+void main() {
+    int ib = O_CNT + C_IND + (pc.big != 0 ? 5 : 0), tx = int(gl_WorkGroupID.x + u[ib + 3]), ty = int(gl_WorkGroupID.y + u[ib + 4]), li = int(gl_LocalInvocationIndex), ti = ty * NTX + tx;
+    if ((pc.lev & L_RLIST) != 0 && pc.big == 0) { ti = int(u[O_RFL + gl_WorkGroupID.x]); tx = ti % NTX; ty = ti / NTX; }
+    uint g = u[O_LAB + ti];
+    if (g == NONE || u[O_GD + g] == 0u || u[O_CNT + C_CAP] != 0u || (u[O_GSZ + g] > 128u) != (pc.big != 0) || (pc.big != 0 && u[O_CNT + C_NEEDBIG] == 0u)) return;
+    ivec2 b = 4 * upk(u[O_GD + g] & 0xFFFFu), o = ivec2(32 * tx, 32 * ty);
+    int h = min(32, pc.H - o.y);
+    for (int i = li; i < 1296; i += 256) { ivec2 p = o + b + ivec2(i % 36 - 2, i / 36 - 2); ra[i] = p.x >= 0 && p.y >= 0 && p.x < pc.W && p.y < pc.H ? cv(imageLoad(la, p)) : 0u; }
+    for (int i = li; i < 1024; i += 256) { ivec2 p = o + ivec2(i % 32, i / 32); bool in_ = i / 32 < h; ra0[i] = in_ ? cv(imageLoad(la, p)) : 0u; rc[i] = in_ ? cv(imageLoad(lc, p)) : 0u; }
+    if (li < 26) acc[li] = 0u;
+    barrier();
+    uint s[26]; for (int k = 0; k < 26; k++) s[k] = 0u;
+    for (int i = li; i < 32 * h; i += 256) {
+        int x = i % 32, y = i / 32; uint c = rc[i];
+        for (int k = 0; k < 25; k++) { uint a = ra[(y + k / 5) * 36 + x + k % 5]; s[k] += c > a ? c - a : a - c; }
+        uint a = ra0[i]; s[25] += c > a ? c - a : a - c;
+    }
+    for (int k = 0; k < 26; k++) atomicAdd(acc[k], s[k]);
+    barrier();
+    if (li < 26) atomicAdd(u[O_GREF + g * 26 + li], acc[li]);
+}

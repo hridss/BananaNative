@@ -422,6 +422,13 @@ void vka_fgui_note_present(uint64_t serial); void vka_fgui_t2t(const vka_img *s,
 void vka_fgui_pass_begin(uint64_t c0_serial, uint32_t w, uint32_t h); void vka_fgui_draw_log(uint64_t vkey, uint64_t fkey, uint64_t c0_serial);
 int vka_fgui_cutpass(VkCommandBuffer cb, unsigned k, VkImage a, VkImage c, uint32_t w, uint32_t h, const vka_fgui_frame *u, int dlss_change, uint64_t count, VkBuffer *rb, VkDeviceSize *roff);
 VkImageView vka_fgui_view(VkImage img);
+// vka_fgmv.c, the motion-vector frame generator (DM_FG_ENGINE=mv)
+int vka_fgmv_wanted(void); int vka_fgmv_engine(void); void vka_fgmv_op(VkCommandBuffer cb, const p_dlss *o); uint64_t vka_fgmv_op_q(uint64_t frame);
+int vka_fgmv_setup(uint32_t w, uint32_t h); void vka_fgmv_teardown(void); VkImage vka_fgmv_input(uint64_t count); vka_img *vka_fgmv_out(int g); VkImageView *vka_fgmv_out_views(void);
+int vka_fgmv_gen(VkCommandBuffer cb, unsigned k, uint64_t count, size_t ng, const vka_fgui_frame *u, int use_pre, uint64_t opq_a, int pre_a, int force, int dch);
+void vka_fgmv_done(unsigned k); void vka_fgmv_replay_poll(void);
+int vka_fgmv_status(char *b, size_t n);   // the last pair: 0 generated, else why the game frame was shown again (b: the reason)
+void vka_fgui_nopre(const vka_fgui_frame *u, uint32_t w, uint32_t h, char *b, size_t n);   // why a frame has no picture without UI
 // vka_fgprof.c: the frame generator's per-game profile (game.tsv fg_* rows over the core defaults) and the engine choice
 typedef struct { int mv; uint64_t ui_pre, ui_layer; unsigned features; double ratio, tol, edge, cut_res, cut_corr, cut_mv; int fill, soft, uisr, uissupr, uisinteg, uispass, uisguard; } vka_fgprof;
 enum { VKA_FGF_UIFLOW = 1, VKA_FGF_UIGATE = 2, VKA_FGF_STATIC = 4, VKA_FGF_STATICZ = 8, VKA_FGF_BOTHFAR = 16, VKA_FGF_DITHER = 32, VKA_FGF_CUT = 64, VKA_FGF_UIPICK = 128, VKA_FGF_UICONS = 256,
