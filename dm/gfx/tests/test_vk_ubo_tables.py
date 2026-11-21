@@ -90,6 +90,16 @@ LITERAL = COMBINED.replace('%arr', '%80').replace('               OpMemoryModel'
     .replace('          %s = OpLoad %si %p', '          %s = OpLoad %si %p\n         %nm = OpExtInst %float %glsl NMax %one %one')
 
 
+# one texture (no array) whose handle is word 8 of c[12] (fp_t2d_cb12_8, handle type 0): vk_android_build.py pool_textures moves such textures to the pools when a stage has
+# more set-0 bindings than its range (Welcome Tour's bezel_pbr pixel shaders, 65)
+SINGLE = COMBINED.replace('"fp_tcube_cb12_0"', '"fp_t2d_cb12_8"').replace('Cube 0 0 0 1', '2D 0 0 0 1') \
+    .replace('%coord = OpConstantComposite %v3f %one %one %one', '%v2f = OpTypeVector %float 2\n      %coord = OpConstantComposite %v2f %one %one') \
+    .replace('%arr = OpVariable %psarr UniformConstant', '%arr = OpVariable %psi UniformConstant') \
+    .replace('          %p = OpAccessChain %psi %arr %i5\n          %s = OpLoad %si %p', '          %s = OpLoad %si %arr')
+# the same texture's load also copied: left as it is
+SINGLE_COPY = SINGLE.replace('          %s = OpLoad %si %arr', '          %s = OpLoad %si %arr\n         %cp = OpCopyObject %si %s')
+
+
 def assemble(d, text):
     (d / 'a.spvasm').write_text(text)
     subprocess.run(['spirv-as', '--target-env', 'vulkan1.3', '--preserve-numeric-ids', str(d / 'a.spvasm'), '-o', str(d / 'a.spv')], check=True)
@@ -183,6 +193,38 @@ class UboHandleTables(unittest.TestCase):
             arr = by_name(m)['fp_tcube_cb12_0']
             self.assertEqual(spv.ubo_handle_tables(m, {arr['id']: {'prefix': 'fp', 'slot': 9, 'off': 0, 'samp': None}}), 0)
             self.assertIn('fp_tcube_cb12_0', by_name(m))
+
+    def test_single_texture_reads_the_pools(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d); m = assemble(d, SINGLE)
+            tex = by_name(m)['fp_t2d_cb12_8']
+            self.assertEqual((tex['desc'], tex['count']), (spv.VK_COMBINED, 1))
+            self.assertEqual(spv.ubo_handle_tables(m, {tex['id']: {'prefix': 'fp', 'slot': 9, 'off': 32, 'samp': None}}), 1)
+            r = by_name(m)
+            self.assertNotIn('fp_t2d_cb12_8', r)
+            pools = sorted((x['desc'], x['count']) for n, x in r.items() if n.endswith(spv.POOL_VAR_SUFFIX))
+            self.assertEqual(pools, [(spv.VK_SAMPLER, 4096), (spv.VK_SAMPLED_IMAGE, 1 << 20)])
+            self.assertEqual([n for n in r if n.startswith('fp_c')], ['fp_c12'])
+            self.assertFalse(any(x[0] & 0xffff == 196 for x in m.ins))   # a constant word: no index arithmetic
+            ops = [x[0] & 0xffff for x in m.ins]
+            self.assertEqual(ops.index(87), ops.index(spv.OP_SAMPLED_IMAGE) + 1)   # made right before its use, in the use's block
+            validate(self, d, m)
+            self.assertEqual(run_handle(m, {('fp_c12', 8): 0x7b << 20 | 0x12345}), {'t': 0x12345, 's': 0x7b})
+
+    def test_single_texture_sampler_word_ored_in(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d); m = assemble(d, SINGLE)
+            tex = by_name(m)['fp_t2d_cb12_8']
+            self.assertEqual(spv.ubo_handle_tables(m, {tex['id']: {'prefix': 'fp', 'slot': 9, 'off': 32, 'samp': (2, 0x18)}}), 1)
+            validate(self, d, m)
+            self.assertEqual(run_handle(m, {('fp_c12', 8): 0x2a, ('fp_c5', 6): 0x55 << 20}), {'t': 0x2a, 's': 0x55})
+
+    def test_single_texture_other_uses_are_left(self):
+        with tempfile.TemporaryDirectory() as d:
+            m = assemble(Path(d), SINGLE_COPY)
+            tex = by_name(m)['fp_t2d_cb12_8']
+            self.assertEqual(spv.ubo_handle_tables(m, {tex['id']: {'prefix': 'fp', 'slot': 9, 'off': 32, 'samp': None}}), 0)
+            self.assertIn('fp_t2d_cb12_8', by_name(m))
 
 
 if __name__ == '__main__':

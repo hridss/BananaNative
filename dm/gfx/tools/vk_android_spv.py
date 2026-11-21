@@ -688,6 +688,8 @@ def ubo_handle_tables(m, specs):
     before each use (a sampled image must be made in the block that uses it). The new variables are named so that classify reads them as CBUF, TEX_POOL and SAMP_POOL, and
     the replay binds them as it binds those (its texture pool reads reported as any pool read's: vka_spvpatch.c vka_spv_pool_fb). Like every pool read, the IDs index the
     pool's table as the game wrote them, without the bound pool's base (vka_bind.c vka_drv_fill).
+    A single texture (not an array) is read the same way from its handle word at byte off: vk_android_build.py pool_textures moves enough of them for a stage with more set-0
+    bindings than its range (VK STAGE_BINDINGS) to fit.
     specs: {array variable: {'prefix': stage prefix, 'slot': uniform slot, 'off': byte offset of element 0, 'samp': None (the sampler ID is the same word's high 12 bits),
     ('id', sampler ID) or (slot, byte offset) of one sampler word ORed into every element's handle}}. An array used other than through one-index access chains that are
     loaded and the loads used by image instructions is left as it is. → the number of arrays rewritten"""
@@ -701,26 +703,31 @@ def ubo_handle_tables(m, specs):
         if body:
             for v in _id_words(x): users[v].append(k)
     plans = {}
+    def plain_loads(p, skip):   # the loads of pointer p whose values only image instructions use, or None when p (or a load of it) is used otherwise
+        out = []
+        for j in users.get(p, ()):
+            if j == skip: continue   # (an access chain itself: its result is among its words)
+            ld = m.ins[j]
+            if ld[0] & 0xffff != OP_LOAD or ld[3] != p: return None
+            cons = [c_ for c_ in users.get(ld[2], []) if c_ != j]
+            if any(m.ins[c][0] & 0xffff in (OP_PHI, OP_STORE, OP_CALL, OP_SELECT, OP_COPY_OBJECT, OP_COMPOSITE_CONSTRUCT) for c in cons): return None
+            out.append(j)
+        return out
     for var, sp in specs.items():
         if var not in m.vars: continue
         ptr, sc = m.vars[var]; arr = m.pointee(ptr)[1]
-        if sc != SC_UNIFORM_CONSTANT or m.op(arr) != OP_TYPE_ARRAY: continue
-        elem = m.types[arr][2]
+        single = m.op(arr) in (OP_TYPE_SAMPLED_IMAGE, OP_TYPE_IMAGE)   # one texture, its handle at byte off (pool_textures)
+        if sc != SC_UNIFORM_CONSTANT or not (single or m.op(arr) == OP_TYPE_ARRAY): continue
+        elem = arr if single else m.types[arr][2]
         img = m.types[elem][2] if m.op(elem) == OP_TYPE_SAMPLED_IMAGE else elem if m.op(elem) == OP_TYPE_IMAGE else None
         if img is None or m.types[img][3] == DIM_BUFFER or m.types[img][7] != 1: continue
-        sites, ok = [], True
-        for k in users.get(var, ()):
-            ac = m.ins[k]
-            if ac[0] & 0xffff not in (OP_ACCESS_CHAIN, OP_IN_BOUNDS_ACCESS_CHAIN) or len(ac) != 5 or ac[3] != var: ok = False; break
-            for j in users.get(ac[2], ()):
-                if j == k: continue   # (the access chain itself: its result is among its words)
-                ld = m.ins[j]
-                if ld[0] & 0xffff != OP_LOAD or ld[3] != ac[2]: ok = False; break
-                cons = [c_ for c_ in users.get(ld[2], []) if c_ != j]
-                if any(m.ins[c][0] & 0xffff in (OP_PHI, OP_STORE, OP_CALL, OP_SELECT, OP_COPY_OBJECT, OP_COMPOSITE_CONSTRUCT) for c in cons): ok = False; break
-                sites.append((k, j, cons))
-            if not ok: break
-        if ok: plans[var] = (sp, elem, img, sites)
+        ok = True
+        if single: ok = plain_loads(var, None) is not None
+        else:
+            for k in users.get(var, ()):
+                ac = m.ins[k]
+                if ac[0] & 0xffff not in (OP_ACCESS_CHAIN, OP_IN_BOUNDS_ACCESS_CHAIN) or len(ac) != 5 or ac[3] != var or plain_loads(ac[2], k) is None: ok = False; break
+        if ok: plans[var] = (sp, elem, img, single)
     if not plans: return 0
     # declarations first: they move the function bodies
     u32 = m.add_type(OP_TYPE_INT, 32, 0)
@@ -759,13 +766,14 @@ def ubo_handle_tables(m, specs):
         pools[ty, n] = (v, m.add_type(OP_TYPE_POINTER, SC_UNIFORM_CONSTANT, ty))
         return pools[ty, n]
     smp_t = m.add_type(OP_TYPE_SAMPLER)
-    for var, (sp, elem, img, sites) in plans.items():
+    for var, (sp, elem, img, single) in plans.items():
         cbuf(sp['prefix'], sp['slot']); pool(sp['prefix'], img, POOL_TEX_LEN, 'tpool')
         if m.op(elem) == OP_TYPE_SAMPLED_IMAGE: pool(sp['prefix'], smp_t, POOL_SAMP_LEN, 'spool')
         if isinstance(sp['samp'], tuple) and sp['samp'][0] != 'id': cbuf(sp['prefix'], sp['samp'][0])
     for v in (0, 1, 2, 3, 20, 0xfffff): c(v)
-    for sp, *_ in plans.values():
-        c(sp['off'] // 4)
+    for sp, _, _, single in plans.values():
+        if single: c(sp['off'] // 16); c(sp['off'] // 4 & 3)
+        else: c(sp['off'] // 4)
         if isinstance(sp['samp'], tuple): (c(sp['samp'][1]) if sp['samp'][0] == 'id' else (c(sp['samp'][1] // 16), c(sp['samp'][1] // 4 & 3)))
     if decl_decos:
         at = max(k for k, x in enumerate(m.ins) if x[0] & 0xffff in (OP_DECORATE, OP_MEMBER_DECORATE)) + 1
@@ -787,7 +795,7 @@ def ubo_handle_tables(m, specs):
     ins_of = lambda op, ty, *w: (lambda r: (r, [(3 + len(w)) << 16 | op, ty, r, *w]))(m.new_id())
     f0 = next(k for k, x in enumerate(m.ins) if x[0] & 0xffff == OP_FUNCTION)
     drop, at_load, before = set(), {}, collections.defaultdict(list)
-    for var, (sp, elem, img, _) in plans.items():
+    for var, (sp, elem, img, single) in plans.items():
         def word(code, slot, w):   # the handle word at 32-bit word index w (an id) of a uniform slot's block → u32
             v, sca, pt = cbufs[sp['prefix'], slot]
             r1, i1 = ins_of(OP_SHR, u32, w, c(2)); r2, i2 = ins_of(OP_AND, u32, w, c(3))
@@ -795,25 +803,34 @@ def ubo_handle_tables(m, specs):
             code += [i1, i2, i3, i4]
             if sca == u32: return r4
             r5, i5 = ins_of(OP_BITCAST, u32, r4); code.append(i5); return r5
+        def word_at(code, slot, off):   # the word at constant byte offset off of a uniform slot's block → u32
+            v, sca, pt = cbufs[sp['prefix'], slot]
+            r3, i3 = ins_of(OP_ACCESS_CHAIN, pt, v, c(0), c(off // 16), c(off // 4 & 3)); r4, i4 = ins_of(OP_LOAD, sca, r3); code += [i3, i4]
+            if sca == u32: return r4
+            r5, i5 = ins_of(OP_BITCAST, u32, r4); code.append(i5); return r5
         tv, tpt = pools[img, POOL_TEX_LEN]
         combined = m.op(elem) == OP_TYPE_SAMPLED_IMAGE
-        for k_ac in [k for k, x in enumerate(m.ins) if len(x) == 5 and x[0] & 0xffff in (OP_ACCESS_CHAIN, OP_IN_BOUNDS_ACCESS_CHAIN) and x[3] == var]:
-            drop.add(k_ac)
-            ptr_id, idx = m.ins[k_ac][2], m.ins[k_ac][4]
-            for k_ld in [k for k, x in enumerate(m.ins) if x[0] & 0xffff == OP_LOAD and x[3] == ptr_id]:
+        if single: sites = [(None, [k for k, x in enumerate(m.ins) if x[0] & 0xffff == OP_LOAD and x[3] == var])]
+        else:
+            sites = []
+            for k_ac in [k for k, x in enumerate(m.ins) if len(x) == 5 and x[0] & 0xffff in (OP_ACCESS_CHAIN, OP_IN_BOUNDS_ACCESS_CHAIN) and x[3] == var]:
+                drop.add(k_ac)
+                sites.append((m.ins[k_ac][4], [k for k, x in enumerate(m.ins) if x[0] & 0xffff == OP_LOAD and x[3] == m.ins[k_ac][2]]))
+        for idx, lds in sites:
+            for k_ld in lds:
                 ld = m.ins[k_ld]; code = []
-                ity = rtype.get(idx, u32)
-                ku = idx
-                if ity != u32: ku, i0 = ins_of(OP_BITCAST, u32, idx); code.append(i0)
-                w, i1 = ins_of(OP_SHL, u32, ku, c(1)); code.append(i1)
-                if sp['off']: w, i2 = ins_of(OP_IADD, u32, w, c(sp['off'] // 4)); code.append(i2)
-                h = word(code, sp['slot'], w)
+                if single: h = word_at(code, sp['slot'], sp['off'])
+                else:
+                    ity = rtype.get(idx, u32)
+                    ku = idx
+                    if ity != u32: ku, i0 = ins_of(OP_BITCAST, u32, idx); code.append(i0)
+                    w, i1 = ins_of(OP_SHL, u32, ku, c(1)); code.append(i1)
+                    if sp['off']: w, i2 = ins_of(OP_IADD, u32, w, c(sp['off'] // 4)); code.append(i2)
+                    h = word(code, sp['slot'], w)
                 s = sp['samp']
                 if isinstance(s, tuple) and s[0] != 'id':   # one sampler word ORed into every handle (handle type 1)
-                    v2, sca2, pt2 = cbufs[sp['prefix'], s[0]]
-                    r3, i3 = ins_of(OP_ACCESS_CHAIN, pt2, v2, c(0), c(s[1] // 16), c(s[1] // 4 & 3)); r4, i4 = ins_of(OP_LOAD, sca2, r3); code += [i3, i4]
-                    if sca2 != u32: r4, i5 = ins_of(OP_BITCAST, u32, r4); code.append(i5)
-                    h, i6 = ins_of(OP_OR, u32, h, r4); code.append(i6)
+                    h2 = word_at(code, s[0], s[1])
+                    h, i6 = ins_of(OP_OR, u32, h, h2); code.append(i6)
                 tid, i7 = ins_of(OP_AND, u32, h, c(0xfffff)); pi, i8 = ins_of(OP_ACCESS_CHAIN, tpt, tv, tid); code += [i7, i8]
                 if not combined:
                     code.append([4 << 16 | OP_LOAD, img, ld[2], pi]); at_load[k_ld] = code; continue
