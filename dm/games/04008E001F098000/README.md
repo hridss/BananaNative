@@ -26,6 +26,7 @@ There is no game-specific patch and no rewriter cut. Everything else it needed i
 
 - 11,058 shaders (`Nin_Ounce_NVN2` BNSH) in [`shader_map.tsv`](shader_map.tsv) since 2026-11-19, 11,059 before (one false BAHS entry removed, not confirmed against a dump: [Found on this game](#found-on-this-game)); a full Mac build takes about 9 minutes on the M6, 4:46 for a second one.
 - 6 are refused (4 task, 2 mesh shaders of the sea, agl `AnnaSea`): their task payloads (21-28 KB) are past Metal's 16 KB ([issue #1753](https://github.com/seedds/nxnative/issues/1753); FifteenPen's [PR #2264](https://github.com/seedds/nxnative/pull/2264) passes them through a device buffer). No draw has been seen to use them.
+- The Android library's task and mesh programs need their layouts in [`shader_facts.tsv`](shader_facts.tsv) (`mesh program without a mesh layout` otherwise), which predated the split's mesh layouts. Since 2026-11-21 it has the 50 rows of this tree's split of update 65536; the other rows are unchanged.
 - 612 pixel shaders read the fragment's shading-rate size; until it read 1 x 1 the sea and the avatars' hair and clothes were black (The fragment's shading-rate size reads 1 x 1).
 - [`pso_manifest.tsv`](pso_manifest.tsv) is this Mac's own list (3,474 shaders, 1,868 render, 41 compute and 22 task / mesh pipelines): a first start, the menus and a doubles match. The pull requests' lists were recorded by an older host: none of their render or mesh pipeline keys matches the current one's.
 
