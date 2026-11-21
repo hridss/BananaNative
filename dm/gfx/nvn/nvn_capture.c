@@ -110,6 +110,8 @@ int cap_rec_fields(uint32_t op, uint8_t *payload, uint32_t size, const cap_ops *
         case OP_SET_TEX_POOL: case OP_SET_SAMP_POOL: return HAS(0) && ops->obj(ctx, CAP_K_DPOOL, F(0), payload, (uint32_t)plen);
         case OP_COPY_B2T: case OP_COPY_T2B: {   // src: the buffer address (the destination for T2B)
             if (!HAS(8)) return 0;
+            // Bytes a recording kept (DM_COPY_KEPT, hle_nvn.c copy_keep) are host memory of the capturing process: the captured copy reads its source from the captured guest memory
+            if (op == OP_COPY_B2T && plen >= sizeof(p_copy_b2t)) ((p_copy_b2t *)payload)->flags &= ~DM_COPY_KEPT;
             return ops->addr(ctx, F(0), 0, op == OP_COPY_T2B) & ops->obj(ctx, CAP_K_TEX, F(8), payload, (uint32_t)plen);
         }
         case OP_COPY_T2T: if (!HAS(8)) return 0; return ops->obj(ctx, CAP_K_TEX, F(0), payload, (uint32_t)plen) & ops->obj(ctx, CAP_K_TEX, F(8), payload, (uint32_t)plen);

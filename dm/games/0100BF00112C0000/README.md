@@ -11,6 +11,7 @@ Brought up on the Mac: the ATLUS logo, the title, the puzzle type choice, the Go
 | `mem_used 0x6000000` (96 MB) | [`game.tsv`](game.tsv) | the rewritten modules take 92 MB, more than the default 64 MB; see [Memory](#memory) |
 | 4 GB layout: `mem_reserve 0x100000000`, `mem_alias 0x10000000`, `mem_stack 0x10000000`, `app_pool 0xCD500000` | `game.tsv` | the block of the other games without virtual address memory: 256 MB in front + 256 MB alias region + 256 MB stack region + 3.25 GB heap region |
 | Node area cut and 2 MB alignment for regions of 4 MB and more (SDK 20's) | `dm/tools/sdk_patches.py` SDK-wide rules, `sdk` build `5fd4f531…` | made for Super Smash Bros. Ultimate on the same build, now from the SDK-wide rules; this game has no virtual address memory and never makes an address region |
+| `tex_copy_staging 93a79c77…:0x32bd78` | `game.tsv` | GFD's upload helper puts its staging block back on its free list as soon as it has recorded the copy; the recording keeps the bytes ([Rendering](#rendering)) |
 | The 2 shaders it compiles at boot | captured on the Mac (`hle_glslc.c`) | compiled at run time by its own GLSLC from GLSL sources in `main`, captured on the Mac as Three Houses' are ([010055D009F78000](../010055D009F78000/README.md)) |
 
 ## Frame rate
@@ -33,6 +34,7 @@ Brought up on the Mac: the ATLUS logo, the title, the puzzle type choice, the Go
 ## Rendering
 
 - **Resolved: the cutscene subtitle band was a hard-edged dark box with a magenta stroke through it.** The band is a 32x512 BC3 gradient the game copies from a staging buffer (`nvnCommandBufferCopyBufferToTexture`, recorded at the start of a frame, `main+0x305e64`), and the GPU copy read the next texture's blocks: the source was right when recorded and when encoded, but the game's resource thread wrote the next texture into the same staging block 64 ms later, before that first submission had even been committed, because the host spent 300 ms building pipelines inside it. On the Switch the GPU runs a submission's copies as soon as the submit returns. A segment is now committed at the first pass boundary after any buffer → texture copy (`g_cut_copy`, `sub_cut` in `nvn_mtl.m`); the `residency set` line counts these cuts (`N after buffer → texture copies`, a few per 300 frames in this game, only while it loads). The game reuses its staging memory about a frame after recording a copy. Found with `DM_NVN_HILITE` on the band's pixel shader, `DM_NVN_TEXRAW` of the texture (decoded: opaque black and magenta blocks, not a fade) and `DM_PROBE_WATCH` on the staging address beside a log of the copy's submission completing.
+- **Current: the Night 2 landing's lighting textures, overbright on a first load (upstream, Mac).** The pass-boundary commit above is not enough: the resource thread can overwrite the staging block before the replay reaches the copy. GFD returns the block to its free list right after the upload helper returns (`main+0x305e68`); the helper records `nvnCommandBufferCopyBufferToTexture` at `main+0x32bd74`. The profile names that call (`tex_copy_staging`, return address `main+0x32bd78` in 1.0.1a), and its recordings keep the source bytes, which the Vulkan replay uploads: [CPU staging recycled before a texture upload](../../../docs/reference/nvn-objects.md#cpu-staging-recycled-before-a-texture-upload-tex_copy_staging). Upstream verified the landing on the Mac (nxnative ff18e88a4); on Android the replay half passes the graphics self-test, and the game itself has not been run (no dump at hand).
 
 ## Movies and audio
 
@@ -69,6 +71,7 @@ General host changes first needed here; each applies to every game:
 - **`nv12-uv-stride` in the movie decoder's output format** (`md_format` in `hle_movie.c`): [Output format keys (`md_format`)](../../../docs/reference/movies.md#output-format-keys-md_format).
 - **The end-of-stream flag on an output without a picture, and no reorder queue for H.264 POC type 2** (`md_pump` in `hle_movie.c`, `hle_movie_avc.c`): [No picture carries the end-of-stream flag](../../../docs/reference/movies.md#no-picture-carries-the-end-of-stream-flag).
 - **`nn::settings::GetAvailableLanguageCodeCount`** (`hle_sdk16.c`): same section.
+- **Recordings that keep a CPU staging upload's bytes** (`tex_copy_staging`, `copy_keep` in `hle_nvn.c`, `copy_bt` in `vka_exec.c`; only for the call site a profile names): [CPU staging recycled before a texture upload](../../../docs/reference/nvn-objects.md#cpu-staging-recycled-before-a-texture-upload-tex_copy_staging).
 
 ## Open
 

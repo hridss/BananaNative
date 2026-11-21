@@ -184,6 +184,12 @@ def header(g):
     if rcd not in ('on', 'off'): sys.exit(f'{g.id}: render_cond must be on or off: {rcd}')
     tfu = g.get('tex_flush_upload', 'off')   # textures written by the CPU into a pool and published with nvnMemoryPoolFlushMappedRange are uploaded like packaged ones (hle_nvn.c): on / off
     if tfu not in ('on', 'off'): sys.exit(f'{g.id}: tex_flush_upload must be on or off: {tfu}')
+    # A verified CPU staging upload: <main build ID>:<return address offset> of the game's nvnCommandBufferCopyBufferToTexture call whose source block the game reuses
+    # as soon as the call returns; the recording keeps the source bytes (hle_nvn.c copy_keep)
+    tcs = g.get('tex_copy_staging', '')
+    tcm = re.fullmatch(r'([0-9a-f]{32}):(0x[0-9a-f]+)', tcs) if tcs else None
+    if tcs and (not tcm or not 0 < int(tcm[2], 16) <= 0x7ffffffc or int(tcm[2], 16) % 4):
+        sys.exit(f'{g.id}: tex_copy_staging takes a main build ID and an aligned return address offset: {tcs}')
     tdu = g.get('tex_dirty_upload', 'off')   # with tex_flush_upload: a registered texture the CPU writes after init without any flush is uploaded too (dirty pages, hle_nvn.c nvn_ft_written): on / off
     if tdu not in ('on', 'off') or (tdu == 'on' and tfu != 'on'): sys.exit(f'{g.id}: tex_dirty_upload must be on or off, and needs tex_flush_upload on: {tdu}')
     tds = g.get('tex_dyn_slots', 'off')   # shaders whose texture handle the translator could not trace to one slot: slot indices in c2, the bound slots in the fallback arrays (nvn_mtl.m): on / off
@@ -439,6 +445,8 @@ def header(g):
          f'#define DM_GAME_PERF_BOOST {int(pm == "boost")}',
          f'#define DM_GAME_LANGUAGES {q(" ".join(langs))}',
          f'#define DM_GAME_TEX_FLUSH_UPLOAD {int(tfu == "on")}',
+         f'#define DM_GAME_TEX_COPY_STAGING_BUILD {q(tcm[1] if tcm else "")}',
+         f'#define DM_GAME_TEX_COPY_STAGING_PC {tcm[2] if tcm else 0}',
          f'#define DM_GAME_SHADER_KEY_SKIP_OFF {sko:#x}', f'#define DM_GAME_SHADER_KEY_SKIP_LEN {skl:#x}',
          f'#define DM_GAME_RENDER_COND {int(rcd == "on")}',
          f'#define DM_GAME_TEX_DIRTY_UPLOAD {int(tdu == "on")}',

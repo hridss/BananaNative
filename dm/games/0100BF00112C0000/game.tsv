@@ -42,3 +42,8 @@ mem_used	0x6000000
 # ---- Shader split (shader_split.py; GLSLC outputs in loose RomFS files, main and the run-time capture) ----
 shader_groups	/data/=data
 shader_note	Catherine: Full Body shaders
+
+# ---- Texture uploads ----
+# GFD's CPU staging upload: the helper records nvnCommandBufferCopyBufferToTexture at main+0x32bd74 and the loader puts the staging block back on its free list as soon as it
+# returns (main+0x305e68), so the recording keeps the source bytes (hle_nvn.c copy_keep). Found upstream on the Mac (README.md)
+tex_copy_staging	93a79c77da81f7f15db021c5c7431eb4:0x32bd78
