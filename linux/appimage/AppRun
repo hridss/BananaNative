@@ -87,6 +87,11 @@ write_settings() { mkdir -p "$CONF"
 #   A window of that size instead of full screen. Default: full screen.
 #NX_GAMESCOPE_WSI=1
 #   Steam Game Mode: keep Gamescope's own Vulkan layer on. 1 = on, 0 = off. Default: off (it caused GPU faults on the Odin 2).
+
+# ---- Shaders ------------------------------------------------------------------------------------------------------
+#NX_LAYER=0
+#   Shaders while playing: build the shaders a game's pack lacks while the game runs (a quick Prepare has none at first,
+#   so things pop in during the first minutes). 1 = on (default), 0 = off. Needs the pack tools Prepare downloads.
 EOT
   }
   if [ ! -f "$CONF/settings.env" ]; then settings_text > "$CONF/settings.env"
@@ -318,6 +323,9 @@ fi
 if [ "${NX_OVERLAY:-0}" = 1 ]; then export MANGOHUD=1; setdef MANGOHUD_CONFIG "${NX_OVERLAY_CONFIG:-fps,frametime,cpu_temp,gpu_temp,ram,position=top-right}"; fi
 [ -d "$APPDIR/usr/share/banananative/fonts" ] && setdef DM_FONT_DIR "$APPDIR/usr/share/banananative/fonts"   # the shared-font stand-ins (Noto Sans, button icons)
 if [ "${NX_GAMESCOPE_WSI:-0}" != 1 ]; then unset ENABLE_GAMESCOPE_WSI; export DISABLE_GAMESCOPE_WSI=1; fi
+# Shaders while playing (NX_LAYER, default on): the host writes a request for every shader the pack's library lacks into $DM_TEMP/shader_layer and maps
+# the layer library a build makes; layer_watch.py (started beside the host, below) builds them. Off: the host writes no requests either (DM_VK_LAYER=0)
+[ "${NX_LAYER:-1}" = 0 ] && setdef DM_VK_LAYER 0
 
 [ -n "$NUP" ] && export DM_ROMFS="$NUP"
 # Add-on content the pack lists (pack.tsv "aoc <index> <folder>"): the host takes DM_AOC_DIR/<index>.nup, a link to the .nup whose addon package
@@ -345,6 +353,27 @@ if [ -n "$g" ] && [ -x "$GOV" ] && sudo -n "$GOV" on $g 2>/dev/null; then gov=1;
 echo "BananaNative: $NAME ($ID), log $LOG"; note "host $ID, log $LOG"
 if [ -t 1 ] && [ "${NX_LOG_TTY:-0}" = 1 ]; then HOME="$DATA/home" "$HOST" "$PACK" & else HOME="$DATA/home" "$HOST" "$PACK" > "$LOG" 2>&1 & fi
 child=$!
+# The layer builder needs this AppImage's pack tools (downloaded once by Prepare: ~/.local/share/banananative/packer/src-<commit>, venv, dotnet). A pack
+# with no shader library (a quick Prepare) has the game's starter list written as requests first, from its game file
+if [ "${NX_LAYER:-1}" != 0 ] && [ "${DM_VK_LAYER:-1}" != 0 ]; then
+  sc=$(awk '$1=="commit"{print $2}' "$APPDIR/usr/share/banananative/source" 2>/dev/null); ch=$(awk '$1=="chain"{print $2}' "$APPDIR/usr/share/banananative/source" 2>/dev/null)
+  PE="${XDG_DATA_HOME:-$HOME/.local/share}/banananative/packer"; LSRC="$PE/src-$(echo "$sc" | cut -c1-12)"
+  # (not downloaded for this AppImage yet, after an update: the tools of another commit with the same shader chain build the same shaders)
+  if [ ! -f "$LSRC/dm/gfx/tools/shader_layer.py" ]; then
+    for d in $(ls -dt "$PE"/src-* 2>/dev/null); do
+      grep -q "DMSH_VK_CHAIN \"$ch\"" "$d/dm/gfx/nvn/dmsh_chain_vk.h" 2>/dev/null && [ -f "$d/dm/gfx/tools/shader_layer.py" ] && { LSRC=$d; break; }
+    done
+  fi
+  if [ -n "$sc" ] && [ -n "$ch" ] && [ -f "$LSRC/dm/gfx/tools/shader_layer.py" ] && [ -x "$PE/venv/bin/python" ] && [ -x "$PE/dotnet/dotnet" ]; then
+    sr=; sm=; if [ -n "$NUP" ] && ! awk -F'\t' '$1=="shaders"{f=1} END{exit !f}' "$PACK/pack.tsv"; then
+      rf=$(awk -F'\t' '$1=="romfs"{print $2; exit}' "$PACK/pack.tsv"); case "$rf" in *:*) sr="$NUP:${rf#*:}" ;; *) sr="$NUP" ;; esac
+      case "$sr" in *:*/romfs) sm="${sr%/romfs}/exefs/main" ;; *) sm= ;; esac
+    fi
+    setsid python3 "$APPDIR/usr/share/banananative/layer_watch.py" --game "$ID" --root "$DATA/temp/shader_layer" --host-pid $child --src "$LSRC" --env "$PE" \
+      --chain "$ch" --log "$LLOG" ${sr:+--seed-romfs "$sr"} ${sm:+--seed-main "$sm"} < /dev/null > /dev/null 2>&1 &
+    note "shaders while playing: builder started$([ -n "$sr" ] && echo ", the pack has no library: starter list from the game file")"
+  else note "shaders while playing: no builder (this AppImage's pack tools are not set up: Prepare a game once)"; fi
+fi
 # Memory trace and guard. With no swap, Ocarina of Time's 3D world needed more memory than the Odin 2 had (2026-11-16): the device thrashed with no frame
 # for minutes (once frozen until switched off, once ended by the kernel's OOM killer after 2.5 min). Mario Kart World races normally with MemAvailable
 # at ~100 MiB (its file-backed texture pools page through flash) but keeps drawing, so the guard needs both: MemAvailable below NX_MEM_GUARD_MB

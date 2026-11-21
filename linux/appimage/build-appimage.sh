@@ -37,7 +37,7 @@ printf 'commit %s\nurl %s\nversion %s\nchain %s\nabi %s\n' "$(git -C "$ROOT" rev
 # the known transitions of the shader library (android/SHADERS.md, "Known transitions"), as the APK carries its chain's rows: the launcher shows a pack whose
 # library is of a row's older version as ready (the host plays a library of another version with its ABI), not as one to prepare again
 cp "$ROOT/dm/gfx/vk_android/vka_known_transitions.tsv" "$APPDIR/usr/share/banananative/known_transitions.tsv"
-cp "$HERE/launcher.py" "$HERE/steam_shortcut.py" "$APPDIR/usr/share/banananative/"
+cp "$HERE/launcher.py" "$HERE/steam_shortcut.py" "$HERE/layer_watch.py" "$APPDIR/usr/share/banananative/"
 # The shared-font stand-ins, as the APK carries them (GameFonts.java, build.gradle nxExtFont): Noto Sans as standard.ttf and the button icons' nintendo_ext.ttf
 # (dm/tools/make_ext_font.py, letters from the same Noto Sans; fontTools in a Python environment of its own under tools/). AppRun sets DM_FONT_DIR to them
 F="$APPDIR/usr/share/banananative/fonts"; mkdir -p "$F"

@@ -76,6 +76,7 @@ The GPU is already past its budget at 768x432, so the higher choices cost frame 
 - The 3D scene from the engine's own settings as game arguments (`DM_GAME_ARGS_ADD`, profile `scene_arg`): [Scene resolution from the engine's own settings](../../../docs/reference/frame-rate.md#scene-resolution-from-the-engines-own-settings-passed-as-game-arguments-android).
 - [The DLSS stand-in ignored sRGB textures](../../../docs/reference/rendering.md#the-dlss-stand-in-ignored-srgb-textures-android): too bright with the Upscaler on FSR. DLSS flags 0x4a (LDR colour, auto exposure), colour image RGBA8 (VkFormat 37, which an sRGB texture also has); fixed by the textures' sRGB, pending the phone check of the new `DLSS stand-in: colour NVN format` line (open until it names the formats).
 - `shader_split.py`: VZIP preamble and LZ4-chained zip members, `viper_shader` single-stage NVN2 program wrapper.
+- [Compute shaders missing in a run's first frames, and a black picture for the run (Linux)](../../../docs/reference/shaders.md#compute-shaders-missing-in-a-runs-first-frames-and-a-black-picture-for-the-run-linux): open; on Linux a Quick Prepare builds the starter list first.
 
 ## Open
 
