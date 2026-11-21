@@ -1,6 +1,6 @@
 # The Duskbloods Network Test (`0400D1D02399A000`)
 
-Base build v0 (Switch 2), FromSoftware's engine, SDK 20.5.19 (Ounce), NVN (whether the game uses NVN2's task and mesh programs is not checked). The profile is provisional: generated from the survey and corrected by hand where a run showed it wrong. The dump has no control data; the display version `0.900.0` comes from the delivery cache file the game asks for (`regulation_nt_0_900.bin`) and the title menu's "App Ver. 0.900", its third part is assumed.
+Base build v0 (Switch 2), FromSoftware's engine, SDK 20.5.19 (Ounce), NVN, with NVN2 task and mesh programs (94 in the shader map). The profile is provisional: generated from the survey and corrected by hand where a run showed it wrong. The dump has no control data; the display version `0.900.0` comes from the delivery cache file the game asks for (`regulation_nt_0_900.bin`) and the title menu's "App Ver. 0.900", its third part is assumed.
 
 Status (2026-11-21, AYN Thor, Adreno 740): with the in-host online services the game signs in, reaches its main menu ("ONLINE"), goes through the first setup and plays its opening cutscene, on Turnip and on Qualcomm's own driver. Play after the cutscene is not tried. Not run on the Mac host (black picture there, see Open).
 
@@ -17,6 +17,7 @@ No `patches.py`.
 ## Files and shaders
 
 - Shaders: in FromSoftware's containers (DCX with Oodle Kraken, BND4, CGSB), which `shader_split.py` reads; the DCX streams are decoded with the game's own decoder. The UI is Coherent Gameface (shaders `CohStandardVS aa6b2fa6917e66ec`, `CohStandardPS 73090e06557f8850`, `CohStencilPS 8361e38b3adc2a01`, `CohStandardRarePS eed9cb499bd9dfef`); its glyph atlas is drawn on the GPU with a depth-stencil target (vertex `cdbc90e84aebce2f`, fragment `eb493d31b0120ca4`).
+- 40 mesh programs, the FLVER material meshes of `shader/gxflvershader.shaderbnd.dcx` (`f73673e585626e6e`, `GXFlver_ColDifSpcBumpEmiIblGlow_Dpt.mpo`, and the other `.mpo` variations), write clip distances 0 and 1 after their generic vectors. The split refused them and the library left them out (`mesh program without a mesh layout`). Since 2026-11-21 their [`shader_facts.tsv`](shader_facts.tsv) rows have mesh layouts with the clip distances as plane codes 133 and 134, computed with the split of the clip distance pull request (no other row changes; these programs have no paired pixel shader). They translate only with that pull request's translator: "Mesh programs that write clip distances had no mesh layout" in `docs/reference/shaders.md`. Not seen on screen yet.
 - The final blend (`GXSimple_BlendUI_Upsample_SDR2SDR_F`, `a18dff97d4670366`) builds its texture handles by ORing a word of one uniform block with a word of another, the sampler words in the block the translator takes for the texture's: the Android layer reads both IDs from the OR (`vka_bind.c`).
 
 ## Found on this game
