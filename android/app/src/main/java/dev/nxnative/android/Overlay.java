@@ -226,7 +226,7 @@ final class Overlay {
             else s.append(String.format(Locale.ROOT, "%.0f fps", rate[0]));
         }
         if (fps && fresh) line(s, String.format(Locale.ROOT, "%.1f ms", rate[2]));
-        if (fps && (rate[3] == 1 || rate[3] == 2)) line(s, "LSFG");
+        if (fps && (rate[3] == 1 || rate[3] == 2)) line(s, Lsfg.label(ctx));
         if (fps && rate[3] < 0) line(s, "no LSFG");
         if (gpu && fresh && rate[5] >= 0) line(s, String.format(Locale.ROOT, "GPU %.1f ms", rate[5]));
         if (cpu) caps(s);

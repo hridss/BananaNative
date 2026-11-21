@@ -274,8 +274,9 @@
     <string name="game_enter_text">Enter text</string>
     <string name="game_extra_environment">Extra environment</string>
     <string name="game_for_this_game_only_default">For this game only. Default follows Settings.</string>
-    <string name="game_frame_generation_lossless_scaling_yo">Frame generation (Lossless Scaling, your own Lossless.dll)</string>
-    <string name="game_frame_generation_lsfg">Frame generation (LSFG)</string>
+    <string name="game_fg_native">Native FG</string>
+    <string name="game_fg_lsfg">LSFG</string>
+    <string name="game_fg_native_help">Built-in frame generation for games that provide motion vectors and depth, for high image quality. Games without support still use LSFG.</string>
     <string name="game_frames_per_game_frame">Frames per game frame</string>
     <string name="game_full">" (full)"</string>
     <string name="game_full_game_speed">Full game speed</string>
@@ -1027,7 +1028,6 @@
     </plurals>
     <string name="game_recommended_colon">Recommended: %1$s</string>
     <string name="home_on_n_of_m_items">On · %1$d of %2$d items</string>
-    <string name="home_on_multiplier">On · %1$sx</string>
     <string name="game_kept_for_game_resolution">Kept for this game (the same setting as Game settings › Resolution).</string>
     <string name="game_applies_now_resizes_picture">Applies now: the game resizes its picture within a few frames. Kept for this game (the same setting as Game settings › Game resolution).</string>
     <string name="game_fit_keeps_shape_note">Fit keeps the game\'s shape, Stretch fills the screen; below 100 % the picture is smaller, with black around it. Applies now, kept for this game.</string>

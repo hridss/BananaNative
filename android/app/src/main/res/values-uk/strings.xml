@@ -259,8 +259,9 @@
     <string name="game_enter_text">Введіть текст</string>
     <string name="game_extra_environment">Додаткові змінні оточення</string>
     <string name="game_for_this_game_only_default">Лише для цієї гри. «За замовчуванням» бере значення з Налаштувань.</string>
-    <string name="game_frame_generation_lossless_scaling_yo">Генерація кадрів (Lossless Scaling, ваш власний Lossless.dll)</string>
-    <string name="game_frame_generation_lsfg">Генерація кадрів (LSFG)</string>
+    <string name="game_fg_native">Native FG</string>
+    <string name="game_fg_lsfg">LSFG</string>
+    <string name="game_fg_native_help">Вбудована генерація кадрів для ігор, що надають вектори руху та глибину, з високою якістю зображення. Ігри без підтримки й надалі використовують LSFG.</string>
     <string name="game_frames_per_game_frame">Кадрів на один ігровий кадр</string>
     <string name="game_full">" (повний)"</string>
     <string name="game_full_game_speed">Повна швидкість гри</string>
@@ -982,7 +983,6 @@
     </plurals>
     <string name="game_recommended_colon">Рекомендовано: %1$s</string>
     <string name="home_on_n_of_m_items">Увімкнено · %1$d із %2$d пунктів</string>
-    <string name="home_on_multiplier">Увімкнено · %1$sx</string>
     <string name="game_kept_for_game_resolution">Збережено для цієї гри (той самий параметр, що й Налаштування гри › Роздільна здатність).</string>
     <string name="game_applies_now_resizes_picture">Застосовується зараз: гра змінює розмір зображення за кілька кадрів. Збережено для цієї гри (той самий параметр, що й Налаштування гри › Роздільна здатність гри).</string>
     <string name="game_fit_keeps_shape_note">«Вписати» зберігає пропорції гри, «Розтягнути» заповнює весь екран; нижче 100 % зображення зменшується з чорними полями навколо. Застосовується зараз і зберігається для цієї гри.</string>

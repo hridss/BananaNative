@@ -257,8 +257,9 @@
     <string name="game_enter_text">Text eingeben</string>
     <string name="game_extra_environment">Zusätzliche Umgebung</string>
     <string name="game_for_this_game_only_default">Nur für dieses Spiel. Standard folgt den Einstellungen.</string>
-    <string name="game_frame_generation_lossless_scaling_yo">Frame Generation (Lossless Scaling, deine eigene Lossless.dll)</string>
-    <string name="game_frame_generation_lsfg">Frame Generation (LSFG)</string>
+    <string name="game_fg_native">Native FG</string>
+    <string name="game_fg_lsfg">LSFG</string>
+    <string name="game_fg_native_help">Eingebaute Frame Generation für Spiele, die Bewegungsvektoren und Tiefe liefern, mit hoher Bildqualität. Spiele ohne Unterstützung nutzen weiterhin LSFG.</string>
     <string name="game_frames_per_game_frame">Bilder pro Spielbild</string>
     <string name="game_full">" (voll)"</string>
     <string name="game_full_game_speed">Volle Spielgeschwindigkeit</string>
@@ -968,7 +969,6 @@
     </plurals>
     <string name="game_recommended_colon">Empfohlen: %1$s</string>
     <string name="home_on_n_of_m_items">An · %1$d von %2$d Elementen</string>
-    <string name="home_on_multiplier">An · %1$sx</string>
     <string name="game_kept_for_game_resolution">Bleibt für dieses Spiel gespeichert (dieselbe Einstellung wie Spieleinstellungen › Auflösung).</string>
     <string name="game_applies_now_resizes_picture">Gilt sofort: Das Spiel passt sein Bild innerhalb weniger Bilder an. Bleibt für dieses Spiel gespeichert (dieselbe Einstellung wie Spieleinstellungen › Spielauflösung).</string>
     <string name="game_fit_keeps_shape_note">„Einpassen“ behält die Form des Spiels, „Strecken“ füllt den Bildschirm; unter 100 % ist das Bild kleiner, mit Schwarz drumherum. Gilt sofort und bleibt für dieses Spiel gespeichert.</string>

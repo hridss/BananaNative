@@ -257,8 +257,9 @@
     <string name="game_enter_text">Metin gir</string>
     <string name="game_extra_environment">Ek ortam</string>
     <string name="game_for_this_game_only_default">Yalnızca bu oyun için. Varsayılan Ayarlar\'ı izler.</string>
-    <string name="game_frame_generation_lossless_scaling_yo">Kare üretimi (Lossless Scaling, kendi Lossless.dll dosyanız)</string>
-    <string name="game_frame_generation_lsfg">Kare üretimi (LSFG)</string>
+    <string name="game_fg_native">Native FG</string>
+    <string name="game_fg_lsfg">LSFG</string>
+    <string name="game_fg_native_help">Hareket vektörleri ve derinlik sağlayan oyunlar için yerleşik kare üretimi, yüksek görüntü kalitesiyle. Desteklemeyen oyunlar LSFG kullanmaya devam eder.</string>
     <string name="game_frames_per_game_frame">Oyun karesi başına kare</string>
     <string name="game_full">" (tam)"</string>
     <string name="game_full_game_speed">Tam oyun hızı</string>
@@ -968,7 +969,6 @@
     </plurals>
     <string name="game_recommended_colon">Önerilen: %1$s</string>
     <string name="home_on_n_of_m_items">Açık · %1$d / %2$d öğe</string>
-    <string name="home_on_multiplier">Açık · %1$sx</string>
     <string name="game_kept_for_game_resolution">Bu oyun için saklanır (Oyun ayarları › Çözünürlük ile aynı ayar).</string>
     <string name="game_applies_now_resizes_picture">Hemen uygulanır: oyun görüntüsünü birkaç kare içinde yeniden boyutlandırır. Bu oyun için saklanır (Oyun ayarları › Oyun çözünürlüğü ile aynı ayar).</string>
     <string name="game_fit_keeps_shape_note">Sığdır oyunun oranını korur, Uzat ekranı doldurur; %100\'ün altında görüntü daha küçüktür ve çevresi siyahtır. Hemen uygulanır, bu oyun için saklanır.</string>

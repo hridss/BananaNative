@@ -105,6 +105,9 @@ final class Native {
     /** Frame generation's shader set (nxhost_framegen_quality): true quality, false performance; the chain is made again at the next frame. */
     static native void frameGenQuality(boolean quality);
 
+    /** The frame generation engine while the game runs (nxhost_framegen_engine): true Native FG (the host's motion-vector engine), false LSFG; an env DM_FG_ENGINE wins */
+    static native void frameGenEngine(boolean nativeFg);
+
     /** "<state> <reason>": state 0 off, 1 generating, 2 on and not generating, -1 unavailable, -2 not in this host. */
     static native String frameGenStatus();
 

@@ -962,7 +962,7 @@ public final class MainActivity extends Activity {
         sharpRow.value(GameUpscaler.sharpName(GameUpscaler.sharp(this)));
         sharpRow.view.setVisibility(GameUpscaler.mode(this) == GameUpscaler.MODE_FSR ? View.VISIBLE : View.GONE);
         drsRow.value(Prefs.DRS_NAMES[Prefs.drs(this)]);
-        lsfgRow.value(!BuildConfig.NX_LSFG ? Tx.s(R.string.home_not_in_this_build) : Lsfg.on(this) ? Tx.s(R.string.home_on_multiplier, Lsfg.multiplier(this)) + (Lsfg.find(this) == null ? Tx.s(R.string.home_lossless_dll_missing) : "") : Tx.s(R.string.game_off));
+        lsfgRow.value(!BuildConfig.NX_LSFG ? Tx.s(R.string.home_not_in_this_build) : Lsfg.summary(this) + (Lsfg.mode(this) == Lsfg.LSFG && Lsfg.find(this) == null ? Tx.s(R.string.home_lossless_dll_missing) : ""));
         GpuDriver.Info d = GpuDriver.selected(this);
         gpuRow.value(d == null ? Tx.s(R.string.common_system) : d.label());
         timeRow.value(TimeOfDay.label(this));
@@ -2450,18 +2450,27 @@ public final class MainActivity extends Activity {
                 .setNegativeButton(Tx.s(R.string.common_cancel), null).show();
     }
 
-    /** Frame generation's settings and the Lossless.dll found (or a manual pick when it is in none of the known places) */
+    /** Frame generation's settings and the Lossless.dll found (or a manual pick when it is in none of the known places). The DLL's place, the pick and LSFG's credit
+     *  show with Native FG too (a game without Native FG runs LSFG), not with Off */
     private void frameGen() {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         File dll = Lsfg.find(this);
-        Lsfg.rows(this, box, Lsfg.note + (dll != null ? "" : Tx.s(R.string.game_put_dll_in_documents)), () -> {});
-        Ui.add(box, Ui.small(this, Tx.s(R.string.home_ported_from_eden_gpl_3)), 10);
-        Ui.sheet(this, Tx.s(R.string.home_frame_generation), box).setPositiveButton(Tx.s(R.string.common_done), null).setOnDismissListener(d -> refreshSettings())
+        AlertDialog[] dlg = {null};
+        TextView credit = Ui.small(this, Tx.s(R.string.home_ported_from_eden_gpl_3));
+        Runnable vis = () -> {
+            int v = Lsfg.on(this) ? View.VISIBLE : View.GONE;
+            credit.setVisibility(v);
+            if (dlg[0] != null && dlg[0].getButton(AlertDialog.BUTTON_NEUTRAL) != null) dlg[0].getButton(AlertDialog.BUTTON_NEUTRAL).setVisibility(v);
+        };
+        Lsfg.rows(this, box, Lsfg.note + (dll != null ? "" : Tx.s(R.string.game_put_dll_in_documents)), false, vis);
+        Ui.add(box, credit, 10);
+        dlg[0] = Ui.sheet(this, Tx.s(R.string.home_frame_generation), box).setPositiveButton(Tx.s(R.string.common_done), null).setOnDismissListener(d -> refreshSettings())
                 .setNeutralButton(Tx.s(R.string.home_pick_lossless_dll), (d, w) -> {
                     Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*");
                     startActivityForResult(i, PICK_DLL);
                 }).show();
+        vis.run();
     }
 
     private void shareLog() { shareLog((String) null); }

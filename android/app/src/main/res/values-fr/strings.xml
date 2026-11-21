@@ -258,8 +258,9 @@
     <string name="game_enter_text">Saisir du texte</string>
     <string name="game_extra_environment">Environnement supplémentaire</string>
     <string name="game_for_this_game_only_default">Pour ce jeu seulement. Par défaut, suit les Paramètres.</string>
-    <string name="game_frame_generation_lossless_scaling_yo">Génération d\'images (Lossless Scaling, avec votre propre Lossless.dll)</string>
-    <string name="game_frame_generation_lsfg">Génération d\'images (LSFG)</string>
+    <string name="game_fg_native">Native FG</string>
+    <string name="game_fg_lsfg">LSFG</string>
+    <string name="game_fg_native_help">Génération d\'images intégrée pour les jeux qui fournissent vecteurs de mouvement et profondeur, avec une grande qualité d\'image. Les jeux non pris en charge utilisent toujours LSFG.</string>
     <string name="game_frames_per_game_frame">Images par image du jeu</string>
     <string name="game_full">" (complet)"</string>
     <string name="game_full_game_speed">Vitesse de jeu complète</string>
@@ -975,7 +976,6 @@
     </plurals>
     <string name="game_recommended_colon">Recommandé : %1$s</string>
     <string name="home_on_n_of_m_items">Activé · %1$d éléments sur %2$d</string>
-    <string name="home_on_multiplier">Activé · %1$sx</string>
     <string name="game_kept_for_game_resolution">Reste enregistré pour ce jeu (le même réglage que Paramètres du jeu › Résolution).</string>
     <string name="game_applies_now_resizes_picture">S\'applique tout de suite : le jeu redimensionne son image en quelques images. Reste enregistré pour ce jeu (le même réglage que Paramètres du jeu › Résolution du jeu).</string>
     <string name="game_fit_keeps_shape_note">Ajuster garde le format du jeu, Étirer remplit l\'écran ; en dessous de 100 %, l\'image est plus petite, avec du noir autour. S\'applique tout de suite et reste enregistré pour ce jeu.</string>

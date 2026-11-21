@@ -258,8 +258,9 @@
     <string name="game_enter_text">Introducir texto</string>
     <string name="game_extra_environment">Entorno adicional</string>
     <string name="game_for_this_game_only_default">Solo para este juego. Por defecto sigue los Ajustes.</string>
-    <string name="game_frame_generation_lossless_scaling_yo">Generación de fotogramas (Lossless Scaling, con tu propio Lossless.dll)</string>
-    <string name="game_frame_generation_lsfg">Generación de fotogramas (LSFG)</string>
+    <string name="game_fg_native">Native FG</string>
+    <string name="game_fg_lsfg">LSFG</string>
+    <string name="game_fg_native_help">Generación de fotogramas integrada para juegos que aportan vectores de movimiento y profundidad, con alta calidad de imagen. Los juegos sin soporte siguen usando LSFG.</string>
     <string name="game_frames_per_game_frame">Fotogramas por fotograma del juego</string>
     <string name="game_full">" (completo)"</string>
     <string name="game_full_game_speed">Velocidad completa del juego</string>
@@ -975,7 +976,6 @@
     </plurals>
     <string name="game_recommended_colon">Recomendado: %1$s</string>
     <string name="home_on_n_of_m_items">Activado · %1$d de %2$d elementos</string>
-    <string name="home_on_multiplier">Activado · %1$sx</string>
     <string name="game_kept_for_game_resolution">Se guarda para este juego (el mismo ajuste que Ajustes del juego › Resolución).</string>
     <string name="game_applies_now_resizes_picture">Se aplica ya: el juego redimensiona su imagen en pocos fotogramas. Se guarda para este juego (el mismo ajuste que Ajustes del juego › Resolución del juego).</string>
     <string name="game_fit_keeps_shape_note">Ajustar mantiene la proporción del juego, Estirar llena la pantalla; por debajo del 100 % la imagen es más pequeña, con negro alrededor. Se aplica ya y se guarda para este juego.</string>

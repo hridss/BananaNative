@@ -935,7 +935,7 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
                 android.widget.Toast.makeText(this, Tx.s(R.string.game_environment_lines, msg), android.widget.Toast.LENGTH_LONG).show();
             }
             if (testSave != null) Native.note("[nxlaunch] test app: DM_SAVE from env-" + id + ".txt: " + testSave);
-            Native.note("frame generation: " + (Lsfg.on(this) ? "on" : "off") + "; " + Lsfg.note);
+            Native.note("frame generation: " + (Lsfg.on(this) ? "on, " + (Lsfg.nativeFg(this) ? "Native FG" : "LSFG") : "off") + "; " + Lsfg.note);
             if (Prefs.ramSaverLevel(this, id) == 2) Native.note("RAM saver: Strong (DM_VK_RAM_SAVER=2); frame generation " + (Lsfg.on(this) ? "on" : "off"));
             Native.note(gpuNote + " (picked in the launcher; a DM_VK_DRIVER line in env.txt wins, the host's [vk] driver line says which ran)");
             Native.note(Recommend.logLine(Prefs.recStates(this, id)));   // each recommended setting with its value and source (yours / recommended / default); env.txt lines come later and win

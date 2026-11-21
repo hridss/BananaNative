@@ -256,8 +256,9 @@
     <string name="game_enter_text">텍스트 입력</string>
     <string name="game_extra_environment">추가 환경 변수</string>
     <string name="game_for_this_game_only_default">이 게임에만 적용돼요. 기본값은 설정을 따라요.</string>
-    <string name="game_frame_generation_lossless_scaling_yo">프레임 생성(Lossless Scaling, 직접 준비한 Lossless.dll)</string>
-    <string name="game_frame_generation_lsfg">프레임 생성(LSFG)</string>
+    <string name="game_fg_native">Native FG</string>
+    <string name="game_fg_lsfg">LSFG</string>
+    <string name="game_fg_native_help">모션 벡터와 깊이를 제공하는 게임을 위한 내장 프레임 생성으로, 높은 화질을 냅니다. 지원하지 않는 게임은 계속 LSFG를 사용합니다.</string>
     <string name="game_frames_per_game_frame">게임 프레임당 프레임 수</string>
     <string name="game_full">" (전체)"</string>
     <string name="game_full_game_speed">정상 게임 속도</string>
@@ -961,7 +962,6 @@
     </plurals>
     <string name="game_recommended_colon">권장: %1$s</string>
     <string name="home_on_n_of_m_items">켬 · 항목 %2$d개 중 %1$d개</string>
-    <string name="home_on_multiplier">켬 · %1$s배</string>
     <string name="game_kept_for_game_resolution">이 게임에 유지돼요(게임 설정 › 해상도와 같은 설정).</string>
     <string name="game_applies_now_resizes_picture">바로 적용돼요: 몇 프레임 안에 게임 화면 크기가 바뀌어요. 이 게임에 유지돼요(게임 설정 › 게임 해상도와 같은 설정).</string>
     <string name="game_fit_keeps_shape_note">맞춤은 게임의 비율을 유지하고, 늘이기는 화면을 가득 채워요. 100 % 미만이면 화면이 작아지고 주변이 검게 표시돼요. 바로 적용되며 이 게임에 유지돼요.</string>

@@ -261,8 +261,9 @@
     <string name="game_enter_text">إدخال نص</string>
     <string name="game_extra_environment">متغيرات بيئة إضافية</string>
     <string name="game_for_this_game_only_default">لهذه اللعبة فقط. الافتراضي يتبع الإعدادات.</string>
-    <string name="game_frame_generation_lossless_scaling_yo">توليد الإطارات (Lossless Scaling، بملف Lossless.dll الخاص بك)</string>
-    <string name="game_frame_generation_lsfg">توليد الإطارات (LSFG)</string>
+    <string name="game_fg_native">Native FG</string>
+    <string name="game_fg_lsfg">LSFG</string>
+    <string name="game_fg_native_help">توليد إطارات مدمج للألعاب التي توفّر متجهات الحركة والعمق، بجودة صورة عالية. الألعاب غير المدعومة تستخدم LSFG كالمعتاد.</string>
     <string name="game_frames_per_game_frame">إطارات لكل إطار من اللعبة</string>
     <string name="game_full">" (كامل)"</string>
     <string name="game_full_game_speed">سرعة اللعبة الكاملة</string>
@@ -996,7 +997,6 @@
     </plurals>
     <string name="game_recommended_colon">موصى به: %1$s</string>
     <string name="home_on_n_of_m_items">مفعّل · %1$d من %2$d عناصر</string>
-    <string name="home_on_multiplier">مفعّل · %1$sx</string>
     <string name="game_kept_for_game_resolution">يُحفظ لهذه اللعبة (هو نفس إعداد إعدادات اللعبة › الدقة).</string>
     <string name="game_applies_now_resizes_picture">يسري الآن: تغيّر اللعبة حجم صورتها خلال بضعة إطارات. يُحفظ لهذه اللعبة (هو نفس إعداد إعدادات اللعبة › دقة اللعبة).</string>
     <string name="game_fit_keeps_shape_note">«ملاءمة» تحافظ على شكل اللعبة، و«تمديد» يملأ الشاشة؛ وتحت 100 % تصغر الصورة ويحيط بها الأسود. يسري الآن ويُحفظ لهذه اللعبة.</string>

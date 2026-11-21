@@ -258,8 +258,9 @@
     <string name="game_enter_text">Inserisci testo</string>
     <string name="game_extra_environment">Ambiente aggiuntivo</string>
     <string name="game_for_this_game_only_default">Solo per questo gioco. Il predefinito segue le Impostazioni.</string>
-    <string name="game_frame_generation_lossless_scaling_yo">Frame generation (Lossless Scaling, la tua Lossless.dll)</string>
-    <string name="game_frame_generation_lsfg">Frame generation (LSFG)</string>
+    <string name="game_fg_native">Native FG</string>
+    <string name="game_fg_lsfg">LSFG</string>
+    <string name="game_fg_native_help">Frame generation integrata per i giochi che forniscono vettori di movimento e profondità, con alta qualità d\'immagine. I giochi non supportati usano comunque LSFG.</string>
     <string name="game_frames_per_game_frame">Fotogrammi per fotogramma di gioco</string>
     <string name="game_full">" (completo)"</string>
     <string name="game_full_game_speed">Velocità di gioco piena</string>
@@ -975,7 +976,6 @@
     </plurals>
     <string name="game_recommended_colon">Consigliato: %1$s</string>
     <string name="home_on_n_of_m_items">Sì · %1$d di %2$d elementi</string>
-    <string name="home_on_multiplier">Sì · %1$sx</string>
     <string name="game_kept_for_game_resolution">Resta salvato per questo gioco (stessa impostazione di Impostazioni di gioco › Risoluzione).</string>
     <string name="game_applies_now_resizes_picture">Si applica subito: il gioco ridimensiona la sua immagine in pochi fotogrammi. Resta salvato per questo gioco (stessa impostazione di Impostazioni di gioco › Risoluzione del gioco).</string>
     <string name="game_fit_keeps_shape_note">«Adatta» mantiene la forma del gioco, «Estendi» riempie lo schermo; sotto il 100 % l\'immagine è più piccola, con il nero intorno. Si applica subito e resta salvato per questo gioco.</string>

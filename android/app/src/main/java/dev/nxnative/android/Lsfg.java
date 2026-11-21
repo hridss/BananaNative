@@ -4,7 +4,6 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.net.Uri;
 import android.view.View;
-import android.widget.CheckBox;
 import android.widget.LinearLayout;
 import android.widget.RadioButton;
 import android.widget.RadioGroup;
@@ -22,6 +21,9 @@ import java.util.List;
  * Lossless Scaling frame generation (LSFG): the user's own Lossless.dll and the settings. The DLL is never part of the APK: the launcher looks for it in a few known places on
  * the phone's storage (it has All files access), takes the first it finds, and keeps a copy in the app's private files; the user can also pick it by hand. The host reads
  * the copy (DM_LSFG_DLL) and the settings (DM_LSFG*), and takes changes made while the game runs through Native.frameGenSet.
+ * Frame generation is one choice of three: Off, Native FG (the host's own motion-vector engine, DM_FG_MENU=mv: no DLL, a build with NX_LSFG) or LSFG; the LSFG
+ * options show only with LSFG. Native FG runs on a game whose profile has the fg_mv row; on any other game the host runs LSFG with these LSFG settings (and the DLL),
+ * so the DLL's place shows with Native FG too. An env.txt DM_FG_ENGINE line wins over it (the host).
  */
 final class Lsfg {
     private Lsfg() {}
@@ -54,7 +56,12 @@ final class Lsfg {
     static File privateCopy(Context c) { return new File(c.getFilesDir(), "lsfg/Lossless.dll"); }
 
     private static SharedPreferences prefs(Context c) { return Prefs.of(c); }
-    static boolean on(Context c) { return prefs(c).getBoolean("lsfg", false); }
+    static final int OFF = 0, NATIVE = 1, LSFG = 2;
+    /** The choice: Off, Native FG or LSFG. Before it there was an on/off box for LSFG ("lsfg"): on reads as LSFG */
+    static int mode(Context c) { SharedPreferences p = prefs(c); return p.contains("fg_mode") ? p.getInt("fg_mode", OFF) : p.getBoolean("lsfg", false) ? LSFG : OFF; }
+    static void mode(Context c, int m) { prefs(c).edit().putInt("fg_mode", m).putBoolean("lsfg", m != OFF).commit(); }
+    static boolean on(Context c) { return mode(c) != OFF; }
+    static boolean nativeFg(Context c) { return mode(c) == NATIVE; }
     /** The multiplier and target in use: the saved choice, or the nearest one the screen can show (the saved one stays, for a faster refresh setting later) */
     static int multiplier(Context c) { return PanelRates.clamp(prefs(c).getInt("lsfg_mult", 2), multipliers(c)); }
     static int target(Context c) { return PanelRates.clamp(prefs(c).getInt("lsfg_target", 0), targets(c)); }
@@ -124,7 +131,8 @@ final class Lsfg {
         File dll = find(c);
         if (dll != null) env.add("DM_LSFG_DLL=" + dll.getPath());
         env.add("DM_LSFG=" + (on(c) ? 1 : 0));
-        env.add("DM_LSFG_MULT=" + multiplier(c));
+        env.add("DM_FG_MENU=" + (nativeFg(c) ? "mv" : "lsfg"));
+        env.add("DM_LSFG_MULT=" + multiplier(c));   // LSFG's settings also with Native FG (its fallback); the motion-vector engine keeps its own 2x at the fixed rate
         env.add("DM_LSFG_TARGET=" + target(c));
         env.add("DM_LSFG_FLOW=" + flow(c));
         env.add("DM_LSFG_QUALITY=" + (quality(c) ? 1 : 0));
@@ -144,24 +152,28 @@ final class Lsfg {
         return g;
     }
 
-    /** The settings rows (main screen dialog and the in-game panel); apply runs after each change (in game: Native.frameGenSet). Returns the status line (null without LSFG in this build) */
-    static TextView rows(Context c, LinearLayout box, String status, Runnable apply) {
-        TextView head = new TextView(c);
-        head.setText(Tx.s(R.string.game_frame_generation_lossless_scaling_yo));
-        head.setPadding(0, 24, 0, 0);
-        box.addView(head);
+    /** The settings rows (main screen dialog, under its own title: title false; the in-game panel: true); apply runs after each change (in game: Native.frameGenSet).
+     *  Returns the status line (null without LSFG in this build): shown with Native FG and LSFG */
+    static TextView rows(Context c, LinearLayout box, String status, boolean title, Runnable apply) {
+        if (title) {
+            TextView head = new TextView(c);
+            head.setText(Tx.s(R.string.settings_frame_generation));
+            head.setPadding(0, 24, 0, 0);
+            box.addView(head);
+        }
         if (!BuildConfig.NX_LSFG) { TextView t = new TextView(c); t.setText(Tx.s(R.string.game_not_in_this_build_built)); box.addView(t); return null; }
         // The options only where they apply: everything below the switch only with frame generation on; the frames per game frame only with a fixed rate (with a
         // target the multiplier follows the target)
         LinearLayout opts = new LinearLayout(c), fixed = new LinearLayout(c);
         opts.setOrientation(LinearLayout.VERTICAL); fixed.setOrientation(LinearLayout.VERTICAL);
-        Runnable vis = () -> { opts.setVisibility(on(c) ? View.VISIBLE : View.GONE); fixed.setVisibility(target(c) == 0 ? View.VISIBLE : View.GONE); };
-        CheckBox on = new CheckBox(c);
-        on.setText(Tx.s(R.string.game_frame_generation_lsfg));
-        on.setChecked(on(c));
-        on.setOnCheckedChangeListener((b, v) -> { prefs(c).edit().putBoolean("lsfg", v).commit(); vis.run(); apply.run(); });
-        box.addView(on);
-        TextView st = new TextView(c);
+        TextView help = new TextView(c), st = new TextView(c);
+        Runnable vis = () -> { int m = mode(c); opts.setVisibility(m == LSFG ? View.VISIBLE : View.GONE); fixed.setVisibility(target(c) == 0 ? View.VISIBLE : View.GONE);
+                               help.setVisibility(m == NATIVE ? View.VISIBLE : View.GONE); st.setVisibility(m != OFF ? View.VISIBLE : View.GONE); };
+        box.addView(choice(c, new int[]{OFF, NATIVE, LSFG}, mode(c), new String[]{Tx.s(R.string.game_off), Tx.s(R.string.game_fg_native), Tx.s(R.string.game_fg_lsfg)},
+                           v -> { mode(c, v); vis.run(); apply.run(); }));
+        help.setText(Tx.s(R.string.game_fg_native_help));
+        help.setTextSize(12);
+        box.addView(help);
         st.setText(status);
         st.setTextSize(12);
         box.addView(st);
@@ -188,7 +200,8 @@ final class Lsfg {
         return st;
     }
 
-    static void push(Context c) { Native.frameGenQuality(quality(c)); Native.frameGenSet(on(c), multiplier(c), target(c), flow(c)); }
+    /** While the game runs: the choice and LSFG's settings (also with Native FG: the host decides on the game's profile whether it runs the engine or LSFG) */
+    static void push(Context c) { Native.frameGenQuality(quality(c)); Native.frameGenEngine(nativeFg(c)); Native.frameGenSet(on(c), multiplier(c), target(c), flow(c)); }
 
     /**
      * While the game runs (GameActivity.hostSetup to onDestroy): the multiplier and target in use follow the screen. A saved 4x held to 2x on a screen at 60 Hz stayed 2x
@@ -218,4 +231,9 @@ final class Lsfg {
             if (dm != null) dm.unregisterDisplayListener(dl);
         };
     }
+    /** The main screen row's value: the choice, with LSFG its frames per game frame (or its target rate) */
+    static String summary(Context c) { int m = mode(c); return m == OFF ? Tx.s(R.string.game_off) : m == NATIVE ? Tx.s(R.string.game_fg_native)
+                                       : Tx.s(R.string.game_fg_lsfg) + " · " + (target(c) > 0 ? target(c) + " fps" : multiplier(c) + "x"); }
+    /** The overlay's word for the engine that runs: Native FG picked on a game the host runs LSFG for (its status: "Native FG is not available for this game: ...") reads LSFG */
+    static String label(Context c) { return Tx.s(nativeFg(c) && !Native.frameGenStatus().contains("Native FG is not available") ? R.string.game_fg_native : R.string.game_fg_lsfg); }
 }

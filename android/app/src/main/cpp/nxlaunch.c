@@ -58,6 +58,7 @@ void nxhost_motion_sens(float factor);
 #pragma weak nxhost_framegen_set
 #pragma weak nxhost_framegen_quality
 #pragma weak nxhost_framegen_status
+#pragma weak nxhost_framegen_engine
 #pragma weak nxhost_picture_place
 #pragma weak nxhost_fps_cap_set
 #pragma weak nxhost_fps_cap_status
@@ -445,6 +446,9 @@ JNIEXPORT void JNICALL Java_dev_nxnative_android_Native_frameGenSet(JNIEnv *env,
 }
 JNIEXPORT void JNICALL Java_dev_nxnative_android_Native_frameGenQuality(JNIEnv *env, jclass cls, jboolean quality) {
     (void)env; (void)cls; if (nxhost_framegen_quality) nxhost_framegen_quality(quality);
+}
+JNIEXPORT void JNICALL Java_dev_nxnative_android_Native_frameGenEngine(JNIEnv *env, jclass cls, jboolean nativeFg) {
+    (void)env; (void)cls; if (nxhost_framegen_engine) nxhost_framegen_engine(nativeFg);
 }
 JNIEXPORT jstring JNICALL Java_dev_nxnative_android_Native_frameGenStatus(JNIEnv *env, jclass cls) {
     (void)cls; char buf[300], out[320];

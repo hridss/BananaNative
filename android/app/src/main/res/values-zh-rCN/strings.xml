@@ -256,8 +256,9 @@
     <string name="game_enter_text">输入文字</string>
     <string name="game_extra_environment">额外环境变量</string>
     <string name="game_for_this_game_only_default">仅针对此游戏。默认跟随设置。</string>
-    <string name="game_frame_generation_lossless_scaling_yo">插帧（Lossless Scaling，使用你自己的 Lossless.dll）</string>
-    <string name="game_frame_generation_lsfg">插帧（LSFG）</string>
+    <string name="game_fg_native">Native FG</string>
+    <string name="game_fg_lsfg">LSFG</string>
+    <string name="game_fg_native_help">内置插帧，适用于提供运动矢量和深度的游戏，画质高。不支持的游戏仍使用 LSFG。</string>
     <string name="game_frames_per_game_frame">每个游戏帧生成的帧数</string>
     <string name="game_full">（完整）</string>
     <string name="game_full_game_speed">完整游戏速度</string>
@@ -961,7 +962,6 @@
     </plurals>
     <string name="game_recommended_colon">推荐：%1$s</string>
     <string name="home_on_n_of_m_items">开 · %1$d / %2$d 项</string>
-    <string name="home_on_multiplier">开 · %1$sx</string>
     <string name="game_kept_for_game_resolution">为此游戏保留（与游戏设置 › 分辨率相同的设置）。</string>
     <string name="game_applies_now_resizes_picture">立即生效：游戏会在几帧内调整画面大小。为此游戏保留（与游戏设置 › 游戏分辨率相同的设置）。</string>
     <string name="game_fit_keeps_shape_note">“适应”保持游戏的画面比例，“拉伸”填满屏幕；低于 100 % 时画面更小，四周为黑边。立即生效，并为此游戏保留。</string>

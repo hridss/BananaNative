@@ -731,7 +731,7 @@ final class SidePanel extends FrameLayout {
             box.addView(DrsSlider.view(act, Prefs.drs(act, game()), drsHead::setText, i -> { Prefs.drs(act, game(), i); Native.drsSet(Prefs.DRS[i][0], Prefs.DRS[i][1]); }));
         }
 
-        lsfgNow = Lsfg.rows(act, box, "", () -> { Lsfg.push(act); refresh(); });
+        lsfgNow = Lsfg.rows(act, box, "", true, () -> { Lsfg.push(act); refresh(); });
 
         Profile prof = Profile.of(game());
         if (prof != null) {

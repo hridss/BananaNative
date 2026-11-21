@@ -259,8 +259,9 @@
     <string name="game_enter_text">Wpisz tekst</string>
     <string name="game_extra_environment">Dodatkowe środowisko</string>
     <string name="game_for_this_game_only_default">Tylko dla tej gry. Domyślnie według Ustawień.</string>
-    <string name="game_frame_generation_lossless_scaling_yo">Generowanie klatek (Lossless Scaling, twój własny Lossless.dll)</string>
-    <string name="game_frame_generation_lsfg">Generowanie klatek (LSFG)</string>
+    <string name="game_fg_native">Native FG</string>
+    <string name="game_fg_lsfg">LSFG</string>
+    <string name="game_fg_native_help">Wbudowane generowanie klatek dla gier, które dostarczają wektory ruchu i głębię, z wysoką jakością obrazu. Gry bez obsługi nadal używają LSFG.</string>
     <string name="game_frames_per_game_frame">Klatek na klatkę gry</string>
     <string name="game_full">" (pełny)"</string>
     <string name="game_full_game_speed">Pełna prędkość gry</string>
@@ -982,7 +983,6 @@
     </plurals>
     <string name="game_recommended_colon">Zalecane: %1$s</string>
     <string name="home_on_n_of_m_items">Włączone · %1$d z %2$d elementów</string>
-    <string name="home_on_multiplier">Włączone · %1$sx</string>
     <string name="game_kept_for_game_resolution">Zapamiętane dla tej gry (to samo ustawienie co Ustawienia gry › Rozdzielczość).</string>
     <string name="game_applies_now_resizes_picture">Działa od razu: gra zmienia rozmiar obrazu w ciągu kilku klatek. Zapamiętane dla tej gry (to samo ustawienie co Ustawienia gry › Rozdzielczość gry).</string>
     <string name="game_fit_keeps_shape_note">Dopasuj zachowuje proporcje gry, Rozciągnij wypełnia ekran; poniżej 100 % obraz jest mniejszy, z czarnym wokół. Działa od razu, zapamiętane dla tej gry.</string>
