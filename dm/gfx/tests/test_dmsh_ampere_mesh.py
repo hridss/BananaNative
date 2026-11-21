@@ -142,6 +142,43 @@ class Mesh(unittest.TestCase):
         self.assertIn(BUILTIN_POINT_SIZE, [md[3] for md in ops[OP_MEMBER_DECORATE] if md[2] == DEC_BUILTIN])
         self.assertEqual(res['mesh']['vertex_locations'], [])   # the point size is no generic location
 
+    # A triangle mesh that writes two clip distances after its position, as The Duskbloods Network Test's FLVER meshes (f73673e585626e6e: SPH byte 0x48 = 3):
+    # codes 133 and 134, planes 4 and 5
+    CLIP = program(stage(STAGE_LOAD, HEADER, rd=1), *[stage(STAGE_STORE, PLANES, rb=1, imm=0x80 * p) for p in range(6)],
+                   stage(STAGE_STORE, INDICES, rb=RZ, imm=4), stage(STAGE_STORE, COUNTS, rb=1, imm=3))
+    BUILTIN_CLIP_DISTANCE, OP_CAPABILITY, CAP_CLIP_DISTANCE, OP_TYPE_ARRAY, OP_CONSTANT = 3, 17, 32, 28, 43
+
+    def clip_array_length(self, ops):
+        """→ the length of the per-vertex block's ClipDistance member, None without one"""
+        member = [md for md in ops.get(OP_MEMBER_DECORATE, []) if md[2] == DEC_BUILTIN and md[3] == self.BUILTIN_CLIP_DISTANCE]
+        if not member: return None
+        block = {t[0]: t[1:] for t in ops[30]}[member[0][0]]   # OpTypeStruct: its member types
+        length_id = {t[0]: t[2] for t in ops[self.OP_TYPE_ARRAY]}[block[member[0][1]]]
+        return {c[1]: c[2] for c in ops[self.OP_CONSTANT]}[length_id]
+
+    def test_clip_distance_mesh(self):
+        for reduced in (True, False):
+            (_, ops), res = self.translate(self.CLIP, stage='ms', local=[32, 1, 1], mesh=[32, 32, 128, 0, 1, 2, 3, 133, 134], reduced=reduced)
+            self.assertIn([self.CAP_CLIP_DISTANCE], ops[self.OP_CAPABILITY])
+            self.assertEqual(self.clip_array_length(ops), 2)
+            self.assertEqual(res['mesh']['vertex_locations'], [])   # clip distances are no generic location
+
+    def test_clip_distance_mesh_names_its_highest(self):   # only clip distance 1: the array still starts at 0, whose element holds 0
+        (_, ops), _ = self.translate(self.CLIP, stage='ms', local=[32, 1, 1], mesh=[32, 32, 128, 0, 1, 2, 3, 134])
+        self.assertEqual(self.clip_array_length(ops), 2)
+
+    def test_clip_distance_without_plane_copy(self):   # a layout too large for the plane copy stores into the outputs directly (the old path)
+        (_, ops), _ = self.translate(self.CLIP, stage='ms', local=[32, 1, 1], mesh=[256, 256, 128, 0, 1, 2, 3, *range(4, 24), 133, 134])
+        self.assertEqual(self.clip_array_length(ops), 2)
+
+    def test_mesh_without_clip_distance_has_none(self):
+        (_, ops), _ = self.translate(self.MESH, stage='ms', local=[32, 1, 1], mesh=self.MESH_LAYOUT)
+        self.assertIsNone(self.clip_array_length(ops))
+        self.assertNotIn([self.CAP_CLIP_DISTANCE], ops.get(self.OP_CAPABILITY, []))
+
+    def test_refused_clip_distance_past_eight(self):
+        self.refused(self.CLIP, 'plane code out of range', stage='ms', local=[32, 1, 1], mesh=[32, 32, 128, 0, 1, 2, 3, 141])
+
     def test_position_invariant_under_relaxed_precision(self):   # as the vertex stages' gl_Position: a prepass and an EQUAL pass must agree on it
         DEC_INVARIANT = 18
         for reduced in (True, False):

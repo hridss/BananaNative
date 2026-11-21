@@ -17,7 +17,7 @@ namespace Ryujinx.Graphics.Shader.StructuredIr
     //   the primitive area, mesh: byte 3 the primitive count, 4 + n t ... primitive t's n vertex indices (n = PrimitiveVertices: 3 for triangles, 1 for points: Zelda: Ocarina
     //     of Time's point meshes store one byte at 4 + t). One word per byte (each store a whole word, so no byte merging between invocations), PrimitiveWords words, addresses masked
     // The layout (IGpuAccessor.QueryMeshShaderLayout, the job's "mesh"): max vertices, max primitives, payload bytes, the per-vertex plane codes in the order of the
-    // planes (the SPH's output map in attribute order: PointSizePlane the point size, 0-3 position x y z w, 4 + 4 g + c generic g component c), then optionally -1 and the per-primitive value codes (same numbering,
+    // planes (the SPH's output map in attribute order: PointSizePlane the point size, 0-3 position x y z w, 4 + 4 g + c generic g component c, ClipDistancePlane + i clip distance i), then optionally -1 and the per-primitive value codes (same numbering,
     // generic only; -3 for a value the program writes that no output takes: the count sets the chunk stride, values x 0x80), then optionally -2 and the generic locations to declare as per-vertex outputs although the program writes none of their components (the
     // pixel shader reads them: they hold (0, 0, 0, 1))
     class MeshShaderInfo
@@ -29,6 +29,10 @@ namespace Ryujinx.Graphics.Shader.StructuredIr
 
         // The point size's plane code (the SPH output map's system value at attribute 0x6c, byte 0x35 bit 3, which comes before position); per vertex only
         public const int PointSizePlane = 4 + 4 * 32;
+
+        // Clip distance i's plane code (the SPH output map's system values C, attribute 0x2c0 + 4 i, byte 0x48 bit i, after the generic vectors); per vertex only
+        public const int ClipDistancePlane = PointSizePlane + 1;
+        public const int MaxClipDistances = 8;
 
         public bool IsTask { get; }
         public bool IsMesh => !IsTask;
@@ -84,7 +88,7 @@ namespace Ryujinx.Graphics.Shader.StructuredIr
                     throw new NotSupportedException($"mesh program with {MaxVertices} vertices / {MaxPrimitives} primitives at most (1-256 each)");
                 }
 
-                if (Planes.Any(p => p < 0 || p > PointSizePlane) || PrimitivePlanes.Any(p => p != NoOutput && (p < 4 || p >= 4 + 4 * 32)) || PadLocations.Any(g => g < 0 || g >= 32) ||
+                if (Planes.Any(p => p < 0 || p >= ClipDistancePlane + MaxClipDistances) ||PrimitivePlanes.Any(p => p != NoOutput && (p < 4 || p >= 4 + 4 * 32)) || PadLocations.Any(g => g < 0 || g >= 32) ||
                     Planes.Distinct().Count() != Planes.Length || PrimitivePlanes.Where(p => p != NoOutput).Distinct().Count() != PrimitivePlanes.Count(p => p != NoOutput))
                 {
                     throw new NotSupportedException($"mesh layout with a plane code out of range or repeated ({string.Join(", ", layout)})");
@@ -130,6 +134,9 @@ namespace Ryujinx.Graphics.Shader.StructuredIr
         // The generic locations of the per-vertex outputs (the planes' and the padded ones) and of the per-primitive outputs
         public IEnumerable<int> VertexLocations => Planes.Where(p => p >= 4 && p < PointSizePlane).Select(p => (p - 4) >> 2).Concat(PadLocations).Distinct().OrderBy(g => g);
         public IEnumerable<int> PrimitiveLocations => PrimitivePlanes.Where(p => p != NoOutput).Select(p => (p - 4) >> 2).Distinct().OrderBy(g => g);
+
+        // The per-vertex ClipDistance array's length: up to the highest clip distance the planes name (0: none)
+        public int ClipDistances => Planes.Where(p => p >= ClipDistancePlane).Select(p => p - ClipDistancePlane + 1).DefaultIfEmpty(0).Max();
 
         private static int PowerOfTwo(int n)
         {

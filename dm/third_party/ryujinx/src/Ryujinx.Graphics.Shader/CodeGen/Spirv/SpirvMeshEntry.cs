@@ -28,7 +28,8 @@ namespace Ryujinx.Graphics.Shader.CodeGen.Spirv
     // of memory on it once the lane was not constant (docs/reference/shaders.md, "Mesh plane stores into outputs exhaust Qualcomm's compiler"). The copy takes
     // 4 x (max vertices x planes + max primitives x values) bytes of workgroup memory; a program for which it and its own shared memory and payload exceed
     // MeshSharedBudget keeps the direct stores (MeshPlaneStore's old form, with the z / w copy for the GL depth rewrite)
-    // Outputs: the position in a per-vertex block array (BuiltIn Position, Invariant under relaxed precision, then BuiltIn PointSize when the planes have the point size), one vec4 array per per-vertex generic location at Location g (as this translator's vertex
+    // Outputs: the position in a per-vertex block array (BuiltIn Position, Invariant under relaxed precision, then BuiltIn PointSize when the planes have the point size, then BuiltIn ClipDistance float[n] when they have clip distances, n up to the highest one; those
+    // they do not name hold 0), one vec4 array per per-vertex generic location at Location g (as this translator's vertex
     // shaders number theirs), one vec4 array per per-primitive location at Location g decorated PerPrimitiveEXT, PrimitiveTriangleIndicesEXT uvec3[max primitives]
     // (points: PrimitivePointIndicesEXT uint[max primitives] and CullPrimitiveEXT bool[max primitives], OutputPoints).
     // SPIR-V 1.4: the entry point lists every global variable.
@@ -59,8 +60,9 @@ namespace Ryujinx.Graphics.Shader.CodeGen.Spirv
             return bytes;
         }
 
-        // The value an output component holds before the program writes it: (0, 0, 0, 1) (plane code: 0-3 position, 4 + 4 g + c generic g component c)
-        private static float DefaultComponent(int code) => (code & 3) == 3 ? 1f : 0f;
+        // The value an output component holds before the program writes it: (0, 0, 0, 1) (plane code: 0-3 position, 4 + 4 g + c generic g component c); the point size and
+        // the clip distances 0 (a clip distance of 0 keeps the vertex)
+        private static float DefaultComponent(int code) => code < MeshShaderInfo.PointSizePlane && (code & 3) == 3 ? 1f : 0f;
 
         public static void Generate(CodeGenContext context, MeshShaderInfo mesh)
         {
@@ -86,11 +88,23 @@ namespace Ryujinx.Graphics.Shader.CodeGen.Spirv
             SpvInstruction posVar = null, idxVar = null, cullVar = null;
             bool points = mesh.Points;
             bool pointSize = mesh.IsMesh && mesh.Planes.Contains(MeshShaderInfo.PointSizePlane);
+            int clipDistances = mesh.IsMesh ? mesh.ClipDistances : 0;
+            uint clipMember = pointSize ? 2u : 1u;   // the per-vertex block: Position, then PointSize when the planes have it, then ClipDistance when they have any
             Dictionary<int, SpvInstruction> generics = new(), primGenerics = new();
 
             if (mesh.IsMesh)
             {
-                SpvInstruction perVertex = pointSize ? context.TypeStruct(true, tVec4, tF32) : context.TypeStruct(true, tVec4);
+                List<SpvInstruction> members = new() { tVec4 };
+                if (pointSize)
+                {
+                    members.Add(tF32);
+                }
+                if (clipDistances != 0)
+                {
+                    context.AddCapability(Capability.ClipDistance);
+                    members.Add(context.TypeArray(tF32, U((uint)clipDistances)));
+                }
+                SpvInstruction perVertex = context.TypeStruct(true, members.ToArray());
                 context.Decorate(perVertex, Decoration.Block);
                 context.MemberDecorate(perVertex, 0, Decoration.BuiltIn, (SpvLiteralInteger)BuiltIn.Position);
                 // Invariant under relaxed precision, as the vertex stages' gl_Position (Declarations.cs): a mesh program and another that computes the same position
@@ -103,7 +117,11 @@ namespace Ryujinx.Graphics.Shader.CodeGen.Spirv
                 {
                     context.MemberDecorate(perVertex, 1, Decoration.BuiltIn, (SpvLiteralInteger)BuiltIn.PointSize);
                 }
-                posVar = context.Variable(context.TypePointer(StorageClass.Output, context.TypeArray(perVertex, U((uint)mesh.MaxVertices))), StorageClass.Output);
+                if (clipDistances != 0)
+                {
+                    context.MemberDecorate(perVertex, (int)clipMember, Decoration.BuiltIn, (SpvLiteralInteger)BuiltIn.ClipDistance);
+                }
+                posVar =context.Variable(context.TypePointer(StorageClass.Output, context.TypeArray(perVertex, U((uint)mesh.MaxVertices))), StorageClass.Output);
                 context.Name(posVar, "mesh_position");
                 context.AddGlobalVariable(posVar);
                 io.Add(posVar);
@@ -261,13 +279,19 @@ namespace Ryujinx.Graphics.Shader.CodeGen.Spirv
                 // shader's the same): the position and the generic locations whose components the planes do not all name, and every per-primitive location
                 bool posFull = Enumerable.Range(0, 4).All(c => mesh.Planes.Contains(c));
                 List<SpvInstruction> vertexInit = generics.Where(kv => !Enumerable.Range(0, 4).All(c => mesh.Planes.Contains(4 + 4 * kv.Key + c))).Select(kv => kv.Value).ToList();
-                if (!copied && (vertexInit.Count != 0 || !posFull))
+                List<int> clipInit = Enumerable.Range(0, clipDistances).Where(i => !mesh.Planes.Contains(MeshShaderInfo.ClipDistancePlane + i)).ToList();
+                if (!copied && (vertexInit.Count != 0 || !posFull || clipInit.Count != 0))
                 {
                     ForEach(lid, mesh.MaxVertices, v =>
                     {
                         if (!posFull)
                         {
                             context.Store(context.AccessChain(pOutVec4, posVar, v, U(0)), init);
+                        }
+
+                        foreach (int i in clipInit)
+                        {
+                            context.Store(context.AccessChain(pOutF32, posVar, v, U(clipMember), U((uint)i)), context.Constant(tF32, 0f));
                         }
 
                         foreach (SpvInstruction g in vertexInit)
@@ -394,6 +418,11 @@ namespace Ryujinx.Graphics.Shader.CodeGen.Spirv
                             context.Store(context.AccessChain(pOutF32, posVar, v, U(1)), Component(vertexCopy, mesh.Planes, b, MeshShaderInfo.PointSizePlane));
                         }
 
+                        for (int i = 0; i < clipDistances; i++)
+                        {
+                            context.Store(context.AccessChain(pOutF32, posVar, v, U(clipMember), U((uint)i)), Component(vertexCopy, mesh.Planes, b, MeshShaderInfo.ClipDistancePlane + i));
+                        }
+
                         foreach ((int g, SpvInstruction output) in generics)
                         {
                             context.Store(context.AccessChain(pOutVec4, output, v), Vec4(vertexCopy, mesh.Planes, b, 4 + 4 * g));
@@ -475,7 +504,9 @@ namespace Ryujinx.Graphics.Shader.CodeGen.Spirv
                 {
                     Guarded(isVertex, () => Scatter(word, mesh.VertexChunkWords, mesh.MaxVertices, mesh.Planes, (v, plane) =>
                     {
-                        context.Store(plane == MeshShaderInfo.PointSizePlane
+                        context.Store(plane >= MeshShaderInfo.ClipDistancePlane
+                            ? context.AccessChain(pOutF32, posVar, v, U(clipMember), U((uint)(plane - MeshShaderInfo.ClipDistancePlane)))
+                            : plane == MeshShaderInfo.PointSizePlane
                             ? context.AccessChain(pOutF32, posVar, v, U(1))
                             : plane < 4
                             ? context.AccessChain(pOutF32, posVar, v, U(0), U((uint)plane))

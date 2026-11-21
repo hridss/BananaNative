@@ -3369,7 +3369,8 @@ def mesh_facts(key, st, ctl, code, keys, mesh_pairs):
     """The translator's layout of an NVN2 task / mesh program (dmsh_xlate job "mesh", Ryujinx StructuredIr/MeshShaderInfo.cs; after azmasm/switch2mac nx2_split.py, MIT):
     "local" the workgroup (control +0x58 threads), "mesh" [max vertices (+0x60), max primitives (+0x62), task memory bytes (+0x5a), the per-vertex planes, then -1 and the
     per-primitive values]. The planes come from the SPH's output map in attribute order (byte 0x35 bit 3 the point size, bits 4..7 position x y z w, from byte 0x36 the
-    generic vectors, 4 bits each): code 132 the point size, 0..3 position, 4 + 4 g + c generic g component c. "mesh_topology" the vertices per output primitive
+    generic vectors, 4 bits each, byte 0x48 bits 0..7 clip distances 0..7, attributes 0x2c0..0x2dc): code 132 the point size, 0..3 position, 4 + 4 g + c generic g
+    component c, 133 + i clip distance i (The Duskbloods Network Test's FLVER meshes write two). "mesh_topology" the vertices per output primitive
     (control +0x5f) when it is not 3 (triangles, the translator's default): 1 for points (Zelda: Ocarina of Time's five point meshes, one index byte per primitive;
     lines are not seen and refused). The per-primitive values are the output map of the program's second header, at control +0x64 in the code area (0: none;
     a geometry-type header, which NVK reads as a passthrough geometry stage's for per-primitive attributes; after pahorema/kartnative docs/reference/shaders-sm86.md, MIT).
@@ -3383,13 +3384,16 @@ def mesh_facts(key, st, ctl, code, keys, mesh_pairs):
     if not threads: return warn('control +0x58 thread count is 0')
     if st == 'ts': return {'local': [threads, 1, 1], 'shared': 0, 'mesh': [0, 0, payload], 'pair': pairs}
     # the planes follow the output map in attribute order, one plane per output component: the point size (byte 0x35 bit 3, attribute 0x6c: Ocarina of Time's
-    # point meshes store it in plane 0, before position), position and the generic vectors. Any other output-map bit (the other system values before position at
-    # 0x30..0x35 bits 0..2, colours / clip distances after the generics) would be a plane whose meaning is not known and shift every one after it: none in Mario
-    # Kart World 1.8.0's 19 mesh programs or Ocarina of Time's 500
-    if any(code[0x30:0x35]) or code[0x35] & 0x7 or any(code[0x46:0x50]): return warn('its SPH output map has outputs besides the point size, position and the generic vectors, whose planes are not known')
+    # point meshes store it in plane 0, before position), position, the generic vectors and the clip distances (byte 0x48, after the generics and the colours: The Duskbloods
+    # Network Test's 40 FLVER mesh programs write clip distances 0 and 1). Any other output-map bit (the other system values before position at 0x30..0x35 bits 0..2, the
+    # colours at 0x46..0x47, the system values and texture coordinates after the clip distances) would be a plane whose meaning is not known and shift every one after
+    # it: none in Mario Kart World 1.8.0's 19 mesh programs or Ocarina of Time's 500
+    if any(code[0x30:0x35]) or code[0x35] & 0x7 or any(code[0x46:0x48]) or any(code[0x49:0x50]):
+        return warn('its SPH output map has outputs besides the point size, position, the generic vectors and the clip distances, whose planes are not known')
     topology = ctl[0x5f]
     if topology not in (1, 3): return warn(f'control +0x5f output topology {topology} (vertices per primitive) is neither points (1) nor triangles (3)')
-    planes = [132] * (code[0x35] >> 3 & 1) + [c for c in range(4) if code[0x35] >> (4 + c) & 1] + [4 + i for i in range(128) if code[0x36 + i // 8] >> (i % 8) & 1]
+    planes = [132] * (code[0x35] >> 3 & 1) + [c for c in range(4) if code[0x35] >> (4 + c) & 1] + [4 + i for i in range(128) if code[0x36 + i // 8] >> (i % 8) & 1] + \
+        [133 + i for i in range(8) if code[0x48] >> i & 1]
     layout = [maxv, maxp, payload, *planes]
     flats, reads = set(), set()
     for ps in pairs:

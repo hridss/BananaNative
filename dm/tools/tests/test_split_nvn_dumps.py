@@ -66,6 +66,16 @@ class TaskMesh(unittest.TestCase):
             ctl[0x5f] = 2; self.assertNotIn('mesh', ss.mesh_facts('m', 'ms', bytes(ctl), bytes(code), {}, set()))
         self.assertIn('neither points (1) nor triangles (3)', log.getvalue())
 
+    def test_clip_distances(self):   # clip distances 0 and 1 (byte 0x48 bits 0 and 1, attributes 0x2c0 / 0x2c4) after the generics, as The Duskbloods Network Test's f73673e585626e6e
+        ctl, code = self.mesh(); code = bytearray(code)
+        code[0x48] = 0x03
+        f = ss.mesh_facts('m', 'ms', ctl, bytes(code), {}, set())
+        self.assertEqual(f['mesh'], [128, 64, 256, 0, 1, 2, 3, 4, 5, 133, 134, -1, 8])   # the per-vertex planes, then the per-primitive value (generic 1 x)
+        for byte, bit in ((0x46, 0), (0x47, 7), (0x49, 0)):   # a colour, or a system value after the clip distances: still refused
+            bad = bytearray(code); bad[byte] |= 1 << bit
+            with contextlib.redirect_stdout(io.StringIO()) as log: self.assertNotIn('mesh', ss.mesh_facts('m', 'ms', ctl, bytes(bad), {}, set()))
+            self.assertIn('besides the point size, position, the generic vectors and the clip distances', log.getvalue())
+
     def test_stage_byte(self):
         ctl, code = self.mesh()
         self.assertEqual(ss.nvn2_stage(ctl, code), 'ms')
