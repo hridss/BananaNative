@@ -64,7 +64,7 @@ _V11 = [
     (0x0058fb74, '00000000', '2ac9edf2', 'v11 camera and UI'),
     (0x0058fb78, '00000000', '73f3ff17', 'v11 camera and UI'),
     (0x0058c944, '00000000', '7f010aeb', 'v11 camera and UI'),
-    (0x0058c948, '00000000', '60d90054', 'v11 camera and UI'),
+    (0x0058c948, '00000000', '00580154', 'v36: b.eq 0x58f448 (L_UnitIn*: the layout y test first; v11 had b.eq 0x58e474)'),
     (0x0058c94c, '00000000', '0aeaadf2', 'v11 camera and UI'),
     (0x0058c950, '00000000', '0aaecef2', 'v11 camera and UI'),
     (0x0058c954, '00000000', '0aeeebf2', 'v11 camera and UI'),
@@ -623,8 +623,23 @@ def _shape(cuts):
     return out + [(t[k], '00000000', struct.pack('<f', vals[k]).hex(), f'Screen shape table: {k} (4:3 {vals[k]:g})') for k in t]
 
 
+# v36: storing an item when the inventory is full (Common_SendUnitItem: "Select an item to put in storage", after a chest or a drop in battle).
+# Its unit header L_UnitInfo (y 396) sits right above the item list L_EquipList (y 214), both under the root. The list took the edge move,
+# 180 up to the 4:3 top edge, but v11 exempts every pane named L_UnitIn* from the rules (for the unit details screens), so the header stayed
+# and the list's top rows slid under it. A pane named L_UnitIn* at layout y 396 (only this one, in all the game's layouts) now takes the rules
+# as any pane does, so header and list move up together; every other L_UnitIn* keeps v11's exemption (cave 0x58f448, from 0x58c948).
+_UI_V36 = [
+    (0x0058f448, '00000000', '0a6c4079', 'v36: ldrh w10, [x0, #0x36] (top half of its layout y)'),
+    (0x0058f44c, '00000000', '4a114051', 'v36: sub w10, w10, #0x4000'),
+    (0x0058f450, '00000000', '5f190f71', 'v36: cmp w10, #0x3c6 (y 396 to 397.99: Common_SendUnitItem L_UnitInfo)'),
+    (0x0058f454, '00000000', '8ae98bd2', 'v36: mov x10, #0x5f4c ("L_", as the name chain had it)'),
+    (0x0058f458, '00000000', 'a0a7fe54', 'v36: b.eq 0x58c94c (the item storage header: on through the rules)'),
+    (0x0058f45c, '00000000', '06fcff17', 'v36: b 0x58e474 (other L_UnitIn*: no rules, as v11)'),
+]
+
+
 _MAIN = 'db93b0125f4850601d61c3edde012f8e'
-VARIANT_CUTS = {'43': {_MAIN: _shape(_V11 + _SCISSOR43 + _UI_V12 + _UI_V13 + _UI_V14 + _UI_V15 + _UI_V16 + _UI_V17 + _UI_V18 + _UI_V20 + _UI_V21 + _UI_V22 + _UI_V24 + _UI_V25 + _UI_V27 + _UI_V28 + _UI_V30)}}
+VARIANT_CUTS = {'43': {_MAIN: _shape(_V11 + _SCISSOR43 + _UI_V12 + _UI_V13 + _UI_V14 + _UI_V15 + _UI_V16 + _UI_V17 + _UI_V18 + _UI_V20 + _UI_V21 + _UI_V22 + _UI_V24 + _UI_V25 + _UI_V27 + _UI_V28 + _UI_V30 + _UI_V36)}}
 
 BINDING = [
     {'what': "Fire Emblem Fortune's Weave native 4:3 variant (VARIANT_CUTS['43']: camera aspect and ui2d pane rules)", 'now': 'build', 'goal': 'unreviewed', 'purpose': 'rendering',

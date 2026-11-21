@@ -7,3 +7,5 @@
 void md_nv12(const vpx_image_t *im, uint8_t *dst, int w, int h);
 // I420 → RGBA (stride 4 w) by the colour space and range the picture declares; a smaller picture is padded with black, a larger one cropped
 void md_rgba(const vpx_image_t *im, uint8_t *dst, int w, int h);
+// < 1 when a native-aspect variant lays the game out taller than 16:9: the share of the frame height a 16:9 movie picture keeps, letterboxed (hle_movie.c)
+float md_lb_factor(void);

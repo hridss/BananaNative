@@ -954,7 +954,8 @@ static int md_rendered(mdec_t *d, int i) {
 // which the present then shows at that shape; a movie the game draws over the whole frame would be stretched tall with it. So its pictures are handed over letterboxed: scaled
 // to the picture's 16:9 share of the height (shape x 9/16; 3/4 at 4:3), centred, black above and below, so the movie keeps its 16:9 shape with bars. The rows are picked
 // (nearest), a shrink the present's own filtering follows. DM_MOVIE_LETTERBOX=0 turns it off; without a variant or with a 16:9-or-wider picture nothing changes.
-static float md_lb_factor(void) {
+// Also used by nn::codec's image pools (hle_codec_video.c pool_native_write: Fortune's Weave's movies)
+float md_lb_factor(void) {
     static float f = -1;
     if (f >= 0) return f;
     f = 1;
