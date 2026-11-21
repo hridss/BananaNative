@@ -137,12 +137,30 @@ __attribute__((weak)) void nvn_dirty_unhold(void);
 #define CV_HOLD_PAGES(a, n) ((void)0)
 #define CV_UNHOLD_PAGES() ((void)0)
 #endif
+// A native-aspect variant (Fire Emblem Fortune's Weave's 4:3) shows the game's 16:9 frame at a taller shape, and the game draws its movies over the whole frame, so they came
+// out stretched tall (hle_movie.c's letterbox covers movie::Decoder only; this game's movies come through these pools). A 16:9 picture is written letterboxed instead:
+// scaled to md_lb_factor() of the height (3/4 at 4:3), centred, black rows above and below, the rows picked nearest as in hle_movie.c. DM_MOVIE_LETTERBOX=0 turns it off
+static void pool_lb_write(cv_pool *p, uint8_t *dst, uint32_t stride, const vpx_image_t *im, float f) {
+    const uint8_t *src = im->user_priv && im->d_w == p->w && im->d_h == p->h ? im->user_priv : NULL;
+    uint8_t *tmp = NULL; size_t rowb = (size_t)p->w * 4;
+    if (!src) { if (!(tmp = malloc(rowb * p->h))) return; md_rgba(im, tmp, p->w, p->h); src = tmp; }
+    int rows = (int)p->h, hc = (int)(rows * f + 0.5f), top = (rows - hc) / 2;
+    for (int y = 0; y < rows; y++) {
+        uint8_t *d = dst + (size_t)y * stride;
+        if (y < top || y >= top + hc) { for (size_t k = 0; k < rowb; k += 4) { d[k] = d[k + 1] = d[k + 2] = 0; d[k + 3] = 255; } continue; }
+        int sr = (int)((y - top) / f); if (sr >= rows) sr = rows - 1;
+        memcpy(d, src + (size_t)sr * rowb, rowb);
+    }
+    free(tmp);
+}
 static void pool_native_write(cv_pool *p, uint32_t i, const vpx_image_t *im, int hold) {
     if (!p->mem || (i + 1) * native_size(p->w, p->h) > p->size) return;
     uint8_t *dst = p->mem + i * native_size(p->w, p->h);
     uint32_t stride = native_stride(p->w);
+    float lb = (uint64_t)p->w * 9 == (uint64_t)p->h * 16 ? md_lb_factor() : 1;   // 16:9 pictures only
     if (hold) CV_HOLD_PAGES(dst, (size_t)stride * p->h);
-    if (im->user_priv && im->d_w == p->w && im->d_h == p->h) {   // converted already (rgba_early)
+    if (lb < 1) pool_lb_write(p, dst, stride, im, lb);
+    else if (im->user_priv && im->d_w == p->w && im->d_h == p->h) {   // converted already (rgba_early)
         if (stride == (uint32_t)p->w * 4) memcpy(dst, im->user_priv, (size_t)p->w * p->h * 4);
         else for (uint32_t y = 0; y < p->h; y++) memcpy(dst + (size_t)y * stride, (uint8_t *)im->user_priv + (size_t)y * p->w * 4, (size_t)p->w * 4);
     }

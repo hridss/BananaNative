@@ -181,6 +181,7 @@ The game keeps its 1920x1080 window and scene; its cameras take a 4:3 aspect and
 | `_UI_V30` | Checks by pane type and size, not name: a Parts pane is never stretched, and nothing inside a big panel part (>= 1080 tall, under 1896 wide: the quest window, Quest List, Tutorials) gets a layout rule, so the quest window's contents are never stretched or moved, also when the game lays them out before naming the part |
 | `_UI_V36` | Storing an item when the inventory is full (`Common_SendUnitItem`): the unit header `L_UnitInfo` moves up to the top edge with the item list below it, so the list's top rows no longer slide under the header (every other `L_UnitIn*` pane keeps v11's exemption) |
 
+Movies: the game draws its movies over the whole 16:9 frame, which the 4:3 picture would show stretched tall, so the host hands their pictures over letterboxed (16:9 with black bars above and below: `hle_codec_video.c` `pool_native_write`, the image pools this game's AV1 movies come through; `DM_MOVIE_LETTERBOX=0` turns it off).
 
 Checked screens: map HUD and minimap, world map, quest offer and Quest List, result telops after arena training, dungeon battles, movie subtitles, command menu, forecast, combat and Blaze Arts, EXP and level-up, unit details, items, quick settings, obelisks, Base Menu, shops, dialogue. Not yet checked: the end-of-chapter battle report. Cave torches miss some of their light pools at a distance in both aspects (likely the game's own light culling; open).
 
