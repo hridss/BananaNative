@@ -444,6 +444,258 @@ static void test_fam2_details_cover_and_gmx_fix(void) {
     pkp_ui43_gmx_fix(r);
     assert(nearf(rd_f32(cur_ani.glob, 0x30), 258.0f));
     assert(nearf(rd_f32(cur_ani.glob, 0x34), 168.0f));
+
+    // The Things-to-Do popup hosts the same sub-layout in CL_0000_parts_cursor_triangle under Null_hint_pokemon: its root sits
+    // at the host's global translation and is left as the game placed it; a root elsewhere (the Pause host) is still corrected.
+    fake_pane_t hint, host;
+    init_pane(&hint, "Null_hint_pokemon", 0, 1218, 129, 0.0f, 124.0f, NULL);
+    init_pane(&host, "CL_0000_parts_cursor_triangle", 0, 84, 84, -540.0f, 84.0f, &hint);
+    wr_f32(host.glob, 0x30, 444.0f);
+    wr_f32(host.glob, 0x34, 224.0f);
+    r[19] = (uintptr_t)host.pane;
+    r[20] = 1;
+    pkp_ui43_gmx_fix(r);                          // records the host's position
+    wr_f32(cur_ani.glob, 0x30, 300.0f);
+    wr_f32(cur_ani.glob, 0x34, 200.0f);
+    r[19] = (uintptr_t)cur_ani.pane;
+    r[20] = 1;
+    pkp_ui43_gmx_fix(r);                          // root at 444, 224 = the host: untouched
+    assert(nearf(rd_f32(cur_ani.glob, 0x30), 300.0f));
+    assert(nearf(rd_f32(cur_ani.glob, 0x34), 200.0f));
+    wr_f32(cur_root.glob, 0x30, 404.0f);          // a root elsewhere: the Pause correction applies again
+    pkp_ui43_gmx_fix(r);
+    assert(!nearf(rd_f32(cur_ani.glob, 0x30), 300.0f));
+}
+
+// Links panes into the layout's pane ring (pane+0xc8 own node, node+0 previous, node+8 next, node+0x10 pane).
+static void link_ring(fake_pane_t **v, int n) {
+    for (int i = 0; i < n; i++) {
+        uintptr_t self = (uintptr_t)v[i]->node;
+        uintptr_t prev = i > 0 ? (uintptr_t)v[i - 1]->node : 0;
+        uintptr_t next = i + 1 < n ? (uintptr_t)v[i + 1]->node : 0;
+        uintptr_t pane = (uintptr_t)v[i]->pane;
+        memcpy(v[i]->pane + 0xc8, &self, sizeof self);
+        memcpy(v[i]->node + 0x00, &prev, sizeof prev);
+        memcpy(v[i]->node + 0x08, &next, sizeof next);
+        memcpy(v[i]->node + 0x10, &pane, sizeof pane);
+    }
+}
+
+// Runs one bake of pane p (so y 0.75, sc 1) and returns the rule's sy and add.
+static void decide(fake_so_t *so, fake_pane_t *p, float *sy, float *add) {
+    init_so(so, 1.0f, 0.75f);
+    pkp_ui43_pre_bake(so->bytes, p->pane);
+    *sy = rd_f32(so->bytes, 0x14);
+    *add = rd_f32(so->bytes, 0x1c);
+    pkp_ui43_post_bake(so->bytes);
+}
+
+static void test_scroll_carrier_gets_row_factor(void) {
+    fake_so_t so;
+    float sy, add;
+    // Challenges: Null_ani_all (50x50) carries the Null_table_* rows (pc169 gives them full-scale positions).
+    fake_pane_t root, ani, row;
+    init_pane(&root, "Null_All", 0, 1920, 1080, 0.0f, 0.0f, NULL);
+    init_pane(&ani, "Null_ani_all", 0, 50, 50, 0.0f, 0.0f, &root);
+    init_pane(&row, "Null_table_0", 0, 1824, 344, 0.0f, 158.0f, &ani);
+    fake_pane_t *l1[] = {&root, &ani, &row};
+    link_ring(l1, 3);
+    decide(&so, &ani, &sy, &add);
+    assert(nearf(sy, 1.0f) && nearf(add, 0.0f));          // [pane+0x14c] = sc, like the rows' full-scale factor
+    decide(&so, &row, &sy, &add);
+    assert(nearf(sy, 0.75f) && nearf(add, 0.25f * 158.0f));
+
+    // Habitat Dex: Null_habitat_table (1500x1714) carries the 1500x240 rows.
+    fake_pane_t hroot, hani, htab, hrow;
+    init_pane(&hroot, "Null_All", 0, 1500, 772, 0.0f, -4.0f, NULL);
+    init_pane(&hani, "Null_ani_all", 0, 1500, 772, 0.0f, 4.0f, &hroot);
+    init_pane(&htab, "Null_habitat_table", 0, 1500, 1714, 0.0f, 0.0f, &hani);
+    init_pane(&hrow, "Null_table_0", 0, 1500, 240, 0.0f, 234.0f, &htab);
+    fake_pane_t *l2[] = {&hroot, &hani, &htab, &hrow};
+    link_ring(l2, 4);
+    decide(&so, &htab, &sy, &add);
+    assert(nearf(sy, 1.0f) && nearf(add, 0.0f));
+    decide(&so, &hani, &sy, &add);                         // its first child is not a row: untouched
+    assert(nearf(sy, 0.75f));
+
+    // Recipe book: Null_scroll_anime (640x620) carries the 640x128 rows.
+    fake_pane_t rroot, rset, rscr, rrow;
+    init_pane(&rroot, "Null_All", 0, 640, 620, 0.0f, 0.0f, NULL);
+    init_pane(&rset, "Null_list_set", 0, 640, 620, 0.0f, 310.0f, &rroot);
+    init_pane(&rscr, "Null_scroll_anime", 0, 640, 620, 0.0f, 0.0f, &rset);
+    init_pane(&rrow, "Null_list_0", 0, 640, 128, 0.0f, -64.0f, &rscr);
+    fake_pane_t *l3[] = {&rroot, &rset, &rscr, &rrow};
+    link_ring(l3, 4);
+    decide(&so, &rscr, &sy, &add);
+    assert(nearf(sy, 1.0f) && nearf(add, 0.0f));
+    decide(&so, &rset, &sy, &add);                         // the existing Null_list_set rule is unchanged
+    assert(nearf(sy, 1.0f) && nearf(add, 0.0f));
+
+    // Negative: a Null pane whose first child is an ordinary pane keeps the default.
+    fake_pane_t nroot, ncar, nchild;
+    init_pane(&nroot, "Null_All", 0, 1920, 1080, 0.0f, 0.0f, NULL);
+    init_pane(&ncar, "Null_scroll_anime", 0, 640, 620, 0.0f, 0.0f, &nroot);
+    init_pane(&nchild, "Something", 0, 640, 100, 0.0f, 0.0f, &ncar);
+    fake_pane_t *l4[] = {&nroot, &ncar, &nchild};
+    link_ring(l4, 3);
+    decide(&so, &ncar, &sy, &add);
+    assert(nearf(sy, 0.75f));
+}
+
+static void test_badge_is_matched_by_what_it_is(void) {
+    fake_so_t so;
+    float sy, add;
+    fake_pane_t root, badge, other;
+    init_pane(&root, "Null_All", 0, 1920, 1080, 0.0f, 0.0f, NULL);
+    // "No. Registered" box in the Pokedex host (tx -922) and the recipe book's (tx -929): both full-scale position.
+    init_pane(&badge, "CL_0200_parts_badge_base", 0, 428, 108, -922.0f, -476.0f, &root);
+    decide(&so, &badge, &sy, &add);
+    assert(nearf(sy, 0.75f) && nearf(add, 0.25f * -476.0f));
+    init_pane(&badge, "CL_0200_parts_badge_base", 0, 428, 108, -929.0f, -465.0f, &root);
+    decide(&so, &badge, &sy, &add);
+    assert(nearf(add, 0.25f * -465.0f));
+    // Negative: another size keeps the edge shift (B = -530 -> clamped -135).
+    init_pane(&other, "CL_0200_parts_badge_base", 0, 428, 109, -922.0f, -476.0f, &root);
+    decide(&so, &other, &sy, &add);
+    assert(nearf(add, -135.0f));
+}
+
+static void test_popup_frame_and_negatives(void) {
+    fake_so_t so;
+    float sy, add;
+    // Things to Do popup: Window 1744x968 over a full-height frame; the L/R triggers end inside its header.
+    fake_pane_t root, win, trig;
+    init_pane(&root, "Null_All", 0, 1920, 1080, 0.0f, 0.0f, NULL);
+    init_pane(&win, "0300_base_mission_details_0", 3, 1744, 968, 0.0f, 12.0f, &root);
+    init_pane(&trig, "CL_0000_parts_btn_common_triggerL", 0, 132, 84, -800.0f, 374.0f, &root);
+    fake_pane_t *l1[] = {&root, &win, &trig};
+    link_ring(l1, 3);
+    decide(&so, &win, &sy, &add);
+    assert(nearf(sy, 1.0f) && nearf(add, 0.0f));
+    decide(&so, &trig, &sy, &add);
+    assert(nearf(sy, 0.75f) && nearf(add, 0.25f * 374.0f));   // was the +135 edge shift
+
+    // Small decorations (both sides under 400: the round empty Pokemon slot, the badge) keep the stock size at their
+    // full-scale position; panel-size Windows (comment box, text_base, the frame-size mask) stretch with their text.
+    fake_pane_t slot, badge, cmt, txt, mask;
+    init_pane(&slot, "Window_0000_slot_empty", 3, 140, 140, -490.0f, -336.0f, &root);
+    init_pane(&badge, "Window_0000_base_badge_0", 3, 244, 56, 0.0f, 0.0f, &root);
+    init_pane(&cmt, "pokemon_comment_base", 3, 992, 160, 589.0f, 0.0f, &root);
+    init_pane(&txt, "text_base", 3, 1288, 372, 0.0f, 0.0f, &root);
+    init_pane(&mask, "0300_base_mission_details_mask_0000", 3, 1744, 968, 0.0f, -386.0f, &root);
+    fake_pane_t *l1b[] = {&root, &win, &trig, &slot, &badge, &cmt, &txt, &mask};
+    link_ring(l1b, 8);
+    decide(&so, &slot, &sy, &add);
+    assert(nearf(sy, 0.75f) && nearf(add, 0.25f * -336.0f));
+    decide(&so, &badge, &sy, &add);
+    assert(nearf(sy, 0.75f));
+    decide(&so, &cmt, &sy, &add);
+    assert(nearf(sy, 1.0f) && nearf(add, 0.0f));
+    decide(&so, &txt, &sy, &add);
+    assert(nearf(sy, 1.0f) && nearf(add, 0.0f));
+    decide(&so, &mask, &sy, &add);
+    assert(nearf(sy, 1.0f) && nearf(add, 0.0f));
+    link_ring(l1, 3);
+
+    // Negative: a Window 700 tall is a floating box, the layout is not a popup layout.
+    init_pane(&win, "0300_base_mission_details_0", 3, 1744, 700, 0.0f, 12.0f, &root);
+    link_ring(l1, 3);
+    decide(&so, &trig, &sy, &add);
+    assert(nearf(add, 135.0f));
+    // Negative: the Pokedex sheet size (1850x1016) keeps its own rule; its layout is not a popup layout either.
+    init_pane(&win, "0300_win_dex_red", 3, 1850, 1016, 0.0f, 0.0f, &root);
+    link_ring(l1, 3);
+    decide(&so, &win, &sy, &add);
+    assert(nearf(sy, 1.0f));
+    decide(&so, &trig, &sy, &add);
+    assert(nearf(add, 135.0f));
+    // Negative: a full-width strip another rule placed keeps that rule inside a popup layout (not full-scale position).
+    init_pane(&win, "0300_base_mission_details_0", 3, 1744, 968, 0.0f, 12.0f, &root);
+    fake_pane_t strip;
+    init_pane(&strip, "CL_0000_parts_key_guide", 0, 1920, 100, 0.0f, -490.0f, &root);
+    fake_pane_t *l2[] = {&root, &win, &strip};
+    link_ring(l2, 3);
+    decide(&so, &strip, &sy, &add);
+    assert(nearf(sy, 0.75f) && !nearf(add, 0.25f * -490.0f));
+}
+
+static void test_root_overhang_edge_anchor(void) {
+    fake_so_t so;
+    float sy, add;
+    // Build materials sheet: standalone root Null_All 1920x500 under a 4x4 holder; the white body overhangs the bottom.
+    fake_pane_t holder, root, win, btn, body, strip;
+    init_pane(&holder, "Holder", 0, 4, 4, 0.0f, 0.0f, NULL);
+    init_pane(&root, "Null_All", 0, 1920, 500, 0.0f, 0.0f, &holder);
+    init_pane(&win, "Win_0400_win_build_info_base", 3, 1920, 512, 0.0f, -56.0f, &root);
+    init_pane(&btn, "CL_0000_parts_input_btn", 0, 512, 128, 0.0f, -229.0f, &root);
+    init_pane(&body, "0000_prt_square_w", 1, 1920, 234, 0.0f, -310.0f, &root);
+    body.pane[0x10c] = 0x10;                                // origin v = 0 (top): extends 234 below ty
+    init_pane(&strip, "CL_0000_log_system_1", 0, 1920, 100, -960.0f, 378.0f, &root);
+    fake_pane_t *l1[] = {&holder, &root, &win, &btn, &body, &strip};
+    link_ring(l1, 6);
+    // Decide in layout order: every unit gets the same shift whatever its own extents (-540 - 0.75 * -544 = -132,
+    // snapped to the -135 clamp like a pane that reaches the edge itself).
+    decide(&so, &win, &sy, &add);
+    assert(nearf(add, -135.0f));
+    decide(&so, &btn, &sy, &add);
+    assert(nearf(add, -135.0f));
+    decide(&so, &body, &sy, &add);
+    assert(nearf(add, -135.0f));
+    // The top strip keeps its own edge rule (up to +135), it is not pulled down with the sheet.
+    decide(&so, &strip, &sy, &add);
+    assert(nearf(add, 135.0f));
+
+    // Negative: content inside the root box (nothing overhangs) stays centred.
+    init_pane(&body, "0000_prt_square_w", 1, 1920, 234, 0.0f, -100.0f, &root);
+    body.pane[0x10c] = 0x10;
+    link_ring(l1, 6);
+    decide(&so, &win, &sy, &add);
+    assert(nearf(add, 0.0f));
+    // Negative: a root whose origin is its top edge and whose child ends at the same bottom does not overhang.
+    fake_pane_t r2, c2;
+    init_pane(&r2, "Null_All", 0, 1920, 512, 0.0f, 0.0f, &holder);
+    r2.pane[0x10c] = 0x10;
+    init_pane(&c2, "inout", 0, 1920, 512, 0.0f, 0.0f, &r2);
+    c2.pane[0x10c] = 0x10;
+    fake_pane_t *l2[] = {&holder, &r2, &c2};
+    link_ring(l2, 3);
+    decide(&so, &c2, &sy, &add);
+    assert(nearf(add, 0.0f));
+}
+
+static void test_challenges_cursor_host(void) {
+    fake_so_t so;
+    float sy, add;
+    fake_pane_t root, ani, cur, row;
+    init_pane(&root, "Null_All", 0, 1920, 1080, 0.0f, 0.0f, NULL);
+    init_pane(&ani, "Null_ani_all", 0, 50, 50, 0.0f, 0.0f, &root);
+    init_pane(&cur, "CL_0000_parts_cursor_triangle", 0, 64, 64, -608.0f, 333.0f, &ani);
+    init_pane(&row, "Null_table_0", 0, 1824, 344, 0.0f, 158.0f, &ani);
+    fake_pane_t *l1[] = {&root, &ani, &cur, &row};
+    link_ring(l1, 4);
+    // Rest at row 0's full-scale position (0.25 * 158) with the 0.75 scale kept, not pc169's 0.25 * 333.
+    decide(&so, &cur, &sy, &add);
+    assert(nearf(sy, 0.75f) && nearf(add, 0.25f * 158.0f));
+    // Negatives: another rest ty, another tx and another name do not take the rule.
+    init_pane(&cur, "CL_0000_parts_cursor_triangle", 0, 64, 64, -608.0f, 300.0f, &ani);
+    decide(&so, &cur, &sy, &add);
+    assert(!nearf(add, 0.25f * 158.0f));
+    init_pane(&cur, "CL_0000_parts_cursor_triangle", 0, 64, 64, -600.0f, 333.0f, &ani);
+    decide(&so, &cur, &sy, &add);
+    assert(!nearf(add, 0.25f * 158.0f));
+    init_pane(&cur, "CL_0000_parts_cursor_other", 0, 64, 64, -608.0f, 333.0f, &ani);
+    decide(&so, &cur, &sy, &add);
+    assert(!nearf(add, 0.25f * 158.0f));
+
+    // Things-to-Do popup host: rests at the target's full-scale position (0.25 * -3); under another parent it does not.
+    fake_pane_t hint, pop;
+    init_pane(&hint, "Null_hint_pokemon", 0, 1218, 129, 0.0f, 124.0f, &root);
+    init_pane(&pop, "CL_0000_parts_cursor_triangle", 0, 84, 84, -540.0f, 84.0f, &hint);
+    decide(&so, &pop, &sy, &add);
+    assert(nearf(sy, 0.75f) && nearf(add, 0.25f * -3.0f));
+    init_pane(&pop, "CL_0000_parts_cursor_triangle", 0, 84, 84, -540.0f, 84.0f, &ani);
+    decide(&so, &pop, &sy, &add);
+    assert(!nearf(add, 0.25f * -3.0f));
 }
 
 int main(void) {
@@ -452,6 +704,11 @@ int main(void) {
     test_t175_t143_t135_t200_t205();
     test_fam2_details_cover_and_gmx_fix();
     test_memories_photo_is_4x3();
+    test_scroll_carrier_gets_row_factor();
+    test_badge_is_matched_by_what_it_is();
+    test_popup_frame_and_negatives();
+    test_root_overhang_edge_anchor();
+    test_challenges_cursor_host();
     puts("pkp ui43: all ScreenLayout rule, bake stack, and gmx_fix tests passed");
     return 0;
 }

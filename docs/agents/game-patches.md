@@ -135,7 +135,7 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
 | [NieR:Automata The End of YoRHa Edition (0100B8E016F76000)](#nierautomata-the-end-of-yorha-edition-0100b8e016f76000) | 8 | 0 | 0 | 0 | 1 | `build` → `game` ×2 |
 | [Paper Mario: The Thousand-Year Door](#paper-mario-the-thousand-year-door) | 1 | 0 | 1 | 0 | 0 | `build` → `game` |
 | [Persona 5 Royal](#persona-5-royal) | 0 | 0 | 0 | 0 | 1 | `build` → `game` |
-| [Pokemon Pokopia](#pokemon-pokopia) | 0 | 8 | 0 | 0 | 1 | `build` → `game` ×2 |
+| [Pokemon Pokopia](#pokemon-pokopia) | 0 | 10 | 0 | 0 | 1 | `build` → `game` ×2 |
 | [Pokémon Brilliant Diamond](#pokémon-brilliant-diamond) | 0 | 0 | 0 | 0 | 1 | `build` → `engine` |
 | [Pokémon Legends: Arceus](#pokémon-legends-arceus) | 0 | 0 | 0 | 1 | 0 | `game` |
 | [Pokémon Shield](#pokémon-shield) | 4 | 0 | 0 | 0 | 1 | `build` → `game` ×2 |
@@ -572,7 +572,7 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
 - **`build` → `game`**, rendering, blocked: future game builds require exact offset and original-word validation, checked: main 76a489f3bd3642fa5e18bd83d32c98ba (Fold 7 observation, 2026-11-11): Pokopia camera aspect hooks in main v2.0.1. Camera layout/offsets are specific to this exact game build
 - **`build` → `game`**, rendering, blocked: one build on hand; future updates require offset and original-word validation, checked: main 76a489f3bd3642fa5e18bd83d32c98ba (kg175 disassembly & rewriter validation): Pokopia native 4:3 UI and camera variant (VARIANT_CUTS['43'] and OBS 30|3..5 in main v2.0.1). Hook offsets (0x9131a8, 0x1f853dc, 0x1f71dc0, 0x1f72270, 0x1f84fac/b4) and ScreenLayout pane offsets belong to this exact build
 
-- **v655360 `main`** `76a489f3…` ([patches.py:23](../../dm/games/0400A3A01EE4C000/patches.py#L23))
+- **v655360 `main`** `76a489f3…` ([patches.py:24](../../dm/games/0400A3A01EE4C000/patches.py#L24))
   - gate 28 at `+0x8cc128`: scene camera enters render view; x20 camera
   - gate 29 at `+0x1f12130`: projection builder entry; x0 camera
   - gate 30 at `+0x1f12354`: perspective projection exit; x19 camera
@@ -581,7 +581,9 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
   - gate 798 at `+0x1f72270`: ScreenLayout pane transform update, global matrix final, children next; x19 pane, x20 what changed
   - gate 1054 at `+0x1f84fac`: ScreenLayout pre-bake before bl 0x1f85000; x0 scaleobj, x1 pane
   - gate 1310 at `+0x1f84fb4`: ScreenLayout post-bake after bl 0x1f85000; x19 scaleobj
-  - host [pkp_aspect.c:42](../../dm/host/android/pkp_aspect.c#L42): build check
+  - gate 1566 at `+0xebecec`: event stencil mask quad rect before submit; x1 rect[4]
+  - gate 1822 at `+0xebedd0`: event alpha-mask quad rect before submit; x1 rect[4], x19 entry
+  - host [pkp_aspect.c:44](../../dm/host/android/pkp_aspect.c#L44): build check
 
 ### Pokémon Brilliant Diamond
 
