@@ -3,6 +3,7 @@
 // Return convention as in hle_friends.c: Result returns RES_FAIL ("saved / submitted" kinds return RES_OK so the game does not retry); bool returns false; events get a bound SystemEvent that never fires.
 #include "hle.h"
 #include "hle_coop.h"
+#include "hle_online.h"
 
 static _Alignas(16) uint8_t g_ev_ldn[0x100];
 
@@ -79,33 +80,33 @@ HLE_FORCE("_ZN2nn9bluetooth19ConnectToGattServerERKNS0_7AddressE", "BLE connect 
 enum { SK_ENETDOWN = 50, SK_EAI_FAIL = 4 };
 // With a co-op node GetLastErrno reads the shared BSD error. Offline keeps the
 // legacy thread-error behavior (including eventfds) exactly as before.
-static int sk_plain_fail(void) { if (dm_coop_node()) dm_sk_seterr(SK_ENETDOWN); return -1; }
+static int sk_plain_fail(void) { if (dm_coop_node() || dm_onl_on()) dm_sk_seterr(SK_ENETDOWN); return -1; }
 HLE_FORCE("_ZN2nn6socket10InitializeEPvmmi", "connects to the bsd socket service; offline, creates no session (cut)", Result, h_sk_Init4, void *mem, uint64_t sz, uint64_t alloc, int conc) { (void)mem; (void)sz; (void)alloc; (void)conc; return RES_OK; }
 HLE_FORCE("_ZN2nn6socket8FinalizeEv", "pairs with Initialize (cut)", Result, h_sk_Fini, void) { return RES_OK; }
-HLE_FORCE("_ZN2nn6socket12GetLastErrnoEv", "offline: ENETDOWN", int, h_sk_Errno, void) { return dm_coop_node() ? dm_sk_geterr() : SK_ENETDOWN; }
-HLE_FORCE("_ZN2nn6socket6SocketEiii", "offline (cut): -1", int, h_sk_Socket3i, int a, int b, int c) { coop_node *cn = dm_coop_node(); if (cn) return dm_coop_ret(coop_vnet_socket(cn, a, b, c)); NET_TRACE("socket::Socket(%d, %d, %d) -> fail", a, b, c); return sk_plain_fail(); }
-HLE_FORCE("_ZN2nn6socket8ShutdownEii", "offline (cut)", int, h_sk_Shutdown, int s, int h) { (void)h; if (dm_coop_vfd(s)) return 0; return sk_plain_fail(); }
+HLE_FORCE("_ZN2nn6socket12GetLastErrnoEv", "offline: ENETDOWN", int, h_sk_Errno, void) { return dm_coop_node() || dm_onl_on() ? dm_sk_geterr() : SK_ENETDOWN; }
+HLE_FORCE("_ZN2nn6socket6SocketEiii", "offline (cut): -1", int, h_sk_Socket3i, int a, int b, int c) { if (dm_onl_on()) return dm_onl_socket(a, b, c); coop_node *cn = dm_coop_node(); if (cn) return dm_coop_ret(coop_vnet_socket(cn, a, b, c)); NET_TRACE("socket::Socket(%d, %d, %d) -> fail", a, b, c); return sk_plain_fail(); }
+HLE_FORCE("_ZN2nn6socket8ShutdownEii", "offline (cut)", int, h_sk_Shutdown, int s, int h) { if (dm_onl_fd(s)) return dm_onl_shutdown(s, h); if (dm_coop_vfd(s)) return 0; return sk_plain_fail(); }
 HLE_FORCE("_ZN2nn6socket4BindEiPK8sockaddrj", "offline (cut)", int, h_sk_Bind, int s, const void *a, unsigned n) { if (dm_coop_vfd(s)) return dm_coop_ret(coop_vnet_bind(dm_coop_node(), s, a, n)); return sk_plain_fail(); }
 int dm_sk_poll(void *fds, uint64_t n, int ms);   // hle_net.c: nothing to wait on → the timeout passes, 0; else -1
 int dm_sk_select(int nfds, const uint64_t *r, const uint64_t *w, const uint64_t *e, const int64_t *tv);
 HLE_FORCE("_ZN2nn6socket4PollEP6pollfdmi", "offline: waits out the timeout when there is nothing to wait on, else fails", int, h_sk_Poll, void *p, uint64_t n, int t) { return dm_sk_poll(p, n, t); }
 // SDK 4's Select with plain fd_set / timeval (Dark Souls Remastered)
 HLE_FORCE("_ZN2nn6socket6SelectEiP6fd_setS2_S2_P7timeval", "offline: waits out the timeout when there is nothing to wait on, else fails", int, h_sk_Select2, int n, void *r, void *w, void *e, void *t) { return dm_sk_select(n, r, w, e, t); }
-HLE_FORCE("_ZN2nn6socket6SendToEiPKvmiPK8sockaddrj", "offline (cut)", long, h_sk_SendTo, int s, const void *b, unsigned long n, int f, const void *a, unsigned al) { if (dm_coop_vfd(s)) return dm_coop_ret(coop_vnet_sendto(dm_coop_node(), s, b, n, f, a, al)); return sk_plain_fail(); }
-HLE_FORCE("_ZN2nn6socket6SendToEiPKvmNS0_7MsgFlagEPKNS0_8SockAddrEj", "offline (cut)", long, h_sk_SendTo2, int s, const void *b, unsigned long n, int f, const void *a, unsigned al) { if (dm_coop_vfd(s)) return dm_coop_ret(coop_vnet_sendto(dm_coop_node(), s, b, n, f, a, al)); return sk_plain_fail(); }
-HLE_FORCE("_ZN2nn6socket8RecvFromEiPvmiP8sockaddrPj", "offline (cut)", long, h_sk_RecvFrom2, int s, void *b, unsigned long n, int f, void *a, unsigned *al) { if (dm_coop_vfd(s)) return dm_coop_ret(coop_vnet_recvfrom(dm_coop_node(), s, b, n, f, a, al)); return sk_plain_fail(); }
-HLE_FORCE("_ZN2nn6socket11GetAddrInfoEPKcS2_PK8addrinfoPPS3_", "name resolution (cut): EAI_FAIL", int, h_sk_Gai2, const char *h, const char *s, const void *hint, void **res) { (void)hint; NET_TRACE("socket::GetAddrInfo \"%.80s\" \"%.20s\" -> EAI_FAIL", h ? h : "(null)", s ? s : "(null)"); if (res) *res = NULL; return SK_EAI_FAIL; }
-HLE_FORCE("_ZN2nn6socket12FreeAddrInfoEP8addrinfo", "pairs with GetAddrInfo (cut)", void, h_sk_FreeAi2, void *ai) { (void)ai; }
+HLE_FORCE("_ZN2nn6socket6SendToEiPKvmiPK8sockaddrj", "offline (cut)", long, h_sk_SendTo, int s, const void *b, unsigned long n, int f, const void *a, unsigned al) { if (dm_onl_fd(s)) return dm_onl_send(s, b, n, f); if (dm_coop_vfd(s)) return dm_coop_ret(coop_vnet_sendto(dm_coop_node(), s, b, n, f, a, al)); return sk_plain_fail(); }
+HLE_FORCE("_ZN2nn6socket6SendToEiPKvmNS0_7MsgFlagEPKNS0_8SockAddrEj", "offline (cut)", long, h_sk_SendTo2, int s, const void *b, unsigned long n, int f, const void *a, unsigned al) { if (dm_onl_fd(s)) return dm_onl_send(s, b, n, f); if (dm_coop_vfd(s)) return dm_coop_ret(coop_vnet_sendto(dm_coop_node(), s, b, n, f, a, al)); return sk_plain_fail(); }
+HLE_FORCE("_ZN2nn6socket8RecvFromEiPvmiP8sockaddrPj", "offline (cut)", long, h_sk_RecvFrom2, int s, void *b, unsigned long n, int f, void *a, unsigned *al) { if (dm_onl_fd(s)) return dm_onl_recv(s, b, n, f); if (dm_coop_vfd(s)) return dm_coop_ret(coop_vnet_recvfrom(dm_coop_node(), s, b, n, f, a, al)); return sk_plain_fail(); }
+HLE_FORCE("_ZN2nn6socket11GetAddrInfoEPKcS2_PK8addrinfoPPS3_", "name resolution (cut): EAI_FAIL", int, h_sk_Gai2, const char *h, const char *s, const void *hint, void **res) { (void)hint; { int r = dm_onl_getaddrinfo(h, s, res); if (r >= 0) return r; } NET_TRACE("socket::GetAddrInfo \"%.80s\" \"%.20s\" -> EAI_FAIL", h ? h : "(null)", s ? s : "(null)"); if (res) *res = NULL; return SK_EAI_FAIL; }
+HLE_FORCE("_ZN2nn6socket12FreeAddrInfoEP8addrinfo", "pairs with GetAddrInfo (cut)", void, h_sk_FreeAi2, void *ai) { dm_onl_freeaddrinfo(ai); }
 HLE_FORCE("_ZN2nn6socket11GAIStrErrorENS0_7AiErrnoE", "resolver error text", const char *, h_sk_GaiStr, int e) { (void)e; return "network unavailable"; }
 // SDK 11's overloads with plain sockaddr / int arguments (Big Brain Academy: Brain vs. Brain, through Pia)
-HLE_FORCE("_ZN2nn6socket7ConnectEiPK8sockaddrj", "offline (cut)", int, h_sk_Connect2, int s, const void *a, unsigned n) { (void)s; (void)a; (void)n; NET_TRACE("socket::Connect -> fail"); return sk_plain_fail(); }
+HLE_FORCE("_ZN2nn6socket7ConnectEiPK8sockaddrj", "offline (cut)", int, h_sk_Connect2, int s, const void *a, unsigned n) { if (dm_onl_fd(s)) return dm_onl_connect(s, a, n); NET_TRACE("socket::Connect -> fail"); return sk_plain_fail(); }
 HLE_FORCE("_ZN2nn6socket6AcceptEiP8sockaddrPj", "offline (cut)", int, h_sk_Accept2, int s, void *a, unsigned *n) { (void)s; (void)a; (void)n; return sk_plain_fail(); }
-HLE_FORCE("_ZN2nn6socket11GetSockNameEiP8sockaddrPj", "offline (cut)", int, h_sk_GetSockName2, int s, void *a, unsigned *n) { if (dm_coop_vfd(s)) return dm_coop_ret(coop_vnet_getsockname(dm_coop_node(), s, a, n)); return sk_plain_fail(); }
-HLE_FORCE("_ZN2nn6socket10GetSockOptEiiiPvPj", "offline (cut)", int, h_sk_GetSockOpt2, int s, int l, int o, void *v, unsigned *n) { if (dm_coop_vfd(s)) return dm_coop_ret(coop_vnet_getsockopt(dm_coop_node(), s, l, o, v, n)); return sk_plain_fail(); }
-HLE_FORCE("_ZN2nn6socket10SetSockOptEiiiPKvj", "offline (cut)", int, h_sk_SetSockOpt2, int s, int l, int o, const void *v, unsigned n) { if (dm_coop_vfd(s)) return dm_coop_ret(coop_vnet_setsockopt(dm_coop_node(), s, l, o, v, n)); return sk_plain_fail(); }
-HLE_FORCE("_ZN2nn6socket5FcntlEiiz", "offline (cut)", int, h_sk_Fcntl2, int s, int c, long a) { if (dm_coop_vfd(s)) return dm_coop_ret(coop_vnet_fcntl(dm_coop_node(), s, c, (int)a)); return sk_plain_fail(); }
-HLE_FORCE("_ZN2nn6socket4RecvEiPvmi", "offline (cut)", long, h_sk_Recv2, int s, void *b, unsigned long n, int f) { if (dm_coop_vfd(s)) return dm_coop_ret(coop_vnet_recvfrom(dm_coop_node(), s, b, n, f, NULL, NULL)); return sk_plain_fail(); }
-HLE_FORCE("_ZN2nn6socket4SendEiPKvmi", "offline (cut)", long, h_sk_Send2, int s, const void *b, unsigned long n, int f) { if (dm_coop_vfd(s)) return dm_coop_ret(coop_vnet_sendto(dm_coop_node(), s, b, n, f, NULL, 0)); return sk_plain_fail(); }
+HLE_FORCE("_ZN2nn6socket11GetSockNameEiP8sockaddrPj", "offline (cut)", int, h_sk_GetSockName2, int s, void *a, unsigned *n) { if (dm_onl_fd(s)) return dm_onl_name(s, 0, a, n); if (dm_coop_vfd(s)) return dm_coop_ret(coop_vnet_getsockname(dm_coop_node(), s, a, n)); return sk_plain_fail(); }
+HLE_FORCE("_ZN2nn6socket10GetSockOptEiiiPvPj", "offline (cut)", int, h_sk_GetSockOpt2, int s, int l, int o, void *v, unsigned *n) { if (dm_onl_fd(s)) return dm_onl_getsockopt(s, l, o, v, n); if (dm_coop_vfd(s)) return dm_coop_ret(coop_vnet_getsockopt(dm_coop_node(), s, l, o, v, n)); return sk_plain_fail(); }
+HLE_FORCE("_ZN2nn6socket10SetSockOptEiiiPKvj", "offline (cut)", int, h_sk_SetSockOpt2, int s, int l, int o, const void *v, unsigned n) { if (dm_onl_fd(s)) return dm_onl_setsockopt(s, l, o, v, n); if (dm_coop_vfd(s)) return dm_coop_ret(coop_vnet_setsockopt(dm_coop_node(), s, l, o, v, n)); return sk_plain_fail(); }
+HLE_FORCE("_ZN2nn6socket5FcntlEiiz", "offline (cut)", int, h_sk_Fcntl2, int s, int c, long a) { if (dm_onl_fd(s)) return dm_onl_fcntl(s, c, a); if (dm_coop_vfd(s)) return dm_coop_ret(coop_vnet_fcntl(dm_coop_node(), s, c, (int)a)); return sk_plain_fail(); }
+HLE_FORCE("_ZN2nn6socket4RecvEiPvmi", "offline (cut)", long, h_sk_Recv2, int s, void *b, unsigned long n, int f) { if (dm_onl_fd(s)) return dm_onl_recv(s, b, n, f); if (dm_coop_vfd(s)) return dm_coop_ret(coop_vnet_recvfrom(dm_coop_node(), s, b, n, f, NULL, NULL)); return sk_plain_fail(); }
+HLE_FORCE("_ZN2nn6socket4SendEiPKvmi", "offline (cut)", long, h_sk_Send2, int s, const void *b, unsigned long n, int f) { if (dm_onl_fd(s)) return dm_onl_send(s, b, n, f); if (dm_coop_vfd(s)) return dm_coop_ret(coop_vnet_sendto(dm_coop_node(), s, b, n, f, NULL, 0)); return sk_plain_fail(); }
 
 // ---------- irsensor: the Joy-Con IR camera (Big Brain Academy: Brain vs. Brain's input layer makes one per controller). The host has none: every camera is unconnected,
 // processors cannot run and report no states. The default-config getters and MakeRect only fill the game's structs and keep running in the SDK ----------
@@ -137,8 +138,9 @@ HLE_FORCE("_ZN2nn8irsensor30GetImageTransferProcessorStateEPNS0_27ImageTransferP
 HLE_FORCE("_ZN2nn3ssl7Context15ImportClientPkiEPmPKcS4_jj", "SSL (cut)", Result, h_ssl_ImpCli, void *self, uint64_t *id, const char *a, const char *b, unsigned x, unsigned y) { (void)self; (void)a; (void)b; (void)x; (void)y; if (id) *id = 0; return RES_FAIL; }
 HLE_FORCE("_ZN2nn3ssl7Context15ImportServerPkiEPmPKcjNS0_17CertificateFormatE", "SSL (cut)", Result, h_ssl_ImpSrv, void *self, uint64_t *id, const char *a, unsigned n, int f) { (void)self; (void)a; (void)n; (void)f; if (id) *id = 0; return RES_FAIL; }
 HLE_FORCE("_ZN2nn3ssl7Context9ImportCrlEPmPKcj", "SSL (cut)", Result, h_ssl_ImpCrl, void *self, uint64_t *id, const char *a, unsigned n) { (void)self; (void)a; (void)n; if (id) *id = 0; return RES_FAIL; }
+uint32_t dm_ssl_builtin(void **out, uint8_t *buf, unsigned cap, const uint32_t *ids, unsigned n);   // hle_net.c
 HLE_FORCE("_ZN2nn3ssl14BuiltInManager22GetBuiltInCertificatesEPPNS0_26BuiltInCertificateInfoBaseEPhjPNS0_15CaCertificateIdEj", "SSL (cut)", Result, h_ssl_Certs,
-          void **out, uint8_t *buf, unsigned bn, void *ids, unsigned n) { (void)buf; (void)bn; (void)ids; (void)n; if (out) *out = NULL; return RES_FAIL; }
+          void **out, uint8_t *buf, unsigned bn, void *ids, unsigned n) { if (dm_ssl_builtin(out, buf, bn, ids, n)) return RES_OK; if (out) *out = NULL; return RES_FAIL; }   // the in-host services' CA (hle_net.c); open: whether the Switch 2 record (InfoBase) has the layout of the older one
 
 // ---------- nifm / nsd: offline ----------
 HLE_FORCE("_ZN2nn4nifm19SetLocalNetworkModeEb", "offline: the local network mode switch is ignored", void, h_nifm_LocalMode, unsigned on) { (void)on; }
@@ -211,19 +213,18 @@ HLE_FORCE("_ZN2nn3web19ShowOfflineHtmlPageEPNS0_26OfflineHtmlPageReturnValueERKN
 // ---------- C interface (nnsocket* / nnssl*): offline as well. The arguments are all in registers and the host does not look at them ----------
 HLE_FORCE("nnsocketAccept", "offline (cut)", int, h_c_sk_Accept, void) { return -1; }
 HLE_FORCE("nnsocketListen", "offline (cut)", int, h_c_sk_Listen, void) { return -1; }
-HLE_FORCE("nnsocketRecvMsg", "offline (cut)", int, h_c_sk_RecvMsg, void) { return -1; }
-HLE_FORCE("nnsocketSendMsg", "offline (cut)", int, h_c_sk_SendMsg, void) { return -1; }
-HLE_FORCE("nnsocketShutdown", "offline (cut)", int, h_c_sk_Shutdown, void) { return -1; }
-HLE_FORCE("nnsocketGetAddrInfoWithOptions", "name resolution with resolver options (cut): EAI_FAIL", int, h_c_sk_GaiOpt, const char *h, const char *s, const void *hint, void **res, const void *o, unsigned long n) { (void)h; (void)s; (void)hint; (void)o; (void)n; if (res) *res = NULL; return SK_EAI_FAIL; }
-HLE_FORCE("nnsocketGetAddrInfo", "name resolution (cut): EAI_FAIL", int, h_c_sk_Gai, const char *h, const char *s, const void *hint, void **res) { (void)h; (void)s; (void)hint; if (res) *res = NULL; return SK_EAI_FAIL; }
-HLE_FORCE("nnsocketFreeAddrInfo", "pairs with GetAddrInfo (cut)", void, h_c_sk_FreeAi, void *ai) { (void)ai; }
+HLE_FORCE("nnsocketRecvMsg", "offline (cut); the in-host services' sockets: the vectors filled", long, h_c_sk_RecvMsg, int s, void *m, int f) { if (dm_onl_fd(s)) return dm_onl_recvmsg(s, m, f); return -1; }
+HLE_FORCE("nnsocketSendMsg", "offline (cut); the in-host services' sockets: the vectors sent", long, h_c_sk_SendMsg, int s, const void *m, int f) { if (dm_onl_fd(s)) return dm_onl_sendmsg(s, m, f); return -1; }
+HLE_FORCE("nnsocketShutdown", "offline (cut)", int, h_c_sk_Shutdown, int s, int h) { if (dm_onl_fd(s)) return dm_onl_shutdown(s, h); return -1; }
+HLE_FORCE("nnsocketGetAddrInfoWithOptions", "name resolution with resolver options (cut): EAI_FAIL", int, h_c_sk_GaiOpt, const char *h, const char *s, const void *hint, void **res, const void *o, unsigned long n) { (void)hint; (void)o; (void)n; { int r = dm_onl_getaddrinfo(h, s, res); if (r >= 0) return r; } if (res) *res = NULL; return SK_EAI_FAIL; }
+HLE_FORCE("nnsocketGetAddrInfo", "name resolution (cut): EAI_FAIL", int, h_c_sk_Gai, const char *h, const char *s, const void *hint, void **res) { (void)hint; { int r = dm_onl_getaddrinfo(h, s, res); if (r >= 0) return r; } if (res) *res = NULL; return SK_EAI_FAIL; }
+HLE_FORCE("nnsocketFreeAddrInfo", "pairs with GetAddrInfo (cut)", void, h_c_sk_FreeAi, void *ai) { dm_onl_freeaddrinfo(ai); }
 HLE_FORCE("nnsocketGAIStrError", "resolver error text", const char *, h_c_sk_GaiStr, int e) { (void)e; return "network unavailable"; }
 
 // ---------- bcat: news / data delivered from the server (Super Mario Odyssey). Initialize talks to the bcat service (an SDK abort without it); mounting the delivery cache fails,
 // which the game treats as "nothing delivered" (main+0x6c9258: a failure skips the read unless the caller asked for an error dialog, which only logs here). Syncing needs the network, which nifm reports unavailable ----------
 HLE_FORCE("_ZN2nn4bcat10InitializeEv", "data delivery init (connects to the bcat service); the host has none, no-op", void, h_bcat_Init, void) {}
-HLE_FORCE("_ZN2nn4bcat25MountDeliveryCacheStorageEv", "mount delivery cache: no delivery data, fails", Result, h_bcat_Mount, void) { return RES_FAIL; }
-HLE_FORCE("_ZN2nn4bcat27UnmountDeliveryCacheStorageEv", "unmount delivery cache", void, h_bcat_Unmount, void) {}
+// (the delivery cache itself: hle_fs.c)
 
 // ---------- album: the capture album (Monster Hunter Rise saves its own photo-mode pictures there). Initialize connects to the capture service (capsrv, an abort in sm::Initialize at the start of
 // nnMain, main+0x6bc5478); the host has no album, so saving fails and showing it does nothing. GetImageWidth / GetImageHeight only compute and keep running in the SDK ----------

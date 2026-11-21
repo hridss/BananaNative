@@ -1673,13 +1673,65 @@ def bdt_jobs(files, parts=64):
 
 def undcx(d, label):
     """FromSoftware's DCX container (big-endian): 'DCX\\0', +0x18 'DCS\\0' u32 length, u32 stored length, +0x24 'DCP\\0' + the method, +0x44 'DCA\\0' u32 8, then the stream. Dark Souls Remastered
-    uses only DFLT (a zlib stream) on all 5,184 of its DCX entries"""
+    uses only DFLT (a zlib stream) on all 5,184 of its DCX entries; The Duskbloods Network Test has DFLT on its small shader archives and KRAK (one Oodle Kraken stream, decoded by the
+    game's own decoder in the Mac host, oodle) on its other 7,570 loose .dcx files"""
     import zlib
+    if len(d) < 0x4c or d[0x44:0x48] != b'DCA\0': red(f'{label}: a DCX container without its DCA block at +0x44')
     n, csz = struct.unpack_from('>II', d, 0x1c)
-    if d[0x28:0x2c] != b'DFLT' or d[0x44:0x48] != b'DCA\0': red(f'{label}: DCX method {d[0x28:0x2c]}: only DFLT is known')
-    out = zlib.decompress(d[0x4c:0x4c + csz])
+    method = d[0x28:0x2c]
+    if method == b'DFLT': out = zlib.decompress(d[0x4c:0x4c + csz])
+    elif method == b'KRAK': out = oodle(d[0x4c:0x4c + csz], n)
+    else: red(f'{label}: DCX method {method}: only DFLT and KRAK are known')
     if len(out) != n: red(f'{label}: DCX holds {len(out):#x} bytes, its header says {n:#x}')
     return out
+
+BND4, CGSB = b'BND4', b'CGSB'
+def bnd4_members(d, label):
+    """FromSoftware's BND4 archive (The Duskbloods Network Test: every decoded .dcx archive, versions '10G29R1' and '07D7R6'): 'BND4', +0x09 u8 big-endian, +0x0a u8 1 = the format
+    byte's bits are stored reversed, +0x0c u32 count, +0x10 u64 0x40, +0x18 8 bytes of version, +0x20 u64 entry length, +0x30 u8 UTF-16 names, +0x31 u8 format (read in the
+    order +0x0a says: 0x02 IDs, 0x04 / 0x08 names, 0x10 64-bit offsets, 0x20 a second length), then at +0x40 the entries {u8 flags, 3 bytes 0, i32 -1, u64 length,
+    [u64 second length], offset, [u32 ID], [u32 name offset]}. The game's formats are 0x2e and 0x2a (the second length, 32-bit offsets, IDs, names), every entry stored
+    as it is (both lengths equal). Names are paths with '\\'. An archive of another shape is red (the file is then left out, scan_file). → (name, data) of each entry"""
+    if len(d) < 0x40: red(f'{label}: a BND4 archive of {len(d)} bytes')
+    n, = struct.unpack_from('<I', d, 0x0c); size, = struct.unpack_from('<Q', d, 0x20)
+    wide, fmt = d[0x30], d[0x31]
+    if d[0x0a]: fmt = int(f'{fmt:08b}'[::-1], 2)
+    want = 0x10 + (8 if fmt & 0x20 else 0) + (8 if fmt & 0x10 else 4) + (4 if fmt & 0x02 else 0) + (4 if fmt & 0x0c else 0)
+    if d[9] or size != want or 0x40 + n * size > len(d): red(f'{label}: BND4 format {fmt:#x} with {n} entries of {size:#x} bytes (big-endian {d[9]}): not a layout this tool reads')
+    for i in range(n):
+        p = 0x40 + i * size
+        length, = struct.unpack_from('<Q', d, p + 8); p += 0x10
+        if fmt & 0x20:
+            if struct.unpack_from('<Q', d, p)[0] != length: red(f'{label}: BND4 entry {i} is compressed ({length:#x} of {struct.unpack_from("<Q", d, p)[0]:#x} bytes)')
+            p += 8
+        off, = struct.unpack_from('<Q' if fmt & 0x10 else '<I', d, p); p += 8 if fmt & 0x10 else 4
+        if fmt & 0x02: p += 4
+        name = str(i)
+        if fmt & 0x0c:
+            at, = struct.unpack_from('<I', d, p)
+            if wide:
+                end = at
+                while end + 2 <= len(d) and d[end:end + 2] != b'\0\0': end += 2
+                name = d[at:end].decode('utf-16-le', 'replace')
+            else: name = d[at:d.index(b'\0', at)].decode('shift-jis', 'replace')
+        if off + length > len(d): red(f'{label}: BND4 entry {i} ({name}) ends past the archive')
+        yield name.replace('\\', '/'), d[off:off + length]
+
+CGSB_STAGE = {0: 'vs', 1: 'hs', 2: 'ds', 3: 'gs', 4: 'ps', 5: 'cs', 6: 'ts', 7: 'ms'}   # CGSB +0x0a, as the entry names say ('.vpo', '.hpo', '.dpo', '.gpo', '.ppo', '.cpo', '.apo', '.mpo'); each is checked against the shader itself
+def cgsb_shaders(d, label):
+    """FromSoftware's compiled shader for NVN2 (The Duskbloods Network Test: 2,641 entries of its eight .shaderbnd archives, and those of the 492 material bundles in
+    shaderbdle.shaderbdlebnd): 'CGSB', u32 0x00112233, u16 1, u16 stage (CGSB_STAGE), u32 0, u64 0x18, then at +0x18 'NVN ', u32 1, u64 0 and three {u64 offset,
+    u64 length} pairs: the code area (Ampere code after its 0x80-byte SPH, no code header), the NVN2 control section (version 0xc9; 0xe0 bytes) and the engine's own
+    reflection data, which is not read. One stage each: the engine combines them per draw (separable_pairs). → [(key, stage, control, code)]"""
+    if len(d) < 0x58 or d[0x18:0x1c] != b'NVN ': red(f'{label}: a CGSB shader without an NVN block at +0x18 ({d[0x18:0x1c]!r})')
+    kcode, ncode, kctl, nctl = struct.unpack_from('<4Q', d, 0x28)
+    if kcode + ncode > len(d) or kctl + nctl > len(d) or not ncode: red(f'{label}: CGSB code area {kcode:#x}+{ncode:#x} or control section {kctl:#x}+{nctl:#x} outside its {len(d):#x} bytes')
+    code, ctl = d[kcode:kcode + ncode], d[kctl:kctl + nctl]
+    if not nvn2_ctl(ctl): red(f'{label}: CGSB control section at {kctl:#x} is not an NVN2 one ({ctl[:8].hex()})')
+    st = nvn2_stage(ctl, code)
+    if not st or CGSB_STAGE.get(d[0x0a]) != st: red(f'{label}: CGSB stage {d[0x0a]} ({CGSB_STAGE.get(d[0x0a])}), its control section and SPH say {st}')
+    if why := check(label, st, ctl, code): red(f'{label} ({st}): {why}')
+    return [(f'{label}#CGSB', st, ctl, code)]
 
 def bnd3_members(d, label):
     """FromSoftware's BND3 archive: 'BND3', 8 bytes of version, u8 format, u8 big-endian, u8 bit-big-endian, u8 0, i32 count, i32 header end, 8 bytes 0, then count 28-byte entries {u8 flags, 3 bytes 0,
@@ -3041,6 +3093,11 @@ def scan_blob(d, label, out, depth=0, left=None):
             left[1] -= int.from_bytes(d[4:8], 'big')
             if left[1] < 0: red(f'{label}: the Yaz0 archive members expand to more than {NEST} times the file')
         d = yaz0(d, label)
+    if d[:4] == DCX:   # FromSoftware's container (undcx): charged like Yaz0, by its header
+        if left is not None:
+            left[1] -= int.from_bytes(d[0x1c:0x20], 'big')
+            if left[1] < 0: red(f'{label}: the DCX archive members expand to more than {NEST} times the file')
+        d = undcx(d, label)
     if left is None: left = [NEST * len(d)] * 2   # the file itself: what its archives' members may add up to, and what their Yaz0 may expand to
     else:
         left[0] -= stored
@@ -3052,6 +3109,10 @@ def scan_blob(d, label, out, depth=0, left=None):
         import cra
         for i, m in enumerate(cra.narc_members(d, label)): scan_blob(cra.undo(m), f'{label}/{i}', out, depth + 1)
         return
+    if d[:4] == BND4:   # FromSoftware's archive (bnd4_members): each entry scanned as a file of its own (CGSB shaders, or the BND4 of a material's shader bundle)
+        for nm, m in bnd4_members(d, label): scan_blob(m, f'{label}/{nm}', out, depth + 1, left)
+        return
+    if d[:4] == CGSB: out.extend(cgsb_shaders(d, label)); return
     if d[:4] == b'BAHS': out.extend(bahs_shaders(d, label)); return
     if d[:4] == b'NDSR': out.extend(ndsr_shaders(d, label)); return
     if d[:4] == b'NDVE': out.extend(ndve_shaders(d, label)); return
@@ -3105,7 +3166,7 @@ def pixel_input_cover(shaders):
         k = min(ins, key=lambda k: (-len(ins[k] & left), k)); cover.append(k); left -= ins[k]
     return cover
 
-SINGLE_STAGE = ('#GLSLC@', '#VIPER', '#UE', '#MTSPK@', '#MGFX@', '#NLG', '#PGSO', '#RAW@', '#TFXO@', '#NEEDLE@', '#SNOWDROP@', '#PHYRE@', '#SUMO@', '#NVNSH@')   # sources whose every shader is a program of one stage: GLSLC outputs, Unreal's shader records, MT Framework's shader package (BNSH variations, Unity programs, MSHD and SDF pair theirs);
+SINGLE_STAGE = ('#GLSLC@', '#VIPER', '#UE', '#MTSPK@', '#MGFX@', '#NLG', '#PGSO', '#RAW@', '#TFXO@', '#NEEDLE@', '#SNOWDROP@', '#PHYRE@', '#SUMO@', '#NVNSH@', '#CGSB')   # sources whose every shader is a program of one stage: GLSLC outputs, Unreal's shader records, MT Framework's shader package (BNSH variations, Unity programs, MSHD and SDF pair theirs);
 # Unreal Engine 3's shader caches (ue3_shaders, '#UE3@'); MonoGame's effects, whose passes may name no vertex shader and keep the one bound (Celeste: 10 of its 13 effects draw through SpriteBatch's vertex shader, which is in main); Next Level Games'
 # archives (Luigi's Mansion 3 makes 5,317 programs of one stage each at boot); PlatinumGames' shader objects (Bayonetta 3: one stage each, pg_shader); control sections loose in main
 # (Advance Wars 1+2: Re-Boot Camp's Bink shaders, raw_shaders), which no file pairs; YEBIS's effect file (tfxo_shaders); and Sumo's Ninty_NX descriptors and NVNsh records, one stage
@@ -3429,6 +3490,9 @@ def scan_file_in(args):
         return rel, uniq_keys(found), var_pairs(found), trees
     if len(args) > 2:   # a range of LINKDATA entries (linkdata_jobs)
         linkdata_shaders(path, rel, args[2], found)
+        return rel, uniq_keys(found), var_pairs(found), trees
+    if head[:4] == DCX:   # a loose FromSoftware container (The Duskbloods Network Test: every archive is one): decoded, then scanned as the archive it holds (scan_blob)
+        with open(path, 'rb') as f: scan_blob(f.read(), '/' + rel, found)
         return rel, uniq_keys(found), var_pairs(found), trees
     if head[:4] == BND2:   # a Criterion Bundle 2 (Need for Speed: Hot Pursuit Remastered's SHADERS.BNDL): GLSLC outputs in its zlib resources (bnd2_shaders)
         found += bnd2_shaders(open(path, 'rb').read(), '/' + rel)

@@ -4,6 +4,8 @@
 
 static int sdk;
 int dm_sdk_major(void) { return sdk; }
+static int ounce;
+int dm_sdk_ounce(void) { return ounce; }
 
 // The record between two guard words; after it, the old record again in an allocation of exactly its size, for AddressSanitizer
 static void check(int major, uint64_t pool) {
@@ -29,6 +31,10 @@ int main(void) {
         h_nv_Fin();
         check(majors[i], 0);
     }
-    puts("NV memory: the 0x20-byte record on SDK 10 and older, 0x40 bytes from SDK 11 on, pool figures in both");
+    // A Switch 2 game that installs a pool of size 0: the total is the application pool; any other game's stays 0
+    h_nv_Init(storage, 0); check(20, 0);
+    ounce = 1; check(20, DM_GAME_APP_POOL); ounce = 0;
+    h_nv_Fin();
+    puts("NV memory: the 0x20-byte record on SDK 10 and older, 0x40 bytes from SDK 11 on, pool figures in both; the application pool for a Switch 2 game with no pool");
     return 0;
 }

@@ -36,7 +36,12 @@ HLE_FORCE("_ZN2nn2gs3sdk27QueryApplicationGpuTimeSpanEPNS_8TimeSpanEmm", "applic
 // x0 = 0) while reporting video memory at startup. Report the pool the game installed, with nothing used from it
 HLE_FORCE("_ZN2nv21GetGraphicsMemoryInfoEPNS_10MemoryInfoE", WHY "; pool figures from nv::InitializeGraphics, no driver statistics", void, h_nv_MemInfo, uint64_t *out) {
     memset(out, 0, DM_SDK_OLD(dm_sdk_major()) ? 0x20 : 0x40);
-    if (g_nv_pool.inited) { out[0] = g_nv_pool.size; out[2] = g_nv_pool.size; }   // [0] total, [1] used (0), [2] free: within the four counters of both sizes
+    // A Switch 2 game may install no pool at all: The Duskbloods Network Test (SDK 20.5.19 Ounce) calls nv::InitializeGraphics with size 0, the console's graphics system
+    // (nn::gs) then serving graphics memory from the application's own, and before it opens its display (main+0x491e150) reads this record and gives up when the total is 0
+    // (its layer setup returns error 5, and the caller reads through the null layer object at main+0x414b4d0). With no pool installed the total is the application pool, the
+    // memory the graphics system draws on. Open: the figures the console reports here (no console reading)
+    unsigned long total = g_nv_pool.size ? g_nv_pool.size : dm_sdk_ounce() ? (unsigned long)DM_GAME_APP_POOL : 0;
+    if (g_nv_pool.inited) { out[0] = total; out[2] = total; }   // [0] total, [1] used (0), [2] free: within the four counters of both sizes
 }
 HLE_FORCE("_ZN2nv22DumpGraphicsMemoryInfoEv", WHY "; the dump goes to the host log", void, h_nv_Dump, void) {
     LOG("nv::DumpGraphicsMemoryInfo: pool %.2f MB, 0 used (host graphics layer)", g_nv_pool.size / 1048576.0);

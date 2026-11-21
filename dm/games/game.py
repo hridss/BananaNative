@@ -415,6 +415,7 @@ def header(g):
          f'#define DM_GAME_APP_POOL {g.int("app_pool"):#x}ull',
          f'#define DM_GAME_MEM_USED {int(g.get("mem_used", "0x4000000"), 0):#x}ull',   # used memory reported beside the heap (hle_svc.c GetInfo UsedMemorySize)
          f'#define DM_GAME_SYS_RESOURCE {int(g.get("sys_resource", "0x2000000"), 0):#x}ull',   # the NPDM's system resource size (hle_svc.c GetInfo TotalSystemResourceSize; 0 = no virtual address memory)
+         f'#define DM_GAME_CORE_MASK {int(g.get("core_mask", "0x7"), 0):#x}ull',   # the cores the NPDM's thread capability allows (hle_svc.c GetInfo CoreMask; cores 0-2 without the key)
          f'#define DM_GAME_ARGS {q(g.get("game_args", ""))}',   # game arguments when the command line gives none (main.c; Octopath Traveler 0: Unreal's -SwitchVirtualAddressSpaceSize=)
          f'#define DM_GAME_ENV {q(g.get("game_env", ""))}',   # KEY=VALUE pairs getenv answers (hle_os.c; Absolum: .NET's DOTNET_GCRegionRange)
          f'#define DM_GAME_FASTBOOT_ENV {q(g.get("fastboot_env", ""))}',   # KEY=VALUE host switches DM_FASTBOOT=1 sets for a test run (main.c fastboot_apply; the environment and env.txt win)

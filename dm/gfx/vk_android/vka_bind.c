@@ -82,6 +82,13 @@ int vka_walk(const vka_bstate *s, int st, const dmsh_vk_entry *e, const dmsh_vk_
                         : b->kind == DMSH_VK_KIND_TEX_C2A ? (int)(vka_c2_handle(s, st, b->off + 8u * k) & 0xfffff)
                         : noslot ? 0 : (int)(vka_tex_slot(s, st, (unsigned)reg) & 0xfffff);
                 int sid = b->skind ? samp_of(s, st, b, k, rd, ctx) : 0;
+                // Two uniform words ORed into one handle (TEX_UBO with SAMP_UBO): the shader does not say which word carries the texture ID and which the sampler ID, and
+                // the translator names the first operand the texture. A game that keeps its sampler words first (The Duskbloods Network Test's final blend: sampler IDs in
+                // one block, texture IDs in another) had the IDs taken from the wrong words: texture 0, nothing bound and a black picture. Both IDs come from the OR
+                if (b->kind == DMSH_VK_KIND_TEX_UBO && b->skind == DMSH_VK_KIND_SAMP_UBO && !noslot) {
+                    uint32_t h = (uint32_t)ubo_word(s, st, reg, b->off + ubo_elem(b, k), 4, rd, ctx) | (uint32_t)ubo_word(s, st, b->sreg, b->soff + ubo_elem(b, k), 4, rd, ctx);
+                    tid = ubo_tex_id(s, h); sid = ubo_samp_id(s, h);
+                }
                 if (tid) { r.what = VKA_R_TEX; r.tid = tid; r.sid = sid; }
                 break; }
             case DMSH_VK_KIND_TBUF: {

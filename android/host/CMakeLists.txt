@@ -44,6 +44,9 @@ endforeach()
 file(GLOB HOST_C CONFIGURE_DEPENDS ${HOST}/*.c)
 list(REMOVE_ITEM HOST_C ${HOST}/hle_movie_avc.c)   # VideoToolbox: dm/host/plat/movie_avc_android.c stands in
 list(APPEND HOST_C ${HOST}/plat/plat_android.c ${HOST}/plat/movie_avc_android.c ${HOST}/plat/front_android.c)
+# The in-host online services (dm/host/online, hle_online.c): inert unless DM_ONLINE_HOSTS is set
+file(GLOB ONLINE_C CONFIGURE_DEPENDS ${HOST}/online/*.c)
+list(APPEND HOST_C ${ONLINE_C})
 # Local wireless (nn::ldn) over IP: pokopia-native's portable co-op module, wired by dm/host/hle_coop.c and inert unless DM_COOP is set. The module is a pinned
 # third-party source the tree vendors separately (dm/third_party/pokopia-coop by default; -DNX_COOP_VENDOR_DIR=<dir> builds against a copy elsewhere). Where it is absent
 # the host builds as before: NX_COOP_VENDOR=0, dm_coop_node() is NULL and every hook keeps its offline answer
@@ -90,6 +93,26 @@ target_compile_options(vpx PRIVATE -O2 -w)
 add_library(zstddec STATIC ${TP}/zstd/zstddeclib.c)
 target_compile_options(zstddec PRIVATE -O2 -w -fvisibility=hidden)
 
+# mbedTLS (TLS and certificates) and nghttp2 (HTTP/2) for the in-host online services (dm/host/online)
+# mbedTLS 4: the sources and include directories of upstream's library/Makefile (TLS and X.509, TF-PSA-Crypto, and the optional drivers it lists, which the default
+# configuration leaves off) (dm/third_party/mbedtls/README.md)
+set(TFPSA ${TP}/mbedtls/tf-psa-crypto)
+set(TFDRV ${TFPSA}/drivers)
+file(GLOB MBEDTLS_C CONFIGURE_DEPENDS ${TP}/mbedtls/library/*.c ${TFPSA}/core/*.c ${TFPSA}/dispatch/*.c ${TFPSA}/extras/*.c ${TFPSA}/platform/*.c ${TFPSA}/utilities/*.c
+     ${TFDRV}/builtin/src/*.c ${TFDRV}/pqcp/src/*.c)
+list(APPEND MBEDTLS_C ${TFDRV}/everest/library/x25519.c ${TFDRV}/everest/library/Hacl_Curve25519_joined.c ${TFDRV}/p256-m/p256-m_driver_entrypoints.c ${TFDRV}/p256-m/p256-m/p256-m.c)
+set(MBEDTLS_PUBLIC_INC ${TP}/mbedtls/include ${TFPSA}/include ${TFDRV}/builtin/include ${TFDRV}/everest/include ${TFDRV}/everest/include/tf-psa-crypto/private/everest
+    ${TFDRV}/everest/include/tf-psa-crypto/private/everest/kremlib ${TFDRV}/p256-m ${TFDRV}/pqcp/include)
+add_library(mbedtls STATIC ${MBEDTLS_C})
+target_include_directories(mbedtls PRIVATE ${TP}/mbedtls/library ${TFPSA}/core ${TFDRV}/builtin/src ${TFPSA}/dispatch ${TFPSA}/extras ${TFPSA}/platform ${TFPSA}/utilities
+    ${TFDRV}/pqcp/src ${TFDRV}/pqcp/mldsa-native/mldsa ${MBEDTLS_PUBLIC_INC})
+target_compile_options(mbedtls PRIVATE -O2 -w -fvisibility=hidden)
+file(GLOB NGHTTP2_C CONFIGURE_DEPENDS ${TP}/nghttp2/lib/*.c)
+add_library(nghttp2 STATIC ${NGHTTP2_C})
+target_include_directories(nghttp2 PRIVATE ${TP}/nghttp2/lib/includes ${TP}/nghttp2/lib)
+target_compile_definitions(nghttp2 PRIVATE NGHTTP2_STATICLIB HAVE_ARPA_INET_H HAVE_NETINET_IN_H)
+target_compile_options(nghttp2 PRIVATE -O2 -w -fvisibility=hidden)
+
 # dav1d (AV1 movies, dm/third_party/dav1d): C sources and per-bit-depth wrappers
 file(GLOB DAV1D_C CONFIGURE_DEPENDS ${TP}/dav1d/src/*.c ${TP}/dav1d/config/tmpl/*.c)
 list(FILTER DAV1D_C EXCLUDE REGEX "_tmpl\\.c$")
@@ -116,9 +139,9 @@ function(nxhost_add tgt game)
   add_custom_target(${tgt}_seed COMMAND ${Python3_EXECUTABLE} ${ROOT}/dm/games/game.py seed ${game} ${SEED_H} BYPRODUCTS ${SEED_H} COMMENT "prewarm seed ${game}")
   add_library(${tgt} SHARED ${HOST_C} ${GFX_C} ${ASM_OUT} ${GAME_H} ${SEED_H})
   add_dependencies(${tgt} ${tgt}_seed)
-  target_include_directories(${tgt} PRIVATE ${GEN}/${game} ${GFX}/nvn/include ${TP}/vulkan-headers/include ${TP}/libvpx ${TP}/libvpx/config ${TP}/dav1d/include ${TP}/stb_vorbis ${HOST} ${NX_COOP_VENDOR_DIR})
+  target_include_directories(${tgt} PRIVATE ${GEN}/${game} ${GFX}/nvn/include ${TP}/vulkan-headers/include ${TP}/libvpx ${TP}/libvpx/config ${TP}/dav1d/include ${TP}/stb_vorbis ${MBEDTLS_PUBLIC_INC} ${TP}/nghttp2/lib/includes ${HOST} ${NX_COOP_VENDOR_DIR})
   # DM_NUP_ZSTD: compressed files of a NUP container are decompressed with zstddec (dm/host/nup_image.h)
-  target_compile_definitions(${tgt} PRIVATE _GNU_SOURCE DM_NUP_ZSTD NX_COOP_VENDOR=${NX_COOP_VENDOR} $<$<BOOL:${NX_LSFG}>:NX_LSFG>)
+  target_compile_definitions(${tgt} PRIVATE _GNU_SOURCE DM_NUP_ZSTD NGHTTP2_STATICLIB NX_ONLINE=1 NX_COOP_VENDOR=${NX_COOP_VENDOR} $<$<BOOL:${NX_LSFG}>:NX_LSFG>)
   # As the Mac host (-O1 -g -Wall -Wno-unused-function). Hidden visibility: the assembly reaches C symbols with adrp, which a shared library allows only for symbols it binds itself
   # -Wno-format: the host prints uint64_t with %ll* (unsigned long long on Darwin, unsigned long on Linux: the same 64 bits)
   target_compile_options(${tgt} PRIVATE -O1 -g -Wall -Wno-unused-function -Wno-format -fvisibility=hidden)
@@ -127,7 +150,7 @@ function(nxhost_add tgt game)
   set_source_files_properties(${VKA_C} PROPERTIES COMPILE_OPTIONS -O2)
   target_link_options(${tgt} PRIVATE -Wl,-Bsymbolic -Wl,--no-undefined -Wl,--error-limit=0 -Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/libnxhost.map)
   set_target_properties(${tgt} PROPERTIES LINK_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/libnxhost.map)
-  target_link_libraries(${tgt} PRIVATE vpx dav1d zstddec aaudio mediandk android log m dl z)   # libvulkan.so is opened at run time (vka_dev.c)
+  target_link_libraries(${tgt} PRIVATE vpx dav1d zstddec mbedtls nghttp2 aaudio mediandk android log m dl z)   # libvulkan.so is opened at run time (vka_dev.c)
 endfunction()
 
 if(NX_GAMES)

@@ -16,7 +16,9 @@ HLE_FORCE("_ZN2nn2oe17GetDisplayVersionEPNS0_14DisplayVersionE", "display versio
     static const struct { const char *build, *ver; } k[] = {DM_GAME_DISPLAY_VERSIONS};
     const char *ver = "1.0.0";
     for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main"))
-        for (unsigned j = 0; j < sizeof k / sizeof *k; j++) if (!strcmp(g_mod[i].build_id, k[j].build)) ver = k[j].ver;
+        // ("?": a derived profile of a dump without control data, its version is not known: 1.0.0 as for an unknown build. The Duskbloods Network Test names its
+        // delivery cache file by the version and built an empty name from "?")
+        for (unsigned j = 0; j < sizeof k / sizeof *k; j++) if (!strcmp(g_mod[i].build_id, k[j].build) && strcmp(k[j].ver, "?")) ver = k[j].ver;
     memset(v, 0, 16); strlcpy(v, ver, 16);
 }
 HLE_FORCE("_ZN2nn2oe24GetExpectedVolumeBalanceEPfS1_", "system / application volume balance; the host always reports 1:1", void, h_oe_GetVolBal, float *sys, float *app) { *sys = 1.0f; *app = 1.0f; }

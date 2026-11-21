@@ -46,6 +46,34 @@ gen/dav1d/%.o: $(DAV1D)/% $(DAV1D_H) ../mac/min_os.mk
 	clang -O2 -g -mmacosx-version-min=$(MACOS_MIN) -fvisibility=hidden -fomit-frame-pointer -fno-align-functions -I$(DAV1D) -I$(DAV1D)/include -I$(DAV1D)/config -c $< -o $@
 $(DAV1D_LIB): $(DAV1D_OBJ)
 	rm -f $@; ar rcs $@ $^
+# Third party: mbedTLS (TLS and certificates) and nghttp2 (HTTP/2) for the in-host online services (online/, hle_online.c), each built into a static library, file by file
+MBED=../third_party/mbedtls
+TFPSA=$(MBED)/tf-psa-crypto
+TFDRV=$(TFPSA)/drivers
+# the sources and include directories of upstream's library/Makefile (with tf-psa-crypto/core/crypto-library.make and scripts/crypto-common.make): mbedTLS 4's TLS and X.509,
+# TF-PSA-Crypto, and the optional drivers it lists (the default configuration leaves them off; they compile to nothing)
+MBED_SRC=$(sort $(wildcard $(MBED)/library/*.c $(TFPSA)/core/*.c $(TFPSA)/dispatch/*.c $(TFPSA)/extras/*.c $(TFPSA)/platform/*.c $(TFPSA)/utilities/*.c $(TFDRV)/builtin/src/*.c $(TFDRV)/pqcp/src/*.c)) \
+         $(TFDRV)/everest/library/x25519.c $(TFDRV)/everest/library/Hacl_Curve25519_joined.c $(TFDRV)/p256-m/p256-m_driver_entrypoints.c $(TFDRV)/p256-m/p256-m/p256-m.c
+MBED_PUBLIC_INC=-I$(MBED)/include -I$(TFPSA)/include -I$(TFDRV)/builtin/include -I$(TFDRV)/everest/include -I$(TFDRV)/everest/include/tf-psa-crypto/private/everest \
+         -I$(TFDRV)/everest/include/tf-psa-crypto/private/everest/kremlib -I$(TFDRV)/p256-m -I$(TFDRV)/pqcp/include
+MBED_PRIVATE_INC=-I$(MBED)/library -I$(TFPSA)/core -I$(TFDRV)/builtin/src -I$(TFPSA)/dispatch -I$(TFPSA)/extras -I$(TFPSA)/platform -I$(TFPSA)/utilities -I$(TFDRV)/pqcp/src \
+         -I$(TFDRV)/pqcp/mldsa-native/mldsa
+MBED_OBJ=$(patsubst $(MBED)/%.c,gen/mbedtls/%.o,$(MBED_SRC))
+MBED_LIB=gen/mbedtls/libmbedtls.a
+gen/mbedtls/%.o: $(MBED)/%.c ../mac/min_os.mk
+	@mkdir -p $(dir $@)
+	clang -O2 -g -w -mmacosx-version-min=$(MACOS_MIN) $(MBED_PRIVATE_INC) $(MBED_PUBLIC_INC) -c $< -o $@
+$(MBED_LIB): $(MBED_OBJ)
+	rm -f $@; ar rcs $@ $^
+NGH2=../third_party/nghttp2/lib
+NGH2_OBJ=$(patsubst $(NGH2)/%.c,gen/nghttp2/%.o,$(sort $(wildcard $(NGH2)/*.c)))
+NGH2_LIB=gen/nghttp2/libnghttp2.a
+gen/nghttp2/%.o: $(NGH2)/%.c ../mac/min_os.mk
+	@mkdir -p $(dir $@)
+	clang -O2 -g -w -mmacosx-version-min=$(MACOS_MIN) -DNGHTTP2_STATICLIB -DNX_ONLINE=1 -DHAVE_ARPA_INET_H -DHAVE_NETINET_IN_H -I$(NGH2)/includes -I$(NGH2) -c $< -o $@
+$(NGH2_LIB): $(NGH2_OBJ)
+	rm -f $@; ar rcs $@ $^
+ONLINE=$(sort $(wildcard online/*.c))
 # The host's own Metal shaders (dm/gfx/msl/*.metal) compiled for MSL_SDK into gen/msl-<sdk>/host_msl_gen.h (dm/gfx/tools/host_msl.py; dm/gfx/nvn/host_msl.m loads them), so the host
 # compiles no MSL at run time. The iOS build (dm/ios/tools/gen_build.py) makes it with MSL_SDK=iphoneos, for the app's deployment target (MSL_MIN_iphoneos, as project.yml)
 MSL_SDK ?= macosx
@@ -79,8 +107,8 @@ endif
 FORCE:
 # -Wl,-U,_vka_env_gen: probe.c's weak reference to the Vulkan replay's live-control generation (vka_ctl.c, Android only) stays null here, as it checks; Apple's linker
 # refuses an undefined weak reference unless told it may stay undefined
-dmhost: $(SRC) $(GFX) ../third_party/stb_vorbis/stb_vorbis.c dm.h plat/plat.h plat/plat_apple.h hle.h romfs_image.h save_sync.h dm_input.h pad_slots.h hle_haptics.h haptics_apple.h motion_fusion.h motion_apple.h motion_pro.h motion_pro_mac.h pad_apple.h pad_hid.h pad_hid_mac.h front.h $(GFX_H) $(GAME_H) $(GAME_STAMP) $(VPX_LIB) $(DAV1D_LIB) $(MSL_H)
-	clang $(CFLAGS) -I../gfx/nvn/include -I$(dir $(MSL_H)) -I../third_party/vulkan-headers/include -I$(dir $(GAME_H)) -I$(VPX) -I$(DAV1D)/include -I../third_party/stb_vorbis -fobjc-arc -Wl,-U,_vka_env_gen -o $@ $(SRC) $(GFX) $(VPX_LIB) $(DAV1D_LIB) -framework Cocoa -framework QuartzCore -framework Metal -framework MetalFX -framework GameController -framework CoreHaptics -framework IOKit -framework AudioToolbox -framework VideoToolbox -framework CoreMedia -framework CoreVideo -framework ImageIO -framework UniformTypeIdentifiers
+dmhost: $(SRC) $(GFX) ../third_party/stb_vorbis/stb_vorbis.c dm.h plat/plat.h plat/plat_apple.h hle.h romfs_image.h save_sync.h dm_input.h pad_slots.h hle_haptics.h haptics_apple.h motion_fusion.h motion_apple.h motion_pro.h motion_pro_mac.h pad_apple.h pad_hid.h pad_hid_mac.h front.h hle_online.h online/online.h $(ONLINE) $(GFX_H) $(GAME_H) $(GAME_STAMP) $(VPX_LIB) $(DAV1D_LIB) $(MBED_LIB) $(NGH2_LIB) $(MSL_H)
+	clang $(CFLAGS) -I../gfx/nvn/include -I$(dir $(MSL_H)) -I../third_party/vulkan-headers/include -I$(dir $(GAME_H)) -I$(VPX) -I$(DAV1D)/include -I../third_party/stb_vorbis $(MBED_PUBLIC_INC) -I$(NGH2)/includes -DNGHTTP2_STATICLIB -DNX_ONLINE=1 -fobjc-arc -Wl,-U,_vka_env_gen -o $@ $(SRC) $(ONLINE) $(GFX) $(VPX_LIB) $(DAV1D_LIB) $(MBED_LIB) $(NGH2_LIB) -framework Cocoa -framework QuartzCore -framework Metal -framework MetalFX -framework GameController -framework CoreHaptics -framework IOKit -framework AudioToolbox -framework VideoToolbox -framework CoreMedia -framework CoreVideo -framework ImageIO -framework UniformTypeIdentifiers
 clean:   # the host and everything make generates for it (gen/: the profile headers, the game stamp and the libvpx and dav1d builds; dmhost_* and *.dSYM beside them, as in .gitignore)
 	rm -rf gen dmhost dmhost_* *.dSYM
 .PHONY: clean

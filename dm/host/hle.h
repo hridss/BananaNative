@@ -66,7 +66,7 @@ void dm_applet_leave(void);
 // a network: every socket call still fails. A game that shows an event only when it believes it is online (Pokopia: Apples to Applin) then starts it. Read once per translation unit
 static inline int dm_online(void) {
     static int v = -1;
-    if (v < 0) { const char *e = getenv("DM_ONLINE"); v = e && *e && strcmp(e, "0") != 0; }
+    if (v < 0) { const char *e = getenv("DM_ONLINE"), *h = getenv("DM_ONLINE_HOSTS"); v = (e && *e && strcmp(e, "0") != 0) || (h && *h); }   // DM_ONLINE_HOSTS: the in-host services (hle_online.h), which need the network reported too
     return v;
 }
 // DM_NET_TRACE=1: logs each nifm / nsd / network clock / socket call the game makes with its result (first 400), to see what a game's online check asks. Read once per translation unit

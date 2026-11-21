@@ -821,7 +821,10 @@ uint64_t svc_dispatch(int num, uint64_t *regs, uint64_t orig_addr) {
     case 0x29: {  // GetInfo(out*, id, handle, subid) → x1 = value
         uint64_t id = regs[1], v = 0;
         switch (id) {
-        case I_CoreMask: v = 7; break;
+        // The cores the NPDM allows the process (profile core_mask; cores 0-2 without the key). A game sizes per-core tables from the highest core here and indexes them with
+        // GetCurrentProcessorNumber, which answers the core a thread asked for: a mask smaller than the NPDM's makes those writes land past the table (The Duskbloods Network Test,
+        // cores 0-5: a thread on core 4 wrote into the block behind a three-entry table)
+        case I_CoreMask: v = DM_GAME_CORE_MASK; break;
         case I_PriorityMask: v = 0; break;
         case I_AliasAddr: v = (uint64_t)g_alias; break;   case I_AliasSize: v = g_alias_cap; break;
         case I_HeapAddr:  v = (uint64_t)g_heap;  break;   case I_HeapSize:  v = g_heap_cap;  break;

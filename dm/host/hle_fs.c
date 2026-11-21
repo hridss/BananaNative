@@ -1665,3 +1665,49 @@ HLE_FORCE("_ZN2nn2fs18IsSaveDataExistingERKNS_7account3UidE", "fsp-srv; save dat
 HLE_FORCE("_ZN2nn2fs26SetPriorityOnCurrentThreadENS0_8PriorityE", "fsp-srv; file read priority, ignored by the host", void, h_fs_SetPrio, int prio) { (void)prio; }
 HLE_FORCE("_ZN2nn2fs6detail18IsEnabledAccessLogEj", "fsp-srv; access log always off (returns bool)", unsigned, h_fs_AccessLogMask, unsigned mask) { (void)mask; return 0; }
 HLE_FORCE("_ZN2nn2fs6detail18IsEnabledAccessLogEv", "fsp-srv; access log always off (returns bool)", unsigned, h_fs_AccessLog, void) { return 0; }
+
+// ---------- bcat: the delivery cache, data the publisher's server delivers to the console (nn::bcat). The host has no delivery: the cache is a host folder the user fills,
+// DM_BCAT_DIR (default <DM_ROOT>/bcat/<program ID>), holding <directory>/<file> as the game names them. With the folder a sync reports done and the files are read from it;
+// without it mounting fails ("nothing delivered", as before: Super Mario Odyssey skips its news) and a sync ends in bcat's "internet request denied" (2122-0008), the result
+// the SDK's own code gave on this host. The Duskbloods Network Test reads its parameter file from there (Regulation/regulation_nt_1_0.bin) and does not start an online
+// session without it ("Failed to retrieve latest calibrations") ----------
+#define BCAT_MOUNT "dmbcat"
+#define RES_BCAT_DENIED 0x107Au   // bcat module 122, description 8
+static const char *bcat_dir(char *b, size_t n) {
+    const char *v = getenv("DM_BCAT_DIR");
+    if (v && *v) return v;
+    snprintf(b, n, "%s%s/bcat/%016llX", getenv("DM_ROOT") ?: getenv("HOME"), getenv("DM_ROOT") ? "" : "/dm-work", (unsigned long long)DM_GAME_PROGRAM_ID); return b;
+}
+static int bcat_have(void) { char b[1100]; struct stat st; return !stat(bcat_dir(b, sizeof b), &st) && S_ISDIR(st.st_mode); }
+HLE_FORCE("_ZN2nn4bcat25MountDeliveryCacheStorageEv", "mount the delivery cache → DM_BCAT_DIR (fails without the folder: nothing delivered)", Result, h_bcat_Mount, void) {
+    static atomic_int done; char b[1100];
+    if (!bcat_have()) return RES_FAIL;
+    if (atomic_exchange(&done, 1)) return RES_OK;
+    LOG("bcat: delivery cache → %s", bcat_dir(b, sizeof b));
+    return mount(BCAT_MOUNT, bcat_dir(b, sizeof b), 1);
+}
+HLE_FORCE("_ZN2nn4bcat27UnmountDeliveryCacheStorageEv", "unmount the delivery cache (the host keeps its mount)", void, h_bcat_Unmount, void) {}
+// A sync: nothing to fetch, done at once. DeliveryCacheProgress is the SDK's object; the host keeps nothing in it
+HLE_FORCE("_ZN2nn4bcat24RequestSyncDeliveryCacheEPNS0_21DeliveryCacheProgressE", "delivery cache sync: done at once (the cache is DM_BCAT_DIR)", Result, h_bcat_Sync, void *progress) {
+    (void)progress; LOG("bcat: RequestSyncDeliveryCache: %s", bcat_have() ? "the delivery cache folder is there, done" : "no delivery cache folder, internet request denied"); return RES_OK; }
+HLE_FORCE("_ZN2nn4bcat21DeliveryCacheProgressC1Ev", "delivery cache progress (host: no state)", void, h_bcat_ProgCtor, void *self) { (void)self; }
+HLE_FORCE("_ZN2nn4bcat21DeliveryCacheProgressD1Ev", "delivery cache progress (host: no state)", void, h_bcat_ProgDtor, void *self) { (void)self; }
+HLE_FORCE("_ZN2nn4bcat21DeliveryCacheProgress6UpdateEv", "delivery cache progress (host: no state)", void, h_bcat_ProgUpdate, void *self) { (void)self; }
+HLE_FORCE("_ZNK2nn4bcat21DeliveryCacheProgress9GetStatusEv", "delivery cache progress: done (DeliveryCacheProgressStatus_Done)", int, h_bcat_ProgStatus, const void *self) { (void)self; return 9; }
+HLE_FORCE("_ZNK2nn4bcat21DeliveryCacheProgress9GetResultEv", "delivery cache progress: success with a delivery cache folder, else internet request denied", Result, h_bcat_ProgResult, const void *self) {
+    (void)self; return bcat_have() ? RES_OK : RES_BCAT_DENIED; }
+// DeliveryCacheFile: the host keeps the open file's handle in the object's first 8 bytes (the SDK's own members are not used: every method is taken over)
+HLE_FORCE("_ZN2nn4bcat17DeliveryCacheFileC1Ev", "delivery cache file (host: its handle in the object)", void, h_bcat_FileCtor, uint64_t *self) { *self = 0; }
+HLE_FORCE("_ZN2nn4bcat17DeliveryCacheFileD1Ev", "delivery cache file: closes an open file", void, h_bcat_FileDtor, uint64_t *self) { if (*self) { h_fs_CloseFile(*self); *self = 0; } }
+HLE_FORCE("_ZN2nn4bcat17DeliveryCacheFile4OpenEPKc", "delivery cache file <directory>/<file> → DM_BCAT_DIR", Result, h_bcat_FileOpen, uint64_t *self, const char *path) {
+    char p[1100]; uint64_t h = 0;
+    if (!path || strstr(path, "..")) return RES_PATH_NOT_FOUND;
+    snprintf(p, sizeof p, BCAT_MOUNT ":/%s", path);
+    Result r = h_fs_OpenFile(&h, p, MODE_READ);
+    LOG("bcat: DeliveryCacheFile::Open(%s) → %#x", path, r);
+    if (r == RES_OK) *self = h;
+    return r;
+}
+HLE_FORCE("_ZN2nn4bcat17DeliveryCacheFile4ReadEPmlPvm", "delivery cache file read", Result, h_bcat_FileRead, uint64_t *self, size_t *out, int64_t off, void *buf, size_t sz) { return h_fs_ReadFile(out, *self, off, buf, sz); }
+HLE_FORCE("_ZN2nn4bcat17DeliveryCacheFile7GetSizeEv", "delivery cache file size", int64_t, h_bcat_FileSize, uint64_t *self) { int64_t n = 0; return h_fs_GetFileSize(&n, *self) == RES_OK ? n : 0; }
+HLE_FORCE("_ZN2nn4bcat17DeliveryCacheFile5CloseEv", "delivery cache file close", void, h_bcat_FileClose, uint64_t *self) { if (*self) { h_fs_CloseFile(*self); *self = 0; } }

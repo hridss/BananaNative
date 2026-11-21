@@ -19,6 +19,7 @@ int dm_sk_fcntl(int fd, int c, int v) { (void)fd; (void)c; (void)v; unexpected++
 long dm_sk_recvfrom(int fd, void *d, unsigned long n, int f, void *a, unsigned *an) { (void)fd; (void)d; (void)n; (void)f; (void)a; (void)an; unexpected++; return -1; }
 long dm_sk_sendto(int fd, const void *d, unsigned long n, int f, const void *a, unsigned an) { (void)fd; (void)d; (void)n; (void)f; (void)a; (void)an; unexpected++; return -1; }
 int dm_sk_poll(void *fds, uint64_t n, int ms) { (void)fds; (void)n; (void)ms; unexpected++; return -1; }
+uint32_t dm_ssl_builtin(void **out, uint8_t *buf, unsigned cap, const uint32_t *ids, unsigned n) { (void)out; (void)buf; (void)cap; (void)ids; (void)n; return 0; }   // hle_net.c: no certificate without the in-host services
 int dm_sk_select(int n, const uint64_t *r, const uint64_t *w, const uint64_t *e, const int64_t *tv) { (void)n; (void)r; (void)w; (void)e; (void)tv; unexpected++; return -1; }
 int dm_sk_errno(void) { unexpected++; return 0; }
 extern const struct mach_header_64 _mh_execute_header;

@@ -30,6 +30,7 @@ DM_AV1_DAV1D	developer	Diagnostics			text			both
 DM_AV1_DAV1D_FP	developer	Game			text			both							
 DM_AV1_MC_FAIL	developer	Diagnostics			text			both							
 DM_AV1_RGBA_EARLY	developer	Game			text			both							
+DM_BCAT_DIR	developer	Diagnostics			text			both							
 DM_BOOTPROF	internal	Diagnostics			text			both						Mac or iOS only	
 DM_BUILD_COMMIT	developer	Diagnostics			text			both							
 DM_BUNDLE_ID	internal	Game			text			both						Mac or iOS only	
@@ -289,6 +290,9 @@ DM_NVN_ZBLOCK	developer	Diagnostics			text			both
 DM_NVN_ZSKIP	developer	Graphics			text			both							
 DM_OE_SCRIPT	developer	Diagnostics			text			both							
 DM_ONLINE	developer	Game			text			both							
+DM_ONLINE_DIR	developer	Diagnostics			text			both							
+DM_ONLINE_HOSTS	developer	Game			text			both							
+DM_ONLINE_HTTP	developer	Diagnostics			text			both							
 DM_OODLE_ADB	developer	Packing			text			both							
 DM_OODLE_ADB_DIR	developer	Packing			text			both							
 DM_OODLE_ADB_FORWARD	developer	Packing			text			both							

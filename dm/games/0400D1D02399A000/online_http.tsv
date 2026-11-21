@@ -1,0 +1,64 @@
+# request type, path or @host prefix	cookie (- = none)	reply body   (dm/tools/online_http_table.py)
+RequestGetPingServerUrlsParams	-	{"type": "ResponseGetPingServerUrlsParams", "value": {"ping_servers": [{"matching_region_id": 0, "ping_server_url": "https://phx-ping-nt.fromsoftware-game.net"}, {"matching_region_id": 1, "ping_server_url": "https://phx-ping-nt.fromsoftware-game.net"}, {"matching_region_id": 2, "ping_server_url": "https://phx-ping-nt.fromsoftware-game.net"}, {"matching_region_id": 3, "ping_server_url": "https://phx-ping-nt.fromsoftware-game.net"}]}}
+RequestCreateSessionParams	session-id=local1001; Path=/	{"type": "ResponseCreateSessionParams", "value": {"player_id": 1001, "player_id_with_signature": {"player_id_document": "eyJwbGF5ZXJfaWQiOiAxMDAxfQ==", "signature_base64": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="}, "display_user_id": "LOCAL-1001", "user_id": "local-1001", "client_ip": "127.0.0.1", "redirect_addr": "", "required_relogin_sec": 86400, "environment_name": "local", "show_environment_name_in_lobby": false}}
+RequestDeleteSessionParams	-	{"type": "ResponseDeleteSessionParams", "value": {"millisecond": 0}}
+RequestGetLoginPlayerStateParams	-	{"type": "ResponseGetLoginPlayerStateParams", "value": {"login_player_states": []}}
+RequestDebugCommandParams	-	{"type": "ResponseDebugCommandParams", "value": {"param": {"type": "", "value": 0}}}
+RequestServerPingParams	-	{"type": "ResponseServerPingParams", "value": {"millisecond": 0}}
+RequestPollingParams	-	{"type": "ResponsePollingParams", "value": {}}
+RequestCheckAliveParams	-	{"type": "ResponseCheckAliveParams", "value": {"region": "", "status": ""}}
+RequestGetAnnounceMessageListParams	-	{"type": "ResponseGetAnnounceMessageListParams", "value": {"to_all_msg": [], "to_player_msg": []}}
+RequestGetIngameNotificationsParams	-	{"type": "ResponseGetIngameNotificationsParams", "value": {"notifications": []}}
+RequestUpdateLoginPlayerCharacterParams	-	{"type": "ResponseUpdateLoginPlayerCharacterParams", "value": {"new_character_id": 0}}
+RequestGlobalEventLogParams	-	{"type": "ResponseGlobalEventLogParams", "value": {}}
+RequestSystemOptionLogParams	-	{"type": "ResponseSystemOptionLogParams", "value": {}}
+RequestUploadFamilySharingInfoParams	-	{"type": "ResponseUploadFamilySharingInfoParams", "value": {}}
+RequestUploadGuardITCodeParams	-	{"type": "ResponseUploadGuardITCodeParams", "value": {}}
+RequestRegisterRoomParams	-	{"type": "ResponseRegisterRoomParams", "value": {"room_id": 0, "public_key_base64": ""}}
+RequestWaitForAssigningRoomParams	-	{"type": "ResponseWaitForAssigningRoomParams", "value": {"has_result": false, "body": {"game_mode": "", "assigning_room": {"match_id": 0, "room_spec": {"game_mode": "", "game_rule": "", "rule_type": "", "team_rule": "", "regulation_version": 0, "executable_version": 0}, "is_allowed_bot": false, "player_infos": []}, "assigning_custom_room": {"invite_code": 0, "room_info": {"max_member_num": 0, "game_rule": "", "team_rule": "", "map_rule": {"map_rule_type": "", "map_uid": 0}, "enabled_bot": false, "phase": 0, "phase_time_sec": [], "remaining_time_until_opened_safe_area_sec": []}, "owener_player_id": 0}}}}
+RequestMatchingTicketParams	-	{"type": "ResponseMatchingTicketParams", "value": {"matching_request_id": 0, "now_rank_point": 0}}
+RequestCancelMatchingTicketParams	-	{"type": "ResponseCancelMatchingTicketParams", "value": {"matchable_player_num": 0}}
+RequestWaitForMatchingTicketResultParams	-	{"type": "ResponseWaitForMatchingTicketResultParams", "value": {"result_type": "", "body_waiting_matching": {"matchable_player_num": 0}, "body_matched": {"matching_ticket_type": "", "p2p_host_info": [], "match_id": 0, "normal_matching_result": 0, "event_matching_result": {"event_match_type": 0}}}}
+RequestGetMatchingPlayerNumParams	-	{"type": "ResponseGetMatchingPlayerNumParams", "value": {"matching_player_num": 0}}
+RequestForceMatchingEndParams	-	{"type": "ResponseForceMatchingEndParams", "value": {}}
+RequestNotifyCreateSessionParams	-	{"type": "ResponseNotifyCreateSessionParams", "value": {}}
+RequestKeepRoomParams	-	{"type": "ResponseKeepRoomParams", "value": {}}
+RequestDeleteRoomParams	-	{"type": "ResponseDeleteRoomParams", "value": {"player_id_with_signature": {"player_id_document": "", "signature_base64": ""}}}
+RequestGetSignedPlayerIDParams	-	{"type": "ResponseGetSignedPlayerIDParams", "value": {"player_id_with_signature": {"player_id_document": "", "signature_base64": ""}}}
+RequestEnableVisitParams	-	{"type": "ResponseEnableVisitParams", "value": {"player_id": 0, "display_user_id": ""}}
+RequestWaitForVisitorParams	-	{"type": "ResponseWaitForVisitorParams", "value": {"has_result": false, "body": {"players": []}}}
+RequestDisableVisitParams	-	{"type": "ResponseDisableVisitParams", "value": {}}
+RequestStartDebugMatchParams	-	{"type": "ResponseStartDebugMatchParams", "value": {}}
+RequestStopDebugMatchParams	-	{"type": "ResponseStopDebugMatchParams", "value": {"login_player_states": []}}
+RequestGetPlayerRankParams	-	{"type": "ResponseGetPlayerRankParams", "value": {"rank": 0, "point": 0, "lower_limit_point": 0, "upper_limit_point": 0, "promotion_chance_count": 0}}
+RequestGetPlayerRankListParams	-	{"type": "ResponseGetPlayerRankListParams", "value": {"verify_multiple_login_result": "", "rank_infos": [], "login_player_states": []}}
+RequestAddRankMatchProgressParams	-	{"type": "ResponseAddRankMatchProgressParams", "value": {"verify_multiple_login_result": "", "player_ids": [], "login_player_states": []}}
+RequestAddRankMatchResultParams	-	{"type": "ResponseAddRankMatchResultParams", "value": {"verify_multiple_login_result": "", "updated_ranks": [], "login_player_states": []}}
+RequestCreateCustomRoomParams	-	{"type": "ResponseCreateCustomRoomParams", "value": {"creating_custom_room_request_id": 0}}
+RequestWaitForCreateCustomRoomParams	-	{"type": "ResponseWaitForCreateCustomRoomParams", "value": {"has_result": false, "body": {"p2p_host_info": []}}}
+RequestUpdateCustomRoomParams	-	{"type": "ResponseUpdateCustomRoomParams", "value": {"room_infos": []}}
+RequestGetCustomRoomListParams	-	{"type": "ResponseGetCustomRoomListParams", "value": {"room_infos": []}}
+RequestJoinCustomRoomByRoomIdParams	-	{"type": "ResponseJoinCustomRoomByRoomIdParams", "value": {"p2p_host_info": []}}
+RequestJoinCustomRoomByInviteCodeParams	-	{"type": "ResponseJoinCustomRoomByInviteCodeParams", "value": {"p2p_host_info": []}}
+RequestGetTicketCreatingCustomRoomParams	-	{"type": "ResponseGetTicketCreatingCustomRoomParams", "value": {"ticket": {"remaining_count": 0, "is_infinite": false}}}
+RequestConsumeTicketCreatingCustomRoomParams	-	{"type": "ResponseConsumeTicketCreatingCustomRoomParams", "value": {"ticket": {"remaining_count": 0, "is_infinite": false}}}
+RequestDeleteCustomRoomParams	-	{"type": "ResponseDeleteCustomRoomParams", "value": {"player_id": 0, "score": 0, "display_data": "", "display_rank": 0, "index_rank": 0}}
+RequestRegisterOfferingRankingParams	-	{"type": "ResponseRegisterOfferingRankingParams", "value": {}}
+RequestRegisterPlayerInfoParams	-	{"type": "ResponseRegisterPlayerInfoParams", "value": {"ranking_list": []}}
+RequestGetRankingByRankParams	-	{"type": "ResponseGetRankingByRankParams", "value": {"ranking_list": []}}
+RequestGetRankingParams	-	{"type": "ResponseGetRankingParams", "value": {"ranking": {"player_id": 0, "score": 0, "display_data": "", "display_rank": 0, "index_rank": 0}}}
+RequestGetRankingPlayerInfoParams	-	{"type": "ResponseGetRankingPlayerInfoParams", "value": {"player_detail_data": "", "display_user_id": ""}}
+RequestGetGrantedRewardsParams	-	{"type": "ResponseGetGrantedRewardsParams", "value": {"server_reward_ids": []}}
+RequestHasPlayerGrantedRewardsParams	-	{"type": "ResponseHasPlayerGrantedRewardsParams", "value": {"player_id": 0, "reward_infos": []}}
+RequestGetBotPlayerInfoParams	-	{"type": "ResponseGetBotPlayerInfoParams", "value": {"player_detail_data": ""}}
+RequestGetRankRuleMasterParams	-	{"type": "ResponseGetRankRuleMasterParams", "value": {"rank_rule_master": []}}
+RequestGetNeighborMatchingRegionMasterParams	-	{"type": "ResponseGetNeighborMatchingRegionMasterParams", "value": {"matching_region_groups": []}}
+RequestRegisterReportParams	-	{"type": "ResponseRegisterReportParams", "value": {"report_id": 0}}
+RequestCreateRoomDebugParams	-	{"type": "ResponseCreateRoomDebugParams", "value": {"room_id": 0}}
+RequestUpdateRoomDebugParams	-	{"type": "ResponseUpdateRoomDebugParams", "value": {}}
+RequestDeleteRoomDebugParams	-	{"type": "ResponseDeleteRoomDebugParams", "value": {"room_info": {"spec": {"keyword": "", "max_member_num": 0, "battle_rule": 0, "time_limit": 0, "map_type": 0, "team_join": 0, "visibility": 0, "region": "", "regulation_version": 0}, "state": {"cur_member_num": 0, "can_join": false, "can_join_dark_event": false, "dropout_member_num": 0}, "p2p_host_info": []}}}
+RequestGetRoomDebugParams	-	{"type": "ResponseGetRoomDebugParams", "value": {"room_info": {"spec": {"keyword": "", "max_member_num": 0, "battle_rule": 0, "time_limit": 0, "map_type": 0, "team_join": 0, "visibility": 0, "region": "", "regulation_version": 0}, "state": {"cur_member_num": 0, "can_join": false, "can_join_dark_event": false, "dropout_member_num": 0}, "p2p_host_info": []}}}
+RequestGetRoomListDebugParams	-	{"type": "ResponseGetRoomListDebugParams", "value": {"room_infos": []}}
+RequestUploadPlaylogParams	-	{"type": "ResponseUploadPlaylogParams", "value": {}}
+/redirect	-	{"response": {"redirect": "nochange"}}
+@phx-ping	-	{}

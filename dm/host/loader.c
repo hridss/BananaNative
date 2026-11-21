@@ -847,6 +847,25 @@ static void fiber_pac_apply(module_t *m) {
 #if PLAT_ANDROID
     if (strcmp(m->name, "sdk") || m->nro) return;
     uint32_t *w = (uint32_t *)m->base; size_t n = m->text_end / 4;
+    // SDK 20 (The Duskbloods Network Test, sdk 18265dae…): the same two functions with other registers and far apart (pacia x1, x9; pacia x8, x9 at sdk+0x14bb48 / +0x14bb58,
+    // autiasp at sdk+0x14f6c8 behind a test of the entry's bit 0, no pacga before it). The rule that covers both forms: the module's only APIAKey instructions are one
+    // pair of pacia <reg>, x9 four instructions apart and one autiasp. With any other count the older pattern below decides
+    {
+        size_t pair = 0, aut = 0; int npair = 0, naut = 0, nother = 0;
+        for (size_t i = 0; i < n; i++) {
+            if (w[i] == 0xD50323BFu) { aut = i; naut++; }                                   // autiasp
+            else if (w[i] == 0xD503233Fu || (w[i] & 0xFFFFFC00u) == 0xDAC11000u) nother++;   // paciasp, autia: another use of the key
+            else if ((w[i] & 0xFFFFFC00u) == 0xDAC10000u) {                                 // pacia
+                if ((w[i] >> 5 & 31) == 9 && i + 4 < n && (w[i + 4] & 0xFFFFFFE0u) == 0xDAC10120u) { pair = i; npair++; i += 4; }
+                else nother++;
+            }
+        }
+        if (npair == 1 && naut == 1 && !nother) {
+            w[pair] |= 0x400u; w[pair + 4] |= 0x400u; w[aut] = 0xD50323FFu;   // pacib <reg>, x9 (twice); autibsp
+            LOG("sdk: FiberImplByHorizon / DispatchFiberContext switched from APIAKey to APIBKey (sdk+%#zx / +%#zx; the module's only APIAKey instructions)", pair * 4, aut * 4);
+            return;
+        }
+    }
     for (size_t i = 0; i + 0x90 < n; i++) {
         if (w[i] != 0xDAC10130u || w[i + 4] != 0xDAC10131u) continue;   // pacia x16, x9; ...; pacia x17, x9
         for (size_t j = i + 0x40; j < i + 0x100 && j < n; j++) {
