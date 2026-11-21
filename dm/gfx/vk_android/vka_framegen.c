@@ -6,6 +6,8 @@
 // Lossless.dll (the launcher finds it and passes DM_LSFG_DLL) is read once. Without NX_LSFG (a build without the GPL folder) every call reports "not in this build".
 // Settings: DM_LSFG=1, DM_LSFG_MULT=2..4, DM_LSFG_TARGET=0|fps, DM_LSFG_FLOW=0 (auto: the optical flow at the game's own resolution) or 25..100 (%), changed while running by
 // nxhost_framegen_set (the launcher's in-game settings); DM_LSFG_QUALITY=1 the quality shader set instead of performance (nxhost_framegen_quality)
+// The motion-vector engine (vka_fgmv.c; DM_FG_ENGINE=mv or the launcher's Native FG on a game with the fg_mv row) takes the chain's place on the same inputs, outputs and
+// pacer, without the DLL, at one generated frame a game frame and the fixed rate (the DM_LSFG_MULT/TARGET settings are LSFG's: Native FG on a game without the row runs LSFG with them)
 #if defined(__ANDROID__)
 #include "vka.h"
 #include "vk_android.h"
@@ -14,6 +16,7 @@
 #include <string.h>
 #include <time.h>
 #include <math.h>
+VkImage vka_fgmv_direct(uint64_t count, const vka_fgui_frame *u, int use_pre, uint32_t cw, uint32_t ch);   // vka_fgmv.c: the engine's input read in place (no copy)
 #ifdef NX_LSFG
 #include "lsfg/lsfg.h"
 #endif
@@ -21,6 +24,7 @@
 static _Atomic int g_on = -1, g_mult = 2, g_target, g_flow = 75, g_quality, g_state;   // g_state: 0 off, 1 generating, 2 on and not generating, -1 unavailable
 static char g_reason[256] = "off";
 static pthread_mutex_t g_rmu = PTHREAD_MUTEX_INITIALIZER;
+#define FB "Native FG is not available for this game: "   // the fallback's status (vka_fgprof_fallback)
 static void reason(const char *fmt, const char *a) { pthread_mutex_lock(&g_rmu); snprintf(g_reason, sizeof g_reason, fmt, a); pthread_mutex_unlock(&g_rmu); }
 
 static void settings_init(void) {
@@ -77,10 +81,25 @@ static struct {
     size_t fit_held, fit_pending; double fit_since; int fit_set;   // the refresh cap's held verdict (cap_hold)
     int auto_flow, af_user, af_dir; double af_since, fg_ms, fg_at;   // the flow the GPU time allows (autoflow), the GPU time's average and when it was last measured
     int in_pre[2], in_mv[2];           // each chain input holds the picture without UI / its frame had DLSS motion vectors (vka_fgui.c)
+    uint64_t in_op[2];                 // each input's op pass (vka_fgmv.c ring number + 1)
 } F;
 
 static double mono_s(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec + t.tv_nsec / 1e9; }
-static void unavailable(const char *why, const char *a) { F.state = -1; reason(why, a); atomic_store(&g_state, -1); VRED("frame generation unavailable: %s", g_reason); }
+
+// The pacing seam: all the frame generation takes from the pacer (lsfg/lsfg_pacer.c, GPL-3.0-or-later) is a plan (warm, the generated frames for the next game frame),
+// the smoothed game frame interval, the count it is told was generated, and its floor for the status. A pacer of another licence would replace these five
+typedef struct { int warm; size_t generations; } fg_pace;
+static fg_pace pace_plan(int decoupled, double min_base, int mult, int target, size_t capacity) {
+    F.pacer.decoupled = decoupled; F.pacer.min_base = (float)min_base;
+    lsfg_plan p = lsfg_pacer_plan(&F.pacer, capacity, mult, target, mono_s());
+    return (fg_pace){p.warm, p.generations};
+}
+static double pace_interval(void) { return F.pacer.smoothed_interval; }
+static void pace_issued(size_t n) { F.pacer.issued = n; }
+static void pace_reset(void) { lsfg_pacer_reset(&F.pacer); }
+static float pace_floor(void) { return lsfg_pacer_floor(&F.pacer); }
+static char g_unav[256];   // why LSFG is unavailable (the status again after the fallback's)
+static void unavailable(const char *why, const char *a) { F.state = -1; reason(why, a); snprintf(g_unav, sizeof g_unav, "%s", g_reason); atomic_store(&g_state, -1); VRED("frame generation unavailable: %s", g_reason); }
 
 // The device must have what the shaders use (Float16, StorageImageExtendedFormats, StorageImageWriteWithoutFormat), null descriptors, and storage images of the chain's formats
 static int device_ok(void) {
@@ -122,8 +141,8 @@ static void teardown(void) {
         if (F.out[i]) vka_tex_drop(F.out[i]);   // the last reference: destroyed by vka_tex.c (with the views the present made of it)
         F.out[i] = NULL;
     }
-    lsfg_pacer_reset(&F.pacer); F.count = 0; F.warm_streak = 0; F.out_period = 0; F.longer_since = 0;
-    memset(F.in_pre, 0, sizeof F.in_pre); memset(F.in_mv, 0, sizeof F.in_mv); vka_fgui_post_reset();
+    pace_reset(); F.count = 0; F.warm_streak = 0; F.out_period = 0; F.longer_since = 0;
+    memset(F.in_pre, 0, sizeof F.in_pre); memset(F.in_mv, 0, sizeof F.in_mv); memset(F.in_op, 0, sizeof F.in_op); vka_fgui_post_reset();
     if (F.probe_buf) vk.vkDestroyBuffer(V.dev, F.probe_buf, NULL);
     if (F.probe_mem) vk.vkFreeMemory(V.dev, F.probe_mem, NULL);
     free(F.probe_last);
@@ -335,11 +354,21 @@ int vka_fg_frame(uint64_t serial, const int *crop, double period, uint64_t fence
     int on = atomic_load(&g_on) > 0, mult = atomic_load(&g_mult), target = atomic_load(&g_target), flow = atomic_load(&g_flow);
     if (!on) {
         if (F.chain) { teardown(); VLOG("frame generation off"); }
+        vka_fgmv_teardown();
         if (F.state >= 0) { atomic_store(&g_state, 0); reason("%s", "off"); }
         vka_fps_fg(F.state < 0 ? -1 : 0, 1);
         return 0;
     }
-    if (!load()) { vka_fps_fg(-1, 1); return 0; }
+    // DM_FG_ENGINE=mv: our own motion-vector generator (vka_fgmv.c) in the chain's place, without the DLL; its self-test failing keeps LSFG
+    int mv = vka_fgmv_engine(), fb = !mv && vka_fgprof_fallback();
+    if (mv) { mult = 2; target = 0; }
+    vka_fgmv_replay_poll();
+    if (!mv && !load()) {
+        static int told; const char *dll = getenv("DM_LSFG_DLL");
+        if (fb != told) { told = fb; char b[340]; snprintf(b, sizeof b, "%s%s", FB, !dll || !*dll ? "LSFG's DLL is missing, frame generation off" : "LSFG is unavailable, frame generation off");
+                          reason("%s", fb ? b : g_unav); if (fb) VLOG("frame generation: %s", b); }
+        vka_fps_fg(-1, 1); return 0;
+    }
     // The game's frame period is never shorter than the host's frame limit allows (hle_fpslock.c): a game that asks for interval 1 (16.7 ms) but is held to 30 fps has two
     // refreshes of a 60 Hz panel a frame, room for one generated frame, and its output rate is 60, not 120. Donkey Kong Bananza's presents ride the host's tick
     // (DM_PRESENT_INTERVAL=display, 8.3 ms at 120 Hz) whatever its limit
@@ -376,54 +405,58 @@ int vka_fg_frame(uint64_t serial, const int *crop, double period, uint64_t fence
     // The chain no larger than the picture on screen (DM_LSFG_FIT=0: the crop's size as before, live). A picture shown smaller than its crop (a 3840x2160 window texture
     // on a 1920x1080 panel, a Picture size under 100 %) is scaled down by the present anyway: the frame goes into the chain at the size it is shown at (a linear blit,
     // as the present's own), the chain's passes and the generated frames have that size, and the present shows them 1:1. Only when both sides are smaller, the format
-    // filters linearly, and the frame is blitted (a window texture copied in its own format, wv, cannot be scaled)
+    // filters linearly, and the frame is blitted (a window texture copied in its own format, wv, cannot be scaled). LSFG only: the motion-vector engine reads the
+    // game's depth and motion vectors at the crop's size
     int fit = 0;
-    if (!wv && (fp.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) && VKA_ENV("DM_LSFG_FIT", 1)) {
+    if (!mv && !wv && (fp.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) && VKA_ENV("DM_LSFG_FIT", 1)) {
         int pw = 0, ph = 0; vka_present_picture_size(cw, ch, &pw, &ph);
         if (pw >= 64 && ph >= 64 && pw < cw && ph < ch) { e = (VkExtent2D){(uint32_t)pw, (uint32_t)ph}; fit = 1; }
     }
     // Room for the generated frames the settings can ask for (each has working images of its own, lsfg_chain.c): the multiplier's, or all with a target rate. A larger
-    // multiplier makes the chain again; a smaller one keeps it until it is made again for another reason
-    size_t gens = target > 0 ? LSFG_MAX_GENERATIONS : (size_t)((mult < 2 ? 2 : mult > 4 ? 4 : mult) - 1);
+    // multiplier makes the chain again; a smaller one keeps it until it is made again for another reason. The motion-vector engine: one
+    size_t gens = mv ? 1 : target > 0 ? LSFG_MAX_GENERATIONS : (size_t)((mult < 2 ? 2 : mult > 4 ? 4 : mult) - 1);
     // The shader set: quality when asked for and the DLL has it (else performance, said once in the log and in the status)
-    int quality = atomic_load(&g_quality) && F.mods.quality;
-    if (atomic_load(&g_quality) && !F.mods.quality) VRED_ONCE("frame generation: quality asked for, but this Lossless.dll has no quality shader set: performance");
+    int quality = !mv && atomic_load(&g_quality) && F.mods.quality;
+    if (!mv && atomic_load(&g_quality) && !F.mods.quality) VRED_ONCE("frame generation: quality asked for, but this Lossless.dll has no quality shader set: performance");
     // Autoflow (DM_LSFG_AUTOFLOW=<% of the game's frame interval>, live, default 25; 0 = off): the flow resolution the user picked is the most it uses. While frame
     // generation's measured GPU time (DM_LSFG_GPUTIME; the average of the frames that generated, at this chain's flow) takes more than that share of the game's frame
     // interval for 2 s, the flow drops a step of 25 points (not under 25 %); while a step up would keep it under 0.8 of the share (the time taken to grow with the flow's
     // area) for 10 s, it rises a step, never above the user's. Each step makes the chain again (its pipelines are kept). The pacer only drops generated frames when the
     // game slows; this lowers their cost first
-    {
+    if (!mv) {
         int user = flow > 0 ? flow : 100, budget = VKA_ENV("DM_LSFG_AUTOFLOW", 25);
         if (budget <= 0 || !F.auto_flow || F.auto_flow > user || F.af_user != user) { F.auto_flow = user; F.af_user = user; F.af_dir = 0; }
-        else if (F.fg_ms > 0 && tnow - F.fg_at < 1.0 && F.pacer.smoothed_interval > 0) {
-            double share = F.fg_ms / (F.pacer.smoothed_interval * 1e3) * 100.0, up = F.auto_flow + 25 > user ? user : F.auto_flow + 25;
+        else if (F.fg_ms > 0 && tnow - F.fg_at < 1.0 && pace_interval() > 0) {
+            double share = F.fg_ms / (pace_interval() * 1e3) * 100.0, up = F.auto_flow + 25 > user ? user : F.auto_flow + 25;
             int lo = F.auto_flow - 25 < 25 ? 25 : F.auto_flow - 25, hi = (int)up;
             int dir = share > budget && lo < F.auto_flow ? -1 : hi > F.auto_flow && share * (up / F.auto_flow) * (up / F.auto_flow) < budget * 0.8 ? 1 : 0;
             if (dir != F.af_dir) { F.af_dir = dir; F.af_since = tnow; }
             else if (dir && tnow - F.af_since >= (dir < 0 ? 2.0 : 10.0)) {
                 int nf = dir < 0 ? lo : hi;
                 VLOG("frame generation: flow %d%% -> %d%% (autoflow: GPU %.2f ms a game frame, %.0f%% of the %.1f ms game frame interval, DM_LSFG_AUTOFLOW=%d%%; the setting is %d%%)",
-                     F.auto_flow, nf, F.fg_ms, share, F.pacer.smoothed_interval * 1e3, budget, user);
+                     F.auto_flow, nf, F.fg_ms, share, pace_interval() * 1e3, budget, user);
                 F.auto_flow = nf; F.af_dir = 0; F.fg_ms = 0;
             }
         } else F.af_dir = 0;
         flow = F.auto_flow;
     }
-    if (!F.chain || F.ext.width != e.width || F.ext.height != e.height || F.flow != flow || F.gens < gens || F.quality != quality) {
+    if (mv) {   // its own inputs and outputs (no chain)
+        if (F.chain) teardown();
+        if (!vka_fgmv_setup(e.width, e.height)) { vka_tex_drop(im); F.warm_streak = 0; atomic_store(&g_state, 2); reason("%s", "on, the motion-vector engine's images could not be made"); vka_fps_fg(2, 1); return 0; }
+    } else if (vka_fgmv_teardown(), !F.chain || F.ext.width != e.width || F.ext.height != e.height || F.flow != flow || F.gens < gens || F.quality != quality) {
         if (!rebuild(e, flow, gens, quality)) { vka_tex_drop(im); unavailable("%s", "the frame generation chain could not be made (see the [RED] lines)"); vka_fps_fg(-1, 1); return 0; }
     }
-    F.pacer.decoupled = &nxhost_fps_decoupled && nxhost_fps_decoupled();   // the game's speed follows its measured rate (hle_fpslock.c sead_rate), not only held by the limiter
-    F.pacer.min_base = (float)VKA_ENV("DM_LSFG_MIN_FPS", 30);   // its floor (live)
-    lsfg_plan plan = lsfg_pacer_plan(&F.pacer, F.gens, mult, target, mono_s());
+    size_t cap = mv ? 1 : F.gens;   // the generated frames a game frame can have
+    // decoupled: the game's speed follows its measured rate (hle_fpslock.c sead_rate), not only held by the limiter; DM_LSFG_MIN_FPS: its floor (live)
+    fg_pace plan = pace_plan(&nxhost_fps_decoupled && nxhost_fps_decoupled(), VKA_ENV("DM_LSFG_MIN_FPS", 30), mult, target, cap);
     uint64_t count = F.count++;
     int warm = plan.warm && count + 1 >= 2;
     F.warm_streak = warm ? F.warm_streak + 1 : 0;
     size_t ng = warm && F.warm_streak >= 2 ? plan.generations : 0;
-    if (ng > F.gens) ng = F.gens;
-    probe_poll();   // (the still-picture check: the submissions done since)
+    if (ng > cap) ng = cap;
+    probe_poll();   // (the still-picture check: the submissions done since; LSFG's chain only)
     int still = ng && F.still >= 2 && F.probe_buf && VKA_ENV("DM_LSFG_STILL", 1);
-    if (still) { ng = 0; F.pacer.issued = 0; F.still_frames++; }
+    if (still) { ng = 0; pace_issued(0); F.still_frames++; }
     // The panel shows one image a refresh (FIFO): more images per game frame than refreshes in the game's period hold the present thread, and the game behind it, to a
     // fraction of its rate. The window asks for the output rate (out_period above), but the system may keep the panel lower: on the Honor phone (LTPO) it sometimes stayed at
     // 60 Hz with the request for 120, and x2 held Donkey Kong Bananza's 60 fps menus at 30 fps (its level was reached 18 s later, int-792f6e4d t1). Generated frames only
@@ -435,19 +468,19 @@ int vka_fg_frame(uint64_t serial, const int *crop, double period, uint64_t fence
         // Bananza's uncapped mode) every present declares the host's tick (8.3 ms at 120 Hz) whatever the game's own rate, which left no refresh for a generated frame and
         // generation never started; held at 60 on a 120 Hz panel its measured interval came out at 15.3-15.5 ms (1.85 refreshes, under the 1.9 below), where the limit's
         // 16.7 ms leaves room for the one generated frame that fits
-        double gp = F.pacer.smoothed_interval > period ? F.pacer.smoothed_interval : period;
+        double gp = pace_interval() > period ? pace_interval() : period;
         double n = gp * 1e9 / (double)rns;   // refreshes in a game frame (60 fps on 120.46 Hz: 2.01; on 60.00 Hz: 1.00)
-        size_t fit = n < 1.9 ? 0 : (size_t)(n + 0.1) - 1;
+        size_t fit_n = n < 1.9 ? 0 : (size_t)(n + 0.1) - 1;
         // The verdict held (DM_LSFG_CAP_HOLD=<ms>, live, default 3000; 0 = none): a new one is taken after it held for that long, a third of it when it is lower. Generating
         // slows a game whose speed follows its rate, which lengthens its interval and lets it fit, and not generating speeds it up again: Donkey Kong Bananza at 4x on
         // the Thor's 60 Hz panel (Turnip, 2026-11-19) ran 20-25 fps generating and 37 without, and the verdict flipped with the game's 30.3-31.7 ms intervals
         double hold_s = VKA_ENV("DM_LSFG_CAP_HOLD", 3000) / 1000.0;
-        if (!F.fit_set || hold_s <= 0) { F.fit_set = 1; F.fit_held = F.fit_pending = fit; F.fit_since = 0; }
-        else if (fit == F.fit_held) { F.fit_pending = fit; F.fit_since = 0; }
-        else if (fit != F.fit_pending || !F.fit_since) { F.fit_pending = fit; F.fit_since = tnow; }
-        else if (tnow - F.fit_since >= (fit < F.fit_held ? hold_s / 3 : hold_s)) { F.fit_held = fit; F.fit_since = 0; }
-        fit = F.fit_held;
-        if (ng > fit) { ng = fit; capped = 1; F.pacer.issued = ng; }   // the pacer counts what was generated (its unloaded rate is measured on frames without)
+        if (!F.fit_set || hold_s <= 0) { F.fit_set = 1; F.fit_held = F.fit_pending = fit_n; F.fit_since = 0; }
+        else if (fit_n == F.fit_held) { F.fit_pending = fit_n; F.fit_since = 0; }
+        else if (fit_n != F.fit_pending || !F.fit_since) { F.fit_pending = fit_n; F.fit_since = tnow; }
+        else if (tnow - F.fit_since >= (fit_n < F.fit_held ? hold_s / 3 : hold_s)) { F.fit_held = fit_n; F.fit_since = 0; }
+        fit_n = F.fit_held;
+        if (ng > fit_n) { ng = fit_n; capped = 1; pace_issued(ng); }   // the pacer counts what was generated (its unloaded rate is measured on frames without)
     }
 
     unsigned k = F.fi++ % NFG;
@@ -461,21 +494,25 @@ int vka_fg_frame(uint64_t serial, const int *crop, double period, uint64_t fence
     if (vka_hung()) { vka_tex_drop(im); return 0; }
     gputime_take(k); probe_poll();
     vka_fgui_post_done(k);   // the slot's cut decision (DM_FG_CUT_LOG)
+    vka_fgmv_done(k);   // the slot's timing
     if (F.fr[k].held) { vka_tex_drop(F.fr[k].held); F.fr[k].held = NULL; }
     vk.vkResetFences(V.dev, 1, &F.fr[k].fence);
     VkCommandBuffer cb = F.fr[k].cb; vk.vkResetCommandBuffer(cb, 0);
     VkCommandBufferBeginInfo bi = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
     vk.vkBeginCommandBuffer(cb, &bi);
-    // DM_LSFG_SCHED=0 (live): the generated frames one after another with a barrier before every pass (Eden's order) instead of the wavefront (lsfg_chain.c), for A/B
-    int in_order = !VKA_ENV("DM_LSFG_SCHED", 1), timed = ng && VKA_ENV("DM_LSFG_GPUTIME", 1) && gputime_ok();
+    // DM_LSFG_SCHED=0 (live): the generated frames one after another with a barrier before every pass (Eden's order) instead of the wavefront (lsfg_chain.c), for A/B.
+    // DM_LSFG_GPUTIME: LSFG's chain only (the motion-vector engine has its own timing, vka_fgmv.c)
+    int in_order = !VKA_ENV("DM_LSFG_SCHED", 1), timed = !mv && ng && VKA_ENV("DM_LSFG_GPUTIME", 1) && gputime_ok();
     if (timed) T.reset(cb, T.qp, 2 * k, 2);
     vka_barrier(cb);   // the replay's writes to the window texture, and the presents still reading the outputs (earlier submissions)
     if (timed) T.write(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, T.qp, 2 * k);
     // DM_FG_UI=layer: the chain reads this frame's picture without UI (vka_fgui.c), when its frame has one of the chain's size
     vka_fgui_frame u; int ugot = vka_fgui_take(serial, &u);
-    VkImage in_c = lsfg_chain_input(F.chain, count);   // the input this frame is copied into
+    VkImage in_c = mv ? vka_fgmv_input(count) : lsfg_chain_input(F.chain, count);   // the input this frame is copied into
     int use_pre = ugot && u.has_ui && vka_fgui_layer() && u.w == e.width && u.h == e.height && !cx && !cy, cutg = vka_fgui_cut();
-    if (use_pre) {
+    VkImage dir = mv ? vka_fgmv_direct(count, &u, use_pre, (uint32_t)cw, (uint32_t)ch) : VK_NULL_HANDLE;   // the engine reads the snapshot in place: no copy
+    if (dir) in_c = dir;
+    else if (use_pre) {
         VkImageCopy c = {{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {0, 0, 0}, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {0, 0, 0}, {(uint32_t)cw, (uint32_t)ch, 1}};
         vk.vkCmdCopyImage(cb, u.pre, VK_IMAGE_LAYOUT_GENERAL, in_c, VK_IMAGE_LAYOUT_GENERAL, 1, &c);
     } else if (wv) {   // the same rectangle as the blit (1:1, no flip), without the read in the image's format
@@ -487,10 +524,13 @@ int vka_fg_frame(uint64_t serial, const int *crop, double period, uint64_t fence
     }
     int pa = (int)((count + 1) & 1), pc_ = (int)(count & 1), force = count >= 1 && F.in_pre[pa] != use_pre, dch = count >= 1 && F.in_mv[pa] != u.has_mv;
     F.in_pre[pc_] = use_pre; F.in_mv[pc_] = u.has_mv;
+    uint64_t opq_a = F.in_op[pa]; F.in_op[pc_] = u.op_q;   // each input's op pass
+    if (mv) {   // the generated frames (or C again: no motion data, a cut, an input change), C's UI layer over them
+        if (ng && !vka_fgmv_gen(cb, k, count, ng, &u, use_pre, opq_a, F.in_pre[pa], force, dch)) ng = 0;
+    } else {
     if (warm) lsfg_chain_shared(F.chain, cb, count);
     if (ng) lsfg_chain_generate(F.chain, cb, count, ng, in_order);
     if (timed) T.write(cb, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, T.qp, 2 * k + 1);
-    F.fr[k].timed = timed; F.fr[k].serial = in_order; F.fr[k].ng = ng; F.fr[k].flow = F.flow; F.fr[k].cgen = F.cgen;
     vka_barrier(cb);   // the outputs for the presents after this
     // C's UI layer over the generated frames, and frame C again across a scene cut (DM_FG_CUT=repeat) or a change between pre-UI and post-UI input. Off: nothing recorded
     if (ng && (use_pre || cutg || force)) vka_fgui_post(cb, k, lsfg_chain_input(F.chain, count + 1), lsfg_chain_input(F.chain, count), F.out_view, ng, e.width, e.height, &u, use_pre, force, dch, count);
@@ -502,6 +542,8 @@ int vka_fg_frame(uint64_t serial, const int *crop, double period, uint64_t fence
         vk.vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &hb, 0, NULL, 0, NULL);
         F.fr[k].probed = 1; F.fr[k].probe_count = count;
     }
+    }
+    F.fr[k].timed = timed; F.fr[k].serial = in_order; F.fr[k].ng = ng; F.fr[k].flow = F.flow; F.fr[k].cgen = F.cgen;
     vk.vkEndCommandBuffer(cb);
     VkPipelineStageFlags st = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
     VkTimelineSemaphoreSubmitInfo ti = {VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO, .waitSemaphoreValueCount = 1, .pWaitSemaphoreValues = &fence};
@@ -524,32 +566,37 @@ int vka_fg_frame(uint64_t serial, const int *crop, double period, uint64_t fence
     if (r) { static _Atomic int n; if (atomic_fetch_add(&n, 1) < 8) VRED("frame generation submission %d", r); ng = 0; F.fr[k].timed = 0; F.fr[k].probed = 0; }
     { static int last, left; int d = VKA_ENV("DM_LSFG_DUMP", 0);   // (see fg_dump)
       if (d != last) { last = d; left = d > 0 ? d : 0; }
-      if (left > 0 && ng) { left--; fg_dump(k, count, ng); } }
-    for (size_t g = 0; g < ng; g++) gen[g] = F.out[g];
-    double interval = F.pacer.smoothed_interval > 0 ? F.pacer.smoothed_interval : period;
+      if (left > 0 && ng && !mv) { left--; fg_dump(k, count, ng); } }
+    for (size_t g = 0; g < ng; g++) gen[g] = mv ? vka_fgmv_out((int)g) : F.out[g];
+    double interval = pace_interval() > 0 ? pace_interval() : period;
     if (interval < period) interval = period;
     if (ng) *hold = interval / (double)(ng + 1);
     // A hold within 0.15 refresh of a whole number of refreshes is that number: the measured interval runs a little long (34 ms at a 30 fps frame step), and a hold of 17 ms on a
     // 16.7 ms panel let each image's desired time (vka_present.c, the previous one's plus the hold) drift across a refresh every few dozen frames, two images in one refresh
-    if (ng && rns) { double r = *hold * 1e9 / (double)rns, w = floor(r + 0.5); if (w >= 1 && fabs(r - w) <= 0.15) *hold = w * (double)rns / 1e9; }
+    if (ng && rns) { double rr = *hold * 1e9 / (double)rns, w = floor(rr + 0.5); if (w >= 1 && fabs(rr - w) <= 0.15) *hold = w * (double)rns / 1e9; }
     int st2 = ng ? 1 : 2;
-    static int was_capped, was_still;
+    static int was_capped, was_still, was_fb;
+    static int mvwhy; char mvr[300] = ""; int mw = mv && st2 == 1 ? vka_fgmv_status(mvr, sizeof mvr) : 0;   // the motion-vector engine: why its last pair showed the game frame again
+    if (mw != mvwhy) { mvwhy = mw; char b[340]; snprintf(b, sizeof b, "generating (Native FG)%s%s", mw ? ", showing the game frame again: " : "", mw ? mvr : ""); reason("%s", b); }
     // Why nothing is generated, in the status the launcher shows ("waiting for a steady frame rate" covered every case before, also a game held under its floor for good)
     char idle[160] = "on, waiting for a steady frame rate";
-    float base = F.pacer.smoothed_interval > 0 ? 1.0f / F.pacer.smoothed_interval : 0;
+    float base = pace_interval() > 0 ? 1.0f / (float)pace_interval() : 0;
     if (st2 == 2 && target > 0 && plan.warm && base > 0) {
-        if (F.pacer.decoupled && base < lsfg_pacer_floor(&F.pacer))
-            snprintf(idle, sizeof idle, "on, the game runs at %.0f fps, under the %.0f fps it is held to (DM_LSFG_MIN_FPS): generating would slow it", base, lsfg_pacer_floor(&F.pacer));
+        if (&nxhost_fps_decoupled && nxhost_fps_decoupled() && base < pace_floor())
+            snprintf(idle, sizeof idle, "on, the game runs at %.0f fps, under the %.0f fps it is held to (DM_LSFG_MIN_FPS): generating would slow it", base, pace_floor());
         else if (base >= target * 0.95f) snprintf(idle, sizeof idle, "on, the game itself reaches the %d fps target", target);
     }
     static char last_idle[160];
     int idle_changed = st2 == 2 && strcmp(idle, last_idle);
-    if (atomic_exchange(&g_state, st2) != st2 || (st2 == 2 && (capped != was_capped || still != was_still || idle_changed))) {
-        snprintf(last_idle, sizeof last_idle, "%s", idle);
-        char why[96]; snprintf(why, sizeof why, "on, the display runs at %.0f Hz: no refresh left for a generated frame", rns ? 1e9 / (double)rns : 0.0);
-        reason("%s", st2 == 1 ? "generating" : still ? "on, the picture is still: nothing to generate" : capped ? why : idle);
+    if (atomic_exchange(&g_state, st2) != st2 || (st2 == 2 && (capped != was_capped || still != was_still || idle_changed)) || fb != was_fb) {
+        was_fb = fb; snprintf(last_idle, sizeof last_idle, "%s", idle);
+        // The status line (the in-game panel) and the overlay (Overlay.java looks for "not generating (display at "): the cap leaves no generated frame at this refresh
+        char why[96]; snprintf(why, sizeof why, "not generating (display at %.0f Hz): no refresh left for a generated frame", rns ? 1e9 / (double)rns : 0.0);
+        if (st2 == 1 && mv) { char b[340]; snprintf(b, sizeof b, "generating (Native FG)%s%s", mw ? ", showing the game frame again: " : "", mw ? mvr : ""); reason("%s", b); }
+        else { char b[340]; snprintf(b, sizeof b, "%s%s", fb ? FB "using LSFG, " : "", st2 == 1 ? "generating" : still ? "on, the picture is still: nothing to generate" : capped ? why : idle); reason("%s", b); }
         { static double last; if (st2 == 2 && still && tnow - last >= 10.0) { last = tnow; VLOG("frame generation: the picture is still (%u identical game frames): not generating until it changes (at most a line in 10 s)", F.still + 1); } }
-        static int ncap; if (st2 == 2 && capped && ncap++ < 4) VLOG("frame generation: not generating, %s (game frame period %.1f ms, measured %.1f ms)", why + 4, period * 1e3, F.pacer.smoothed_interval * 1e3);
+        static int ncap; if (st2 == 2 && capped && ncap++ < 4) VLOG("frame generation: not generating, the display runs at %.0f Hz: no refresh left for a generated frame (game frame period %.1f ms, measured %.1f ms)",
+                                                      rns ? 1e9 / (double)rns : 0.0, period * 1e3, pace_interval() * 1e3);
         static int logged; if (st2 == 1 && !logged) { logged = 1; VLOG("frame generation: first %zu generated frame(s), game frame interval %.1f ms", ng, interval * 1e3); }
     }
     was_capped = st2 == 2 && capped; was_still = st2 == 2 && still;
