@@ -13,3 +13,4 @@ Step-by-step guides for players. Back to the [main page](../../.github/README.md
 6. [GPU drivers](gpu-drivers.md): the system driver or Turnip, per game.
 7. [Troubleshooting](troubleshooting.md): Readiness check, Share log, opening an issue.
 8. [Experimental games](experimental-games.md): their known problems, and how to help.
+9. [Adding a game to Native FG](native-frame-generation-new-game.md): for developers, the steps and checks for a game's `fg_*` profile rows.

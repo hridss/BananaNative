@@ -611,6 +611,10 @@ One line per symptom in the [subsystem references](../reference/): what you see 
 - with display timing (`VK_GOOGLE_display_timing`) a frame meant to be held for its period went out late or untimed after a slow present: the desired time handed to `vkQueuePresentKHR` was already past. → [A desired present time chosen before the present's waits (Android)](../reference/frame-rate.md#a-desired-present-time-chosen-before-the-presents-waits-android)
 - setting `DM_FPS_TARGET=30` or `DM_FPS_LIMIT=30` slows Fast Fusion to roughly half speed (~0.5×) instead of pacing at full game speed. → [Shin'en engine runs at half speed under a 30 fps cap](../reference/frame-rate.md#shinen-engine-runs-at-half-speed-under-a-30-fps-cap)
 
+## Native FG: frame generation from the game's own motion vectors and depth
+
+- (Android) with Native FG on, Fire Emblem: Fortune's Weave's battle cursor (the yellow diamond and its glow) is missing in every generated frame, or shows two half-bright glows, while the camera follows the cursor at speed (zoomed in, fast pan). Real frames are correct; with the camera orbiting the cursor it is correct. → [The battle cursor vanishes or doubles in generated frames](../reference/frame-generation.md#the-battle-cursor-vanishes-or-doubles-in-generated-frames)
+
 ## NVN objects
 
 - heap corruption; a stack smash where a function returned to `0x100000000`; a crash in SHA-256 on the code address 0x16300. → [Host records must fit the game's SDK object sizes](../reference/nvn-objects.md#host-records-must-fit-the-games-sdk-object-sizes)

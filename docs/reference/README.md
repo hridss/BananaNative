@@ -12,6 +12,7 @@ How the host meets each part of a Switch game, and every failure met so far, one
 | [movies.md](movies.md) | The SDK's movie library: decoder lifecycle, output slots, native-texture output, demuxers and codecs, game movie players |
 | [audio.md](audio.md) | The audio renderer and its command lists by SDK, AudioOut and devices, codecs, timing |
 | [frame-rate.md](frame-rate.md) | The host's frame step, engine frame limiters, present intervals and display rates, CPU cost |
+| [frame-generation.md](frame-generation.md) | Native FG, the host's own frame generator from the game's motion vectors and depth: the pipeline, what a game must give it, why a frame is shown again, the `fg_*` profile rows and every switch, costs, limits, licence |
 | [nvn-objects.md](nvn-objects.md) | NVN object sizes, memory pools, command memory, queues and syncs, CPU-written textures, NVN entry points |
 | [rendering.md](rendering.md) | The replay on Metal: textures, passes and clears, blend / depth / stencil, vertex input, uniforms and ordering, conditional rendering; the Vulkan and OpenGL layers |
 | [shaders.md](shaders.md) | Shader containers by engine, control sections and code, translation, bindings and handles, shaders compiled at run time, pipelines and caches |
