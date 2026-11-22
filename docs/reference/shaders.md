@@ -452,6 +452,14 @@ Finding, keying and translating shaders (`dm/gfx/tools/shader_split.py`, `dmsh_b
 - **Reader:** `uepak.py` `inline_shaders` tells such a pak from one with archives by its directory index (cooked packages and no `.ushaderbytecode`; an encrypted index is taken for one with archives), and `shader_split.py` `ue_legacy_jobs` reads it file by file, Zlib and LZ4 blocks decoded in Python (`Pak.read`), so no host runs. `ue_inline_shaders` finds each LZ4 block by its first literals, the record's `LSLG`, with the token and literal length bytes in front of it, and takes it when it decodes to exactly the raw size after the block.
 - **Found on:** [OCTOPATH TRAVELER II](../../dm/games/0100A3501946E000/README.md): 13,980 unique shaders (1,910 vertex, 11,346 pixel, 694 compute, 30 geometry) from the 3.3 GB pak in 13 s.
 
+### Zstandard-compressed Unreal pak entries sent to Oodle
+
+- **Symptom:** shader splitting reports no shaders after every Zstd-compressed pak entry fails with `main has no "OodleLZ_Decompress" name and no streaming decoder to find`.
+- **Cause:** the pak footer names `Zstd`, but `Pak.read` gave every method except Zlib and LZ4 to the game's decoder. A game with Zstandard packages need not contain Oodle at all.
+- **Fix:** `uepak.py` decodes Zstd blocks itself with Python's `compression.zstd` (3.14) or `backports.zstd` (`zstd_block`): negative sizes are refused, the output is limited to the block's raw size plus one byte, and the frame must end exactly at that size with no trailing bytes.
+- **Found on:** BRAVELY DEFAULT II 1.0.0 in upstream nxnative (PR #3193; no profile here): its version 8 pak has 155,207 Zstd entries.
+- **Check:** `dm/tools/tests/test_uepak_zstd.py`: frames with and without a content size, wrong and negative sizes, a truncated frame, trailing bytes, an empty frame.
+
 ### Unreal Engine 3 shader caches (Oodle packages)
 
 - **Symptom:** `the shader split found no shaders in main or the RomFS`; the survey lists the RomFS as cooked packages (`.xxx`) and `.usm` movies only.
