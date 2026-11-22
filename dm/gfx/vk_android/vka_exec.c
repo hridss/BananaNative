@@ -649,6 +649,7 @@ void vka_rp_sub_begin(void) {
     if (!vka_init()) return;
     vka_gpu_floor();
     if (vka_hung()) { VRED_ONCE("GPU hang: submissions from now on run their effects without the GPU"); return; }   // no command buffer: mtl_sub_commit takes the CPU path
+    if (vka_cap_dry()) return;   // a dry capture (vka_capture.c DM_NVN_CAPTURE_DRY): the same CPU path
     { uint64_t tj0 = now_ns(); vka_mem_join_due(); g_t_join += now_ns() - tj0; }   // parts of a pool placed by parts that a range given to the GPU lies across, joined into one (vka_mem.c "Joining parts"): before anything is recorded
     g_sub_draws0 = g_stat_draws; g_sub_ops0 = g_stat_ops; g_sub_skip0 = g_stat_skipped; g_sub_t0 = now_ns(); g_n_sub++; g_rc_rec = 1;
     if (!g_pool) {
@@ -810,6 +811,7 @@ static void chunk(void) {
     vka_gbar_settle(g_cb);   // a game barrier left pending (vka_gbar.c), in this part: it covers the parts after it
     vka_crumb(g_cb, CR_PART_END, 0);
     vka_up_flush(); vka_up_throttle();   // the upload batch goes first: the part may use what it made (vka_dev.c "Upload batches")
+    vka_ind_check();   // DM_VK_IND_PEEK=4 (vka_draw.c): this part's indirect arguments, as the GPU will read them, after the parts before it are done
     // With the encoder the part's end, its submit and the next part's reset and begin are made on its thread, in order with the calls before: the replay thread goes on
     if (vka_enc_call(part_submit, &pe, sizeof pe)) { vka_enc_call(part_begin, &pb, sizeof pb); vka_enc_switch(next); }
     else { part_submit(&pe); part_begin(&pb); }
@@ -819,6 +821,7 @@ static void chunk(void) {
     vka_crumb(g_cb, CR_PART_BEGIN, 0);
     g_chunk_d0 = g_stat_draws; g_n_chunks++;
 }
+void vka_part_split(void) { if (g_cb) chunk(); }   // the work recorded so far goes to the GPU as a part of its own (vka_draw.c rp_begin, DM_VK_IND_PEEK=4); no pass may be open
 // DM_VK_CHUNK_PASS=n (live; default 600, 0 = off): a pass that has had n draws in the part in progress is also ended there and the part submitted; the next draw opens it again over the
 // same targets (loadOp LOAD, after the pass end's barrier), so its contents and the draws' order are kept. A pass of 1,700 draws whose GPU work (14-18 ms) only began after
 // all of it was recorded then starts on the GPU while the rest is recorded. Donkey Kong Bananza's level (Adreno 840, DM_VK_GPUPROF): the extra splits cost no measurable GPU
@@ -919,6 +922,7 @@ static uint64_t sub_commit(uint64_t reserved, int has_sig, uint64_t signal) {
     unsigned ks = (g_slot_i - 1) % NSLOT;
     if (!signal && !g_slot[ks].vf) { VkFenceCreateInfo fi = {VK_STRUCTURE_TYPE_FENCE_CREATE_INFO}; if (vk.vkCreateFence(V.dev, &fi, NULL, &g_slot[ks].vf)) g_slot[ks].vf = VK_NULL_HANDLE; }
     if (g_slot_ts[ks]) cal_submit(ks * QPS + 2 * (g_slot_parts[ks] - 1) + 1);
+    vka_ind_check();   // DM_VK_IND_PEEK=4 (vka_draw.c): the last part's indirect arguments, as the GPU will read them
     uint64_t gt = gate_take();
     if (!r) r = vka_submit_fence(g_cb, signal, !signal ? g_slot[ks].vf : VK_NULL_HANDLE, gt);
     if (gt) vka_qtrace(QT_GATE_SUB, S.serial, fence, gt, (uint32_t)r, 1, 0, 0, NULL);

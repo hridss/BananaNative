@@ -2260,6 +2260,7 @@ void vka_img_written_at(vka_img *im, const char *file, int line) {
         VLOG("large image serial %llu %ux%u layers %u format %#x (%.1f MiB): first GPU write at frame %llu (%s:%d), sampled by %u draws before, %u other textures over its storage", (unsigned long long)im->serial,
              im->w, im->h, im->layers, im->d.format, im->m.size / 1048576.0, (unsigned long long)vka_frame(), file, line, im->nsamp, im->novl); }
     im->gpu_owned = 1;
+    { uint64_t f = vka_frame(); if (im->wr_frame != f) { im->wr_prev = im->wr_frame; im->wr_frame = f; } }   // (vka_draw.c pass_redrawn)
     im->last_fence = vka_fence_last();
     if (img_wb_kind(im)) { static _Atomic int n; if (atomic_fetch_add(&n, 1) < 32)   // which GPU writes a copied-back linear texture takes (the copy-back covers the whole image)
         VLOG("linear texture serial %llu %ux%u format %#x: GPU write at frame %llu (%s:%d)%s", (unsigned long long)im->serial, im->w, im->h, im->d.format,

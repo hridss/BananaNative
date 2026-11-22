@@ -585,6 +585,21 @@ void nvn_cap_submit(int n, const uint64_t *h) {
     g_cap_ns += now_ns() - t0;
 }
 
+// The capture's time brought forward to now (a diagnostic that sees its frame coming: vka_draw.c ind_peek, DM_VK_IND_PEEK=3): with DM_NVN_CAPTURE=@<far>:1:<path>, the frame
+// after the next present is captured. Nothing when no @seconds capture waits
+// DM_NVN_CAPTURE_DRY=1 (diagnostic): from the trigger on, nothing more of the game's goes to the GPU (vka_cap_dry: draws and dispatches dropped, submissions committed on the
+// CPU as after a GPU hang), so a frame whose GPU work hangs the GPU can still be captured whole: the GPU finishes what was submitted before the trigger, the capture's own
+// readbacks run, and the captured frame is replayed by nxreplay instead. The run is broken from the trigger on (nothing is drawn)
+static _Atomic int g_cap_dry;
+int vka_cap_dry(void) { return atomic_load_explicit(&g_cap_dry, memory_order_relaxed); }
+void vka_capture_trigger(void) {
+    if (g_cap_frame == 0 && g_cap_at_s > 0 && !g_cap_done) {
+        g_cap_at_s = 1e-6; CLOG("triggered: the next frame is captured");
+        const char *d = getenv("DM_NVN_CAPTURE_DRY");
+        if (d && *d == '1' && !atomic_exchange(&g_cap_dry, 1)) CLOG("dry: from now on nothing more goes to the GPU (DM_NVN_CAPTURE_DRY)");
+    }
+}
+
 // Hook: nvnQueuePresentTexture, before the present is queued
 void nvn_cap_present(const tex_t *t, const int crop[4]) {
     if (!nvn_cap_enabled()) return;

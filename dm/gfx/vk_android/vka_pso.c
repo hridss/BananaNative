@@ -1310,9 +1310,12 @@ static void busy_wait(gval *g) {
 // DM_VK_PSO_ASYNC=N (restart; default 0 = off): a stopgap for frame-path pipelines on slow compilers (Turnip on the Adreno 740 made Donkey Kong Bananza's fragment shader
 // libraries in 77-213 ms, 96 pipelines and 13.7 s of frame waits in 40 s of wall punching). The frame path still makes the cache-only try (a fraction of a millisecond when
 // the pipeline cache has it); on a miss the entry is made on one of N background threads (at most 4) and its draws are skipped until it is there, as Eden's asynchronous
-// shaders do. A skipped draw is missing from that frame only, except where the game keeps what it drew (a texture drawn once and reused): that stays wrong until redrawn.
-// Mesh pipelines are still made on the frame path; compute pipelines go through the same queue (DM_VK_CS_ASYNC, cs_obtain). Open: the cause, slow library compiles on
-// Turnip, is not addressed. cs: a compute job (sh[5] its shader, g an entry of g_cs; len, k unused)
+// shaders do. A skipped draw is missing from that frame only where the game draws its targets again every frame; a pass into a target the game drew in neither of the two
+// frames before (one it draws once and keeps: Unreal Engine 5's colour grading volume, whose skipped draw left Orbitals' menus black) waits for its pipeline instead
+// (vka_pso_redrawn, vka_draw.c pass_redrawn; counted as "waited"). Mesh pipelines are still made on the frame path; compute pipelines go through the same queue
+// (DM_VK_CS_ASYNC, cs_obtain). Open: the cause, slow library compiles on Turnip, is not addressed. cs: a compute job (sh[5] its shader, g an entry of g_cs; len, k unused)
+int vka_pso_redrawn = 1;
+static _Atomic uint64_t g_as_kept;   // frame-path builds for passes whose targets are not drawn every frame
 typedef struct as_job { struct as_job *next; gval *g; size_t len; vka_shader *sh[VKA_NSTAGE]; vka_layout lay; vka_gkey k; uint64_t t0, cost; int cs; uint64_t umask, smask; } as_job;   // umask, smask: a compute job's retyped images (cs_obtain)
 static as_job *g_as_head, **g_as_tail = &g_as_head; static pthread_mutex_t g_as_mu = PTHREAD_MUTEX_INITIALIZER; static pthread_cond_t g_as_cv = PTHREAD_COND_INITIALIZER;
 static _Atomic uint64_t g_as_queued, g_as_made, g_as_skips, g_as_ns, g_as_lat_max_ns; static _Atomic int g_as_depth, g_as_depth_max;
@@ -1394,12 +1397,13 @@ void vka_pso_async_line(char *out, size_t n) {
     pthread_mutex_lock(&g_as_mu);
     uint64_t cn = g_as_cheap_n, on = g_as_old_n; double cl = cn ? g_as_lat_cheap_ns / 1e6 / cn : 0.0, ol = on ? g_as_lat_old_ns / 1e6 / on : 0.0;
     pthread_mutex_unlock(&g_as_mu);
-    snprintf(out, n, "asynchronous: %llu queued, %llu made (%.0f ms in all, longest wait from the miss %.0f ms), deepest queue %d, draws skipped waiting %llu; "
+    snprintf(out, n, "asynchronous: %llu queued, %llu made (%.0f ms in all, longest wait from the miss %.0f ms), deepest queue %d, draws skipped waiting %llu, "
+             "%llu made on the frame path for targets not drawn every frame; "
              "background compiles %d at once (%s), their gate held the frame's %.0f ms and the speculative ones %.0f ms; "
              "taken %s: %llu cheapest (mean wait %.0f ms), %llu oldest (mean wait %.0f ms); "
              "compute dispatches that waited for their pipeline %llu, %llu of them not made in time, %.0f ms in all (DM_VK_CS_WAIT_MS)",
              (unsigned long long)atomic_load(&g_as_queued), (unsigned long long)atomic_load(&g_as_made), atomic_load(&g_as_ns) / 1e6, atomic_load(&g_as_lat_max_ns) / 1e6,
-             atomic_load(&g_as_depth_max), (unsigned long long)atomic_load(&g_as_skips), atomic_load(&g_gate_slots), pso_overlap() ? "ungated: DM_VK_PREWARM_OVERLAP=1" : "by memory, DM_VK_PSO_SLOTS",
+             atomic_load(&g_as_depth_max), (unsigned long long)atomic_load(&g_as_skips), (unsigned long long)atomic_load(&g_as_kept), atomic_load(&g_gate_slots), pso_overlap() ? "ungated: DM_VK_PREWARM_OVERLAP=1" : "by memory, DM_VK_PSO_SLOTS",
              atomic_load(&g_gate_frame_wait_ns) / 1e6, atomic_load(&g_gate_spec_wait_ns) / 1e6,
              g_as_order ? "least cost first, the oldest in turn (DM_VK_PSO_ORDER)" : "in arrival order (DM_VK_PSO_ORDER=0)",
              (unsigned long long)cn, cl, (unsigned long long)on, ol,
@@ -1407,11 +1411,13 @@ void vka_pso_async_line(char *out, size_t n) {
 }
 static gval *gfx_obtain(const gkey_full *fk, uint64_t h, size_t len, vka_shader *const sh[VKA_NSTAGE], const vka_layout *lay, const vka_gkey *k, int prewarm, int *made) {
     *made = 0;
-    int async = !prewarm && !sh[7] && as_threads() > 0;
+    int async = !prewarm && !sh[7] && as_threads() > 0, kept = async && !vka_pso_redrawn;
+    if (kept) async = 0;   // a pass into a target the game keeps: its draws must not be skipped (vka_draw.c pass_redrawn)
     pthread_mutex_lock(&g_mu);
     gval *g = km_get(&g_gfx, fk, h);
     if (g) {
         if (g->busy && (prewarm || async)) { pthread_mutex_unlock(&g_mu); return prewarm ? NULL : g; }
+        if (g->busy && kept) atomic_fetch_add(&g_as_kept, 1);
         if (g->busy) busy_wait(g);
         pthread_mutex_unlock(&g_mu);
         return g;
@@ -1446,6 +1452,7 @@ static gval *gfx_obtain(const gkey_full *fk, uint64_t h, size_t len, vka_shader 
         *made = 1;
         return g;
     }
+    if (kept) atomic_fetch_add(&g_as_kept, 1);
     gfx_build(g, len, sh, lay, k, prewarm, 0, t_make);
     *made = 1;
     return g;
