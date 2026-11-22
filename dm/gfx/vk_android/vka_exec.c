@@ -1534,6 +1534,41 @@ static void mdx_write(void) { if (g_mdx_n || g_mdx_scan_ep == g_mdx_ep) { g_mdx_
 static void mdx_sub(void) { if (g_mdx_sub != g_n_sub) { g_mdx_sub = g_n_sub; g_mdx_ep++; g_mdx_n = 0; } }
 static int mdx_find(uint64_t ind) { for (int i = 0; i < g_mdx_n; i++) if (g_mdx[i].ind == ind) return i; return -1; }
 static int mdx_on(void) { return vka_mesh_on() && VKA_ENV("DM_VK_MESH_IND", 1); }
+
+#include "vka_quad_indirect_spv.h"
+enum { QDX_MAX = 1024, QDX_MAX_QUADS = 262144 };
+static struct { uint64_t ind; VkBuffer buf; VkDeviceSize off; } g_qdx[QDX_MAX];
+static int g_qdx_n, g_qdx_pipe_state, g_qdx_ib_failed;
+static uint64_t g_qdx_ep = 1, g_qdx_scan_ep, g_qdx_sub = ~0ull, g_qdx_copies, g_qdx_splits, g_qdx_scans;
+static VkDescriptorSetLayout g_qdx_dsl;
+static VkPipelineLayout g_qdx_pl;
+static VkPipeline g_qdx_pipe;
+static VkBuffer g_qdx_ib;
+static VkDeviceMemory g_qdx_ib_mem;
+static void qdx_write(void) { if (g_qdx_n || g_qdx_scan_ep == g_qdx_ep) { g_qdx_ep++; g_qdx_n = 0; } }
+static void qdx_sub(void) { if (g_qdx_sub != g_n_sub) { g_qdx_sub = g_n_sub; g_qdx_ep++; g_qdx_n = 0; } }
+static int qdx_find(uint64_t ind) { for (int i = 0; i < g_qdx_n; i++) if (g_qdx[i].ind == ind) return i; return -1; }
+static int qdx_on(void) { return V.push_desc && vk.vkCmdPushDescriptorSetKHR && VKA_ENV("DM_VK_QUAD_IND", 1); }
+
+// Collect unique indirect records in replay order up to the next buffer-writing command (kind: 0 = mesh, 1 = quads).
+static int ind_scan_collect(const uint8_t *p, int kind, uint64_t *q, int qmax) {
+    int nq = 0;
+    const uint8_t *ret[17]; int nret = g_nxret; memcpy(ret, g_xret, sizeof(ret[0]) * (size_t)nret);
+    for (int guard = 0; guard < 200000 && nq < qmax; guard++) {
+        op_hdr h; memcpy(&h, p, sizeof h); const void *a = p + 8;
+        if (h.op == OP_END) { if (!nret) break; p = ret[--nret]; continue; }
+        if (h.op == OP_JUMP) { memcpy(&p, a, 8); continue; }
+        if (h.op == OP_CALL) { if (nret == 17) break; ret[nret++] = p + h.size; memcpy(&p, a, 8); continue; }
+        if (h.op == OP_DISPATCH || h.op == OP_COPY_B2B || h.op == OP_CLEAR_BUF || h.op == OP_COPY_T2B || h.op == OP_UPDATE_UB) break;
+        if (h.op == OP_DRAW) { p_draw t; const p_draw *d = draw_rec(a, h.size, &t);
+            int match = kind ? (d->prim == NVN_DRAW_PRIMITIVE_QUADS && d->ind && !d->mdi_cnt && qdx_find(d->ind) < 0)
+                             : (d->prim == NVN_PRIM_MESH && d->ind && mdx_find(d->ind) < 0);
+            if (match) { int dup = 0; for (int k = 0; k < nq && !dup; k++) dup = q[k] == d->ind; if (!dup) q[nq++] = d->ind; } }
+        if (h.size < 8) break;
+        p += h.size;
+    }
+    return nq;
+}
 static void mdx_copy(const uint64_t *inds, int n) {
     vka_span s;
     if (!n || g_mdx_n + n > MDX_MAX) { if (n) VRED_ONCE("indirect mesh draws: more than %d records between two writes: the rest drawn from their records", MDX_MAX); return; }
@@ -1555,19 +1590,8 @@ static void mdx_copy(const uint64_t *inds, int n) {
 }
 // The indirect mesh draws from record p on (this list, then the lists that called it) up to the next write that could change a record; the copies made
 static void mdx_scan(const uint8_t *p) {
-    enum { QMAX = 256 }; uint64_t q[QMAX]; int nq = 0;
-    const uint8_t *ret[17]; int nret = g_nxret; memcpy(ret, g_xret, sizeof(ret[0]) * (size_t)nret);
-    for (int guard = 0; guard < 200000 && nq < QMAX; guard++) {
-        op_hdr h; memcpy(&h, p, sizeof h); const void *a = p + 8;
-        if (h.op == OP_END) { if (!nret) break; p = ret[--nret]; continue; }
-        if (h.op == OP_JUMP) { memcpy(&p, a, 8); continue; }
-        if (h.op == OP_CALL) { if (nret == 17) break; ret[nret++] = p + h.size; memcpy(&p, a, 8); continue; }
-        if (h.op == OP_DISPATCH || h.op == OP_COPY_B2B || h.op == OP_CLEAR_BUF || h.op == OP_COPY_T2B || h.op == OP_UPDATE_UB) break;
-        if (h.op == OP_DRAW) { p_draw t; const p_draw *d = draw_rec(a, h.size, &t);
-            if (d->prim == NVN_PRIM_MESH && d->ind && mdx_find(d->ind) < 0) { int dup = 0; for (int k = 0; k < nq && !dup; k++) dup = q[k] == d->ind; if (!dup) q[nq++] = d->ind; } }
-        if (h.size < 8) break;
-        p += h.size;
-    }
+    enum { QMAX = 256 }; uint64_t q[QMAX];
+    int nq = ind_scan_collect(p, 0, q, QMAX);
     g_mdx_scan_ep = g_mdx_ep;
     if (nq) { g_mdx_scans++; mdx_copy(q, nq); }
 }
@@ -1583,6 +1607,119 @@ int vka_mdx_args(uint64_t ind, VkBuffer *b, VkDeviceSize *o) {
     if (!mdx_on()) return vka_addr(ind, 12, b, o, NULL) && !(*o & 3);
     int i = mdx_find(ind); if (i < 0) return 0;
     *b = g_mdx[i].buf; *o = g_mdx[i].off; return 1;
+}
+
+static int qdx_pipe_fail(void) {
+    if (g_qdx_pl) { vk.vkDestroyPipelineLayout(V.dev, g_qdx_pl, NULL); g_qdx_pl = VK_NULL_HANDLE; }
+    if (g_qdx_dsl) { vk.vkDestroyDescriptorSetLayout(V.dev, g_qdx_dsl, NULL); g_qdx_dsl = VK_NULL_HANDLE; }
+    VRED("indirect quad draws: failed to create compute conversion pipeline");
+    g_qdx_pipe_state = -1;
+    return 0;
+}
+static int qdx_init_pipe(void) {
+    if (g_qdx_pipe_state) return g_qdx_pipe_state > 0;
+    VkDescriptorSetLayoutBinding b = {.binding = 0, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT};
+    VkDescriptorSetLayoutCreateInfo dci = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, .flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR, .bindingCount = 1, .pBindings = &b};
+    VkPushConstantRange pc = {.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT, .size = 4};
+    if (vk.vkCreateDescriptorSetLayout(V.dev, &dci, NULL, &g_qdx_dsl)) return qdx_pipe_fail();
+    VkPipelineLayoutCreateInfo lci = {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, .setLayoutCount = 1, .pSetLayouts = &g_qdx_dsl, .pushConstantRangeCount = 1, .pPushConstantRanges = &pc};
+    if (vk.vkCreatePipelineLayout(V.dev, &lci, NULL, &g_qdx_pl)) return qdx_pipe_fail();
+    VkShaderModule mod = VK_NULL_HANDLE;
+    VkShaderModuleCreateInfo sm = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, .codeSize = sizeof quad_indirect_spv, .pCode = quad_indirect_spv};
+    if (vk.vkCreateShaderModule(V.dev, &sm, NULL, &mod)) return qdx_pipe_fail();
+    VkComputePipelineCreateInfo ci = {VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+        .stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, .stage = VK_SHADER_STAGE_COMPUTE_BIT, .module = mod, .pName = "main"},
+        .layout = g_qdx_pl};
+    VkResult r = vk.vkCreateComputePipelines(V.dev, VK_NULL_HANDLE, 1, &ci, NULL, &g_qdx_pipe);
+    vk.vkDestroyShaderModule(V.dev, mod, NULL);
+    if (r || !g_qdx_pipe) return qdx_pipe_fail();
+    g_qdx_pipe_state = 1;
+    return 1;
+}
+static VkBuffer qdx_ib_fail(VkBuffer b, VkDeviceMemory mem) {
+    if (mem) vk.vkFreeMemory(V.dev, mem, NULL);
+    if (b) vk.vkDestroyBuffer(V.dev, b, NULL);
+    g_qdx_ib_failed = 1;
+    VRED("indirect quad draws: failed to allocate %llu-quad index buffer", (unsigned long long)QDX_MAX_QUADS);
+    return VK_NULL_HANDLE;
+}
+VkBuffer vka_qdx_ib(void) {
+    if (g_qdx_ib || g_qdx_ib_failed) return g_qdx_ib;
+    VkDeviceSize sz = (VkDeviceSize)QDX_MAX_QUADS * 6 * sizeof(uint32_t);
+    VkBufferCreateInfo bci = {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = sz, .usage = VK_BUFFER_USAGE_INDEX_BUFFER_BIT};
+    VkBuffer b = VK_NULL_HANDLE; VkDeviceMemory mem = VK_NULL_HANDLE; void *p = NULL;
+    if (vk.vkCreateBuffer(V.dev, &bci, NULL, &b)) return qdx_ib_fail(b, mem);
+    VkMemoryRequirements mr; vk.vkGetBufferMemoryRequirements(V.dev, b, &mr);
+    uint32_t t = vka_mem_type(mr.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 0);
+    VkMemoryAllocateInfo ai = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, .allocationSize = mr.size, .memoryTypeIndex = t};
+    if (t == UINT32_MAX || vk.vkAllocateMemory(V.dev, &ai, NULL, &mem) || vk.vkBindBufferMemory(V.dev, b, mem, 0) || vk.vkMapMemory(V.dev, mem, 0, sz, 0, &p))
+        return qdx_ib_fail(b, mem);
+    vka_qdx_fill_indices((uint32_t *)p, QDX_MAX_QUADS);
+    vk.vkUnmapMemory(V.dev, mem);
+    g_qdx_ib = b; g_qdx_ib_mem = mem;
+    return g_qdx_ib;
+}
+static void qdx_phase_barrier(VkCommandBuffer cb, int phase) {
+    VkPipelineStageFlags src = phase == 1 ? VK_PIPELINE_STAGE_TRANSFER_BIT : VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+    VkPipelineStageFlags dst = phase == 1 ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT : VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT;
+    VkAccessFlags sa = phase == 1 ? VK_ACCESS_TRANSFER_WRITE_BIT : VK_ACCESS_SHADER_WRITE_BIT;
+    VkAccessFlags da = phase == 1 ? (VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT) : VK_ACCESS_INDIRECT_COMMAND_READ_BIT;
+    VkMemoryBarrier mb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER, .srcAccessMask = sa, .dstAccessMask = da};
+    vk.vkCmdPipelineBarrier(cb, src, dst, 0, 1, &mb, 0, NULL, 0, NULL);
+}
+static void qdx_convert(const uint64_t *inds, int n) {
+    if (!n || g_qdx_n + n > QDX_MAX) { if (n) VRED_ONCE("indirect quad draws: more than %d records between two writes: the rest skipped", QDX_MAX); return; }
+    if (!qdx_init_pipe()) return;
+    VkDeviceSize align = V.sb_align < 64 ? 64 : V.sb_align, stride = (64 + align - 1) / align * align;
+    vka_span s;
+    if (!vka_scratch((VkDeviceSize)n * stride, stride, &s)) { VRED_ONCE("indirect quad draws: no scratch memory for conversion"); return; }
+    memset(s.ptr, 0, (size_t)((VkDeviceSize)n * stride));
+    vka_barrier(g_cb);
+    uint64_t vi[256]; VkDeviceSize vo[256]; int nv = 0;
+    for (int k = 0; k < n && k < 256; k++) {
+        VkBuffer b; VkDeviceSize o;
+        if (!vka_addr(inds[k], 16, &b, &o, NULL) || (o & 3)) continue;
+        VkDeviceSize d = s.off + (VkDeviceSize)k * stride;
+        VkBufferCopy c = {o, d, 16}; vk.vkCmdCopyBuffer(g_cb, b, s.buf, 1, &c);
+        vi[nv] = inds[k]; vo[nv++] = d;
+    }
+    if (!nv) return;
+    qdx_phase_barrier(g_cb, 1);
+    vk.vkCmdBindPipeline(g_cb, VK_PIPELINE_BIND_POINT_COMPUTE, g_qdx_pipe);
+    uint32_t max_q = QDX_MAX_QUADS;
+    vk.vkCmdPushConstants(g_cb, g_qdx_pl, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof max_q, &max_q);
+    for (int k = 0; k < nv; k++) {
+        VkDescriptorBufferInfo bi = {s.buf, vo[k], 64};
+        VkWriteDescriptorSet w = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstBinding = 0, .descriptorCount = 1, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .pBufferInfo = &bi};
+        vk.vkCmdPushDescriptorSetKHR(g_cb, VK_PIPELINE_BIND_POINT_COMPUTE, g_qdx_pl, 0, 1, &w);
+        vk.vkCmdDispatch(g_cb, 1, 1, 1);
+        g_qdx[g_qdx_n].ind = vi[k]; g_qdx[g_qdx_n].buf = s.buf; g_qdx[g_qdx_n++].off = vo[k] + 32; g_qdx_copies++;
+    }
+    qdx_phase_barrier(g_cb, 2);
+    vka_dyn_invalidate();
+    if (g_qdx_scans + g_qdx_splits == 1 || (g_qdx_scans + g_qdx_splits) % 20000 == 0)
+        VLOG("indirect quad draws: %llu conversions, %llu look-aheads, %llu render passes split", (unsigned long long)g_qdx_copies,
+             (unsigned long long)g_qdx_scans, (unsigned long long)g_qdx_splits);
+}
+static void qdx_scan(const uint8_t *p) {
+    enum { QMAX = 256 }; uint64_t q[QMAX];
+    int nq = ind_scan_collect(p, 1, q, QMAX);
+    g_qdx_scan_ep = g_qdx_ep;
+    if (nq) { g_qdx_scans++; qdx_convert(q, nq); }
+}
+static void qdx_before_draw(const uint8_t *p, const p_draw *d) {
+    if (!qdx_on()) return;
+    qdx_sub();
+    int ind_quad = d && d->prim == NVN_DRAW_PRIMITIVE_QUADS && d->ind && !d->mdi_cnt;
+    if (!vka_rp_on()) { if (g_qdx_scan_ep != g_qdx_ep || (ind_quad && qdx_find(d->ind) < 0)) qdx_scan(p); return; }
+    if (ind_quad && qdx_find(d->ind) < 0) { vka_rp_end(); g_qdx_splits++; qdx_scan(p); }
+}
+int vka_qdx_args(uint64_t ind, VkBuffer *b, VkDeviceSize *o) {
+    if (!qdx_on()) return 0;
+    int i = qdx_find(ind); if (i < 0) return 0;
+    if (b) *b = g_qdx[i].buf;
+    if (o) *o = g_qdx[i].off;
+    return 1;
 }
 
 // Mesh draws through compute (vka_memu_draw.inc, docs/reference/rendering.md "Mesh draws through compute"): when a render pass is about to open, memu_scan looks ahead in
@@ -1687,7 +1824,7 @@ void vka_event_replayed(volatile uint32_t *w, uint32_t mode, uint32_t v);
 static qs_cont *g_pk;
 // A later record of an indirect-count multi-draw that its first record makes whole (vka_draw.c vka_mdi_gpu): nothing of its own to record
 static int mdi_rest(uint32_t op, const void *a, uint32_t size) {   // (a multi-draw's record is always whole: hle_nvn.c rec_draw; a plain draw's stops before ind)
-    if (op == OP_DRAW) { if (size - 8 < sizeof(p_draw)) return 0; const p_draw *d = a; return d->mdi_cnt && d->mdi_i > 0 && d->prim != NVN_PRIM_MESH && vka_mdi_gpu(0, d->mdi_n, d->mdi_stride); }
+    if (op == OP_DRAW) { if (size - 8 < sizeof(p_draw)) return 0; const p_draw *d = a; return d->mdi_cnt && d->mdi_i > 0 && d->prim != NVN_PRIM_MESH && d->prim != NVN_DRAW_PRIMITIVE_QUADS && vka_mdi_gpu(0, d->mdi_n, d->mdi_stride); }
     if (op == OP_DRAW_IDX) { if (size - 8 < sizeof(p_draw_idx)) return 0; const p_draw_idx *d = a; return d->mdi_cnt && d->mdi_i > 0 && vka_mdi_gpu(1, d->mdi_n, d->mdi_stride); }
     return 0;
 }
@@ -1751,9 +1888,9 @@ static int exec(const uint8_t *p, int depth) {   // 1: parked at a wait (g_pk ho
             else { uint64_t x, y; int known = rc_known(rc->addr, &x) && rc_known(rc->addr + 16, &y); S.rc_skip = known && (rc->mode ? x == y : x != y); }
             break; }
         case OP_RESET_COUNTER: { uint64_t t; memcpy(&t, a, 8); if (t == NVN_COUNTER_TYPE_SAMPLES_PASSED) oq_reset(); break; }
-        case OP_CLEAR_BUF: mdx_write(); if (g_cb) { const p_clear_buf *cb = a; vka_rw_pre(g_cb); buf_fill(cb->addr, cb->size, cb->value); vka_barrier(g_cb); vka_rw_point(g_cb, 'f', 0, cb->value, cb->addr); } break;
-        case OP_COPY_B2B: mdx_write(); if (g_cb) { uint64_t s_, d, n; memcpy(&s_, a, 8); memcpy(&d, (const uint8_t *)a + 8, 8); memcpy(&n, (const uint8_t *)a + 16, 8); vka_rw_pre(g_cb); buf_copy(s_, d, n); vka_barrier(g_cb); vka_rw_point(g_cb, 'c', 0, s_, d); } break;
-        case OP_UPDATE_UB: mdx_write(); g_n_ub++; if (g_cb) { uint64_t d, n; memcpy(&d, a, 8); memcpy(&n, (const uint8_t *)a + 8, 8); if (!vka_rp_ub_defer(d, n, (const uint8_t *)a + 16)) { vka_rp_end(); vka_rw_pre(g_cb); buf_update((const uint8_t *)a + 16, d, n); vka_barrier(g_cb); vka_rw_point(g_cb, 'u', 0, n, d); } } break;
+        case OP_CLEAR_BUF: mdx_write(); qdx_write(); if (g_cb) { const p_clear_buf *cb = a; vka_rw_pre(g_cb); buf_fill(cb->addr, cb->size, cb->value); vka_barrier(g_cb); vka_rw_point(g_cb, 'f', 0, cb->value, cb->addr); } break;
+        case OP_COPY_B2B: mdx_write(); qdx_write(); if (g_cb) { uint64_t s_, d, n; memcpy(&s_, a, 8); memcpy(&d, (const uint8_t *)a + 8, 8); memcpy(&n, (const uint8_t *)a + 16, 8); vka_rw_pre(g_cb); buf_copy(s_, d, n); vka_barrier(g_cb); vka_rw_point(g_cb, 'c', 0, s_, d); } break;
+        case OP_UPDATE_UB: mdx_write(); qdx_write(); g_n_ub++; if (g_cb) { uint64_t d, n; memcpy(&d, a, 8); memcpy(&n, (const uint8_t *)a + 8, 8); if (!vka_rp_ub_defer(d, n, (const uint8_t *)a + 16)) { vka_rp_end(); vka_rw_pre(g_cb); buf_update((const uint8_t *)a + 16, d, n); vka_barrier(g_cb); vka_rw_point(g_cb, 'u', 0, n, d); } } break;
         case OP_SET_RT: S.rt = *(const p_set_rt *)a; S.has_rt = 1; break;
         case OP_SCISSOR: S.sc = *(const p_scissor *)a; S.has_sc = 1; break;
         case OP_COPY_STRIDE: { const p_copy_stride *cs = a; if (cs->image) S.copy_img_stride = cs->stride; else S.copy_stride = cs->stride; break; }
@@ -1761,17 +1898,17 @@ static int exec(const uint8_t *p, int depth) {   // 1: parked at a wait (g_pk ho
         case OP_CLEAR_DS: if (!S.rc_skip && g_cb) clear_ds(a); break;
         case OP_CLEAR_TEX: if (!S.rc_skip && g_cb) clear_tex(a); break;
         case OP_COPY_B2T: if (g_cb) copy_bt(a, 1); break;
-        case OP_COPY_T2B: mdx_write(); if (g_cb) { vka_rw_pre(g_cb); copy_bt(a, 0); vka_rw_point(g_cb, 't', 0, 0, 0); } break;
+        case OP_COPY_T2B: mdx_write(); qdx_write(); if (g_cb) { vka_rw_pre(g_cb); copy_bt(a, 0); vka_rw_point(g_cb, 't', 0, 0, 0); } break;
         case OP_COPY_T2T: if (g_cb) copy_t2t(a); break;
         case OP_DLSS: if (!S.rc_skip && g_cb) dlss_eval(a); break;
         case OP_BARRIER: if (g_cb && !bar_kept) { int32_t bits; memcpy(&bits, a, 4); if (!vka_gbar_game(g_cb, (uint32_t)bits)) vka_barrier(g_cb); } break;   // (vka_gbar.c: between dispatches, a compute-to-compute barrier at the next one)
         case OP_DRAW: if (S.rc_skip) vka_rtlog_skip(&S.rt, S.has_rt, &S.d, "skipped by a render condition");
-                      if (!S.rc_skip && g_cb) { p_draw t; const p_draw *d = draw_rec(a, h.size, &t); g_stat_draws++; mdx_before_draw(p, d); memu_before_draw(p, d); uint64_t sk = 0; if (g_oq_count) vka_draw_stats(NULL, &sk, NULL, NULL);
+                      if (!S.rc_skip && g_cb) { p_draw t; const p_draw *d = draw_rec(a, h.size, &t); g_stat_draws++; mdx_before_draw(p, d); qdx_before_draw(p, d); memu_before_draw(p, d); uint64_t sk = 0; if (g_oq_count) vka_draw_stats(NULL, &sk, NULL, NULL);
                           vka_draw(&S.d, &S.rt, S.has_rt, &S.sc, S.has_sc, d, NULL); oq_lost(sk); } else if (!S.rc_skip && g_oq_count) g_oq_lost++; break;
         case OP_DRAW_IDX: if (S.rc_skip) vka_rtlog_skip(&S.rt, S.has_rt, &S.d, "skipped by a render condition");
-                          if (!S.rc_skip && g_cb) { p_draw_idx t; g_stat_draws++; mdx_before_draw(p, NULL); memu_before_draw(p, NULL); uint64_t sk = 0; if (g_oq_count) vka_draw_stats(NULL, &sk, NULL, NULL);
+                          if (!S.rc_skip && g_cb) { p_draw_idx t; g_stat_draws++; mdx_before_draw(p, NULL); qdx_before_draw(p, NULL); memu_before_draw(p, NULL); uint64_t sk = 0; if (g_oq_count) vka_draw_stats(NULL, &sk, NULL, NULL);
                           vka_draw(&S.d, &S.rt, S.has_rt, &S.sc, S.has_sc, NULL, draw_idx_rec(a, h.size, &t)); oq_lost(sk); } else if (!S.rc_skip && g_oq_count) g_oq_lost++; break;
-        case OP_DISPATCH: mdx_write(); if (!S.rc_skip && g_cb) vka_dispatch(&S.d, a); break;
+        case OP_DISPATCH: mdx_write(); qdx_write(); if (!S.rc_skip && g_cb) vka_dispatch(&S.d, a); break;
         case OP_DRAW_TEX: not_yet(h.op); if (!S.rc_skip && g_oq_count) { g_oq_lost++; g_oqs_skip++; } break;
         default: break;   // state: taken by vka_state_op above
         }

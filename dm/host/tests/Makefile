@@ -132,6 +132,7 @@ run: $(B)/t_language $(B)/t_motion $(B)/t_heap_size $(B)/t_touch $(B)/t_gesture 
 	$(B)/t_android_tlsig
 	$(B)/t_android_gbar
 	$(B)/t_android_memu
+	$(B)/t_android_quad_ind
 	TMPDIR="$(abspath $(B))" $(B)/t_android_layerreq
 	$(B)/t_server_environment
 run: $(B)/t_nro
@@ -626,6 +627,10 @@ $(B)/t_android_layerreq: t_android_layerreq.c $(VKA)/vka_layerreq.h $(VKA)/vka_s
 	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -fsanitize=address,undefined -I.. -o $@ t_android_layerreq.c $(VKA)/vka_shlib.c $(B)/zstddeclib.o -lpthread
 $(B)/t_android_memu: t_android_memu.c $(VKA)/vka_memu_spv.c $(VKA)/vka_memu_spv.h $(VKA)/vka_memu_abi.h $(VKA)/vka_memu_order.h $(VKA)/vka_spvpatch.c $(VKA)/vka_shlib.c $(VKA)/vka_bind.c memu/memu_fixtures.h $(B)/zstddeclib.o | $(B)
 	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -fsanitize=address,undefined -I.. -o $@ t_android_memu.c $(VKA)/vka_memu_spv.c $(VKA)/vka_spvpatch.c $(VKA)/vka_shlib.c $(VKA)/vka_bind.c $(B)/zstddeclib.o
+# Non-indexed indirect QUADS -> VkDrawIndexedIndirect compute header and host math
+$(B)/t_android_quad_ind: t_android_quad_ind.c $(VKA)/vka_quad_indirect_spv.h | $(B)
+	$(CLANG) -std=c11 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined -I$(VKA) -o $@ t_android_quad_ind.c
+
 # The replay's SPIR-V rewrite of integer-fed vertex inputs (vka_spvpatch.c): the selftest's vertex shader, validated by spirv-val when it is on the PATH; DM_VK_SPV_DIR=<.spv folder> adds those modules
 $(B)/t_android_spvpatch: t_android_spvpatch.c $(VKA)/vka_spvpatch.c $(VKA)/vka_spvpatch.h $(VKA)/vka_selftest_spv.h | $(B)
 	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -fsanitize=address,undefined -I.. -o $@ t_android_spvpatch.c $(VKA)/vka_spvpatch.c

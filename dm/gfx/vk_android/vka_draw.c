@@ -2421,7 +2421,8 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
         if (!ind && inst_n <= 1) { int32_t c = dw ? dw->count : di->count; g_claim_words = c > 0 ? (uint32_t)c : 1; }
         else VRED_ONCE("geometry shader %016llx writes memory in an %s draw: drawn without the claim, its writes repeated by the device's runs of each primitive", (unsigned long long)sh[2]->key, ind ? "indirect" : "instanced");
     }
-    if (expand && ind) SKIP("an indirect draw of quads or a line loop is not on Vulkan yet: skipped");
+    if (expand && ind && !(expand == 1 && dw && !dw->mdi_cnt && vka_qdx_args(ind, NULL, NULL)))
+        SKIP("an indirect draw of %s is not on Vulkan yet: skipped", expand == 1 ? (di ? "indexed quads" : dw->mdi_cnt ? "multi-draw quads" : "quads (conversion unavailable)") : "a line loop");
     if (!mesh && sh[1] && skip_fs(sh[1]->key)) { g_skipped++; return; }
     if (bisect_drop(sh)) { g_skipped++; return; }
     if (!mesh && VKA_ENV("DM_VK_SHADER_STATS", 0)) {
@@ -2740,19 +2741,26 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
             if ((uint32_t)dw->count > maxg) SKIPD(VKS_FEATURE, "mesh draw of %d workgroups: more than the device's %u in one dimension; skipped", dw->count, maxg);
             vk.vkCmdDrawMeshTasksEXT(g_cb, (uint32_t)dw->count, 1, 1);
         }
-    } else if (expand) {   // quads or a line loop: the indices made here, 32-bit, in scratch memory
-        uint32_t count = (uint32_t)(dw ? dw->count : di->count), *src = NULL;
-        if (di && !(src = read_indices(di->ibuf, di->itype, count))) SKIP("indices at %#llx are not readable: the draw is skipped", (unsigned long long)di->ibuf);
-        uint32_t nout = expand == 1 ? count / 4 * 6 : count + 1; vka_span s;
-        if (!nout || !vka_scratch(4 * (VkDeviceSize)nout, 4, &s)) { free(src); return; }
-        uint32_t *o = (uint32_t *)s.ptr, base = dw ? (uint32_t)dw->first : 0;
-        #define IX(i) (src ? src[i] : base + (i))
-        if (expand == 1) for (uint32_t q = 0; q < count / 4; q++) { static const uint8_t t[6] = {0, 1, 2, 0, 2, 3}; for (int j = 0; j < 6; j++) o[6 * q + j] = IX(4 * q + t[j]); }
-        else { for (uint32_t i = 0; i < count; i++) o[i] = IX(i); o[count] = IX(0); }
-        #undef IX
-        free(src);
-        ib_bind(s.buf, s.off, VK_INDEX_TYPE_UINT32);
-        vk.vkCmdDrawIndexed(g_cb, nout, inst, 0, di ? di->base_vertex : 0, binst);
+    } else if (expand) {   // quads or a line loop: indirect quads converted by compute (qdx), direct on the CPU
+        if (expand == 1 && ind && dw && !dw->mdi_cnt) {
+            VkBuffer qb; VkDeviceSize qo; VkBuffer qib = vka_qdx_ib();
+            if (!qib || !vka_qdx_args(ind, &qb, &qo)) SKIP("indirect quad draw at %#llx not prepared: skipped", (unsigned long long)ind);
+            ib_bind(qib, 0, VK_INDEX_TYPE_UINT32);
+            vk.vkCmdDrawIndexedIndirect(g_cb, qb, qo, 1, 20);
+        } else {
+            uint32_t count = (uint32_t)(dw ? dw->count : di->count), *src = NULL;
+            if (di && !(src = read_indices(di->ibuf, di->itype, count))) SKIP("indices at %#llx are not readable: the draw is skipped", (unsigned long long)di->ibuf);
+            uint32_t nout = expand == 1 ? count / 4 * 6 : count + 1; vka_span s;
+            if (!nout || !vka_scratch(4 * (VkDeviceSize)nout, 4, &s)) { free(src); return; }
+            uint32_t *o = (uint32_t *)s.ptr, base = dw ? (uint32_t)dw->first : 0;
+            #define IX(i) (src ? src[i] : base + (i))
+            if (expand == 1) for (uint32_t q = 0; q < count / 4; q++) { static const uint8_t t[6] = {0, 1, 2, 0, 2, 3}; for (int j = 0; j < 6; j++) o[6 * q + j] = IX(4 * q + t[j]); }
+            else { for (uint32_t i = 0; i < count; i++) o[i] = IX(i); o[count] = IX(0); }
+            #undef IX
+            free(src);
+            ib_bind(s.buf, s.off, VK_INDEX_TYPE_UINT32);
+            vk.vkCmdDrawIndexed(g_cb, nout, inst, 0, di ? di->base_vertex : 0, binst);
+        }
     } else if (dw) {
         if (ind) { VkBuffer b, cb; VkDeviceSize o, co;
                    VRED_ONCE("indirect draws: outside vertex shaders, the driver segment's base instance (c0 + 0x644) reads the record's, not the GPU's");
