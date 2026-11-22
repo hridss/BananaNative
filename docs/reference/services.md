@@ -422,6 +422,13 @@ Most service calls can be found before they crash, before the first boot or the 
 - **Found on:** [Splatoon Raiders](../../dm/games/0400380020056000/README.md) on Android, with the phone's own gyroscope. Check with `DM_MOTION_LOG=1` (the log shows the sample once a second).
 - **Open:** a controller's own gyro (a DualSense or Switch Pro on the phone) still has no source on Android; only the phone's sensors reach the game.
 
+### Nintendo controllers' pitch and roll inverted (Android)
+
+- **Symptom:** Android, a Pro Controller or Joy-Con's own gyro (`PadMotion.java`): turning it left and right (yaw) aims the right way, tilting it forward or sideways (pitch, roll) aims the opposite way.
+- **Cause:** the kernel's `hid-nintendo` reports the controller's own IMU frame (X toward the triggers, Y to the left, Z up out of the buttons; it turns the right Joy-Con to match), which is the six-axis sensor's frame turned half a turn about Z. Other controllers report the sensor's frame.
+- **Fix:** for USB vendor 0x057e, `PadMotion` negates X and Y of both the gyroscope and the accelerometer (a rotation, so gravity stays consistent with the gyro); the `padmotion:` log line says so.
+- **Found on:** in Peanuts Native, with Nintendo controllers on Android; not run here.
+
 ### The phone's gyro aims badly: big movements, no steady hold
 
 - **Symptom:** gyro aiming (Splatoon Raiders, issue 174) needs a large turn of the phone for a small move of the aim, and a held phone cannot keep the aim on a point: the cursor creeps up and down.
