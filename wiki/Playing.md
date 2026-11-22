@@ -11,7 +11,7 @@ How to start a game, stop it, start it from a launcher or frontend, and where it
 
 ## Settings
 
-- **Options for a game**: press and hold a game on Home (on a controller, hold **X** on it). The menu has **Move**, **Set cover image**, **Rename game** and **Remove game…**. A strip at the bottom of Home reminds you ("Hold a game for options", with the button on a controller).
+- **Options for a game**: press and hold a game on Home (on a controller, hold **X** on it). The menu has **Move**, **Set cover image**, **Rename game** and **Remove game…**. With a controller, a strip at the bottom of Home shows the buttons.
 - **Move** lifts the game: move it with the arrows (a grid also moves up and down) or drag it, **A** or a tap puts it down, **B** cancels. The order is kept.
 - **Set cover image** picks a picture from your phone and lets you pan and zoom it under a frame (touch, or D-pad to move and the triggers to zoom, **A** confirms). The game's own picture comes back with **Reset cover**. The picture is kept inside the app only.
 - **Rename game** gives the game your own name on Home and on its page (up to 60 characters). **Reset name** (in the same menu once you renamed it) brings back the game's own name. The name stays when you add the same game again.

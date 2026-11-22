@@ -1379,7 +1379,6 @@
     <string name="home_reset_name">Ripristina nome</string>
     <string name="hint_open">Apri</string>
     <string name="hint_options_hold">Opzioni (tieni premuto)</string>
-    <string name="hint_hold_for_options">Tieni premuto un gioco per le opzioni</string>
     <string name="hint_move">Sposta</string>
     <string name="hint_place">Posiziona</string>
     <string name="hint_cancel">Annulla</string>
@@ -1414,4 +1413,7 @@
     <string name="game_fast_fp16_shader_math">Calcolo shader FP16 veloce</string>
     <string name="game_fp16_on_turnip_faster">Mezza precisione a 16 bit su Turnip: calcolo shader più veloce, meno calore</string>
     <string name="game_fp16_default_precision">Precisione predefinita</string>
+    <string name="settings_build_preview">Stai usando una versione di anteprima (v%1$s). Le anteprime possono rovinare i giochi. La stabile v%2$s la sostituisce quando esce.</string>
+    <string name="settings_build_preview_channel">Il tuo canale è %1$s: l\'app ti porta alla versione stabile v%2$s quando esce.</string>
+    <string name="settings_build_hotfix">Stai usando un hotfix (v%1$s): una piccola correzione tra le versioni settimanali. La prossima versione settimanale la include.</string>
 </resources>

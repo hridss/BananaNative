@@ -24,6 +24,12 @@ if (nxApp && nxPlay) throw new GradleException('nxApp and nxPlay build different
 def nxLive = providers.gradleProperty('nxLive').getOrElse('false') == 'true'
 if (nxLive && (nxPlay || nxApp)) throw new GradleException('nxLive builds the release app: give neither nxPlay nor nxApp')
 def nxVersion = providers.gradleProperty('nxVersion').getOrElse('0.1-bringup')
+// -PnxReleaseKind=major|hotfix|critical|preview says which kind of release this build is (the release notes' "Update type" line; preview for a vX.Y.Z-preview tag). The launcher shows a
+// Preview or Hotfix chip on Home and a line in Settings › Updates for it, and the logs name it. Empty (the default) is a test build of unknown kind; a versionName ending in "-preview" is a preview
+def nxReleaseKind = providers.gradleProperty('nxReleaseKind').getOrElse('')
+if (nxReleaseKind && !(nxReleaseKind in ['major', 'hotfix', 'critical', 'preview'])) throw new GradleException("nxReleaseKind must be major, hotfix, critical or preview, not $nxReleaseKind")
+if (nxVersion.endsWith('-preview') && nxReleaseKind && nxReleaseKind != 'preview') throw new GradleException("nxVersion $nxVersion is a preview but nxReleaseKind is $nxReleaseKind")
+if (nxReleaseKind == 'preview' && !nxVersion.endsWith('-preview')) throw new GradleException("nxReleaseKind=preview needs an nxVersion ending in -preview, not $nxVersion")
 def nxVersionCode = providers.gradleProperty('nxVersionCode').getOrElse('1') as int
 def signStore = System.getenv('NX_SIGN_STORE'), signAlias = System.getenv('NX_SIGN_ALIAS'), signPass = System.getenv('NX_SIGN_PASS')
 if (nxLive && !(signStore && signAlias && signPass && new File(signStore).isFile()))
@@ -246,6 +252,7 @@ android {
         buildConfigField 'String', 'NX_COMMIT', "\"${commit ?: 'unknown'}\""
         buildConfigField 'String', 'NX_BRANCH', "\"${branch ?: 'unknown'}\""
         buildConfigField 'String', 'NX_DIRTY', "\"${commit ? dirty : ''}\""
+        buildConfigField 'String', 'NX_RELEASE_KIND', "\"${nxVersion.endsWith('-preview') ? 'preview' : nxReleaseKind}\""
         buildConfigField 'boolean', 'NX_LSFG', "$nxLsfg"
         buildConfigField 'int', 'NX_MIN_SDK', "$nxMinSdk"
         // The play app and the release behave alike (saves/<id>, the user's build tag, no test switches); every other app is a test app

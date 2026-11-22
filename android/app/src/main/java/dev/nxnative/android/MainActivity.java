@@ -415,6 +415,8 @@ public final class MainActivity extends Activity {
         logo.setContentDescription(Tx.s(R.string.home_banana_native));
         logo.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
         top.addView(logo);
+        TextView kindChip = buildKindChip();   // Preview or Hotfix: this build is not a weekly release
+        if (kindChip != null) { LinearLayout.LayoutParams kl = Ui.wrap(); kl.setMarginStart(dp(10)); top.addView(kindChip, kl); }
         top.addView(new View(this), new LinearLayout.LayoutParams(0, 1, 1f));
         top.addView(dock(), new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)));
         content.addView(top, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
@@ -434,6 +436,19 @@ public final class MainActivity extends Activity {
         holder.addView(addFab, fl);
         content.addView(holder, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
         refresh();
+    }
+
+    /** A small chip beside the logo for a preview ("Preview", the warning tint) or a hotfix or critical build ("Hotfix"); null for a weekly release and a test build (BuildKind) */
+    private TextView buildKindChip() {
+        String kind = Prefs.buildKind();
+        boolean preview = "preview".equals(kind);
+        if (!preview && !BuildKind.isHotfix(kind)) return null;
+        TextView t = Ui.chip(this, Tx.s(preview ? R.string.settings_channel_preview : R.string.settings_channel_hotfix));
+        if (preview) {
+            t.setBackground(Ui.round(Ui.col(this, R.color.bn_warn_tint), dp(999), 0, 0));
+            t.setTextColor(Ui.col(this, R.color.bn_text));
+        }
+        return t;
     }
 
     /** The dock: round buttons in a pill. The first is the user (the console's users, what games start with): its letter is the current user's, as the profile icon of a console's home */
@@ -738,6 +753,8 @@ public final class MainActivity extends Activity {
         upd.addView(updateRow.view);
         channelRow = Updater.channelSetting(this);   // Update channel: Stable, Hotfix or Preview; names a newer release on another channel
         upd.addView(channelRow.view);
+        String runLine = Updater.runningBuild(Prefs.updateChannel(this));   // what kind of build this is: a preview or a hotfix says so; a weekly release says nothing
+        if (!runLine.isEmpty()) Ui.add(upd, Ui.small(this, runLine), 8);
         Updater.seen(this);   // Settings shows the waiting update: the dot goes (a critical one keeps it)
         upd.addView(new Ui.Setting(this, "💾", Tx.s(R.string.settings_backup_before_update), null)   // UpdateBackupUi: the saves outside app storage before an update installs
                 .toggle(this, Prefs.backupBeforeUpdate(this), (b, on) -> Prefs.backupBeforeUpdate(this, on))
@@ -1285,7 +1302,6 @@ public final class MainActivity extends Activity {
             boolean onTile = f != null && f.getTag() instanceof TileInfo;
             if (games.isEmpty()) { if (pad) hint.set(new String[] {"A", Tx.s(R.string.home_add_game)}); else hint.set(); }
             else if (pad && onTile) hint.set(new String[] {"A", Tx.s(R.string.hint_open)}, new String[] {"X", Tx.s(R.string.hint_options_hold)});
-            else if (!pad) hint.set(new String[] {null, Tx.s(R.string.hint_hold_for_options)});
             else hint.set();
         } else if (pad) hint.set(new String[] {"A", Tx.s(R.string.hint_select)}, new String[] {"B", Tx.s(R.string.hint_back)});
         else hint.set();

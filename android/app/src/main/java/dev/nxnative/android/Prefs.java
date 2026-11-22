@@ -694,6 +694,9 @@ final class Prefs {
         return Signer.buildId(BuildConfig.NX_PLAY, BuildConfig.VERSION_NAME, BuildConfig.NX_COMMIT, BuildConfig.NX_DIRTY, BuildConfig.NX_BRANCH);
     }
 
+    /** This build's kind (BuildKind.of on BuildConfig): preview, hotfix, critical, major, or "" for a test build */
+    static String buildKind() { return BuildKind.of(BuildConfig.VERSION_NAME, BuildConfig.NX_RELEASE_KIND); }
+
     private static String buildTag() { return Signer.buildTag(BuildConfig.NX_PLAY, buildId()); }
 
     /** Game settings › Aspect ratio, for a game whose profile has a variant labelled w:h (Profile.aspectVariant; a native 4:3 mod): the label chosen ("4:3"), null = as

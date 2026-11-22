@@ -20,7 +20,7 @@ class Stamp(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.tmp = Path(tempfile.mkdtemp(prefix='signer_'))
-        subprocess.run(['javac', '-Xlint:all', '-Werror', '-encoding', 'UTF-8', '-d', str(cls.tmp / 'classes'), str(SRC), str(TEST)], check=True, capture_output=True, text=True)
+        subprocess.run(['javac', '-Xlint:all', '-Werror', '-encoding', 'UTF-8', '-d', str(cls.tmp / 'classes'), str(SRC), str(SRC.parent / 'BuildKind.java'), str(TEST)], check=True, capture_output=True, text=True)
 
     @classmethod
     def tearDownClass(cls): shutil.rmtree(cls.tmp, ignore_errors=True)
@@ -55,6 +55,8 @@ class Stamp(unittest.TestCase):
                          'launcher-2@4a15067|Banana Native test · launcher-2@4a15067')
         self.assertEqual(self.java('build', 0, '0.1.1', 'unknown', '+dirty', 'int'), 'int@unknown+dirty|Banana Native test · int@unknown+dirty')
         self.assertEqual(self.java('build', 1, '0.1-release', '6a6448d123', '-', 'main'), '0.1 · 6a6448d|' + TAG)
+        self.assertEqual(self.java('build', 1, '0.3.51-preview', 'abc1234def', '-', 'main'), '0.3.51-preview · abc1234|Banana Native 0.3.51-preview · abc1234')   # a preview keeps its mark
+        self.assertEqual(self.java('build', 1, '0.3.51', 'abc1234def', '-', 'main'), '0.3.51 · abc1234|Banana Native 0.3.51 · abc1234')               # a hotfix is plain
 
     def test_short_id(self):
         other = hashlib.sha256(b'x').hexdigest()

@@ -1363,7 +1363,6 @@
     <string name="home_reset_name">重置名称</string>
     <string name="hint_open">打开</string>
     <string name="hint_options_hold">选项（长按）</string>
-    <string name="hint_hold_for_options">长按游戏查看选项</string>
     <string name="hint_move">移动</string>
     <string name="hint_place">放下</string>
     <string name="hint_cancel">取消</string>
@@ -1398,4 +1397,7 @@
     <string name="game_fast_fp16_shader_math">快速 FP16 着色器运算</string>
     <string name="game_fp16_on_turnip_faster">Turnip 上的 16 位半精度：着色器更快，发热更少</string>
     <string name="game_fp16_default_precision">默认精度</string>
+    <string name="settings_build_preview">你正在使用预览版（v%1$s）。预览版可能导致游戏出问题。稳定版 v%2$s 发布后会替换它。</string>
+    <string name="settings_build_preview_channel">你的更新渠道是%1$s：稳定版 v%2$s 发布后，应用会将你切换到该版本。</string>
+    <string name="settings_build_hotfix">你正在使用热修复版（v%1$s）：两次每周版本之间的小修复。下一个每周版本已包含它。</string>
 </resources>

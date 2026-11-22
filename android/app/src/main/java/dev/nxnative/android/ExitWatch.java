@@ -111,7 +111,7 @@ final class ExitWatch {
                     File log = runLog;
                     if (log == null) {
                         log = new File(logDir, runId + "-" + new SimpleDateFormat("yyyyMMdd-HHmmss", Locale.ROOT).format(new Date()) + ".log");
-                        append(log, "[nxlaunch] build " + BuildConfig.VERSION_NAME + " (" + BuildConfig.NX_COMMIT + "): the game process crashed before its log started\n");
+                        append(log, "[nxlaunch] build " + BuildConfig.VERSION_NAME + BuildKind.logNote(Prefs.buildKind()) + " (" + BuildConfig.NX_COMMIT + "): the game process crashed before its log started\n");
                         append(recordFile, "log=" + log.getName() + "\n");
                     }
                     append(log, ExitNotice.crashBlock(t.getName(), w.toString(), 60));   // the log is opened O_APPEND by nxlaunch too: whole lines, no overlap

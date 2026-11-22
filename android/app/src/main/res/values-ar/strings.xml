@@ -1403,7 +1403,6 @@
     <string name="home_reset_name">إعادة الاسم الأصلي</string>
     <string name="hint_open">فتح</string>
     <string name="hint_options_hold">خيارات (اضغط مطولاً)</string>
-    <string name="hint_hold_for_options">اضغط مطولاً على لعبة للخيارات</string>
     <string name="hint_move">تحريك</string>
     <string name="hint_place">وضع</string>
     <string name="hint_cancel">إلغاء</string>
@@ -1438,4 +1437,7 @@
     <string name="game_fast_fp16_shader_math">حسابات تظليل FP16 سريعة</string>
     <string name="game_fp16_on_turnip_faster">نصف دقة 16 بت على Turnip: تظليل أسرع وحرارة أقل</string>
     <string name="game_fp16_default_precision">الدقة الافتراضية</string>
+    <string name="settings_build_preview">أنت تستخدم نسخة معاينة (v%1$s). قد تعطّل النسخ التجريبية الألعاب. تحل محلها النسخة المستقرة v%2$s عند صدورها.</string>
+    <string name="settings_build_preview_channel">قناتك هي %1$s: ينقلك التطبيق إلى النسخة المستقرة v%2$s عند صدورها.</string>
+    <string name="settings_build_hotfix">أنت تستخدم إصلاحًا سريعًا (v%1$s): إصلاح صغير بين الإصدارات الأسبوعية. يتضمنه الإصدار الأسبوعي التالي.</string>
 </resources>

@@ -368,6 +368,18 @@ final class Updater {
         if (n != null) popup(a, n);
     }
 
+    /** Settings › Updates: one line about the running build when it is a preview or a hotfix (BuildKind); "" for a weekly release or a test build */
+    static String runningBuild(String channel) {
+        String kind = Prefs.buildKind(), v = BuildConfig.VERSION_NAME, base = BuildKind.base(v);
+        if ("preview".equals(kind)) {
+            String s = Tx.s(R.string.settings_build_preview, v, base);
+            if (!UpdateCheck.PREVIEW.equals(channel))
+                s += "\n" + Tx.s(R.string.settings_build_preview_channel, UpdateCheck.STABLE.equals(channel) ? Tx.s(R.string.settings_channel_stable) : Tx.s(R.string.settings_channel_hotfix), base);
+            return s;
+        }
+        return BuildKind.isHotfix(kind) ? Tx.s(R.string.settings_build_hotfix, v) : "";
+    }
+
     static Ui.Setting channelSetting(Activity a) {
         Ui.Setting row = new Ui.Setting(a, "🩹", Tx.s(R.string.settings_update_channel), null).chevron(a);
         CharSequence[] items = new CharSequence[CHANNELS.length];

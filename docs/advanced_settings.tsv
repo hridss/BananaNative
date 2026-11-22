@@ -188,6 +188,7 @@ DM_NVN_BARRIER	developer	Graphics			text			both
 DM_NVN_BF_WANT	developer	Diagnostics			text			both							
 DM_NVN_BLIT_ORDER	developer	Diagnostics			text			both							
 DM_NVN_CAPTURE	internal	Diagnostics			text			both						Mac or iOS only	
+DM_NVN_CAPTURE_DRY	developer	Diagnostics			text			both							
 DM_NVN_CBDUMP	developer	Diagnostics			text			both							
 DM_NVN_CBDUMP_KEY	developer	Diagnostics			text			both							
 DM_NVN_CBLOG	developer	Diagnostics			text			both							
@@ -595,6 +596,8 @@ DM_VK_IMG_RESERVE_MB	developer	Memory			text			both
 DM_VK_IMG_RETYPE	developer	Memory			text			both							
 DM_VK_IMG_SPV	internal	Diagnostics			text			both						test harness	
 DM_VK_IMG_UPGRADE	developer	Memory			text			both							
+DM_VK_IND_PEEK	developer	Diagnostics			text			both							
+DM_VK_IND_PEEK_LINES	developer	Diagnostics			text			both							
 DM_VK_INSTANCE	advanced	Performance	Instanced draws		toggle			game		Game settings > Instanced draws					
 DM_VK_INSTANCE_FAST	developer	Diagnostics			text			both							
 DM_VK_KGSL_FILTER	developer	Graphics			text			both							
@@ -746,6 +749,7 @@ DM_VK_SUBGROUP_PIN	developer	Performance			text			both
 DM_VK_SWAP_RB	developer	Diagnostics			text			both							
 DM_VK_SYNCLOG	developer	Diagnostics			text			both							
 DM_VK_TBUF	developer	Graphics			text			both							
+DM_VK_TBUF_RECOPY	developer	Diagnostics			text			both							
 DM_VK_TEST_HANG	developer	Diagnostics			text			both							
 DM_VK_TEXU_ELEM	developer	Diagnostics			text			both							
 DM_VK_TEX_MEMO	developer	Memory			text			both							

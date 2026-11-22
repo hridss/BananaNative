@@ -1371,7 +1371,6 @@
     <string name="home_reset_name">Adı sıfırla</string>
     <string name="hint_open">Aç</string>
     <string name="hint_options_hold">Seçenekler (basılı tut)</string>
-    <string name="hint_hold_for_options">Seçenekler için bir oyuna basılı tut</string>
     <string name="hint_move">Taşı</string>
     <string name="hint_place">Bırak</string>
     <string name="hint_cancel">İptal</string>
@@ -1406,4 +1405,7 @@
     <string name="game_fast_fp16_shader_math">Hızlı FP16 gölgelendirici matematiği</string>
     <string name="game_fp16_on_turnip_faster">Turnip\'te 16 bit yarım duyarlık: daha hızlı gölgelendirme, daha az ısı</string>
     <string name="game_fp16_default_precision">Varsayılan duyarlık</string>
+    <string name="settings_build_preview">Bir önizleme sürümü (v%1$s) kullanıyorsun. Önizlemeler oyunları bozabilir. Kararlı v%2$s çıktığında bunun yerini alır.</string>
+    <string name="settings_build_preview_channel">Kanalın %1$s: kararlı v%2$s çıktığında uygulama seni ona geçirir.</string>
+    <string name="settings_build_hotfix">Bir hızlı düzeltme sürümü (v%1$s) kullanıyorsun: haftalık sürümler arasında küçük bir düzeltme. Sonraki haftalık sürüm onu içerir.</string>
 </resources>
