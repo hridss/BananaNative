@@ -1251,7 +1251,7 @@ static void *pw_main(void *a) {
             atomic_fetch_add(&g_pw_heavywait_ns, gate_hold(tok, key));
             spec_begin(key);
         }
-        int made = 0;
+        int made = 0, other = 0;   // other: a key of a device with the other vertex input, dropped here (counted once, as dropped, not also as already there)
         if (bad) { atomic_fetch_add(&g_pw_bad, 1); pw_mark_bad(offs[i]); }
         else if (r.kind == VKA_PW_CS) {   // (with its retype masks: the module its dispatches use)
             uint64_t m[2] = {0, 0}; if (r.klen == VKA_PW_CS_MASKS) memcpy(m, kb, sizeof m);
@@ -1259,7 +1259,7 @@ static void *pw_main(void *a) {
         }
         else {
             vka_gkey k; memset(&k, 0, sizeof k); memcpy(&k, kb, r.klen < sizeof k ? r.klen : sizeof k);
-            if (k.vin_static != (uint32_t)!V.vin_dyn) { atomic_fetch_add(&g_pw_bad, 1); }   // a list from a device with the other vertex input (not this one's keys)
+            if (k.vin_static != (uint32_t)!V.vin_dyn) { atomic_fetch_add(&g_pw_bad, 1); other = 1; }   // a list from a device with the other vertex input (not this one's keys)
             else {
                 gkey_full fk; memset(&fk, 0, sizeof fk); memcpy(fk.sh, sh, sizeof fk.sh); fk.layout = lay.layout; fk.k = k;
                 size_t len = k.vin_static ? sizeof fk : offsetof(gkey_full, k.va);
@@ -1268,7 +1268,7 @@ static void *pw_main(void *a) {
         }
         if (!bad) spec_end(key);
         gate_leave(tok);
-        if (made) atomic_fetch_add(&g_pw_made, 1); else if (!bad) atomic_fetch_add(&g_pw_had, 1);
+        if (made) atomic_fetch_add(&g_pw_made, 1); else if (!bad && !other) atomic_fetch_add(&g_pw_had, 1);
         setpriority(PRIO_PROCESS, 0, 10);   // back under the game's threads if a waiting frame path raised it (busy_wait)
     }
     free(offs);
@@ -1290,8 +1290,13 @@ static void pw_start(void) {
     if (nt <= 0 || !g_pw_load_n) { if (g_pw_load_n) VLOG("prewarm: off (%s): %u keys not made ahead", getenv("DM_VK_PREWARM") ? "DM_VK_PREWARM=0" : "default on Qualcomm's driver before 512.800; DM_VK_PREWARM=4 on", g_pw_load_n); return; }
     if (nt > 4) nt = 4;
     heavy_load();   // the shaders earlier runs found long on this driver (build_end)
-    g_pw_t0 = now_ns(); g_pw_threads = 0;
-    for (int i = 0; i < nt; i++) { pthread_t th; if (!vka_compiler_thread(&th, pw_main, NULL)) { pthread_detach(th); g_pw_threads++; } }
+    g_pw_t0 = now_ns();
+    // g_pw_threads is the count before any thread runs: counted as the threads were made, a thread that finished its share while later ones were still being made
+    // counted itself the last (the done line early). A thread not made brings the count down; if the others are all done by then, the done line is not written
+    g_pw_threads = nt;
+    int made = 0;
+    for (int i = 0; i < nt; i++) { pthread_t th; if (!vka_compiler_thread(&th, pw_main, NULL)) { pthread_detach(th); made++; } }
+    if (made < nt) g_pw_threads = made;
     VLOG("prewarm: %u pipeline keys of earlier runs made ahead on %d background threads (DM_VK_PREWARM=0 off)", g_pw_load_n, g_pw_threads);
 }
 
