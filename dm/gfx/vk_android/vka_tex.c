@@ -716,6 +716,8 @@ static int storage_mode(const tex_t *t, const uint8_t *c, const vka_fmt *f, int 
         if (any && k < 4) VLOG("texture serial %llu %ux%ux%u format %#x pool flags %#x: written by the CPU before its first use, a sample (NVN2): uploaded from its storage, re-uploaded when it changes (%llu so far, %llu more with empty storage)",
                                (unsigned long long)t->serial, d->width, d->height, d->depth, d->format, pf, (unsigned long long)k + 1, (unsigned long long)g_nvn2_first[1]);
     }
+    else if (DM_GAME_TEX_DIRTY_UPLOAD && sampled && !(d->flags & (NVN_TEXTURE_FLAGS_IMAGE | NVN_TEXTURE_FLAGS_COMPRESSIBLE | NVN_TEXTURE_FLAGS_SPARSE))
+             && !(pf & (NVN_MEMORY_POOL_FLAGS_CPU_NO_ACCESS | NVN_MEMORY_POOL_FLAGS_VIRTUAL))) want = ST_TRACK;
     else if (!(d->flags & NVN_TEXTURE_FLAGS_COMPRESSIBLE) && t->pool && ((pf & (NVN_MEMORY_POOL_FLAGS_CPU_NO_ACCESS | NVN_MEMORY_POOL_FLAGS_CPU_UNCACHED)) || nvn_flushed(t->mem, t->L.size))
              && mem_any_mapped(c, t)) want = ST_FILL;
     // No later CPU writes to follow: a pool the CPU cannot access, a virtual pool (its pages are not the storage's), storage outside every tracked pool, or tracking off
