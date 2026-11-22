@@ -7,10 +7,12 @@
 //
 // KTGL's camera (init main+0x1f12368): projection rows +192, vertical FOV
 // (radians) +328, aspect +332, flags +344 (bit 0: orthographic).
-// patches.py pins the three observation gates to main build 76a489f3...:
-//   +0x8cc128, x20: remember a scene camera handed to the render view.
-//   +0x1f12130, x0: before the builder reads the fields, increase vertical FOV.
-//   +0x1f12354, x19: after the builder writes P, restore horizontal reach.
+// patches.py pins the observation gates to main build 76a489f3...:
+//   +0x8cc128 (28), x20: remember a scene camera handed to the render view.
+//   +0x1f12130 (29), x0: before the builder reads the fields, increase vertical FOV.
+//   +0x1f12354 (30|0), x19: after the builder writes P, restore horizontal reach.
+//   +0x0ebecec (30|6), x1: event stencil mask quad rect[4] before submit (Screen shape & variant 43).
+//   +0x0ebedd0 (30|7), x1/x19: event alpha-mask quad rect[4] & entry before submit (Screen shape & variant 43).
 //
 // The game copies the scene camera into a secondary render camera. Remember
 // corrected FOV values too, so that copy receives the same projection fix.
@@ -21,13 +23,13 @@
 // Changing it requires a restart: live changes cannot safely restore cameras
 // that the game has copied or stopped rebuilding. Default/off never writes a
 // camera. The picture may use DM_VK_PICTURE_ASPECT; when DM_PATCH_VARIANT is
-// unset, this also drives Screen shape UI scaling/anchoring (gates 30|1..3).
+// unset, this also drives Screen shape UI scaling/anchoring (gates 30|1..3, 30|6..7).
 //
 // With DM_PATCH_VARIANT=43 (native 4:3 pack variant, main build 76a489f3...),
 // world cameras run at 4:3 (W1) plus the T95 7-deg Pokedex portrait camera fix
-// on gate 30|0, while gates 30|3..5 dispatch kg175 UI rules (pkp_ui43.c) and
-// 30|1..2 are no-ops. Any other DM_PATCH_VARIANT disables aspect() / UI squeeze
-// so variants are never double-corrected.
+// on gate 30|0, while gates 30|3..5 dispatch kg175 UI rules (pkp_ui43.c),
+// 30|6..7 widen event mask rects, and 30|1..2 are no-ops. Any other
+// DM_PATCH_VARIANT disables aspect() / UI squeeze so variants are never double-corrected.
 #include "hle.h"
 #include "dm.h"
 #include "pkp_ui43.h"
@@ -388,6 +390,27 @@ static int t95_caller_is_22bba04(uint64_t fp) {
 }
 
 static void proj_done(uint64_t *r, int param) {
+    if (param == 6 || param == 7) {
+        double a = aspect();
+        if (!a || (!is_variant_43() && !ui_on()) || !r[1]) return;
+        if (param == 7) {
+            uint64_t entry = r[19];
+            if (!entry || !*(uint64_t *)(uintptr_t)entry ||
+                *(uint32_t *)(uintptr_t)(entry + 0x68) != 0x918000u)
+                return;
+        }
+        float *rect = (float *)(uintptr_t)r[1];
+        if (!isfinite(rect[0]) || !isfinite(rect[2])) return;
+        float cx = 0.5f * (rect[0] + rect[2]);
+        float hw = 0.5f * (rect[2] - rect[0]) * (float)(K169 / a);
+        static _Atomic int logged;
+        if (!atomic_exchange_explicit(&logged, 1, memory_order_relaxed))
+            LOG("pkp aspect %.4f: mask rect (%d) (%.1f..%.1f) -> (%.1f..%.1f)",
+                a, param, rect[0], rect[2], cx - hw, cx + hw);
+        rect[0] = cx - hw;
+        rect[2] = cx + hw;
+        return;
+    }
     int v43 = is_variant_43();
     if (param == 4) {
         if (v43) pkp_ui43_pre_bake((void *)(uintptr_t)r[0], (void *)(uintptr_t)r[1]);
