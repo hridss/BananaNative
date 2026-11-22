@@ -211,6 +211,18 @@ static void device_shared_refused(void) {
     assert(resize(0) == BAD);
     dm_device_share((void *)(heap + 1024 * 1024), P, 0);
     assert(!resize(0));
+    // UnmapMemory over device-shared memory is refused too, and leaves the mapping, its bytes and the source as they were (upstream nxnative 6c50d74e5)
+    assert(!pages(1, alias, 4 * P));
+    memset((void *)alias, 0x5a, 4 * P);
+    assert(!map(stack + P, alias + P, 2 * P));
+    memset((void *)(stack + P), 0x5b, 2 * P);
+    dm_device_share((void *)(stack + 2 * P), P, 1);
+    assert(unmap(stack + P, alias + P, 2 * P) == BAD);
+    for (size_t i = 0; i < 2 * P; ++i) assert(((uint8_t *)(stack + P))[i] == 0x5b);
+    dm_device_share((void *)(stack + 2 * P), P, 0);
+    assert(!unmap(stack + P, alias + P, 2 * P));
+    for (size_t i = 0; i < 2 * P; ++i) assert(((uint8_t *)(alias + P))[i] == 0x5b);
+    assert(!pages(0, alias, 4 * P));
 }
 
 static void ownership(void) {

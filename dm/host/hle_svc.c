@@ -360,7 +360,7 @@ int dm_map_source_overlap(uint64_t addr, uint64_t size, uint64_t *s, uint64_t *n
     return r;
 }
 // Device-shared memory. On Horizon, NVN gives a memory pool's storage to the GPU through nvmap, whose device mapping (svcMapDeviceAddressSpaceAligned, KPageTableBase::LockForMapDeviceAddressSpace)
-// sets KMemoryAttribute_DeviceShared on those pages and counts each mapping. UnmapPhysicalMemory and a SetHeapSize that shrinks refuse any page with an attribute set (ResultInvalidCurrentMemory,
+// sets KMemoryAttribute_DeviceShared on those pages and counts each mapping. UnmapMemory, UnmapPhysicalMemory and a SetHeapSize that shrinks refuse any page with an attribute set (ResultInvalidCurrentMemory,
 // 0xD401; Atmosphère's KPageTableBase::UnmapPhysicalMemory and SetHeapSize), so the pages stay mapped until the pool is finalized. Without this, the host gave such pages back (guest_release put
 // fresh pages under them) while the pool's zero-copy Metal buffer still held the old ones: the CPU then wrote one copy and the GPU read the other. PR #1616 found that on Monster Jam Steel Titans 2,
 // whose light-grid compute shaders read stale counts from the pool and hung the GPU. hle_nvn.c registers each pool's storage at nvnMemoryPoolInitialize and removes it at nvnMemoryPoolFinalize;
@@ -687,6 +687,8 @@ uint64_t svc_dispatch(int num, uint64_t *regs, uint64_t orig_addr) {
         int k = map_find(dst, size);
         if (!k || g_map[k - 1].base != dst || g_map[k - 1].size != size || g_map[k - 1].src != src) {
             pthread_mutex_unlock(&g_map_lock); LOG("UnmapMemory does not match a mapping %#llx+%#llx", dst, size); regs[0] = 0xD401; return 0; }
+        // Device-shared memory (a live NVN pool's storage) is refused as UnmapPhysicalMemory refuses it, before anything is copied back or given back (guest_drop_pages below)
+        if (device_shared(dst, size, "UnmapMemory")) { pthread_mutex_unlock(&g_map_lock); regs[0] = 0xD401; return 0; }
         dm_guest_write_prepare((void *)src, size);
         memcpy((void *)src, (void *)dst, size);
         map_del(k - 1);
