@@ -1807,7 +1807,11 @@ void dm_gfx_leave(void) { gfx_leave(); }
 __attribute__((weak)) void dm_keys_stop(void) {}   // hle_hid.c: drop the remaining DM_KEYS steps (DM_MARK_KEYS_STOP; the graphics unit tests have no scripted input)
 __attribute__((weak)) void dm_vk_drain(void) {}   // dm/gfx/vk/hle_vk.m: wait for the Vulkan layer's queue (the graphics unit tests do not link it)
 __attribute__((weak)) void dm_gl_drain(void) {}   // dm/gfx/gl/hle_gl.m: the same for the GL layer
+// Raised at each resume: the frame step takes the frame that spans the pause as a stall and owes none of its time (fstep_tick, nvn_fstep.h settle; upstream nxnative 6ef18a1f).
+// Android pauses here when the app leaves the screen (input_android.c), the Mac when its window is minimized
+static _Atomic uint64_t g_fs_settle_seq;
 void dm_gfx_suspend(int on) {
+    if (!on) atomic_fetch_add(&g_fs_settle_seq, 1);
     pthread_mutex_lock(&g_susp_mu);
     g_susp = on != 0;
     if (on) while (g_inflight_api) pthread_cond_wait(&g_susp_cv, &g_susp_mu);
@@ -1947,6 +1951,7 @@ extern uint32_t mtl_present_qos(void);
 static uint64_t g_frame;
 static uint64_t g_acq_wait_ns, g_pq_wait_ns;   // Accumulated display-link wait / wait for the present queue to return inside acquire, recorded per frame at present (there can be several acquires within one frame)
 static uint64_t g_fs_start, g_fs_wait;   // frame step (fstep_tick): when the first acquire after a present returned (the frame's start, 0 = none yet), and its pacing wait
+static uint64_t g_fs_settle_at;   // g_fs_settle_seq at the frame's start: a resume between the acquire and the present belongs to the next frame's span, not this one's
 uint64_t dm_nvn_frame_count(void) { return g_frame; }
 extern uint64_t g_t0_ns;   // Host process start point (main.c; same base as the UIMSG timestamps)
 // The fence an acquire sync waits for. The default: every commit before the acquire, as the Metal layer has it. presented: the last fence reserved when this image was
@@ -1980,7 +1985,7 @@ NVN(nvnWindowAcquireTexture, NVNwindowAcquireTextureResult, NVNwindow *w, NVNsyn
     uint64_t tk = *idx < 4 ? o->ticket[*idx] : 0;
     if (tk) { uint64_t w0 = now_ns(); mtl_present_wait(tk); g_pq_wait_ns += now_ns() - w0; }
     if (s) { ((sync_t *)s)->fenced = 2; ((sync_t *)s)->fence = mtl_acquire_fence(*idx < 4 ? o->pfence[*idx] : 0); }   // The swapchain texture becomes available once the graphics layer says (mtl_acquire_fence) (fenced 2: an acquire sync, for the wait ledger)
-    if (!g_fs_start) { g_fs_start = now_ns(); g_fs_wait = pace_ns; }   // the frame starts when the first acquire after a present returns: on a display-link tick when on time
+    if (!g_fs_start) { g_fs_start = now_ns(); g_fs_wait = pace_ns; g_fs_settle_at = atomic_load(&g_fs_settle_seq); }   // the frame starts when the first acquire after a present returns: on a display-link tick when on time
     return NVN_WINDOW_ACQUIRE_TEXTURE_RESULT_SUCCESS;
 }
 // The older API (NVN 53, Super Mario 3D World + Bowser's Fury): the queue waits for the texture on the GPU and no sync object is handed out. The host replays in submission order, so later commands already come after earlier presents; the same as WindowAcquireTexture without a sync object
@@ -2450,9 +2455,13 @@ static int fstep_hold(void) {
 static void fstep_tick(const win_t *o, int c) {
     static uint64_t prev, t0, v0, fixed_sum, held[FSTEP_MAX + 1]; static int nlog;
     const double v = 1e9 / 60;
+    uint64_t settle_now = g_fs_start ? g_fs_settle_at : atomic_load(&g_fs_settle_seq);   // resumes up to this frame's start (its span: the previous start to this one)
     uint64_t st = g_fs_start ? g_fs_start : now_ns(), pw = g_fs_wait; g_fs_start = g_fs_wait = 0;
-    double shown = prev ? (st - prev) / v : 0, gpu = 0; prev = st;
-    for (uint64_t f = g_frame; f-- > 0 && g_frame - f <= 8;) { double g = mtl_gpu_ms(f); if (g >= 0) { gpu = g * 1e6 / v; break; } }
+    double shown = prev ? (st - prev) / v : 0, gpu = 0; prev = st; int gpu_on = 0;
+    for (uint64_t f = g_frame; f-- > 0 && g_frame - f <= 8;) { double g = mtl_gpu_ms(f); if (g >= 0) { gpu = g * 1e6 / v; gpu_on = 1; break; } }
+    // A pause the host knows of (graphics resumed: gfx_resume_locked) since the last frame: a stall whatever it took, its time beyond the hold not owed (nvn_fstep.h settle)
+    static uint64_t seen_settle;
+    if (settle_now != seen_settle) { if (shown > 0) g_fs.settle = 1; seen_settle = settle_now; }   // (one before the first frame is startup, not a pause)
     double cpu = shown - pw / v, cost = cpu > gpu ? cpu : gpu;
     int kmin = 60 / c, kmax = !fstep_hold() ? kmin : kmin >= 2 ? 2 : FSTEP_MAX, k0 = g_fs.k, kmin0 = g_fs.kmin, probe0 = g_fs.probe;
     int fixed = (int)__atomic_load_n((uint32_t *)(dm_fps_state + 0x24), __ATOMIC_RELAXED);
@@ -2475,6 +2484,7 @@ static void fstep_tick(const win_t *o, int c) {
         if (__builtin_popcount(slow_bits) >= 12) g_fs.screen = 2;
     }
     g_fs.smax = dm_fps_step_max;   // the stub's largest step (STEP_MAX): frames held longer than the game steps would play in slow motion
+    g_fs.gpu_on = gpu_on; g_fs.gpu = gpu;   // an idle GPU's late frames do not step up; a hold the GPU does not explain is probed (nvn_fstep.h)
     int n = nvn_fstep_next(&g_fs, shown, cost, kmin, kmax, fixed, cslow || gslow);
     __atomic_store_n((uint32_t *)(dm_fps_state + 0x20), (uint32_t)n, __ATOMIC_RELAXED); atomic_store(&g_fs_k, g_fs.k);
     held[g_fs.k]++; if (fixed) fixed_sum += (uint64_t)n;   // the stubs count only the host's steps
@@ -2482,15 +2492,18 @@ static void fstep_tick(const win_t *o, int c) {
     if (fixed != fixed_was && nfix < 40) { nfix++; if (fixed) LOG("[nvn] frame step: the game fixes its own step at %d vsyncs at present %llu", fixed, (unsigned long long)o->presents); else LOG("[nvn] frame step: the game hands the step back to the host at present %llu", (unsigned long long)o->presents); }
     fixed_was = fixed;
     if (k0 && g_fs.k != k0 && nlog < 40) {
-        char why[160], held[48] = ""; int w = snprintf(why, sizeof why, "probe");
+        char why[256], held[48] = ""; int w = snprintf(why, sizeof why, "probe");
         if (cslow) w += snprintf(why + w, sizeof why - w, ", CPU %d%% on performance cores", g_fs_pshare);
         double gr = nvn_fgpu_ratio(&g_fg);   // the failed probes' ratio: the scene's time at kmin is cur over it
         if (gslow && gr > 0) w += snprintf(why + w, sizeof why - w, ", GPU %.2f at hold %d, %.2f at hold %d by the failed probes", g_fg.cur, g_fg.k, g_fg.cur / gr, kmin);
         else if (gslow) w += snprintf(why + w, sizeof why - w, ", GPU %.2f× its time at hold %d", g_fg.cur / g_fg.ref, kmin);
-        if (nvn_fstep_same(&g_fs)) snprintf(why + w, sizeof why - w, ", cost %.2f× the cost that held hold %d", g_fs.ccur / g_fs.cref, kmin);
+        if (w >= (int)sizeof why) w = sizeof why - 1;   // (snprintf returns the length it would have written)
+        if (nvn_fstep_same(&g_fs)) w += snprintf(why + w, sizeof why - w, ", cost %.2f× the cost that held hold %d", g_fs.ccur / g_fs.cref, kmin);
+        if (w >= (int)sizeof why) w = sizeof why - 1;
+        if (g_fs.uprobe) snprintf(why + w, sizeof why - w, ", GPU fits a shorter hold, frames not waiting in the pacing");
         if (g_fs.k > k0 && g_fs.cref > 0) snprintf(held, sizeof held, "; hold %d held at %.2f", kmin, g_fs.cref);   // what a probe compares the longer hold's cost with
         LOG("[nvn] frame step: hold %d → %d vsyncs at present %llu (%s; cost %.2f vsyncs, GPU %.2f%s)%s", k0, g_fs.k, (unsigned long long)o->presents,
-            fixed ? "the game's own step" : kmin0 > FSTEP_MAX ? "the game's own step ended" : kmin != kmin0 ? "the cap changed" : g_fs.k > k0 ? "3 late frames" : g_fs.probes != probes0 ? why : "trial", cost, gpu, held, ++nlog == 40 ? "; further changes only counted below" : "");
+            fixed ? "the game's own step" : kmin0 > FSTEP_MAX ? "the game's own step ended" : kmin != kmin0 ? "the cap changed" : g_fs.k > k0 ? (g_fs.up_idle ? "30 late frames, some with the GPU idle" : "3 late frames") : g_fs.probes != probes0 ? why : "trial", cost, gpu, held, ++nlog == 40 ? "; further changes only counted below" : "");
     }
     if (probe0 == 1 && g_fs.probe != 1 && !fixed && nlog < 40) {   // whether the controller raised the clock for the shorter deadline, and the GPU time it measured there
         char gm[96] = "";
@@ -2501,9 +2514,10 @@ static void fstep_tick(const win_t *o, int c) {
         LOG("[nvn] frame step: the run at hold %d after the probe lasted under %.0f s, counted as a failed probe (CPU %d%% on performance cores)%s", kmin, FSTEP_HOLD_MAX / 60, g_fs_pshare, ++nlog == 40 ? "; further changes only counted below" : "");
     if (o->presents % 1800 == 0) {   // game time against real time (1.000 = normal speed; lower when a device cannot hold 20 fps or after long stalls)
         uint64_t vs = __atomic_load_n((uint64_t *)(dm_fps_state + 0x30), __ATOMIC_RELAXED) + fixed_sum, t = now_ns();
-        if (t0) LOG("[nvn] frame step: game time %.2f s in %.2f s (%.3f of real time); held 1 / 2 / 3 vsyncs %llu / %llu / %llu frames, %llu late, %llu vsyncs paid back, %.0f dropped, %llu up / %llu down (%llu probes, %llu failed trials)",
+        if (t0) LOG("[nvn] frame step: game time %.2f s in %.2f s (%.3f of real time); held 1 / 2 / 3 vsyncs %llu / %llu / %llu frames, %llu late, %llu vsyncs paid back, %.0f dropped, %llu up / %llu down (%llu probes, %llu failed trials); %llu stalls (pauses, frames of %.0f vsyncs or more)",
                     (vs - v0) / 60.0, (t - t0) / 1e9, (vs - v0) / 60.0 / ((t - t0) / 1e9), (unsigned long long)held[1], (unsigned long long)held[2], (unsigned long long)held[3],
-                    (unsigned long long)g_fs.late, (unsigned long long)g_fs.paid, g_fs.dropped, (unsigned long long)g_fs.ups, (unsigned long long)g_fs.downs, (unsigned long long)g_fs.probes, (unsigned long long)g_fs.failed);
+                    (unsigned long long)g_fs.late, (unsigned long long)g_fs.paid, g_fs.dropped, (unsigned long long)g_fs.ups, (unsigned long long)g_fs.downs, (unsigned long long)g_fs.probes, (unsigned long long)g_fs.failed,
+                    (unsigned long long)g_fs.stalls, FSTEP_STALL);
         t0 = t; v0 = vs; memset(held, 0, sizeof held);
     }
 }
