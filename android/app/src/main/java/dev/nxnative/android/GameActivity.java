@@ -98,8 +98,11 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
     @Override protected void onCreate(Bundle saved) {
         super.onCreate(saved);
         fitOrientation();
-        setShowWhenLocked(true);
-        setTurnScreenOn(true);
+        // The game stays behind the lock screen: shown over it, after the lid closed it was drawn over the lock screen, which then had no way to the PIN prompt
+        // (found in Peanuts Native). Only a start that asks for it (--ez show_when_locked true, which MainActivity passes on) shows over it, for test runs on a phone that locks
+        boolean onLock = getIntent().getBooleanExtra("show_when_locked", false);
+        setShowWhenLocked(onLock);
+        setTurnScreenOn(onLock);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         // A screen created for another game in a process whose host runs one (RunGuard): it shows the running game, with the same "stop it first" as onNewIntent,
         // never Native.load of the other title or attach() to a host that is not the one asked for

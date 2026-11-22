@@ -2427,6 +2427,7 @@ public final class MainActivity extends Activity {
         Game.touch(this, g);   // the entry played last is the one kept if the list ever holds this game twice
         Intent intent = new Intent(this, GameActivity.class).putExtra("title_id", g.titleId).putExtra("name", g.name).putExtra("game", g.gameDir).putExtra("pack", g.packDir);
         if (getIntent().getBooleanExtra("no_pause", false)) intent.putExtra("no_pause", true);
+        if (getIntent().getBooleanExtra("show_when_locked", false)) intent.putExtra("show_when_locked", true);   // a test run over the lock screen (GameActivity)
         GameReturn.remember(this, g.titleId, g.name, g.gameDir, g.packDir);   // the app's icon goes back to this game while it runs
         startActivity(intent);
     }
