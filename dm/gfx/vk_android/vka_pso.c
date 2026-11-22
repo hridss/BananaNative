@@ -314,11 +314,12 @@ void vka_pso_save(int force) {
     if (force != 1) {
         if (__atomic_load_n(&g_made, __ATOMIC_RELAXED) == g_saved_at) return;
         int s = force == 2 ? VKA_ENV("DM_VK_PCACHE_SAVE_SLOW_S", 3) : VKA_ENV("DM_VK_PCACHE_SAVE_S", 20); if (s < 1) s = 1;
-        if (t - g_save_ns < (uint64_t)s * 1000000000ull) return;
-        g_save_ns = t;
+        // (claimed with a compare-and-swap: the prewarm threads call this too while the boot hold runs, several at once)
+        uint64_t last = __atomic_load_n(&g_save_ns, __ATOMIC_RELAXED);
+        if (t - last < (uint64_t)s * 1000000000ull || !__atomic_compare_exchange_n(&g_save_ns, &last, t, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) return;
         if (g_sv_up) { pthread_mutex_lock(&g_sv_mu); g_sv_want = 1; pthread_cond_signal(&g_sv_cv); pthread_mutex_unlock(&g_sv_mu); return; }
     }
-    g_save_ns = t;
+    __atomic_store_n(&g_save_ns, t, __ATOMIC_RELAXED);
     pthread_mutex_lock(&g_save_mu); save_now(); pthread_mutex_unlock(&g_save_mu);
 }
 void vka_gpl_line(char *out, size_t n);
@@ -638,12 +639,15 @@ static VkPipeline full_pipeline(pstate *P, vka_shader *const sh[VKA_NSTAGE], con
     else if (ms_ > 50) {
         static _Atomic int n;
         if (atomic_fetch_add(&n, 1) < 200) {
+            // The whole pipeline's hit flag is the driver's: Turnip sets it when any stage was found in the cache and marks no stage (cached), so a slow pipeline with it
+            // compiled at least one stage, which the stage times show (Ocarina of Time, 2026-11-22: "hit; vertex 5 ms, fragment 470 ms" was a fragment shader compiled);
+            // the line says "hit for some stages" for it, not "hit"
             char st[160]; size_t o = 0; st[0] = 0;
             for (uint32_t i = 0; i < P->ns && o < sizeof st; i++)
                 o += (size_t)snprintf(st + o, sizeof st - o, "%s%s %.0f ms%s", i ? ", " : "", stage_name(P->ss[i].stage), (fb_st[i].flags & VK_PIPELINE_CREATION_FEEDBACK_VALID_BIT) ? fb_st[i].duration / 1e6 : -1.0,
                                       (fb_st[i].flags & VK_PIPELINE_CREATION_FEEDBACK_APPLICATION_PIPELINE_CACHE_HIT_BIT) ? " (cached)" : "");
             VLOG("graphics pipeline (%s %016llx fragment %016llx) took %.0f ms%s (pipeline cache %s; %s)", P->mesh ? "mesh" : "vertex", pre ? (unsigned long long)pre->key : 0ull, sh[1] ? (unsigned long long)sh[1]->key : 0ull, ms_, how ? how : "",
-                 !(fb_all.flags & VK_PIPELINE_CREATION_FEEDBACK_VALID_BIT) ? "?" : (fb_all.flags & VK_PIPELINE_CREATION_FEEDBACK_APPLICATION_PIPELINE_CACHE_HIT_BIT) ? "hit" : "miss", st[0] ? st : "no stage times");
+                 !(fb_all.flags & VK_PIPELINE_CREATION_FEEDBACK_VALID_BIT) ? "?" : (fb_all.flags & VK_PIPELINE_CREATION_FEEDBACK_APPLICATION_PIPELINE_CACHE_HIT_BIT) ? "hit for some stages" : "miss", st[0] ? st : "no stage times");
         }
     }
     return p;
@@ -1329,6 +1333,10 @@ static void *pw_main(void *a) {
         if (!bad) spec_end(key);
         gate_leave(tok);
         if (made) atomic_fetch_add(&g_pw_made, 1); else if (!bad && !other) atomic_fetch_add(&g_pw_had, 1);
+        // Saves come from the replay thread's submissions (vka_pso_save), and the boot hold keeps the game from submitting: a run stopped or killed in the hold kept
+        // none of its compiles, and the next run made them again (Ocarina of Time on Turnip, 2026-11-22: runs stopped at 90 s and 200 s of a 204 s hold saved nothing).
+        // While the hold runs, the prewarm threads ask for the save themselves, due on the same DM_VK_PCACHE_SAVE_S schedule, on the saver thread
+        if (made && atomic_load(&g_prep)) vka_pso_save(0);
         setpriority(PRIO_PROCESS, 0, 10);   // back under the game's threads if a waiting frame path raised it (busy_wait)
     }
     free(offs);
