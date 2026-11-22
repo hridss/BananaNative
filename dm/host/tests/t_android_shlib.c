@@ -218,6 +218,19 @@ static void test_walk(void) {
         CHECK(na == 3 && r[1].tid == 121 && r[2].sid == 231, "DM_VK_TEXU_ELEM=0: %d/%d", r[1].tid, r[2].sid);
         vka_texu_elem = 1;
     }
+    // A handle of all ones (0xFFFFFFFF: an engine's "none", Kirby's Star-Crossed World shaders) binds nothing, as a handle of 0 does, in a uniform buffer, its texture-and-sampler
+    // OR and a texture slot; an ordinary handle beside it still binds
+    {
+        uint32_t none = 0xffffffffu, ok = 5 | 6u << 20; memcpy(g_mem + 0x60, &none, 4); memcpy(g_mem + 0x68, &ok, 4);
+        static vka_bstate ns; memcpy(&ns, &s, sizeof ns); ns.tex[1][3] = 0xffffffffu; ns.samp[1][6] = 0xffffffffu;
+        dmsh_vk_bind nb[] = {{.kind = DMSH_VK_KIND_TEX_UBO, .desc = 1, .binding = 270, .count = 1, .reg = 0, .off = 0x60, .skind = DMSH_VK_KIND_SAMP_UBO, .sreg = 0, .soff = 0x60, .dim = 1},
+                             {.kind = DMSH_VK_KIND_TEX_UBO, .desc = 1, .binding = 271, .count = 1, .reg = 0, .off = 0x68, .skind = DMSH_VK_KIND_SAMP_UBO, .sreg = 0, .soff = 0x68, .dim = 1},
+                             {.kind = DMSH_VK_KIND_TEX, .desc = 1, .binding = 272, .count = 1, .reg = 3, .skind = DMSH_VK_KIND_SAMP_TEX, .sreg = 3, .dim = 1}};
+        dmsh_vk_entry en = {.stage = DMSH_VK_STAGE_FS, .bind_count = 3};
+        int nn = vka_walk(&ns, 1, &en, nb, 0, 64, rd, NULL, r, 32, NULL, why, sizeof why);
+        CHECK(nn == 3 && r[0].what == VKA_R_NULL && r[1].what == VKA_R_TEX && r[1].tid == 105 && r[1].sid == 206 && r[2].what == VKA_R_NULL,
+              "all-ones handles bind nothing: %d, %d %d/%d/%d %d", nn, r[0].what, r[1].what, r[1].tid, r[1].sid, r[2].what);
+    }
     // An image whose handle the game keeps in its uniform buffer (DMSH_VK_KIND_IMG_UBO; Unreal Engine 5.6 on the Switch 2, Orbitals' compute shaders: c[3] word 2): a storage
     // image of the handle's texture ID with the pool base, as tex_ubo's and upstream's IMGU; a zero handle binds nothing
     {

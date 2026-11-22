@@ -26,8 +26,14 @@ static uint64_t ubo_word(const vka_bstate *s, int st, int reg, unsigned off, uns
 int vka_texu_elem = 1;
 // Element k's byte offset past an array's base: a uniform buffer's array of 64-bit NVN handles that the shader indexes (BindlessToArray: the host fills element k from base + 8k)
 static unsigned ubo_elem(const dmsh_vk_bind *b, unsigned k) { return b->count > 1 && vka_texu_elem ? 8u * k : 0; }
-static int ubo_tex_id(const vka_bstate *s, uint32_t h) { int t = (int)(h & 0xfffff); return t ? t + s->tex_base : 0; }
-static int ubo_samp_id(const vka_bstate *s, uint32_t h) { int x = (int)(h >> 20); return x ? x + s->samp_base : 0; }
+// A handle of all ones names no texture and no sampler: texture ID 0xFFFFF and sampler ID 0xFFF lie past every pool a game makes, and an engine writes the whole word as
+// its "none" for a slot the shader's branch does not sample (Kirby and the Forgotten Land - Nintendo Switch 2 Edition, its Star-Crossed World shaders DeferredShading,
+// VolumetricColorGrading and MeteorAreaRatePreCalculate: the slot's neighbours hold ordinary handles). It binds nothing, as a handle of 0 does; before, it read as unbound
+// behind a [RED] line for a texture ID no pool registers (vka_draw.c), which named a fault where there was none. The reads are the same: zeros
+#define HANDLE_NONE 0xffffffffu
+static int slot_tid(uint64_t h) { return (uint32_t)h == HANDLE_NONE ? 0 : (int)(h & 0xfffff); }   // a texture slot's or c2 handle's texture ID
+static int ubo_tex_id(const vka_bstate *s, uint32_t h) { int t = (int)(h & 0xfffff); return t && h != HANDLE_NONE ? t + s->tex_base : 0; }
+static int ubo_samp_id(const vka_bstate *s, uint32_t h) { if (h == HANDLE_NONE) return 0; int x = (int)(h >> 20); return x ? x + s->samp_base : 0; }
 
 // The sampler half of a combined image sampler (skind, sreg, soff); element k of an array
 static int samp_of(const vka_bstate *s, int st, const dmsh_vk_bind *b, unsigned k, vka_read_fn rd, void *ctx) {
@@ -79,17 +85,17 @@ int vka_walk(const vka_bstate *s, int st, const dmsh_vk_entry *e, const dmsh_vk_
                 break; }
             case DMSH_VK_KIND_TEX: case DMSH_VK_KIND_TEX_UBO: case DMSH_VK_KIND_TEX_C2A: {
                 int tid = b->kind == DMSH_VK_KIND_TEX_UBO ? (noslot ? 0 : ubo_tex_id(s, (uint32_t)ubo_word(s, st, reg, b->off + ubo_elem(b, k), 4, rd, ctx)))
-                        : b->kind == DMSH_VK_KIND_TEX_C2A ? (int)(vka_c2_handle(s, st, b->off + 8u * k) & 0xfffff)
-                        : noslot ? 0 : (int)(vka_tex_slot(s, st, (unsigned)reg) & 0xfffff);
+                        : b->kind == DMSH_VK_KIND_TEX_C2A ? slot_tid(vka_c2_handle(s, st, b->off + 8u * k))
+                        : noslot ? 0 : slot_tid(vka_tex_slot(s, st, (unsigned)reg));
                 int sid = b->skind ? samp_of(s, st, b, k, rd, ctx) : 0;
                 if (tid) { r.what = VKA_R_TEX; r.tid = tid; r.sid = sid; }
                 break; }
             case DMSH_VK_KIND_TBUF: {
-                int tid = noslot ? 0 : (int)(vka_tex_slot(s, st, (unsigned)reg) & 0xfffff);
+                int tid = noslot ? 0 : slot_tid(vka_tex_slot(s, st, (unsigned)reg));
                 if (tid) { r.what = VKA_R_TBUF; r.tid = tid; }
                 break; }
             case DMSH_VK_KIND_IMG: {
-                int tid = noslot || reg >= 32 ? 0 : (int)(s->img[st][reg] & 0xfffff);
+                int tid = noslot || reg >= 32 ? 0 : slot_tid(s->img[st][reg]);
                 if (tid) { r.what = VKA_R_IMG; r.tid = tid; }
                 break; }
             case DMSH_VK_KIND_IMG_UBO: {   // the image handle the game keeps in its uniform buffer (Unreal Engine 5 on the Switch 2: c[3]), read at bind time as tex_ubo's
