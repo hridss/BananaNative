@@ -78,6 +78,7 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
 | `build` → `game` | camera aspect and 2D layer: the 3D cameras and the UI follow the picture shape (Game settings > Aspect ratio) | rendering | blocked: one build on hand; the aspect store and the getter calls could be found by function fingerprint | judgement | 1 | [Mario Kart World](../../dm/games/0400C3F00006E000/README.md) | sead::PerspectiveProjection and nn::ui2d::DrawInfo are the same in every title of this engine, but the five sites are fixed addresses of this build |
 | `build` → `game` | camera aspect and 2D layer: the gameplay camera and the layouts follow the picture shape (Game settings > Aspect ratio) | rendering | blocked: one build on hand; the setter could be found by function fingerprint (two ucvtf, ucvtf, fdiv, str s0 blocks from the layout's +0x2c and +0x34 into the camera array at +0x40 and +0x370) | judgement | 1 | [Mario Tennis Fever](../../dm/games/0400D4201C6EA000/README.md) | the display layout setter, the camera's projection builders and the layout setup are the game's own code at fixed addresses of this build; the two nn::ui2d sites are SDK code a fingerprint finds (the same as Mario Kart World 1.8.0's) |
 | `build` → `game` | camera aspect: the 3D cameras follow the picture shape (Game settings > Aspect ratio) | rendering | blocked: one build on hand; the projection reads are plain sead code and could be found by function fingerprint | judgement | 1 | [The Legend of Zelda: Ocarina of Time](../../dm/games/0400486024DEC000/README.md) | sead::PerspectiveProjection is the same in every title of this engine, but the five read sites are fixed addresses of this build |
+| `build` → `game` | cutscene fade scheduling uses the sequence frame rate | frame rate | blocked: the scheduler has no unwind entry in 1.1.1, which the function matcher needs | checked: 1.1.1 disassembly and post-Porquillon runtime trace of the fade trigger, sequence rate and opacity | 1 | [Pikmin 4](../../dm/games/0100B7C00933A000/README.md) | the title's fade scheduler compares sequence-frame positions after converting seconds with the engine frame rate |
 | `build` → `game` | Donkey Kong Bananza camera and layout aspect callback in main v458752 | rendering | blocked: one build on hand | judgement | 1 | [Donkey Kong Bananza](../../dm/games/040074A01BF12000/README.md) | the callback reads the scene camera updater's aspect and fovy and the layout draw info's projection at fixed offsets, and the gates sit at fixed addresses of this build; the projection update and the layout setup are plain code a function fingerprint could find |
 | `build` → `game` | draw distance: the main camera's far plane capped (Game settings > Advanced > Draw distance, DM_OOT_DRAW_DISTANCE) | frame rate | blocked: the projection reads are plain sead code and could be found by function fingerprint; fog or LOD-distance parameters (RomFS) are the other levers, see the game note | judgement | 1 | [The Legend of Zelda: Ocarina of Time](../../dm/games/0400486024DEC000/README.md) | a per-game rule because no general one can do it: the game decides what to draw and clips by its own camera, so the host sees only draw calls; it rides the camera aspect gates (same sites, same 16:9 test) |
 | `build` → `game` | fog at the cut: the sky's scatter and adhoc fog distances pulled in to the draw distance (Game settings > Advanced > Fog at the cut, DM_OOT_FOG_AT_CUT) | rendering | blocked: one build on hand; the sky layout is agl's and the two loads sit in the scene manager's view update and scene draw, which a function fingerprint could find | judgement | 1 | [The Legend of Zelda: Ocarina of Time](../../dm/games/0400486024DEC000/README.md) | a per-game rule because no general one can do it: the fog distances are four floats of agl's sky that the game turns into constant-buffer terms each frame; the host cannot tell them apart in the buffers, and the two gates are fixed addresses of this build |
@@ -136,6 +137,7 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
 | [NieR:Automata The End of YoRHa Edition (0100B8E016F76000)](#nierautomata-the-end-of-yorha-edition-0100b8e016f76000) | 8 | 0 | 0 | 0 | 1 | `build` → `game` ×2 |
 | [Paper Mario: The Thousand-Year Door](#paper-mario-the-thousand-year-door) | 1 | 0 | 1 | 0 | 0 | `build` → `game` |
 | [Persona 5 Royal](#persona-5-royal) | 0 | 0 | 0 | 0 | 1 | `build` → `game` |
+| [Pikmin 4](#pikmin-4) | 0 | 0 | 1 | 0 | 0 | `build` → `game` |
 | [Pokemon Pokopia](#pokemon-pokopia) | 0 | 10 | 0 | 0 | 1 | `build` → `game` ×2 |
 | [Pokémon Brilliant Diamond](#pokémon-brilliant-diamond) | 0 | 0 | 0 | 0 | 1 | `build` → `engine` |
 | [Pokémon Legends: Arceus](#pokémon-legends-arceus) | 0 | 0 | 0 | 1 | 0 | `game` |
@@ -565,6 +567,15 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
 
 - **1.0.2 `main`** `d4b150b2…`
   - host [hle_fpslock.c:84](../../dm/host/hle_fpslock.c#L84): engine frame limit set to fps_target: Persona 5 Royal present interval
+
+### Pikmin 4
+
+[Pikmin 4](../../dm/games/0100B7C00933A000/README.md), `0100B7C00933A000`, [patches.py](../../dm/games/0100B7C00933A000/patches.py).
+
+- **`build` → `game`**, frame rate, blocked: the scheduler has no unwind entry in 1.1.1, which the function matcher needs, checked: 1.1.1 disassembly and post-Porquillon runtime trace of the fade trigger, sequence rate and opacity: cutscene fade scheduling uses the sequence frame rate. The title's fade scheduler compares sequence-frame positions after converting seconds with the engine frame rate
+
+- **1.1.1 `main`** `060f827b…` ([patches.py:30](../../dm/games/0100B7C00933A000/patches.py#L30))
+  - stub `+0x1ca4590`: cutscene fade scheduling uses the sequence frame rate
 
 ### Pokemon Pokopia
 

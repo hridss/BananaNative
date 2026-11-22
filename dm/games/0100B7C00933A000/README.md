@@ -18,6 +18,7 @@ Status: on the Mac, the boot, the title (a VP9 movie behind the logo), the main 
 ## Frame rate
 
 - **Current:** 30 fps, as on the Switch. The game steps a fixed frame time (`bUseFixedFrameRate=True` in `DefaultEngine.ini`, Unreal's default `FixedFrameRate` of 30) and asks for present interval 2 (`rhi.SyncInterval=2` in `SwitchDeviceProfiles.ini`, `r.VSync=1`), so a faster present rate would speed the game up, not smooth it. No `fps_target`.
+- **Cutscene fade scheduled at the sequence's frame rate** (from upstream nxnative [#2471](https://github.com/seedds/nxnative/issues/2471)). The title's cutscene scheduler converts a one-second fade into frames with the engine rate, then subtracts them from the end of a sequence that runs at 30 fps. With the engine at 60 fps (nxnative's Mac build) the fade started at sequence frame 200 and covered the post-Porquillon narration, which holds at 221. Here the game runs at its fixed 30 fps, so the two rates agree and the fade cannot start early; the 1.1.1 [stub](patches.py) at `main+0x1ca4590` (converting seconds with the sequence player's input frame rate) keeps the fade right if the engine rate ever differs. Not run here (no dump on hand); upstream checked it on an M4 Pro at 30 and 60 fps.
 
 ## Memory
 
