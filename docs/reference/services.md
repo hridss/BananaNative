@@ -1295,6 +1295,14 @@ Most service calls can be found before they crash, before the first boot or the 
 - **Fix:** it is logged, as nothing reads it (`hle_hid.c`; upstream nxnative's pull request #1425, b0f14c1a).
 - **Found on:** [Nintendo Switch 2 Welcome Tour](../../dm/games/040057C02159A000/README.md): its scene modules.
 
+### GameShare HID feature query opens the service
+
+- **Symptom:** `[RED] sf: the game connects to service stpl:u itself, which the host does not serve`, followed by `Result 0xe15` in a guest input loop, despite the streamplay initialization takeovers.
+- **Cause:** `nn::streamplay::GetSupportedHidFeatureSet()` was missing from the host. Unlike the hooked initialization functions, this public getter still ran in the SDK and lazily opened the service through `detail::GetUserService()` and `detail::CreateUserServiceByHipc()`. It returns a 32-bit configured feature mask; the game tests its bits before reading guest inputs. This is neither a different Initialize overload nor an internal call bypassing its hook.
+- **Fix:** take over the getter by symbol and retain the mask in the existing setter (`hle_misc.c`), as for the guest style and hold configuration. The default mask is zero. No IPC commands, aborts or executable addresses are changed.
+- **Found on:** [Star Fox](../../dm/games/0400E88025B1A000/README.md), base v0, main build ID `898024ffa42c059518eb38196f1ee0f635ecdf89`, SDK build ID `41d4de4a3b78214ad20c896960df0e5ea0ed595f`. On these builds only, the observed path is `main+0xad98620` (PLT call) → `sdk+0x770db0` (getter) → `sdk+0x77a280` (lazy service) → `sdk+0x777770` (connect / abort). These are diagnostic offsets, not patch addresses.
+- **Check:** `t_pctl` resolves both takeover registrations and checks default, replacement, clearing and high-bit masks without a guest service. The PR #3162 author verified startup and played from an existing save through to Andross once on an M4 Max, macOS 27.2.1 (2026-11-21); other titles remain unchecked.
+
 ### GameShare guest displays
 
 - **Symptom:** a crash at boot in `nn::vi` under `nn::streamplay::CreateIndividualDisplays`.
