@@ -9,6 +9,7 @@
 #include "vka_skipwarn.h"
 #include "vka_gmem.h"
 #include "../nvn/nvn_mtl.h"
+#include "../nvn/nvn_dbnd.h"
 #include "../../host/plat/plat.h"
 #include "vka_gml.h"
 #include "game_profile.h"
@@ -130,6 +131,7 @@ int vka_state_op(vka_dstate *d, uint32_t op, const void *a) {
     case OP_VIEWPORTS: { const p_viewports *b = a; for (int i = 0; i < b->n && b->first + i < 16; i++) { memcpy(d->vp[b->first + i], b->v[i], 16); d->vp_origin[b->first + i] = (uint8_t)b->origin; } d->has_vp = 1; break; }
     case OP_DEPTH_RANGE: { const p_depth_range *b = a; d->dr[0] = b->n; d->dr[1] = b->f; break; }
     case OP_DEPTH_CLAMP: d->depth_clamp = ((const p_depth_clamp *)a)->on; break;
+    case OP_DEPTH_BOUNDS: d->dbnd = *(const p_depth_bounds *)a; break;
     case OP_VP_SWIZZLE: { const p_vp_swizzle *b = a; if (b->first >= 0 && b->first + b->n <= 16) memcpy(d->vp_sw[b->first], b->sw, 4 * (size_t)b->n); break; }
     case OP_BLEND_COLOR: memcpy(d->blend_color, ((const p_blend_color *)a)->rgba, 16); break;
     case OP_ALPHA_REF: d->alpha_ref = ((const p_alpha_ref *)a)->ref; break;
@@ -1830,7 +1832,7 @@ static uint32_t *read_indices(uint64_t addr, int itype, uint32_t count) {
 // The dynamic state the command buffer holds: each draw sets only what changed (the draw path set some 25 states a draw). Valid from the first draw of a submission until
 // something else binds a graphics pipeline with static state (the masked stencil clear: vka_dyn_invalidate) or the submission ends; every graphics pipeline of the draws has
 // the same dynamic states (vka_pso.c), so binding one keeps them, except a mesh pipeline, which has no topology or primitive restart (vka_draw resets DY.topo / DY.pr after one)
-static struct { int valid; VkPipeline pipe; VkViewport vp; VkRect2D sc; uint32_t cull, ff, topo, dt, dw, dc, dbt, stt, dbe, rd, pr, sop[8], smask[6]; float db[3], bc[4]; } DY;
+static struct { int valid; VkPipeline pipe; VkViewport vp; VkRect2D sc; uint32_t cull, ff, topo, dt, dw, dc, dbt, stt, dbe, rd, pr, sop[8], smask[6]; float db[3], bc[4], dbb[2]; } DY;
 #define DY_SET(f, val, call) do { if (!DY.valid || !g_dyn_filter || memcmp(&DY.f, &(val), sizeof DY.f)) { memcpy(&DY.f, &(val), sizeof DY.f); call; } } while (0)
 #define DY_SET1(f, val, call) do { uint32_t v_ = (val); if (!DY.valid || !g_dyn_filter || DY.f != v_) { DY.f = v_; call; } } while (0)
 // The index buffer the command buffer holds: bound again only when it changes (DM_VK_VB_FILTER), forgotten with the dynamic state
@@ -2135,7 +2137,7 @@ static int vegetation_cut(const vka_dstate *d, vka_shader *const *sh) {
 typedef struct {
     int pair; uint64_t ind, frame, seq; vka_shader *fs;   // the prepass draw's pair, indirect record (0: direct), frame, order and pixel shader
     vka_range ubo[16], ssbo[16]; uint64_t tex[VKA_NTEX], samp[128], img[32], s_ssbo, s_tex;   // its pixel stage's bindings and their stamps
-    ds_st ds; uint32_t st_vmask[2], st_wmask[2], st_ref[2]; poly_st poly; p_poly_offset po; int depth_clamp; color_st color; float alpha_ref; ms_st ms;
+    ds_st ds; uint32_t st_vmask[2], st_wmask[2], st_ref[2]; poly_st poly; p_poly_offset po; int depth_clamp; p_depth_bounds dbnd; color_st color; float alpha_ref; ms_st ms;
 } prepass_snap;
 static prepass_snap g_pps[32]; static uint64_t g_pps_seq;   // the prepass draws last seen, by pair and indirect record
 static vka_shader *g_fs_sub;   // set while prepass_draw draws: the pixel shader in place of the bound one, and no mesh_cut
@@ -2149,7 +2151,7 @@ static void prepass_note(const vka_dstate *d, int i, uint64_t ind, vka_shader *f
     memcpy(s->ubo, d->b.ubo[1], sizeof s->ubo); memcpy(s->ssbo, d->b.ssbo[1], sizeof s->ssbo); memcpy(s->tex, d->b.tex[1], sizeof s->tex);
     memcpy(s->samp, d->b.samp[1], sizeof s->samp); memcpy(s->img, d->b.img[1], sizeof s->img); s->s_ssbo = d->s_ssbo[1]; s->s_tex = d->s_tex[1];
     s->ds = d->ds; memcpy(s->st_vmask, d->st_vmask, sizeof s->st_vmask); memcpy(s->st_wmask, d->st_wmask, sizeof s->st_wmask); memcpy(s->st_ref, d->st_ref, sizeof s->st_ref);
-    s->poly = d->poly; s->po = d->po; s->depth_clamp = d->depth_clamp; s->color = d->color; s->alpha_ref = d->alpha_ref; s->ms = d->ms;
+    s->poly = d->poly; s->po = d->po; s->depth_clamp = d->depth_clamp; s->dbnd = d->dbnd; s->color = d->color; s->alpha_ref = d->alpha_ref; s->ms = d->ms;
 }
 // The prepass draw of pair i a colour draw takes its depth from: the one of its own indirect record (the game draws both passes of a batch from one record), else the
 // pair's latest; from this frame or the one before. NULL: none
@@ -2245,7 +2247,7 @@ static int prepass_draw(const vka_dstate *d, const p_set_rt *rt, int has_rt, con
     memcpy(d2.b.ubo[1], s->ubo, sizeof s->ubo); memcpy(d2.b.ssbo[1], s->ssbo, sizeof s->ssbo); memcpy(d2.b.tex[1], s->tex, sizeof s->tex);
     memcpy(d2.b.samp[1], s->samp, sizeof s->samp); memcpy(d2.b.img[1], s->img, sizeof s->img); d2.s_ssbo[1] = s->s_ssbo; d2.s_tex[1] = s->s_tex;
     d2.ds = s->ds; memcpy(d2.st_vmask, s->st_vmask, sizeof d2.st_vmask); memcpy(d2.st_wmask, s->st_wmask, sizeof d2.st_wmask); memcpy(d2.st_ref, s->st_ref, sizeof d2.st_ref);
-    d2.poly = s->poly; d2.po = s->po; d2.depth_clamp = s->depth_clamp; d2.color = s->color; d2.alpha_ref = s->alpha_ref; d2.ms = s->ms;
+    d2.poly = s->poly; d2.po = s->po; d2.depth_clamp = s->depth_clamp; d2.dbnd = s->dbnd; d2.color = s->color; d2.alpha_ref = s->alpha_ref; d2.ms = s->ms;
     d2.chmask.mask = 0;
     static _Atomic int logged; if (atomic_fetch_add(&logged, 1) < 4)
         VLOG("mesh_prepass_cut: the depth of prepass %016llx drawn with colour mesh %016llx and pixel shader %016llx (inputs moved), then the colour pass as asked",
@@ -2632,7 +2634,16 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
     DY_SET1(dw, (uint32_t)(hd && d->ds.dt && d->ds.dw), vk.vkCmdSetDepthWriteEnable(g_cb, DY.dw));
     uint32_t dfv = eq_relax && d->ds.df == NVN_DEPTH_FUNC_EQUAL ? NVN_DEPTH_FUNC_LEQUAL : d->ds.df;   // mesh_cut
     DY_SET1(dc, (uint32_t)(dfv >= 1 && dfv <= 8 ? (VkCompareOp)(dfv - 1) : VK_COMPARE_OP_ALWAYS), vk.vkCmdSetDepthCompareOp(g_cb, DY.dc));
-    DY_SET1(dbt, (uint32_t)(VK_FALSE), vk.vkCmdSetDepthBoundsTestEnable(g_cb, DY.dbt));
+    // The depth bounds test (SetDepthBounds): a fragment passes when the depth already stored at its sample lies in [lo, hi]. Bounds no stored depth can meet (min above max,
+    // out of range, NaN) go to the GPU as (1, 0), which rejects every fragment as the Switch's GPU does, the pixel shader's side effects included; Vulkan takes bounds in
+    // [0, 1] only (no VK_EXT_depth_range_unrestricted). Without a depth attachment there is no stored depth and no test. A device without depthBounds ignores the bounds, as before
+    { float bb[2]; int kind = hd && V.depth_bounds ? dbnd_resolve(d->dbnd.on, d->dbnd.lo, d->dbnd.hi, bb) : DBND_OFF;
+      if (kind == DBND_EMPTY) { bb[0] = 1; bb[1] = 0; }
+      static _Atomic int told_;   // what the game asked for, once, when the device cannot test it
+      if (hd && !V.depth_bounds && d->dbnd.on && dbnd_resolve(1, d->dbnd.lo, d->dbnd.hi, (float[2]){0}) != DBND_OFF && !atomic_exchange(&told_, 1))
+          VLOG("depth bounds (%g, %g) asked for, but the device has no depthBounds feature: the bounds are ignored", d->dbnd.lo, d->dbnd.hi);
+      DY_SET1(dbt, (uint32_t)(kind != DBND_OFF), vk.vkCmdSetDepthBoundsTestEnable(g_cb, DY.dbt));
+      if (kind != DBND_OFF) DY_SET(dbb, bb, vk.vkCmdSetDepthBounds(g_cb, bb[0], bb[1])); }
     DY_SET1(stt, (uint32_t)(hs && d->ds.st), vk.vkCmdSetStencilTestEnable(g_cb, DY.stt));
     #define SOP(x) ((x) >= 1 && (x) <= 8 ? (VkStencilOp)((x) - 1) : VK_STENCIL_OP_KEEP)
     #define SCMP(x) ((x) >= 1 && (x) <= 8 ? (VkCompareOp)((x) - 1) : VK_COMPARE_OP_ALWAYS)

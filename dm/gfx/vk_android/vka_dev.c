@@ -248,6 +248,7 @@ static int init_once(void) {
     V.push_desc = x_push; V.vin_dyn = x_vin && fvin.vertexInputDynamicState; V.null_desc = x_rob && frob.nullDescriptor; V.idx8 = x_i8 && fi8.indexTypeUint8;
     V.divisor = x_div && fdiv.vertexAttributeInstanceRateDivisor; V.logic_op = f2.features.logicOp; V.dual_src = f2.features.dualSrcBlend; V.geom = f2.features.geometryShader;
     V.tess = f2.features.tessellationShader; V.depth_clamp = f2.features.depthClamp; V.fill_lines = f2.features.fillModeNonSolid; V.depth_bias_clamp = f2.features.depthBiasClamp;
+    V.depth_bounds = f2.features.depthBounds && VKA_ENV("DM_VK_DEPTH_BOUNDS", 1);   // (enabled with the rest of f2; DM_VK_DEPTH_BOUNDS=0: the bounds ignored, as before)
     V.multi_vp = f2.features.multiViewport; V.a2c = 1; V.vstores = f2.features.vertexPipelineStoresAndAtomics; V.fstores = f2.features.fragmentStoresAndAtomics; V.mesh = x_mesh && fmesh.meshShader; V.task = V.mesh && fmesh.taskShader;
     if (!f12.timelineSemaphore || !f13.dynamicRendering) { VRED("the device lacks timeline semaphores (%d) or dynamic rendering (%d)", f12.timelineSemaphore, f13.dynamicRendering); return 0; }
     V.imageless = f12.imagelessFramebuffer;   // (enabled with the rest of f12)

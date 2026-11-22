@@ -658,6 +658,14 @@ The replay on Metal (`dm/gfx/nvn/nvn_mtl.m`) and the Vulkan and OpenGL layers. E
 - **Fix:** `SetDepthClamp` is recorded (`OP_DEPTH_CLAMP`) and replayed as Metal's depth clip mode (it used to be ignored).
 - **Found on:** [Fire Emblem: Three Houses](../../dm/games/010055D009F78000/README.md) (the game turns it on).
 
+### Depth bounds
+
+- **Symptom:** `nvnCommandBufferSetDepthBounds` was a no-op (`g_nops` in `hle_nvn.c`) and the Vulkan replay always turned the test off, so a draw meant to touch only the pixels whose stored depth lies in `[min, max]` (a light volume, a decal) would draw over all of them. No red line.
+- **Cause:** nothing recorded the bounds. The Switch's GPU passes a fragment when the depth already stored at its sample lies in `[min, max]` (GL's `EXT_depth_bounds_test`, Vulkan's depth bounds test).
+- **Fix:** `SetDepthBounds` is recorded as `OP_DEPTH_BOUNDS` (`p_depth_bounds`: the enable and the bounds as passed; capture op 57) and kept in the replay's draw state, the mesh look-ahead and the prepass snapshot included. `dbnd_resolve` (`dm/gfx/nvn/nvn_dbnd.h`) turns it into off (the test off, or bounds that cover `[0, 1]`), bounds to test (clamped to `[0, 1]`), or bounds no stored depth meets (min above max, out of range, NaN). `vka_draw.c` sets `vkCmdSetDepthBoundsTestEnable` and the dynamic `vkCmdSetDepthBounds` from it, only with a depth attachment; bounds that pass nothing go to the GPU as `(1, 0)`, so every fragment is rejected as on the console (the pixel shader's side effects included) rather than the draw skipped. Pipelines take `VK_DYNAMIC_STATE_DEPTH_BOUNDS` on a device with `depthBounds`; a device without it ignores the bounds, as before, with one log line when a game asks for bounds that would reject something. `DM_VK_DEPTH_BOUNDS=0` turns it off. Upstream nxnative did the same for Metal on Apple10 GPUs ([PR #2866](https://github.com/seedds/nxnative/pull/2866), 5b7dad03b).
+- **Check:** `make -C dm/gfx/tests check_t_depth_bounds` (the resolver's cases: off, clamped, empty, NaN, -0), and `t_capture` (the record walks with no pointer).
+- **Found on:** no game seen so far asks for bounds that reject anything. Upstream measured [Breath of the Wild](../../dm/games/01007EF00011E000/README.md) (Great Plateau, 23 to 34.5 calls a frame), [Tears of the Kingdom](../../dm/games/0100F2C0115B6000/README.md) (opening cave, 23 to 25.8) and [Pokémon Scarlet](../../dm/games/0100A3D008C5C000/README.md) (outdoors, 65 to 66.7): every call with the test off and `(0, 1)`.
+
 ### Telling depth rejection from no rasterization
 
 - `DM_NVN_DEPTHOVR` (depth test forced to `ALWAYS`) with `HILITE` tells "rejected by depth" from "never rasterized". `TEXSNAP` copies used to run before the pass they were meant to show (classic-queue command buffer committed ahead of the Metal 4 one); they now go through the replay's copy encoder.
