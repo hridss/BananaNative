@@ -7,6 +7,7 @@
 #if defined(__ANDROID__)
 #include "vka.h"
 #include "vka_poolslot.h"
+#include "vka_dsplanes.h"
 #include "../nvn/nvn_mtl.h"
 #include "../tex/nvn_deswizzle.h"
 #include "../nvn/dmsh_abi_vk.h"
@@ -2880,6 +2881,19 @@ int vka_tex_id_in_pass(int id) {
     pthread_mutex_lock(&g_tmu);
     int r = 0;
     if (id < g_ntreg && g_treg[id].t.serial) { smap_ent *e = map_get(g_treg[id].t.serial); if (e && e->im && in_fb(e->im)) r = e->im->f.kind >= 3 ? 2 : 1; }
+    pthread_mutex_unlock(&g_tmu);
+    return r;
+}
+// The plane a texture ID of a depth / stencil image reads, as view_of picks its view's aspect: VKDS_STENCIL for a stencil-mode texture or view or an image without depth,
+// else VKDS_DEPTH; VKDS_BOTH when not known (vka_draw.c's pass feedback rule, vka_dsplanes.h)
+int vka_tex_id_ds_planes(int id) {
+    int r = VKDS_BOTH;
+    pthread_mutex_lock(&g_tmu);
+    if (id > 0 && id < g_ntreg && g_treg[id].t.serial) {
+        const treg_ent *e = &g_treg[id]; smap_ent *s = map_get(e->t.serial);
+        if (s && s->im && s->im->aspect != VK_IMAGE_ASPECT_COLOR_BIT)
+            r = e->t.stencil || (e->has_v && e->v.set_dsmode && e->v.dsmode) || !(s->im->aspect & VK_IMAGE_ASPECT_DEPTH_BIT) ? VKDS_STENCIL : VKDS_DEPTH;
+    }
     pthread_mutex_unlock(&g_tmu);
     return r;
 }

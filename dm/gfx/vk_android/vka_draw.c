@@ -17,6 +17,7 @@
 #include "vka_prepass.h"
 #include "vka_wbfollow.h"
 #include "vka_rplist.h"
+#include "vka_dsplanes.h"
 #include <math.h>
 #include <stdio.h>
 #include <stddef.h>
@@ -210,7 +211,8 @@ static struct {
     uint32_t cnl[8], dnl; VkExtent2D cext[8], dext;      // each attachment's layers and level size (clears in the pass must cover what they would outside it)
     int swrite;                                          // a draw of the pass wrote memory (storage buffers or images, raw global stores, a geometry shader's claim)
     int bar_pending;                                     // a game barrier came inside the pass and was taken there (vka_rp_game_barrier): the draws after it are checked (bar_hazard)
-    int rt_cont, dread;                                  // SET_RT continued the pass; a draw of the pass sampled its depth attachment
+    int rt_cont, dread;                                  // SET_RT continued the pass; the planes of its depth / stencil attachment draws of the pass sampled (vka_dsplanes.h)
+    int zwrote, swrote;                                  // a draw of the pass wrote depth; one wrote stencil (an operation that changes it: vkds_stencil_writes)
     struct { vka_img *im, *sh; uint32_t lv, l0, nl, bw, bh; } bc[8]; int nbc;   // block-compressed targets drawn through their shadows (bcrt_attach), copied back at the pass end
 } R;
 // Inline uniform updates (OP_UPDATE_UB) that came with a render pass open (DM_VK_UB_DEFER, default 1): Vulkan forbids vkCmdCopyBuffer inside a rendering pass, and ending the
@@ -1688,13 +1690,19 @@ static int bar_hazard(vka_shader *const sh[VKA_NSTAGE], const vka_dstate *d) {
     }
     return 0;
 }
-static int depth_sampled(vka_shader *const sh[VKA_NSTAGE], const vka_dstate *d) {
+static unsigned depth_sampled(vka_shader *const sh[VKA_NSTAGE], const vka_dstate *d) {   // the planes (vka_dsplanes.h) of the pass's depth / stencil attachment the draw samples
+    unsigned p = 0;
     for (int st = 0; st < VKA_NSTAGE; st++) {
         if (!sh[st] || (st == 1 && d->rast_discard)) continue;
         const vka_res *r = g_wk.r[st];
-        for (int i = 0; i < g_wk.n[st]; i++) if ((r[i].what == VKA_R_TEX || r[i].what == VKA_R_TBUF) && r[i].tid && vka_tex_id_in_pass_rec(r[i].tid, r[i].dim) == 2) return 1;
+        for (int i = 0; i < g_wk.n[st] && p != VKDS_BOTH; i++)
+            if ((r[i].what == VKA_R_TEX || r[i].what == VKA_R_TBUF) && r[i].tid && vka_tex_id_in_pass_rec(r[i].tid, r[i].dim) == 2) p |= (unsigned)vka_tex_id_ds_planes(r[i].tid);
     }
-    return 0;
+    return p;
+}
+static unsigned stencil_writes(const vka_dstate *d) {   // the stencil plane, when this draw's stencil state changes it (vkds_stencil_writes)
+    const unsigned ops[6] = {d->ds.fail_f, d->ds.zfail_f, d->ds.zpass_f, d->ds.fail_b, d->ds.zfail_b, d->ds.zpass_b};
+    return vkds_stencil_writes(d->ds.st, d->st_wmask[0], d->st_wmask[1], ops, NVN_STENCIL_OP_KEEP);
 }
 // When inline updates are deferred in UB: a draw with raw global memory access, or whose storage, vertex, index or indirect buffer overlaps UB, or whose overlapping UBO has an uncompleted opaque GPU write, ends the pass first
 static int ub_hazard(const vka_dstate *d, vka_shader *const sh[VKA_NSTAGE], int mesh, const p_draw *dw, const p_draw_idx *di) {
@@ -2563,11 +2571,17 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
     if (R.on && R.bar_pending && bar_hazard(sh, d)) { g_bar_late++; vka_rp_end(); }   // the game barrier taken inside the pass is needed here: the pass ends (its full barrier) first
     if (R.on && UB.n && ub_hazard(d, sh, mesh, dw, di)) vka_rp_end();
     if (R.on && (R.df || R.sf) && rt_same(rt, has_rt, &R.rt, R.has_rt)) {   // SetRenderTargets of the same targets between a depth write and sampling depth (or sampling depth then writing it)
-        int ds = (R.rt_cont || !R.dread) ? depth_sampled(sh, d) : 0;
+        // Depth and stencil are two planes (vka_dsplanes.h): the pass ends only for a plane written and sampled in it, the plane a sample reads coming from its view
+        // (vka_tex_id_ds_planes), a stencil write only when an operation changes it; a sample after a continuing SET_RT of a plane the pass has not written reads what
+        // the pass loaded. DM_VK_ZS_SPLIT=0 (live, default 1): one plane for both, any sample after a continuing SET_RT and any depth or stencil write after a sample, as before
+        unsigned ds = (R.rt_cont || R.dread != VKDS_BOTH) ? depth_sampled(sh, d) : 0;
         int hd_ = R.df != VK_FORMAT_UNDEFINED, hs_ = R.sf != VK_FORMAT_UNDEFINED;
+        unsigned w = d->rast_discard ? 0 : (hd_ && d->ds.dt && d->ds.dw ? VKDS_DEPTH : 0) | (hs_ ? stencil_writes(d) : 0);
         int dw_ = !d->rast_discard && ((hd_ && d->ds.dt && d->ds.dw) || (hs_ && d->ds.st && (d->st_wmask[0] || d->st_wmask[1])));
-        if ((ds && R.rt_cont) || (dw_ && R.dread)) vka_rp_end();
-        else if (ds) R.dread = 1;
+        int end = VKA_ENV("DM_VK_ZS_SPLIT", 1) ? vkds_end(R.rt_cont, ds, w, (R.zwrote ? VKDS_DEPTH : 0) | (R.swrote ? VKDS_STENCIL : 0), (unsigned)R.dread)
+                                                : (ds && R.rt_cont) || (dw_ && R.dread);
+        if (end) vka_rp_end();
+        else R.dread |= (int)ds;
     }
     uint64_t tstats = 0;   // DM_VK_TEX_STATS: this draw's fragment shader, its inputs' level 0 scanned and logged
     if (sh[1] && !d->rast_discard && ((vka_nan_on() >= 2 && vka_nan_probe(sh[1]->key)) || (vka_texstats_probe(sh[1]->key) && (tstats = sh[1]->key)))) {   // DM_VK_NANSCAN_FS: this draw's sampled textures, scanned before it
@@ -2583,7 +2597,9 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
         vka_nan_inputs(g_cb, ims, bs, ts, m, tstats);
     }
     if (!rp_begin(rt, has_rt, sc, has_sc, d)) { g_skipped++; return; }
-    if ((R.df || R.sf) && !R.dread && depth_sampled(sh, d)) R.dread = 1;
+    if ((R.df || R.sf) && R.dread != VKDS_BOTH) R.dread |= (int)depth_sampled(sh, d);
+    if (!R.zwrote && !d->rast_discard && R.df && d->ds.dt && d->ds.dw) R.zwrote = 1;
+    if (!R.swrote && !d->rast_discard && R.sf && stencil_writes(d)) R.swrote = 1;
     if (!R.swrite && draw_writes(sh, d)) R.swrite = 1;   // (a game barrier in this pass from now on ends it: vka_rp_game_barrier)
     d->b.samples = R.samples;
     vka_gkey k; memset(&k, 0, V.vin_dyn ? offsetof(vka_gkey, va) : sizeof k);   // (va, vb: only without vertex input dynamic state, vin_build; the pipeline lookup reads no further then)
