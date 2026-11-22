@@ -1400,4 +1400,22 @@
     <string name="settings_build_preview">你正在使用預覽版（v%1$s）。預覽版可能導致遊戲出問題。穩定版 v%2$s 發佈後會取代它。</string>
     <string name="settings_build_preview_channel">你的更新頻道是%1$s：穩定版 v%2$s 發佈後，應用程式會將你切換到該版本。</string>
     <string name="settings_build_hotfix">你正在使用熱修復版（v%1$s）：兩次每週版本之間的小修復。下一個每週版本已包含它。</string>
+    <string name="home_cannot_use_this_nx">無法使用此 .nx 檔案</string>
+    <string name="ready_an_nx_that_reads_and">：可讀取並通過檢查的 .nx（</string>
+    <string name="ready_an_nx_used_where_it">：在原位置使用的 .nx（透過檔案選擇器選取；</string>
+    <string name="home_a_games_folder">遊戲資料夾（新增其中的每個遊戲，以及之後放入的新遊戲）</string>
+    <string name="games_folders_pick">選擇存放遊戲的資料夾。</string>
+    <string name="games_folders_title">遊戲資料夾</string>
+    <string name="games_folders_value">應用程式在其中查找新遊戲的資料夾</string>
+    <string name="games_folders_none">還沒有遊戲資料夾。</string>
+    <string name="games_folders_add">新增遊戲資料夾</string>
+    <string name="games_folders_look">查找新遊戲</string>
+    <string name="games_folders_removed">%1$s 不再是遊戲資料夾。其中的遊戲仍留在首頁上。</string>
+    <string name="games_folders_looking">正在查找新遊戲…</string>
+    <string name="games_folders_nothing_new">遊戲資料夾中沒有新遊戲。</string>
+    <string name="games_folders_no_game">在 %1$s 中沒有找到遊戲。它仍是遊戲資料夾：之後放入的遊戲會在應用程式啟動時新增。</string>
+    <string name="games_folders_cannot_keep">此資料夾不允許應用程式在重新啟動後繼續讀取。請選擇手機儲存空間或 SD 卡上的資料夾。</string>
+    <string name="games_folders_cannot_read">目前無法讀取 %1$s。它可能已被移動或刪除，或者權限已被收回。請在 設定 › 資料夾 中移除它，然後重新新增。</string>
+    <string name="games_folders_dump_needs_access">%1$s 是一個傾印資料夾：應用程式依路徑讀取它，這需要“所有檔案”存取權限。</string>
+    <string name="games_folders_hint">.nup、.nsp 或 .nx 檔案就是一個遊戲，傾印資料夾也是；放在遊戲旁邊的更新或 DLC 屬於該遊戲。應用程式會在新增資料夾時、每次啟動時以及“查找新遊戲”時瀏覽這些資料夾，並新增還沒有卡片的遊戲（啟動時只看新增或變更的檔案，因此你移除的卡片不會再回來）。它從不移除卡片。</string>
 </resources>
