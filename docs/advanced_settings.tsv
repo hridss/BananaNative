@@ -671,6 +671,10 @@ DM_VK_POOL_FB	developer	Memory			text			both
 DM_VK_POOL_FB_EARLY	developer	Diagnostics			text			both							
 DM_VK_POOL_SLOT_BIND	developer	Diagnostics			text			both							
 DM_VK_PREFAULT	developer	Diagnostics			text			both							
+DM_VK_PREPARE	developer	Graphics			text		1: the game waits at its start until the pipelines of earlier runs are made	both							
+DM_VK_PREPARE_MAX_S	developer	Graphics			text		300 s	both							
+DM_VK_PREPARE_SHOW_MS	developer	Graphics			text		1000 ms	both							
+DM_VK_PREPARE_SLOTS	developer	Graphics			text		4 compiles at once while the game waits (Turnip: its own 1 unless set)	both							
 DM_VK_PRESENT_GATE_WAIT	developer	Performance			text		30 ms with Turnip, 0 (off) with other drivers	both							
 DM_VK_PRESENT_NEAREST	developer	Performance			text			both							
 DM_VK_PRESENT_OWNFMT	developer	Diagnostics			text			both							

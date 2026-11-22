@@ -322,6 +322,114 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
         ui.removeCallbacks(skipRun);
         if (!skipShown) ui.postDelayed(skipRun, 30000);
     }
+
+    /**
+     * The compiling-shaders screen (PrepareScreen): the host holds the game at its first pipeline while it makes the pipelines of earlier runs and of the game's profile
+     * (vka_pso.c, DM_VK_PREPARE), and answers Native.prepareStatus() while that hold runs past a second. Polled every 300 ms over the run's first 3 minutes until it shows,
+     * then until the hold ends; it covers the picture (the game draws nothing meanwhile), a ring and the count, the time left, and Skip, which ends the hold. Once per run
+     */
+    private static boolean prepareDone;
+    private FrameLayout prepareView;
+    private ProgressRing prepareRing;
+    private TextView prepareCount, prepareLeft;
+    private static long prepareT0;   // (the run's: a recreated screen keeps counting from the start)
+    private final Runnable prepareRun = this::prepareTick;
+    private void prepareTick() {
+        if (prepareDone || rootView == null) return;
+        int[] st = PrepareScreen.parse(Native.prepareStatus());
+        if (st != null) {
+            if (prepareView == null) prepareShow();
+            prepareRing.set(PrepareScreen.fraction(st));
+            prepareCount.setText(PrepareScreen.count(st));
+            prepareLeft.setText(PrepareScreen.left(st));
+        } else if (prepareView != null) { prepareGone(); return; }
+        else if (android.os.SystemClock.elapsedRealtime() - prepareT0 > 180000) { prepareDone = true; return; }   // no hold came: nothing to make, or a host without it
+        ui.postDelayed(prepareRun, 300);
+    }
+    private void prepareStart() {
+        ui.removeCallbacks(prepareRun);
+        if (prepareDone) return;
+        if (prepareT0 == 0) prepareT0 = android.os.SystemClock.elapsedRealtime();
+        ui.post(prepareRun);
+    }
+    private void prepareGone() {
+        prepareDone = true;
+        ui.removeCallbacks(prepareRun);
+        FrameLayout v = prepareView; prepareView = null;
+        if (v != null) v.animate().alpha(0).setDuration(400).withEndAction(() -> rootView.removeView(v)).start();
+    }
+    private void prepareShow() {
+        Native.note("compiling shaders: the screen shown (" + Native.prepareStatus() + ")");
+        float dp = getResources().getDisplayMetrics().density;
+        FrameLayout scrim = new FrameLayout(this);
+        scrim.setBackgroundColor(0xF0101010);
+        scrim.setClickable(true);   // it takes the touches the game would get (the game is held anyway)
+        android.widget.LinearLayout col = new android.widget.LinearLayout(this);
+        col.setOrientation(android.widget.LinearLayout.VERTICAL);
+        col.setGravity(Gravity.CENTER_HORIZONTAL);
+        TextView title = new TextView(this);
+        title.setText(PrepareScreen.title());
+        title.setTextColor(Color.WHITE);
+        title.setTextSize(22);
+        title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        title.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+        title.setGravity(Gravity.CENTER);
+        android.widget.LinearLayout.LayoutParams tlp = new android.widget.LinearLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT);
+        tlp.gravity = Gravity.CENTER_HORIZONTAL;   // (the column's own gravity left it at the left edge of the widest line)
+        col.addView(title, tlp);
+        prepareRing = new ProgressRing(this, Ui.col(this, R.color.bn_banana), true);
+        int rs = Math.round(112 * dp);
+        android.widget.LinearLayout.LayoutParams rlp = new android.widget.LinearLayout.LayoutParams(rs, rs);
+        rlp.topMargin = Math.round(20 * dp); rlp.bottomMargin = Math.round(16 * dp); rlp.gravity = Gravity.CENTER_HORIZONTAL;
+        col.addView(prepareRing, rlp);
+        prepareCount = new TextView(this);
+        prepareCount.setTextColor(Color.WHITE);
+        prepareCount.setTextSize(15);
+        prepareCount.setGravity(Gravity.CENTER);
+        col.addView(prepareCount);
+        prepareLeft = new TextView(this);
+        prepareLeft.setTextColor(0xB3FFFFFF);
+        prepareLeft.setTextSize(13);
+        prepareLeft.setGravity(Gravity.CENTER);
+        col.addView(prepareLeft);
+        TextView note = new TextView(this);
+        note.setText(PrepareScreen.note());
+        note.setTextColor(0x99FFFFFF);
+        note.setTextSize(12);
+        note.setGravity(Gravity.CENTER);
+        note.setMaxWidth(Math.round(420 * dp));
+        android.widget.LinearLayout.LayoutParams nlp = new android.widget.LinearLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT);
+        nlp.topMargin = Math.round(18 * dp);
+        col.addView(note, nlp);
+        TextView skip = new TextView(this);
+        skip.setText(PrepareScreen.skip());
+        skip.setTextColor(Color.WHITE);
+        skip.setTextSize(14);
+        int p = Math.round(10 * dp);
+        skip.setPadding(3 * p, p, 3 * p, p);
+        android.graphics.drawable.GradientDrawable sb = new android.graphics.drawable.GradientDrawable();
+        sb.setColor(0x22FFFFFF);
+        sb.setStroke(Math.round(dp), 0x66FFFFFF);
+        sb.setCornerRadius(20 * dp);
+        skip.setBackground(sb);
+        skip.setOnClickListener(v -> { Native.note("compiling shaders: skipped by the player"); Native.prepareSkip(); prepareGone(); });
+        android.widget.LinearLayout.LayoutParams slp = new android.widget.LinearLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT);
+        slp.topMargin = Math.round(24 * dp); slp.gravity = Gravity.CENTER_HORIZONTAL;
+        col.addView(skip, slp);
+        TextView skipNote = new TextView(this);
+        skipNote.setText(PrepareScreen.skipNote());
+        skipNote.setTextColor(0x80FFFFFF);
+        skipNote.setTextSize(11);
+        skipNote.setGravity(Gravity.CENTER);
+        android.widget.LinearLayout.LayoutParams klp = new android.widget.LinearLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT);
+        klp.topMargin = Math.round(6 * dp);
+        col.addView(skipNote, klp);
+        scrim.addView(col, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
+        scrim.setAlpha(0f);
+        rootView.addView(scrim, panel != null ? rootView.indexOfChild(panel) : rootView.getChildCount(), new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+        scrim.animate().alpha(1f).setDuration(250).start();
+        prepareView = scrim;
+    }
     /**
      * The shader layer (LayerWatch): shaders the game asked for and its prepared library lacks are built while it runs; "Building shaders (N)" is shown small and see-through at the very top middle
      * while requests are pending (Prefs.layerLabel: Off, the count alone, or the full words). One watcher; a recreated screen starts it again
@@ -876,6 +984,7 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
                     + ": window " + Prefs.startWindow(this, id) + ", scene " + (sceneName.isEmpty() ? "the game's own palette" : sceneName);
             pinStart();   // Use fast cores (Game settings, Settings)
             skipStart();
+            prepareStart();   // the compiling-shaders screen (PrepareScreen)
             layerStart();
             // DM_TEST_CRASH (a test crash, ExitWatch): the test app only
             if (!testApp() && user.removeIf(kv -> kv.startsWith("DM_TEST_CRASH="))) unknownNotes.add("[nxlaunch] DM_TEST_CRASH not taken: the test app only");
@@ -1054,6 +1163,7 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
         ui.postDelayed(this::fpsTick, 500);
         pinStart();
         skipStart();
+        prepareStart();   // the compiling-shaders screen (PrepareScreen)
         layerStart();
     }
 
