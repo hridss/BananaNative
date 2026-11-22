@@ -1893,7 +1893,7 @@ __attribute__((constructor)) static void nvn_nops_register(void) {
 
 // ---------- Window / present ----------
 #define WB(b) ((win_builder_t *)(b))
-NVN(nvnWindowBuilderSetDefaults, void, NVNwindowBuilder *b) { NVNdevice *dev = WB(b)->dev; memset(b, 0, sizeof(win_builder_t)); WB(b)->dev = dev; WB(b)->interval = 1; }
+NVN(nvnWindowBuilderSetDefaults, void, NVNwindowBuilder *b) { NVNdevice *dev = WB(b)->dev; memset(b, 0, sizeof(win_builder_t)); WB(b)->dev = dev; WB(b)->interval = 1; WB(b)->acq_timeout = UINT64_MAX; }
 NVN(nvnWindowBuilderSetDevice, void, NVNwindowBuilder *b, NVNdevice *d) { WB(b)->dev = d; }
 NVN(nvnWindowBuilderSetNativeWindow, void, NVNwindowBuilder *b, NVNnativeWindow w) { WB(b)->native = w; }
 NVN(nvnWindowBuilderSetTextures, void, NVNwindowBuilder *b, int n, NVNtexture *const *t) {
@@ -1901,9 +1901,17 @@ NVN(nvnWindowBuilderSetTextures, void, NVNwindowBuilder *b, int n, NVNtexture *c
     WB(b)->ntex = n; for (int i = 0; i < n; i++) WB(b)->tex[i] = t[i];
 }
 NVN(nvnWindowBuilderSetPresentInterval, void, NVNwindowBuilder *b, int v) { WB(b)->interval = v; }
+// NVN2's acquire timeout (Ocarina of Time looks these four up). nvn.h has no prototypes for them (names.txt, nvn_protos.h "without a prototype"): the timeout is taken as a 64-bit
+// count of nanoseconds, the form NVN's other timeouts have (nvnSyncWait); a 32-bit argument would read the same in its low half. The value is kept and read back, not applied:
+// nvnWindowAcquireTexture here waits only for its texture's present slot (at most one present interval behind, pacing) and for a present still in flight, and NVN's result for an
+// acquire that timed out is not known here. The builder's default is UINT64_MAX (no limit), an assumption: NVN's own default is not known here either
+NVN_NOPROTO(nvnWindowBuilderSetAcquireTimeout, void, NVNwindowBuilder *b, uint64_t ns) { WB(b)->acq_timeout = ns; }
+NVN_NOPROTO(nvnWindowBuilderGetAcquireTimeout, uint64_t, const NVNwindowBuilder *b) { return ((const win_builder_t *)b)->acq_timeout; }
+NVN_NOPROTO(nvnWindowSetAcquireTimeout, void, NVNwindow *w, uint64_t ns) { ((win_t *)w)->acq_timeout = ns; }
+NVN_NOPROTO(nvnWindowGetAcquireTimeout, uint64_t, const NVNwindow *w) { return ((const win_t *)w)->acq_timeout; }
 NVN(nvnWindowInitialize, NVNboolean, NVNwindow *w, const NVNwindowBuilder *b) {
     const win_builder_t *s = (const win_builder_t *)b; win_t *o = (win_t *)w;
-    memset(o, 0, sizeof *o); o->magic = MAGIC('W', 'I', 'N', 'D'); o->native = s->native; o->ntex = s->ntex; o->interval = s->interval;
+    memset(o, 0, sizeof *o); o->magic = MAGIC('W', 'I', 'N', 'D'); o->native = s->native; o->ntex = s->ntex; o->interval = s->interval; o->acq_timeout = s->acq_timeout;
     memcpy(o->tex, s->tex, sizeof o->tex);
     for (int i = 0; i < o->ntex; i++) if (o->tex[i]) mtl_xv_window_tex(CTX(o->tex[i])->serial);
     LOG("[nvn] WindowInitialize swap chain %d textures, interval %d, first %dx%d format %#x", o->ntex, o->interval,

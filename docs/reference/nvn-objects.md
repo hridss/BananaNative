@@ -693,8 +693,8 @@ Games read this count as a position in their own command memory and size their h
 
 - **Symptom:** a jump to pc=0 right after the NVN bootstrap loader (`lr=main+0x37fe930`, `[RED] NVN address lookup of an unknown name: nvnSetExternalDebuggerEnabledNVX`).
 - **Cause:** the game fetches an NVX extension of the SDK 8 driver by name and calls it without checking the pointer. Unknown names return null, as the real driver does for a name it lacks; this one the driver has.
-- **Fix:** it joins `dm/gfx/nvn/names.txt` (thunks regenerated with `gen_protos.py`; no prototype in `nvn.h`, so `NVN_NOPROTO`) as a no-op.
-- **Found on:** [Super Smash Bros. Ultimate](../../dm/games/01006A800016E000/README.md) (13.0.5).
+- **Fix:** it joins `dm/gfx/nvn/names.txt` (thunks regenerated with `gen_protos.py`; no prototype in `nvn.h`, so `NVN_NOPROTO`) as a no-op. NVN2's window acquire timeout (`nvnWindowBuilderSetAcquireTimeout`, `nvnWindowBuilderGetAcquireTimeout`, `nvnWindowSetAcquireTimeout`, `nvnWindowGetAcquireTimeout`; the names as upstream nxnative has them) joined the same way: the value (taken as a 64-bit count of nanoseconds) is kept in the builder and the window and read back, not applied, since `nvnWindowAcquireTexture` here waits only for its texture's present slot and for a present still in flight, and NVN's result for an acquire that timed out is not known here. The builder's default is `UINT64_MAX` (no limit), an assumption.
+- **Found on:** [Super Smash Bros. Ultimate](../../dm/games/01006A800016E000/README.md) (13.0.5); the acquire timeout on [Ocarina of Time](../../dm/games/0400486024DEC000/README.md#found-on-this-game) (looked up at start: `[RED] NVN address lookup of an unknown name: nvnWindowBuilderSetAcquireTimeout` and the other three on Android).
 
 ### NVN entry points on the big host stack
 

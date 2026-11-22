@@ -801,7 +801,16 @@ int main(void) {
     NVNtexture *missing_first[2] = {NULL, &sc[1]};
     P(nvnWindowBuilderSetTextures)(&wb, 2, missing_first);
     EXPECT("WindowInitialize with null first texture", 1, P(nvnWindowInitialize)(&win, &wb));
+    // NVN2's acquire timeout (no prototype in nvn.h): the builder's default (UINT64_MAX), a value set on the builder reaches the window, the window's own setter
+    uint64_t (*at_bget)(const NVNwindowBuilder *) = (uint64_t (*)(const NVNwindowBuilder *))proc("nvnWindowBuilderGetAcquireTimeout");
+    void (*at_bset)(NVNwindowBuilder *, uint64_t) = (void (*)(NVNwindowBuilder *, uint64_t))proc("nvnWindowBuilderSetAcquireTimeout");
+    uint64_t (*at_wget)(const NVNwindow *) = (uint64_t (*)(const NVNwindow *))proc("nvnWindowGetAcquireTimeout");
+    void (*at_wset)(NVNwindow *, uint64_t) = (void (*)(NVNwindow *, uint64_t))proc("nvnWindowSetAcquireTimeout");
+    EXPECT("acquire timeout: the builder's default is no limit", 1, at_bget(&wb) == UINT64_MAX);
+    at_bset(&wb, 16666667); EXPECT("acquire timeout: the builder keeps it", 1, at_bget(&wb) == 16666667);
     P(nvnWindowBuilderSetTextures)(&wb, 2, scp); EXPECT("WindowInitialize succeeds", 1, P(nvnWindowInitialize)(&win, &wb));
+    EXPECT("acquire timeout: the window takes the builder's", 1, at_wget(&win) == 16666667);
+    at_wset(&win, UINT64_MAX); EXPECT("acquire timeout: the window's own setter", 1, at_wget(&win) == UINT64_MAX);
     int idx[4];
     for (int f = 0; f < 4; f++) {
         P(nvnWindowAcquireTexture)(&win, &s2, &idx[f]);
