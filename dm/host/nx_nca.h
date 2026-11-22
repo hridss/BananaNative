@@ -285,7 +285,8 @@ static nxs *nx_nca_romfs(nx_ncx *x, int type, uint32_t ver, uint64_t tid, int ao
     uint8_t *h = malloc(0xC00), *bh = malloc(0xC00); nxs *f, *sec, *cur, *res = NULL; int r, si;
     if (!h || !bh) { snprintf(why, wn, "out of memory"); goto out; }
     if (!(f = nx_cnmt_nca(x, pk, type == 2 ? 2 : 1, type == 2 ? -1 : pidx, why, wn)) || nx_nca_hdr(x, f, h, why, wn)) goto out;
-    if (h[0x205] != (type == 2 ? 4 : 0)) { snprintf(why, wn, "%s: content type %u, not a %s NCA", f->name, h[0x205], type == 2 ? "data" : "program"); goto out; }
+    // An add-on's content is a Data NCA (content type 4) or a PublicData one (5: Mario Kart 8 Deluxe's add-on 1 in a snapshot made from its NSP); the RomFS reads the same
+    if (type == 2 ? h[0x205] != 4 && h[0x205] != 5 : h[0x205] != 0) { snprintf(why, wn, "%s: content type %u, not a %s NCA", f->name, h[0x205], type == 2 ? "data" : "program"); goto out; }
     if ((si = nx_romfs_section(f, h, why, wn)) < 0 || !(sec = nx_nca_section(x, f, h, si, why, wn))) goto out;
     const uint8_t *fh = h + 0x400 + 0x200 * si; cur = sec;
     if (fh[3] != 3 || memcmp(fh + 8, "IVFC", 4)) { snprintf(why, wn, "%s: its RomFS section has no IVFC hash levels (hash type %u)", f->name, fh[3]); goto out; }
