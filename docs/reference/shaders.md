@@ -460,6 +460,14 @@ Finding, keying and translating shaders (`dm/gfx/tools/shader_split.py`, `dmsh_b
 - **Found on:** BRAVELY DEFAULT II 1.0.0 in upstream nxnative (PR #3193; no profile here): its version 8 pak has 155,207 Zstd entries.
 - **Check:** `dm/tools/tests/test_uepak_zstd.py`: frames with and without a content size, wrong and negative sizes, a truncated frame, trailing bytes, an empty frame.
 
+### Single-block Unreal pak entries truncated by their 6-bit block size
+
+- **Symptom:** `[RED] <N> file(s) could not be read, their shaders are left out (first: …BaseCompat.ini: … block 0 does not decode (the stream does not end within its 0x3800 raw bytes))`, then `[RED] shader <key> is not in the shader map` at run time.
+- **Cause:** in version 11 encoded entries (`uepak.py` `Pak.entry`), Unreal Engine 4.26 writes `(raw >> 11) & 0x3f` into the 6-bit block-size field of a single-block compressed file, since `FPakFile::DecodePakEntry` takes the uncompressed size for a file of one block. `Pak.entry` took the raw size only when that field was 0 (under 2 KB, or UE 5.6), so a single-block file of 2 KB or more whose size is not a multiple of 2 KB got a smaller block size and its block did not decode.
+- **Fix:** every single-block encoded entry takes its raw size as its block size (`Pak.entry`), `Pak.read` uses the raw size for single-block reads of every pak version, and a negative raw size, a non-positive block size of a multi-block entry, or blocks that leave raw bytes over are refused.
+- **Found on:** Grand Theft Auto: The Trilogy – The Definitive Edition 1.0.8 in upstream nxnative (issue #3012; no profile here).
+- **Check:** `dm/tools/tests/test_uepak_v11.py` (upstream's): version 11 single-block entries with truncated 6-bit block sizes, plain and encrypted, zero and `0x3f`-escaped sizes, multi-block entries, older single-block entries, damaged block coverage.
+
 ### Unreal Engine 3 shader caches (Oodle packages)
 
 - **Symptom:** `the shader split found no shaders in main or the RomFS`; the survey lists the RomFS as cooked packages (`.xxx`) and `.usm` movies only.
