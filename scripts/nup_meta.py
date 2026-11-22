@@ -63,7 +63,7 @@ def cut_unfinished(path):
 
 
 def set_meta(path, sel, icon, title, version, publisher):
-    cut_unfinished(path)
+    cut_unfinished(path); nup.forget(path)   # (possibly cut: stat it again)
     n = nup.open_nup(path)
     pkg = pick(n, sel)
     idx = pkg.index
@@ -107,6 +107,7 @@ def set_meta(path, sel, icon, title, version, publisher):
             fh.seek(nup.SB.unpack(sb_old)[3]); fh.write(toc_old)
             fh.seek(0); fh.write(sb_old); fh.truncate(end); fh.flush()
             raise
+        finally: nup.forget(path)   # written: the next open stats it again (nup.stat reuses a stat for 2 s)
     nup.open_nup(path)   # the result must read back as a valid file
     print(f'{path}: {pkg.selector} meta block {msize} -> {len(block)} bytes ({", ".join(NAMES[t] for t in sorted(new))} set)')
     return True

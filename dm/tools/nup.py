@@ -23,7 +23,7 @@ one per file: a game of a games folder read through the provider and the files b
 
 Usage: nup.py <file>.nup [packages | ls [<name>] | cat <name> | verify [<name>]]   (exit 1 on a bad file; <name> is a selector with a path)
 """
-import errno, fnmatch, functools, glob, hashlib, io, os, re, stat as _stat, struct, sys, tempfile
+import errno, fnmatch, functools, glob, hashlib, io, os, re, stat as _stat, struct, sys, tempfile, time
 
 MAGIC, TOC_MAGIC = b'NUP\x01', b'TOC\x01'
 SB = struct.Struct('<4sHHQQ32sQQII16s32s')     # superblock, 0x80 bytes (SPEC §2)
@@ -107,10 +107,28 @@ def open_fd(path):
     return os.dup(fd) if fd is not None else os.open(path, O_RDONLY)
 
 
+STAT_S = float(os.environ.get('DM_NUP_STAT_S', '2'))   # seconds an archive's os.stat is reused (0: every call asks the file system)
+_stats = {}   # path → (monotonic time, os.stat result)
+
 def stat(path):
-    """os.stat of a .nup, or fstat of DM_NUP_FD's descriptor for its path"""
+    """os.stat of a .nup, or fstat of DM_NUP_FD's descriptor for its path. Every path operation inside an archive (romfs.py's stat, scandir, open of
+    `<file>.nx:<rest>`) resolves the archive again, which stats it twice (resolve, open_nup): about 9 ms each on a network share, so a walk of a game's
+    20,000 files spent all its time in this function (shader_split.py on Kirby and the Forgotten Land's .nx on an SMB share: 6.7 hours, 99.6% of the
+    samples here). A stat taken within STAT_S seconds is reused; a file replaced after that is seen at the next call, as before"""
     fd = fd_of(path)
-    return os.fstat(fd) if fd is not None else os.stat(path)
+    if fd is not None: return os.fstat(fd)
+    if STAT_S <= 0: return os.stat(path)
+    now = time.monotonic(); hit = _stats.get(path)
+    if hit and now - hit[0] < STAT_S: return hit[1]
+    st = os.stat(path)
+    if len(_stats) > 64: _stats.clear()
+    _stats[path] = (now, st)
+    return st
+
+
+def forget(path):
+    """Drops path's reused stat: a tool that has just written the file (scripts/nup_meta.py) reads it back as it now is"""
+    _stats.pop(path, None); _stats.pop(os.path.abspath(os.fsdecode(path)), None)
 
 
 def zstd():
