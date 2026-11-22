@@ -181,6 +181,43 @@ static const uint32_t SPV_REMAP_FRAG[] = {
     0x000200f8, 0x00000016, 0x000100fc, 0x000200f8, 0x00000017, 0x0004003d, 0x00000007, 0x0000001c, 0x0000001b, 0x00050041, 0x0000000c, 0x0000001e,
     0x00000009, 0x0000001d, 0x0004003d, 0x00000006, 0x0000001f, 0x0000001e, 0x0005008e, 0x00000007, 0x00000020, 0x0000001c, 0x0000001f, 0x0003003e,
     0x0000001a, 0x00000020, 0x000100fd, 0x00010038};
+// A buffer address made a pointer through a 64-bit integer (vka_spv_no_int64), assembled in the translator's shape (SPIR-V 1.3): a compute shader reads two 32-bit words
+// from a BufferBlock storage buffer, bitcasts them to a uint64 and that to a physical-storage-buffer pointer, loads through it, adds a constant whose value equals
+// the uint64 type's id (6) and stores the sum to the storage buffer. SPV_I64_BAD also adds the uint64 to itself before the pointer is made
+static const uint32_t SPV_I64_ADDR[] = {
+    0x07230203, 0x00010300, 0x00000000, 0x0000001c, 0x00000000, 0x00020011, 0x00000001, 0x00020011, 0x0000000b, 0x00020011, 0x000014e3, 0x0009000a,
+    0x5f565053, 0x5f52484b, 0x73796870, 0x6c616369, 0x6f74735f, 0x65676172, 0x6675625f, 0x00726566, 0x0003000e, 0x000014e4, 0x00000001, 0x0005000f,
+    0x00000005, 0x00000001, 0x6e69616d, 0x00000000, 0x00060010, 0x00000001, 0x00000011, 0x00000001, 0x00000001, 0x00000001, 0x00040005, 0x00000015,
+    0x72646461, 0x00000000, 0x00030047, 0x00000009, 0x00000003, 0x00050048, 0x00000009, 0x00000000, 0x00000023, 0x00000000, 0x00050048, 0x00000009,
+    0x00000001, 0x00000023, 0x00000008, 0x00040047, 0x0000000b, 0x00000022, 0x00000000, 0x00040047, 0x0000000b, 0x00000021, 0x00000000, 0x00030047,
+    0x00000007, 0x00000002, 0x00050048, 0x00000007, 0x00000000, 0x00000023, 0x00000000, 0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002,
+    0x00040015, 0x00000004, 0x00000020, 0x00000000, 0x00040017, 0x00000005, 0x00000004, 0x00000002, 0x00040015, 0x00000006, 0x00000040, 0x00000000,
+    0x0003001e, 0x00000007, 0x00000004, 0x00040020, 0x00000008, 0x000014e5, 0x00000007, 0x0004001e, 0x00000009, 0x00000005, 0x00000004, 0x00040020,
+    0x0000000a, 0x00000002, 0x00000009, 0x0004003b, 0x0000000a, 0x0000000b, 0x00000002, 0x00040015, 0x0000000c, 0x00000020, 0x00000001, 0x0004002b,
+    0x0000000c, 0x0000000d, 0x00000000, 0x0004002b, 0x0000000c, 0x0000000e, 0x00000001, 0x00040020, 0x0000000f, 0x00000002, 0x00000005, 0x00040020,
+    0x00000010, 0x00000002, 0x00000004, 0x00040020, 0x00000011, 0x000014e5, 0x00000004, 0x0004002b, 0x00000004, 0x0000001a, 0x00000006, 0x00050036,
+    0x00000002, 0x00000001, 0x00000000, 0x00000003, 0x000200f8, 0x00000012, 0x00050041, 0x0000000f, 0x00000013, 0x0000000b, 0x0000000d, 0x0004003d,
+    0x00000005, 0x00000014, 0x00000013, 0x0004007c, 0x00000006, 0x00000015, 0x00000014, 0x00040078, 0x00000008, 0x00000016, 0x00000015, 0x00050041,
+    0x00000011, 0x00000017, 0x00000016, 0x0000000d, 0x0006003d, 0x00000004, 0x00000018, 0x00000017, 0x00000002, 0x00000004, 0x00050080, 0x00000004,
+    0x0000001b, 0x00000018, 0x0000001a, 0x00050041, 0x00000010, 0x00000019, 0x0000000b, 0x0000000e, 0x0003003e, 0x00000019, 0x0000001b, 0x000100fd,
+    0x00010038};
+static const uint32_t SPV_I64_BAD[] = {
+    0x07230203, 0x00010300, 0x00000000, 0x0000001d, 0x00000000, 0x00020011, 0x00000001, 0x00020011, 0x0000000b, 0x00020011, 0x000014e3, 0x0009000a,
+    0x5f565053, 0x5f52484b, 0x73796870, 0x6c616369, 0x6f74735f, 0x65676172, 0x6675625f, 0x00726566, 0x0003000e, 0x000014e4, 0x00000001, 0x0005000f,
+    0x00000005, 0x00000001, 0x6e69616d, 0x00000000, 0x00060010, 0x00000001, 0x00000011, 0x00000001, 0x00000001, 0x00000001, 0x00040005, 0x00000015,
+    0x72646461, 0x00000000, 0x00030047, 0x00000009, 0x00000003, 0x00050048, 0x00000009, 0x00000000, 0x00000023, 0x00000000, 0x00050048, 0x00000009,
+    0x00000001, 0x00000023, 0x00000008, 0x00040047, 0x0000000b, 0x00000022, 0x00000000, 0x00040047, 0x0000000b, 0x00000021, 0x00000000, 0x00030047,
+    0x00000007, 0x00000002, 0x00050048, 0x00000007, 0x00000000, 0x00000023, 0x00000000, 0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002,
+    0x00040015, 0x00000004, 0x00000020, 0x00000000, 0x00040017, 0x00000005, 0x00000004, 0x00000002, 0x00040015, 0x00000006, 0x00000040, 0x00000000,
+    0x0003001e, 0x00000007, 0x00000004, 0x00040020, 0x00000008, 0x000014e5, 0x00000007, 0x0004001e, 0x00000009, 0x00000005, 0x00000004, 0x00040020,
+    0x0000000a, 0x00000002, 0x00000009, 0x0004003b, 0x0000000a, 0x0000000b, 0x00000002, 0x00040015, 0x0000000c, 0x00000020, 0x00000001, 0x0004002b,
+    0x0000000c, 0x0000000d, 0x00000000, 0x0004002b, 0x0000000c, 0x0000000e, 0x00000001, 0x00040020, 0x0000000f, 0x00000002, 0x00000005, 0x00040020,
+    0x00000010, 0x00000002, 0x00000004, 0x00040020, 0x00000011, 0x000014e5, 0x00000004, 0x0004002b, 0x00000004, 0x0000001a, 0x00000006, 0x00050036,
+    0x00000002, 0x00000001, 0x00000000, 0x00000003, 0x000200f8, 0x00000012, 0x00050041, 0x0000000f, 0x00000013, 0x0000000b, 0x0000000d, 0x0004003d,
+    0x00000005, 0x00000014, 0x00000013, 0x0004007c, 0x00000006, 0x00000015, 0x00000014, 0x00050080, 0x00000006, 0x0000001c, 0x00000015, 0x00000015,
+    0x00040078, 0x00000008, 0x00000016, 0x0000001c, 0x00050041, 0x00000011, 0x00000017, 0x00000016, 0x0000000d, 0x0006003d, 0x00000004, 0x00000018,
+    0x00000017, 0x00000002, 0x00000004, 0x00050080, 0x00000004, 0x0000001b, 0x00000018, 0x0000001a, 0x00050041, 0x00000010, 0x00000019, 0x0000000b,
+    0x0000000e, 0x0003003e, 0x00000019, 0x0000001b, 0x000100fd, 0x00010038};
 // Whether a variable is decorated Location loc (*var: the first one), and a global variable's storage class (-1: none)
 static int loc_of(const uint32_t *w, size_t n, uint32_t loc, uint32_t *var) {
     for (size_t i = 5; i < n && (w[i] >> 16); i += w[i] >> 16) if ((w[i] & 0xffff) == 71 && (w[i] >> 16) >= 4 && w[i + 2] == 30 && w[i + 3] == loc) { if (var) *var = w[i + 1]; return 1; }
@@ -451,6 +488,30 @@ int main(void) {
         }
         if (dir) closedir(dir);
         printf("t_android_spvpatch: %d of %d modules in %s read the pool and were rewritten\n", nrw, nmod, pd);
+    }
+    {   // 64-bit integers only for a buffer address (vka_spv_no_int64): made without them, as SPIR-V 1.5 with the storage buffer StorageBuffer-class
+        size_t in = sizeof SPV_I64_ADDR / 4; int ch = 0;
+        CHECK(vka_spv_declares_int64(SPV_I64_ADDR, in) && !vka_spv_declares_int64(SPV_TRI_VERT, n), "Int64 found in the address module only");
+        uint32_t *x = vka_spv_no_int64(SPV_I64_ADDR, in, &on, &ch, err, sizeof err);
+        CHECK(x && ch, "address module not rewritten: %s", err);
+        if (x) {
+            int cap64 = 0, int64t = 0, bufblock = 0, uni = 0, sbuf = 0;
+            for (size_t i = 5; i < on && (x[i] >> 16); i += x[i] >> 16) {
+                uint32_t op = x[i] & 0xffff;
+                cap64 += op == 17 && x[i + 1] == 11; int64t += op == 21 && x[i + 2] == 64; bufblock += op == 71 && x[i + 2] == 3;
+                if (op == 59) { uni += x[i + 3] == 2; sbuf += x[i + 3] == 12; }
+            }
+            CHECK(x[1] == 0x10500, "SPIR-V 1.5 (%08x)", x[1]);
+            CHECK(!cap64 && !int64t && !count_op(x, on, 120), "no Int64 capability, 64-bit type or OpConvertUToPtr left");
+            CHECK(count_op(x, on, 124) == 1, "the pointer made by one bitcast from the two words");
+            CHECK(!bufblock && !uni && sbuf == 1, "the storage buffer Block-decorated and StorageBuffer-class");
+            if (val) CHECK(validate(x, on, "no-Int64 address module"), "valid SPIR-V");
+            free(x);
+        }
+        err[0] = 1; x = vka_spv_no_int64(SPV_I64_BAD, sizeof SPV_I64_BAD / 4, &on, &ch, err, sizeof err);
+        CHECK(!x && !ch && !err[0], "a 64-bit integer used some other way: left as it is, without an error");
+        x = vka_spv_no_int64(SPV_TRI_VERT, n, &on, &ch, err, sizeof err);
+        CHECK(!x && !ch && !err[0], "a module without Int64: nothing to do");
     }
     printf("t_android_spvpatch: %s%s\n", g_fail ? "FAILED" : "ok", val ? "" : " (no spirv-val: structure only)");
     return g_fail != 0;

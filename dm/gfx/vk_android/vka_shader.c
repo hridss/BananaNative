@@ -424,6 +424,16 @@ static uint32_t *lib_words(const vka_shlib *L, const dmsh_vk_entry *e, const dms
         if (o) { free(w); w = o; *nb = on * 4; }
         else if (e2[0]) { static _Atomic int n; if (atomic_fetch_add(&n, 1) < 8) VRED("pixel shader %016llx: per-primitive inputs not made flat (%s): its pipelines are refused", (unsigned long long)e->key, e2); }
     }
+    // A device without 64-bit integers in shaders (Qualcomm's driver on the Adreno 740): a module that declares them only to make buffer pointers from two 32-bit words is
+    // rewritten without them (vka_spv_no_int64), else the driver refuses every pipeline of it (-13). Every variant and retype is made from these words, so they have it too
+    if (w && !V.int64 && vka_spv_declares_int64(w, *nb / 4)) {
+        size_t on = 0; int changed = 0; char e2[160]; uint32_t *o = vka_spv_no_int64(w, *nb / 4, &on, &changed, e2, sizeof e2);
+        unsigned long long key = e ? (unsigned long long)e->key : 0;
+        if (o) {
+            free(w); w = o; *nb = on * 4;
+            static _Atomic int n; if (!atomic_fetch_add(&n, 1)) VLOG("shaderInt64: none on this device: modules that use 64-bit integers only for buffer addresses are made without them, as SPIR-V 1.5 (the first: %016llx)", key);
+        } else { static _Atomic int n; if (atomic_fetch_add(&n, 1) < 8) VRED("shader %016llx: uses 64-bit integers %s and the device has no shaderInt64: its pipelines are refused", key, e2[0] ? e2 : "beyond buffer addresses"); }
+    }
     return w;
 }
 static VkShaderModule spv_module_(const vka_shlib *L, const dmsh_vk_entry *e, const dmsh_vk_module *m, uint64_t key, const char **why, char *err, size_t errn, uint8_t *fcomp) {

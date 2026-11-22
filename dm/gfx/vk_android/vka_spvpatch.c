@@ -1436,3 +1436,124 @@ fail:
     free(loc); free(ptr_sc); free(ptr_to); free(var_ty); free(kind); free(o.w);
     return NULL;
 }
+
+// vka_spv_no_int64: a module that declares 64-bit integers only to make a physical-storage-buffer pointer from two 32-bit words, for a device without shaderInt64. The translator
+// writes such a pointer as %u64 = OpBitcast %ulong %uvec2 (the two words), %p = OpConvertUToPtr %ptr %u64, and declares the Int64 capability for that one type. Qualcomm's
+// driver on the Adreno 740 (512.676, Vulkan 1.3.128) has no shaderInt64 and refuses every pipeline of such a module (-13): Kirby and the Forgotten Land - Nintendo Switch 2
+// Edition's Star-Crossed World draws, 7,739 modules of its library and 61% of its draws skipped. SPIR-V 1.5 lets OpBitcast make the pointer from the 2-component 32-bit vector
+// directly, so the pair becomes %p = OpBitcast %ptr %uvec2, and the 64-bit types, their bitcasts and the capability go. The module moves to SPIR-V 1.5 (from 1.4 on an entry
+// point lists every global variable it uses, not only its inputs and outputs: every global variable is added to each entry point's interface; and the BufferBlock decoration
+// is gone: a Uniform-class storage buffer becomes a Block in the StorageBuffer class, with every pointer into it). Kirby's 7,739 such modules all come out valid (spirv-val,
+// Vulkan 1.3). NULL with *changed 0: nothing to
+// do (no Int64, or a 64-bit integer used some other way: the module stays as it is); NULL with err set: a module this does not read
+uint32_t *vka_spv_no_int64(const uint32_t *w, size_t nw, size_t *out_nw, int *changed, char *err, size_t errn) {
+    enum { OpCapability = 17, CapInt64 = 11, OpConvertUToPtr = 120, OpConstant = 43, OpConstantComposite = 44, SCFunction = 7 };
+    *changed = 0; if (err && errn) err[0] = 0;
+    if (nw < 5 || w[0] != 0x07230203) { snprintf(err, errn, "not SPIR-V"); return NULL; }
+    uint32_t bound = w[3];
+    uint8_t *k = calloc(bound, 1);   // 1: a 64-bit integer type; 2: a bitcast to one from a 2 x 32-bit vector; 4: a 2 x 32-bit integer vector type; 8: a global variable
+    uint32_t *vtype = calloc(bound, 4), *bc_from = calloc(bound, 4);   // the result type of a value (bitcast operands); a bitcast's operand
+    if (!k || !vtype || !bc_from) { free(k); free(vtype); free(bc_from); snprintf(err, errn, "out of memory"); return NULL; }
+    int int64 = 0, ok = 1;
+    uint8_t *istype = calloc(bound, 1);
+    if (!istype) { free(k); free(vtype); free(bc_from); snprintf(err, errn, "out of memory"); return NULL; }
+    for (size_t i = 5; i < nw && ok;) {   // pass 1: the types, 64-bit integers, the bitcasts to them, the global variables
+        uint32_t op = w[i] & 0xffff, len = w[i] >> 16;
+        if (!len || i + len > nw) { snprintf(err, errn, "truncated"); ok = 0; break; }
+        const uint32_t *a = w + i + 1;
+        if (op >= 19 && op <= 39 && len >= 2 && a[0] < bound) istype[a[0]] = 1;   // OpTypeVoid … OpTypeForwardPointer
+        if (op == OpCapability && a[0] == CapInt64) int64 = 1;
+        else if (op == OpTypeInt && len >= 4 && a[0] < bound) { if (a[1] == 64) k[a[0]] |= 1; }
+        else if (op == OpTypeVector && len >= 4 && a[0] < bound && a[1] < bound) {
+            if (k[a[1]] & 1) ok = 0;   // a vector of 64-bit integers: another use
+            else if (a[2] == 2) { size_t j; for (j = 5; j < nw; j += w[j] >> 16) { if (!(w[j] >> 16)) { j = nw; break; } if ((w[j] & 0xffff) == OpTypeInt && w[j + 1] == a[1] && w[j + 2] == 32) break; } if (j < nw) k[a[0]] |= 4; }
+        }
+        else if (op >= 19 && op <= 39) { for (uint32_t x = 1; x < len - 1; x++) if (a[x] < bound && (k[a[x]] & 1)) ok = 0; }   // a struct, pointer, array or function type of one: another use
+        else if (op == OpVariable && len >= 4 && a[1] < bound && a[2] != SCFunction) k[a[1]] |= 8;
+        else if (op == OpBitcast && len == 4 && a[0] < bound && a[1] < bound && a[2] < bound && (k[a[0]] & 1)) { k[a[1]] |= 2; bc_from[a[1]] = a[2]; }
+        if (len >= 3 && a[0] < bound && istype[a[0]] && a[1] < bound) vtype[a[1]] = a[0];   // an instruction with a result type
+        i += len;
+    }
+    for (size_t i = 5; i < nw && ok;) {   // pass 2: any other use of a 64-bit type or of such a bitcast's result
+        uint32_t op = w[i] & 0xffff, len = w[i] >> 16; const uint32_t *a = w + i + 1;
+        int skip = op == OpName || op == OpDecorate || op == OpMemberDecorate || op == OpEntryPoint || (op >= 19 && op <= 39) || op == OpCapability
+                   || (op == OpBitcast && len == 4 && a[1] < bound && (k[a[1]] & 2)) || (op == OpConvertUToPtr && len == 4 && a[2] < bound && (k[a[2]] & 2));
+        // (the literal words of the common instructions are not ids: a constant's value, memory operands, indices and the like)
+        uint32_t ids = len - 1;
+        switch (op) {
+        case 3: case 6: case 7: case 8: case 10: case 11: case 14: case 16: case 246: case 247: ids = 0; break;   // Source, MemberName, String, Line, Extension, ExtInstImport, MemoryModel, ExecutionMode, merges
+        case OpConstant: case 50: ids = 2; break;   // (Spec)Constant: the type and the result
+        case 61: ids = ids < 3 ? ids : 3; break;   // Load: type, result, pointer
+        case 82: ids = ids < 4 ? ids : 4; break;   // CompositeInsert: type, result, object, composite
+        case 62: ids = ids < 2 ? ids : 2; break;   // Store: pointer, object
+        case 81: ids = ids < 3 ? ids : 3; break;   // CompositeExtract: type, result, composite
+        case 79: ids = ids < 4 ? ids : 4; break;   // VectorShuffle: type, result, the two vectors
+        case 251: ids = ids < 1 ? ids : 1; break;   // Switch: the selector (then literals and labels)
+        }
+        if (!skip) for (uint32_t x = 0; x < ids; x++) if (a[x] < bound && (k[a[x]] & 3) && !(op == 12 && x == 3)) { ok = 0; break; }   // (ExtInst: its 4th word is the instruction number)
+        i += len;
+    }
+    free(istype);    for (uint32_t x = 0; x < bound && ok; x++) if ((k[x] & 2) && !(bc_from[x] < bound && (k[vtype[bc_from[x]]] & 4))) ok = 0;   // a bitcast from something other than 2 x 32-bit
+    if (!int64 || !ok) { free(k); free(vtype); free(bc_from); return NULL; }
+    // SPIR-V 1.4 drops the BufferBlock decoration that the translator's storage buffers carry (a Uniform-class block): each becomes Block, its variables and every pointer
+    // into them StorageBuffer-class (a StorageBuffer pointer type to the same pointee: the module's own, or a new one declared after the Uniform one)
+    enum { OpTypeArray = 28, OpTypeRuntimeArray = 29, OpTypePointer = 32, OpFunctionParameter = 55, OpFunctionCall = 57, OpAccessChain = 65, OpInBoundsAccessChain = 66,
+           OpPtrAccessChain = 67, OpInBoundsPtrAccessChain = 70, OpCopyObject = 83, OpSelect = 169, OpPhi = 245, DecBufferBlock = 3, DecBlock = 2, SCUniform = 2, SCStorageBuffer = 12 };
+    uint8_t *sb = calloc(bound, 1);   // 1: a BufferBlock struct or an array of one; 2: a pointer into a storage buffer; 4: a Uniform pointer type such a pointer has
+    uint32_t *pt_sc = calloc(bound, 4), *pt_to = calloc(bound, 4), *sbty = calloc(bound, 4), nbound = bound;   // a pointer type's class and pointee; its StorageBuffer twin
+    if (!sb || !pt_sc || !pt_to || !sbty) { free(sb); free(pt_sc); free(pt_to); free(sbty); free(k); free(vtype); free(bc_from); snprintf(err, errn, "out of memory"); return NULL; }
+    for (size_t i = 5; i < nw && ok; i += w[i] >> 16) {
+        uint32_t op = w[i] & 0xffff, len = w[i] >> 16; const uint32_t *a = w + i + 1;
+        if (op == OpDecorate && len >= 3 && a[1] == DecBufferBlock && a[0] < bound) sb[a[0]] |= 1;
+        else if ((op == OpTypeArray || op == OpTypeRuntimeArray) && len >= 3 && a[0] < bound && a[1] < bound && (sb[a[1]] & 1)) sb[a[0]] |= 1;
+        else if (op == OpTypePointer && len == 4 && a[0] < bound) { pt_sc[a[0]] = a[1]; pt_to[a[0]] = a[2]; }
+        else if (op == OpVariable && len >= 4 && a[0] < bound && a[1] < bound && a[2] == SCUniform && pt_to[a[0]] < bound && (sb[pt_to[a[0]]] & 1)) { sb[a[1]] |= 2; sb[a[0]] |= 4; }
+        else if ((op == OpAccessChain || op == OpInBoundsAccessChain || op == OpPtrAccessChain || op == OpInBoundsPtrAccessChain || op == OpCopyObject) && len >= 4 && a[0] < bound
+                 && a[1] < bound && a[2] < bound && (sb[a[2]] & 2)) { if (pt_sc[a[0]] != SCUniform) ok = 0; sb[a[1]] |= 2; sb[a[0]] |= 4; }
+        else if (op == OpFunctionParameter && len >= 3 && a[0] < bound && pt_sc[a[0]] == SCUniform) ok = 0;   // (a pointer passed to a function: not rewritten)
+        else if ((op == OpPhi || op == OpSelect || op == OpFunctionCall) && len >= 3) { for (uint32_t x = 2; x < len - 1; x++) if (a[x] < bound && (sb[a[x]] & 2)) ok = 0; }
+    }
+    for (uint32_t t = 0; t < bound && ok; t++) {   // each Uniform pointer type a storage-buffer pointer has: its StorageBuffer twin
+        if (!(sb[t] & 4)) continue;
+        for (uint32_t u = 0; u < bound && !sbty[t]; u++) if (pt_sc[u] == SCStorageBuffer && pt_to[u] == pt_to[t]) sbty[t] = u;
+        if (!sbty[t]) sbty[t] = nbound++;
+    }
+    if (!ok) { snprintf(err, errn, "a storage-buffer pointer passed to a function, selected or merged"); free(sb); free(pt_sc); free(pt_to); free(sbty); free(k); free(vtype); free(bc_from); return NULL; }
+    vec_t o = {0};
+    int good = put_n(&o, w, 5);
+    if (good && o.w[1] < 0x10500) o.w[1] = 0x10500;
+    if (good) o.w[3] = nbound;
+    for (size_t i = 5; i < nw && good;) {
+        uint32_t op = w[i] & 0xffff, len = w[i] >> 16; const uint32_t *a = w + i + 1;
+        if (op == OpDecorate && len >= 3 && a[1] == DecBufferBlock) { good = put_n(&o, w + i, len); if (good) o.w[o.n - len + 2] = DecBlock; i += len; continue; }
+        if (op == OpTypePointer && len == 4 && a[0] < bound && (sb[a[0]] & 4) && sbty[a[0]] >= bound) {   // a new StorageBuffer twin after the Uniform type
+            good = put_n(&o, w + i, len) && put(&o, 4u << 16 | OpTypePointer) && put(&o, sbty[a[0]]) && put(&o, SCStorageBuffer) && put(&o, a[2]); i += len; continue; }
+        if (op == OpVariable && len >= 4 && a[1] < bound && (sb[a[1]] & 2)) { good = put_n(&o, w + i, len); if (good) { o.w[o.n - len + 1] = sbty[a[0]]; o.w[o.n - len + 3] = SCStorageBuffer; } i += len; continue; }
+        if ((op == OpAccessChain || op == OpInBoundsAccessChain || op == OpPtrAccessChain || op == OpInBoundsPtrAccessChain || op == OpCopyObject) && len >= 4 && a[1] < bound && (sb[a[1]] & 2)) {
+            good = put_n(&o, w + i, len); if (good) o.w[o.n - len + 1] = sbty[a[0]]; i += len; continue; }
+        if (op == OpCapability && a[0] == CapInt64) { i += len; continue; }
+        if ((op == OpTypeInt && (k[a[0]] & 1)) || (op == OpBitcast && len == 4 && (k[a[1]] & 2))) { i += len; continue; }
+        if ((op == OpName || op == OpDecorate) && len >= 2 && a[0] < bound && (k[a[0]] & 3)) { i += len; continue; }
+        if (op == OpConvertUToPtr && len == 4 && (k[a[2]] & 2)) { good = put(&o, 4u << 16 | OpBitcast) && put(&o, a[0]) && put(&o, a[1]) && put(&o, bc_from[a[2]]); i += len; continue; }
+        if (op == OpEntryPoint && len >= 4) {
+            uint32_t s = 2; while (s < len - 1 && (a[s] >> 24)) s++; s++;   // past the name's last word (its last byte is 0)
+            size_t at = o.n; good = put_n(&o, w + i, len);
+            for (uint32_t g = 0; g < bound && good; g++) {
+                if (!(k[g] & 8)) continue;
+                int listed = 0; for (uint32_t x = s; x < len - 1; x++) if (a[x] == g) listed = 1;
+                if (!listed) good = put(&o, g);
+            }
+            if (good) o.w[at] = (uint32_t)(o.n - at) << 16 | OpEntryPoint;
+            i += len; continue;
+        }
+        good = put_n(&o, w + i, len); i += len;
+    }
+    free(k); free(vtype); free(bc_from); free(sb); free(pt_sc); free(pt_to); free(sbty);
+    if (!good) { free(o.w); snprintf(err, errn, "out of memory"); return NULL; }
+    *changed = 1; *out_nw = o.n; return o.w;
+}
+int vka_spv_declares_int64(const uint32_t *w, size_t nw) {   // 1 = OpCapability Int64
+    if (nw < 5 || w[0] != 0x07230203) return 0;
+    for (size_t i = 5; i < nw;) { uint32_t op = w[i] & 0xffff, len = w[i] >> 16; if (!len) return 0; if (op == 17 && len >= 2 && w[i + 1] == 11) return 1; if (op == 54) return 0; i += len; }   // (capabilities come first; stops at the first function)
+    return 0;
+}

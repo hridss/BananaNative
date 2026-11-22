@@ -102,6 +102,7 @@ typedef struct {
     VkInstance inst; VkPhysicalDevice pd; VkDevice dev; VkQueue q; uint32_t qf;
     VkPhysicalDeviceProperties props; VkPhysicalDeviceMemoryProperties memp;
     int placed, placed_range, unmap_reserve, fd_alias, bda, uab, display_timing, has_android_surface;
+    int int64;   // shaderInt64: 64-bit integers in shaders (vka_shader.c lib_words rewrites the modules that use them only for buffer addresses when the device has none)
     int mem_budget;                                 // VK_EXT_memory_budget: the texture cache's limit reads the image heap's budget and usage (vka_tex.c, vka_texlimit.h)
     int cal_ts;                                     // VK_KHR / EXT_calibrated_timestamps: GPU timestamps can be put on the host clock (vka_exec.c DM_VK_TSCAL)
     void *perf_hint;                                // vkQueueSetPerfHintQCOM (VK_QCOM_queue_perf_hint), NULL without it: vka_gpu_floor
