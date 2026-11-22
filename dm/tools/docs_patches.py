@@ -155,6 +155,9 @@ SWITCH_BINDING = [
      'why': 'unified memory semantics; off by default because a flushed range could cover an image a shader writes: tracking GPU writes would make it safe for every game'}),
     ('tex_dirty_upload', '', {'what': 'CPU-written textures uploaded without a flush', 'now': 'game', 'goal': 'host', 'purpose': 'rendering',
      'why': 'as tex_flush_upload, for pools the CPU writes without a flush'}),
+    ('tex_copy_staging', '', {'what': "one call site's buffer → texture copies keep their source bytes at recording (hle_nvn.c copy_keep)", 'now': 'build', 'goal': 'host', 'purpose': 'rendering',
+     'why': "the game reuses its staging block as soon as it has recorded the copy, counting on the GPU to run it right after the submit; keeping every CPU-sourced copy's bytes "
+            "would need GPU-write tracking to tell them from copies of what the GPU wrote earlier in the submission, and running each submission's copies as it is submitted would serve every game"}),
     ('low_ram_place_part_mb', '', {'what': 'memory pools placed by parts from a smaller size on a device of 12 GB or less', 'now': 'game', 'goal': 'host', 'purpose': 'memory',
      'why': "less placed memory where RAM is short; a size for every game once the part size's cost is measured on the other games"}),
     ('low_ram_img_cache_max_mb', '', {'what': "a ceiling on the texture cache's limit on a device of 12 GB or less", 'now': 'game', 'goal': 'game', 'purpose': 'memory',

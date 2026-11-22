@@ -79,6 +79,37 @@ class SceneArg(unittest.TestCase):
             self.assertIn(msg, out, rows)
 
 
+class TexCopyStaging(unittest.TestCase):   # tex_copy_staging (hle_nvn.c copy_keep): <main build ID>:<aligned return address offset>, and the two defines it makes
+    def header_text(self, rows):
+        with tempfile.TemporaryDirectory() as d:
+            Path(d, ID).mkdir()
+            (Path(d, ID) / 'game.tsv').write_text(TSV + rows)
+            r = subprocess.run([sys.executable, str(GAME), 'header', ID, str(Path(d, ID) / 'game.h')], env={**os.environ, 'DM_GAMES_DIR': d}, capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            return (Path(d, ID) / 'game.h').read_text()
+
+    def test_row(self):
+        h = self.header_text('tex_copy_staging\t93a79c77da81f7f15db021c5c7431eb4:0x32bd78\n')
+        self.assertIn('#define DM_GAME_TEX_COPY_STAGING_BUILD "93a79c77da81f7f15db021c5c7431eb4"\n', h)
+        self.assertIn('#define DM_GAME_TEX_COPY_STAGING_PC 0x32bd78\n', h)
+
+    def test_none(self):   # without the key: no call site, so no copy keeps its bytes
+        h = self.header_text('')
+        self.assertIn('#define DM_GAME_TEX_COPY_STAGING_BUILD ""\n', h)
+        self.assertIn('#define DM_GAME_TEX_COPY_STAGING_PC 0\n', h)
+
+    def test_rejected_rows(self):
+        for rows in ('tex_copy_staging\t93a79c77da81f7f15db021c5c7431eb4\n',            # no offset
+                     'tex_copy_staging\t93a79c77da81f7f15db021c5c7431eb:0x32bd78\n',     # a build ID one digit short
+                     'tex_copy_staging\t93A79C77DA81F7F15DB021C5C7431EB4:0x32bd78\n',    # build IDs are lower case, as fixups.tsv writes them
+                     'tex_copy_staging\t93a79c77da81f7f15db021c5c7431eb4:0x32bd7a\n',    # not an instruction boundary
+                     'tex_copy_staging\t93a79c77da81f7f15db021c5c7431eb4:0x0\n',
+                     'tex_copy_staging\t93a79c77da81f7f15db021c5c7431eb4:3325304\n'):    # the offset is hexadecimal
+            rc, out = header(rows)
+            self.assertNotEqual(rc, 0, rows)
+            self.assertIn(': tex_copy_staging takes a main build ID and an aligned return address offset', out, rows)
+
+
 RC = 'render_cfg\t0123456789abcdef0123456789abcdef\t0x223e0b0\t2\t16\t0x0\t0x8\t2048x1152/1024x576,1920x1080/960x540\toriginal=2048x1152\tmax_render=1280x720\tmin=720\n'
 RQ = 'render_quality\tquality=boost:2\tperformance=normal:1\n'
 

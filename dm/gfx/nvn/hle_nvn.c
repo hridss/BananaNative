@@ -1318,10 +1318,50 @@ static uint8_t *hostseg_take(const cmd_t *o, size_t n) {
     if (t == 1 || t % 1024 == 0) LOG("[nvn] the game's command memory ran short, the host lends a segment of %zu KB (%u times so far, frame %llu, segment pool %d segments, %llu KB)", n >> 10, t, (unsigned long long)f, ns, (unsigned long long)(bytes >> 10));
     return m;
 }
-// The game gives out [lo, hi): segments whose recording's guest bytes overlap it are dead, reclaim them
+// Source bytes a recording keeps for a CPU staging upload (copy_keep, profile key tex_copy_staging). They have the lifetime of the record: like a host segment, each block remembers
+// the guest range of the command memory its record is in (that segment's origin when the record is in a host segment) and dies when the game gives that range out again. A dead
+// block is freed KEEP_GRACE frames later, as the encoder can still be replaying the last submission that used it. KEEP_CAP bounds the live bytes (blocks whose origin is unknown
+// are never released); past it the copy reads the guest memory as before
+#define KEEP_CAP (256u << 20)
+#define KEEP_GRACE 3
+typedef struct { uint8_t *mem; size_t n; uintptr_t lo, hi; uint64_t dead; } keep_t;   // dead: the frame it was released in + 1 (0 = live)
+static keep_t *g_keep; static int g_nkeep, g_capkeep; static uint64_t g_keep_bytes;
+static void keep_sweep(uint64_t f) {   // caller holds g_hostseg_mu
+    int k = 0;
+    for (int i = 0; i < g_nkeep; i++) {
+        if (g_keep[i].dead && f >= g_keep[i].dead + KEEP_GRACE) { free(g_keep[i].mem); g_keep_bytes -= g_keep[i].n; continue; }
+        g_keep[k++] = g_keep[i];
+    }
+    g_nkeep = k;
+}
+// The guest range a record at [p, p + n) hangs off: its own bytes in the game's command memory, or the origin of the host segment it is in
+static void keep_origin(const uint8_t *p, size_t n, uintptr_t *lo, uintptr_t *hi) {   // caller holds g_hostseg_mu
+    *lo = (uintptr_t)p; *hi = (uintptr_t)p + n;
+    for (int i = 0; i < g_nhostseg; i++)
+        if (p >= g_hostseg[i].mem && p < g_hostseg[i].mem + g_hostseg[i].n) { *lo = g_hostseg[i].org_lo; *hi = g_hostseg[i].org_hi; return; }
+}
+// A block of n bytes kept for the record at [rec, rec + rec_n); NULL past KEEP_CAP
+static uint8_t *keep_take(const uint8_t *rec, size_t rec_n, size_t n) {
+    uint64_t f = dm_nvn_frame_count(); uint8_t *m = NULL; static int full;
+    pthread_mutex_lock(&g_hostseg_mu);
+    keep_sweep(f);
+    if (g_keep_bytes + n <= KEEP_CAP && (m = malloc(n))) {
+        if (g_nkeep == g_capkeep) { g_capkeep = g_capkeep ? g_capkeep * 2 : 64; g_keep = realloc(g_keep, sizeof *g_keep * (size_t)g_capkeep); }
+        uintptr_t lo, hi; keep_origin(rec, rec_n, &lo, &hi);
+        g_keep[g_nkeep++] = (keep_t){ m, n, lo, hi, 0 }; g_keep_bytes += n;
+    }
+    uint64_t live = g_keep_bytes; int nk = g_nkeep;
+    pthread_mutex_unlock(&g_hostseg_mu);
+    if (!m && !full++) LOG("[RED] NVN staging upload: the kept source bytes reached %llu MB in %d blocks without the game giving their command memory out again; this copy reads the guest memory, which the game may have reused", (unsigned long long)(live >> 20), nk);
+    return m;
+}
+// The game gives out [lo, hi): segments whose recording's guest bytes overlap it are dead, reclaim them, and the kept bytes of records in that range
 static void hostseg_release(uintptr_t lo, uintptr_t hi) {
+    uint64_t f = dm_nvn_frame_count();
     pthread_mutex_lock(&g_hostseg_mu);
     for (int i = 0; i < g_nhostseg; i++) if (g_hostseg[i].busy && g_hostseg[i].org_hi > lo && g_hostseg[i].org_lo < hi) g_hostseg[i].busy = 0;
+    for (int i = 0; i < g_nkeep; i++) if (!g_keep[i].dead && g_keep[i].hi > lo && g_keep[i].lo < hi) g_keep[i].dead = f + 1;
+    if (g_nkeep) keep_sweep(f);
     pthread_mutex_unlock(&g_hostseg_mu);
 }
 NVN(nvnCommandBufferAddCommandMemory, void, NVNcommandBuffer *c, const NVNmemoryPool *p, ptrdiff_t off, size_t n) {
@@ -1592,10 +1632,53 @@ NVN(nvnCommandBufferBarrier, void, NVNcommandBuffer *c, int bits) { *(int32_t *)
 NVN(nvnCommandBufferSetTexturePool, void, NVNcommandBuffer *c, const NVNtexturePool *p) { REC(c, OP_SET_TEX_POOL, p_set_pool)->pool = (const dpool_t *)p; CB(c)->tex_base = dpool_base(&g_tpt, p); }
 NVN(nvnCommandBufferSetSamplerPool, void, NVNcommandBuffer *c, const NVNsamplerPool *p) { REC(c, OP_SET_SAMP_POOL, p_set_pool)->pool = (const dpool_t *)p; CB(c)->samp_base = dpool_base(&g_spt, p); }
 
+// CPU staging uploads (profile key tex_copy_staging): NVN reads a copy's source when the GPU runs it, but a game may put the source block back on its free list as soon as the call
+// returns. Catherine: Full Body's resource loader does (1.0.1a, the upload helper's call at main+0x32bd74): the next texture's bytes replaced a queued upload's before the replay
+// reached it, and the Night 2 landing sampled corrupt lighting textures. Only the verified call site keeps its bytes, since a buffer-to-texture copy may also read what the GPU
+// wrote earlier in the same submission, which recording-time bytes would miss
+static int copy_staging_site(uintptr_t ra) {
+    if (!DM_GAME_TEX_COPY_STAGING_PC) return 0;
+    const module_t *m = module_of((const void *)ra);
+    return m && !strcmp(m->name, "main") && ra - (uintptr_t)m->base == (uintptr_t)DM_GAME_TEX_COPY_STAGING_PC && !strcmp(m->build_id, DM_GAME_TEX_COPY_STAGING_BUILD);
+}
+// The bytes a copy of region r reads with these strides (0: tightly packed); 0 when the host cannot size it
+static size_t copy_span(const tex_t *t, const NVNcopyRegion *r, int64_t row_st, int64_t img_st, int64_t *row, int64_t *img) {
+    int bw = 1, bh = 1, bpb = t ? nvn_fmt_bpb(t->d.format, &bw, &bh) : 0;
+    if (bpb <= 0 || r->width <= 0 || r->height <= 0 || r->depth < 0 || row_st < 0 || img_st < 0) return 0;
+    size_t wb = (size_t)((r->width + bw - 1) / bw) * (size_t)bpb, rows = (size_t)((r->height + bh - 1) / bh), nz = r->depth ? (size_t)r->depth : 1;
+    size_t rs = row_st ? (size_t)row_st : wb, is = img_st ? (size_t)img_st : rs * rows;
+    if (rs < wb || (nz > 1 && is < rs * rows)) return 0;
+    size_t n = is * (nz - 1) + rs * (rows - 1) + wb;
+    if (n > (64u << 20)) return 0;
+    *row = (int64_t)rs; *img = (int64_t)is;
+    return n;
+}
+// Keep the source bytes of the copy record o (DM_COPY_KEPT): the record was allocated with room for its p_copy_kept after the texture snapshot
+static void copy_keep(const cmd_t *cb, p_copy_b2t *o, uintptr_t ra) {
+    static _Atomic unsigned kept, refused;
+    int64_t row = 0, img = 0; size_t n = o->tex ? copy_span(o->tex, &o->r, cb->copy_row, cb->copy_img, &row, &img) : 0;
+    void *b; uint64_t bo;
+    if (!n || !mtl_addr(o->src, n, &b, &bo)) {
+        if (atomic_fetch_add(&refused, 1) < 4) LOG("[RED] NVN staging upload at main+%#llx: source %#llx (%zu bytes) is not sizable or not in guest RAM; the copy reads the guest memory at replay", (unsigned long long)DM_GAME_TEX_COPY_STAGING_PC, (unsigned long long)o->src, n);
+        return;
+    }
+    size_t rec_n = (8 + SNAP_OFF(p_copy_b2t) + sizeof(tex_t) + sizeof(p_copy_kept) + 7) & ~(size_t)7;
+    uint8_t *m = keep_take((const uint8_t *)o - 8, rec_n, n);
+    if (!m) return;
+    memcpy(m, (const void *)(uintptr_t)o->src, n);
+    p_copy_kept *k = (p_copy_kept *)((uint8_t *)o + SNAP_OFF(p_copy_b2t) + sizeof(tex_t));
+    *k = (p_copy_kept){ m, n, row, img };
+    o->flags |= DM_COPY_KEPT;
+    unsigned nk = atomic_fetch_add(&kept, 1) + 1;
+    if (nk == 1 || nk % 1000 == 0) LOG("[nvn] staging upload at main+%#llx: the recording keeps the source bytes (%u uploads so far, this one %zu bytes, texture format %#x)", (unsigned long long)(ra - (uintptr_t)module_of((const void *)ra)->base), nk, n, o->tex->d.format);
+}
 NVN(nvnCommandBufferCopyBufferToTexture, void, NVNcommandBuffer *c, NVNbufferAddress src, const NVNtexture *t, const NVNtextureView *v,
     const NVNcopyRegion *r, int flags) {
     shp_bind(SHK_COPY, src, 0);
-    p_copy_b2t *o = REC_SNAP(c, OP_COPY_B2T, p_copy_b2t, 1); o->src = src; o->tex = tex_snap(o, SNAP_OFF(p_copy_b2t), 0, t, (uint64_t)__builtin_return_address(0)); copy_view(&o->view, &o->has_view, v); o->r = *r; o->flags = flags;
+    uintptr_t ra = (uintptr_t)__builtin_return_address(0); int keep = copy_staging_site(ra);
+    p_copy_b2t *o = (p_copy_b2t *)rec(c, OP_COPY_B2T, SNAP_OFF(p_copy_b2t) + sizeof(tex_t) + (keep ? sizeof(p_copy_kept) : 0));
+    o->src = src; o->tex = tex_snap(o, SNAP_OFF(p_copy_b2t), 0, t, ra); copy_view(&o->view, &o->has_view, v); o->r = *r; o->flags = flags & ~DM_COPY_KEPT;
+    if (keep) copy_keep(CB(c), o, ra);
 }
 NVN(nvnCommandBufferCopyTextureToBuffer, void, NVNcommandBuffer *c, const NVNtexture *t, const NVNtextureView *v, const NVNcopyRegion *r,
     NVNbufferAddress dst, int flags) {
@@ -1622,8 +1705,8 @@ NVN(nvnCommandBufferDrawTexture, void, NVNcommandBuffer *c, NVNtextureHandle h, 
     if (sid) sid += (uint64_t)CB(c)->samp_base;
     *REC(c, OP_DRAW_TEX, p_draw_tex) = (p_draw_tex){tid | sid << 20, *d, *s};
 }
-NVN(nvnCommandBufferSetCopyRowStride, void, NVNcommandBuffer *c, ptrdiff_t st) { p_copy_stride *o = REC(c, OP_COPY_STRIDE, p_copy_stride); o->stride = st; o->image = 0; }
-NVN(nvnCommandBufferSetCopyImageStride, void, NVNcommandBuffer *c, ptrdiff_t st) { p_copy_stride *o = REC(c, OP_COPY_STRIDE, p_copy_stride); o->stride = st; o->image = 1; }   // Link's Awakening
+NVN(nvnCommandBufferSetCopyRowStride, void, NVNcommandBuffer *c, ptrdiff_t st) { p_copy_stride *o = REC(c, OP_COPY_STRIDE, p_copy_stride); o->stride = st; o->image = 0; CB(c)->copy_row = st; }
+NVN(nvnCommandBufferSetCopyImageStride, void, NVNcommandBuffer *c, ptrdiff_t st) { p_copy_stride *o = REC(c, OP_COPY_STRIDE, p_copy_stride); o->stride = st; o->image = 1; CB(c)->copy_img = st; }   // Link's Awakening
 NVN(nvnCommandBufferSetBlendColor, void, NVNcommandBuffer *c, const float *v) { memcpy(REC(c, OP_BLEND_COLOR, p_blend_color)->rgba, v, 16); }
 
 // ---------- State objects: packed in place (nvn_obj.h) ----------

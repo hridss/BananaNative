@@ -82,6 +82,7 @@ typedef struct {
     uint64_t used;                       // Bytes written since the game last added command memory, across recordings and host segments, including segment-switch JUMPs (returned by GetCommandMemoryUsed)
     int32_t tex_base, samp_base;         // Host-table bases of the texture / sampler pool this command buffer last bound (hle_nvn.c dpool_add; 0 = the first pool of its kind)
     size_t ctl_size;                     // Bytes in the last control memory block supplied by the game (the host records no control commands)
+    int64_t copy_row, copy_img;          // The last SetCopyRowStride / SetCopyImageStride recorded into this command buffer (copy_keep: the layout of the bytes it keeps)
 } cmd_t;                                                                                   FITS(cmd_t, NVNcommandBuffer);
 
 // ---------- State objects (defaults follow the NVN / GL defaults) ----------
@@ -195,6 +196,14 @@ typedef struct { const dpool_t *pool; } p_set_pool;
 typedef struct { uint64_t src; const tex_t *tex; view_t view; uint8_t has_view; NVNcopyRegion r; int32_t flags; } p_copy_b2t;
 // A host-only bit in flags: DM_COPY_RESOLVE = this is a Downsample (multisample resolve), recorded as a texture copy so everything else treats it as one (reads the source, writes the destination)
 #define DM_COPY_RESOLVE 0x40000000
+// A host-only bit in a buffer-to-texture copy's flags: DM_COPY_KEPT = the recording kept the source bytes (hle_nvn.c copy_keep), described by a p_copy_kept after the texture
+// snapshot. src stays the guest address, so a replay that does not know the bit (the Metal one) reads the guest memory as before. The bytes are laid out with the row and image
+// strides of the record, not the replay's copy stride state; they live until the game gives out the command memory the record is in again
+#define DM_COPY_KEPT 0x20000000
+typedef struct { const uint8_t *data; uint64_t n; int64_t row, img; } p_copy_kept;   // row / img: 0 = tightly packed, as without SetCopyRowStride / SetCopyImageStride
+static inline const p_copy_kept *copy_kept(const p_copy_b2t *c) {
+    return c->flags & DM_COPY_KEPT ? (const p_copy_kept *)((const uint8_t *)c + ((sizeof(p_copy_b2t) + 7) & ~(size_t)7) + sizeof(tex_t)) : NULL;
+}
 typedef struct { const tex_t *src, *dst; view_t sv, dv; uint8_t has_sv, has_dv; NVNcopyRegion sr, dr; int32_t flags; } p_copy_t2t;   // Reused for T2B: src stores the destination buffer address
 // FSR 3.1's inputs for one DLSS evaluation (vka_exec.c dlss_eval, mode 4 -> vka_fsr3.c): the colour and output rectangles as a copy's, then depth, motion vectors, jitter, their scale, the reset
 typedef struct { p_copy_t2t c; const tex_t *depth, *motion; float jitter[2], mv[2]; uint32_t reset; } p_dlss_t2t;

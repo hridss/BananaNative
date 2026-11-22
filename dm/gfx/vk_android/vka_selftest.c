@@ -132,6 +132,13 @@ int nxhost_vk_selftest(ANativeWindow *w, int frames) {
         p_copy_b2t r2 = r1; r2.src = (uintptr_t)rb + 16; r2.r.xoffset = 100; r2.r.yoffset = 100;
         p_copy_b2t r3 = r1; r3.src = (uintptr_t)rb + 32; r3.r.xoffset = 640; r3.r.yoffset = 360;
         p_copy_b2t r4 = r1; r4.src = (uintptr_t)rb + 48; r4.r.xoffset = 685; r4.r.yoffset = 360;   // one cell to the right of the centre: a dropped (transparent) cell at frame 0
+        // A staging upload whose recording kept its source bytes (DM_COPY_KEPT, hle_nvn.c copy_keep): texel (10,10) gets the kept 0x11223344, not the 0xdeadbeef the game left at
+        // src since; r5 reads it back. The record is laid out as hle_nvn.c writes it: the copy, the texture snapshot, then the p_copy_kept
+        static const uint32_t kept_px = 0x11223344u, reused_px = 0xdeadbeefu; memcpy(rb + 80, &reused_px, 4);
+        uint8_t kb[((sizeof(p_copy_b2t) + 7) & ~(size_t)7) + sizeof(tex_t) + sizeof(p_copy_kept)]; memset(kb, 0, sizeof kb);
+        p_copy_b2t kc = r1; kc.src = (uintptr_t)rb + 80; kc.r.xoffset = 10; kc.r.yoffset = 10; kc.flags = DM_COPY_KEPT; memcpy(kb, &kc, sizeof kc);
+        p_copy_kept kk = {(const uint8_t *)&kept_px, 4, 4, 4}; memcpy(kb + sizeof kb - sizeof kk, &kk, sizeof kk);
+        p_copy_b2t r5 = r1; r5.src = (uintptr_t)rb + 64; r5.r.xoffset = 10; r5.r.yoffset = 10;
         uint8_t se[16]; uint64_t ea = (uintptr_t)ev; uint32_t m = NVN_EVENT_SIGNAL_MODE_WRITE, val = (uint32_t)f + 1; memcpy(se, &ea, 8); memcpy(se + 8, &m, 4); memcpy(se + 12, &val, 4);
         // The draw's state, as hle_nvn.c records it
         p_bind_program bp = {&gp, 0x3}, bc = {&cp, 0x20};
@@ -155,6 +162,7 @@ int nxhost_vk_selftest(ANativeWindow *w, int frames) {
         if (f == 0) {
             p = rec(p, OP_BIND_PROGRAM, &bc, sizeof bc); p = rec(p, OP_BIND_SSBO, &sb, sizeof sb); p = rec(p, OP_DISPATCH, &dp, sizeof dp);
             p = rec(p, OP_COPY_T2B, &r1, sizeof r1); p = rec(p, OP_COPY_T2B, &r2, sizeof r2); p = rec(p, OP_COPY_T2B, &r3, sizeof r3); p = rec(p, OP_COPY_T2B, &r4, sizeof r4);
+            p = rec(p, OP_COPY_B2T, kb, sizeof kb); p = rec(p, OP_COPY_T2B, &r5, sizeof r5);
         }
         p = rec(p, OP_SIGNAL_EVENT, se, sizeof se); p = rec(p, OP_END, NULL, 0);
         mtl_queue_activate(q);
@@ -173,6 +181,9 @@ int nxhost_vk_selftest(ANativeWindow *w, int frames) {
             bad += !ok || a_ != want || b_ != white || *ev != 1;
             bad += nd != 1 || t_ != magenta || h_ != want;
             bad += nc != 1 || sbuf[5] != 4005 || sbuf[255] != 4255;
+            uint32_t k_; memcpy(&k_, rb + 64, 4);
+            VLOG("selftest: kept staging upload: texel (10,10) %08x (want %08x, the kept bytes; %08x would be the reused guest bytes)", k_, kept_px, reused_px);
+            bad += k_ != kept_px;
         }
         uint64_t tk = mtl_present(&t, 1 / 60.0, NULL);
         if (last) mtl_present_wait(last);   // at most two presents in flight, as a double-buffered game

@@ -1215,8 +1215,18 @@ static void copy_bt(const p_copy_b2t *c, int to_tex) {
     if (row % f->bpb) { VRED_ONCE("buffer copy row stride %zu is not a whole number of %u-byte blocks", row, f->bpb); return; }
     uint64_t span = img * (size_t)(nz - 1) + row * (rows - 1) + (size_t)((c->r.width + f->bw - 1) / f->bw) * f->bpb;
     VkBuffer b; VkDeviceSize o;
-    if (!vka_addr(c->src, span, &b, &o, NULL)) { static _Atomic int nr; if (atomic_fetch_add(&nr, 1) < 8) VRED("%s at %#llx (%llu bytes) is not in placed guest RAM", to_tex ? "buffer → texture copy source" : "texture → buffer copy destination", (unsigned long long)c->src, (unsigned long long)span); return; }
     vka_span s = {0}; VkDeviceSize al = asp == VK_IMAGE_ASPECT_COLOR_BIT ? (f->bpb % 4 == 0 ? f->bpb : f->bpb % 2 == 0 ? 2 * f->bpb : 4 * f->bpb) : 4;   // a whole block and a multiple of 4
+    const p_copy_kept *k = to_tex ? copy_kept(c) : NULL;
+    if (k) {   // the recording kept the source bytes (hle_nvn.c copy_keep), as the game reuses its staging block at once: upload them, tightly packed, from scratch memory
+        size_t wb = (size_t)((c->r.width + f->bw - 1) / f->bw) * f->bpb, kr = (size_t)k->row, ki = (size_t)k->img;
+        if (kr < wb || ki * (size_t)(nz - 1) + kr * (rows - 1) + wb > k->n) {
+            VRED_ONCE("kept buffer → texture copy: %llu bytes (row %zu, image %zu) do not cover a %dx%dx%d region of %zu-byte rows", (unsigned long long)k->n, kr, ki, c->r.width, c->r.height, nz, wb);
+            return;
+        }
+        if (!vka_scratch(wb * rows * (size_t)nz, al * 16, &s)) return;
+        for (int z = 0; z < nz; z++) for (size_t y = 0; y < rows; y++) memcpy(s.ptr + (z * rows + y) * wb, k->data + z * ki + y * kr, wb);
+        b = s.buf; o = s.off; row = wb; img = wb * rows;
+    } else if (!vka_addr(c->src, span, &b, &o, NULL)) { static _Atomic int nr; if (atomic_fetch_add(&nr, 1) < 8) VRED("%s at %#llx (%llu bytes) is not in placed guest RAM", to_tex ? "buffer → texture copy source" : "texture → buffer copy destination", (unsigned long long)c->src, (unsigned long long)span); return; }
     int bounce = o % al != 0 || (img % row) != 0;   // Vulkan wants block-aligned offsets and layers a whole number of rows apart
     if (bounce) {
         size_t wb = (size_t)((c->r.width + f->bw - 1) / f->bw) * f->bpb;
