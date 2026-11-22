@@ -1400,4 +1400,12 @@
     <string name="settings_build_preview">你正在使用预览版（v%1$s）。预览版可能导致游戏出问题。稳定版 v%2$s 发布后会替换它。</string>
     <string name="settings_build_preview_channel">你的更新渠道是%1$s：稳定版 v%2$s 发布后，应用会将你切换到该版本。</string>
     <string name="settings_build_hotfix">你正在使用热修复版（v%1$s）：两次每周版本之间的小修复。下一个每周版本已包含它。</string>
+    <string name="common_picture_size">画面大小</string>
+    <string name="game_lsfg_on_target">开 · %1$d fps</string>
+    <string name="game_own_follows_settings">此游戏沿用设置（%1$s）。在此更改后将成为此游戏自己的设置。</string>
+    <string name="game_own_settings_note">这是此游戏自己的设置。使用设置默认值即可重新沿用设置。</string>
+    <string name="game_use_settings_default">使用设置默认值</string>
+    <string name="settings_touch_look">屏幕控制外观</string>
+    <string name="settings_panel_look">游戏内面板外观</string>
+    <string name="settings_player_one_away">所选手柄（未连接）</string>
 </resources>

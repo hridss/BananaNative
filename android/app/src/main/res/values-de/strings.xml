@@ -1408,4 +1408,12 @@
     <string name="settings_build_preview">Du nutzt eine Vorschauversion (v%1$s). Vorschauversionen können Spiele kaputt machen. Die stabile v%2$s ersetzt sie, sobald sie erscheint.</string>
     <string name="settings_build_preview_channel">Dein Kanal ist %1$s: Die App stellt dich auf die stabile v%2$s um, sobald sie erscheint.</string>
     <string name="settings_build_hotfix">Du nutzt einen Hotfix (v%1$s): eine kleine Korrektur zwischen den wöchentlichen Versionen. Die nächste wöchentliche Version enthält sie.</string>
+    <string name="common_picture_size">Bildgröße</string>
+    <string name="game_lsfg_on_target">An · %1$d fps</string>
+    <string name="game_own_follows_settings">Dieses Spiel folgt den Einstellungen (%1$s). Eine Änderung hier gilt nur für dieses Spiel.</string>
+    <string name="game_own_settings_note">Das sind die eigenen Einstellungen dieses Spiels. Mit „Standard der Einstellungen“ folgt es wieder den Einstellungen.</string>
+    <string name="game_use_settings_default">Standard der Einstellungen</string>
+    <string name="settings_touch_look">Aussehen der Bildschirmsteuerung</string>
+    <string name="settings_panel_look">Aussehen des Spielpanels</string>
+    <string name="settings_player_one_away">Der gewählte Controller (nicht verbunden)</string>
 </resources>

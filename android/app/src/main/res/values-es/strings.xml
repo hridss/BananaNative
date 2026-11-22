@@ -1416,4 +1416,12 @@
     <string name="settings_build_preview">Estás usando una versión de vista previa (v%1$s). Las vistas previas pueden romper juegos. La versión estable v%2$s la reemplaza cuando salga.</string>
     <string name="settings_build_preview_channel">Tu canal es %1$s: la app te pasa a la versión estable v%2$s cuando salga.</string>
     <string name="settings_build_hotfix">Estás usando una corrección urgente (v%1$s): un arreglo pequeño entre versiones semanales. La próxima versión semanal la incluye.</string>
+    <string name="common_picture_size">Tamaño de la imagen</string>
+    <string name="game_lsfg_on_target">Activado · %1$d fps</string>
+    <string name="game_own_follows_settings">Este juego sigue los Ajustes (%1$s). Un cambio aquí será propio de este juego.</string>
+    <string name="game_own_settings_note">Estos son los ajustes propios de este juego. Usa «Valor de Ajustes» para volver a seguir los Ajustes.</string>
+    <string name="game_use_settings_default">Valor de Ajustes</string>
+    <string name="settings_touch_look">Aspecto de los controles en pantalla</string>
+    <string name="settings_panel_look">Aspecto del panel del juego</string>
+    <string name="settings_player_one_away">El mando elegido (no conectado)</string>
 </resources>

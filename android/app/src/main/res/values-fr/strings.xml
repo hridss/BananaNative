@@ -1416,4 +1416,12 @@
     <string name="settings_build_preview">Tu utilises une version aperçu (v%1$s). Les aperçus peuvent casser des jeux. La version stable v%2$s la remplace dès qu\'elle sort.</string>
     <string name="settings_build_preview_channel">Ton canal est %1$s : l\'app te fait passer à la version stable v%2$s dès qu\'elle sort.</string>
     <string name="settings_build_hotfix">Tu utilises un correctif rapide (v%1$s) : un petit correctif entre deux versions hebdomadaires. La prochaine version hebdomadaire l\'inclut.</string>
+    <string name="common_picture_size">Taille de l\'image</string>
+    <string name="game_lsfg_on_target">Activé · %1$d i/s</string>
+    <string name="game_own_follows_settings">Ce jeu suit les Paramètres (%1$s). Une modification ici devient propre à ce jeu.</string>
+    <string name="game_own_settings_note">Ce sont les réglages propres à ce jeu. « Valeur des Paramètres » le fait de nouveau suivre les Paramètres.</string>
+    <string name="game_use_settings_default">Valeur des Paramètres</string>
+    <string name="settings_touch_look">Apparence des commandes à l\'écran</string>
+    <string name="settings_panel_look">Apparence du panneau en jeu</string>
+    <string name="settings_player_one_away">La manette choisie (non connectée)</string>
 </resources>

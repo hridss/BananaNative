@@ -1440,4 +1440,12 @@
     <string name="settings_build_preview">أنت تستخدم نسخة معاينة (v%1$s). قد تعطّل النسخ التجريبية الألعاب. تحل محلها النسخة المستقرة v%2$s عند صدورها.</string>
     <string name="settings_build_preview_channel">قناتك هي %1$s: ينقلك التطبيق إلى النسخة المستقرة v%2$s عند صدورها.</string>
     <string name="settings_build_hotfix">أنت تستخدم إصلاحًا سريعًا (v%1$s): إصلاح صغير بين الإصدارات الأسبوعية. يتضمنه الإصدار الأسبوعي التالي.</string>
+    <string name="common_picture_size">حجم الصورة</string>
+    <string name="game_lsfg_on_target">مفعّل · %1$d إطار/ث</string>
+    <string name="game_own_follows_settings">هذه اللعبة تتبع الإعدادات (%1$s). أي تغيير هنا يصبح خاصًا بهذه اللعبة.</string>
+    <string name="game_own_settings_note">هذه إعدادات هذه اللعبة الخاصة. استخدم الافتراضي من الإعدادات لتتبع الإعدادات مجددًا.</string>
+    <string name="game_use_settings_default">استخدام الافتراضي من الإعدادات</string>
+    <string name="settings_touch_look">مظهر عناصر التحكم على الشاشة</string>
+    <string name="settings_panel_look">مظهر اللوحة داخل اللعبة</string>
+    <string name="settings_player_one_away">وحدة التحكم المختارة (غير متصلة)</string>
 </resources>

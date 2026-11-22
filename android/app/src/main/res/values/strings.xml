@@ -1491,4 +1491,12 @@
     <string name="settings_build_preview">You\'re running a preview build (v%1$s). Previews may break games. The stable v%2$s replaces it when it\'s out.</string>
     <string name="settings_build_preview_channel">Your channel is %1$s: the app moves you to the stable v%2$s when it ships.</string>
     <string name="settings_build_hotfix">You\'re running a hotfix (v%1$s): a small fix between weekly releases. The next weekly release includes it.</string>
+    <string name="common_picture_size">Picture size</string>
+    <string name="game_lsfg_on_target">On · %1$d fps</string>
+    <string name="game_own_follows_settings">This game follows Settings (%1$s). A change here becomes this game\'s own.</string>
+    <string name="game_own_settings_note">These are this game\'s own settings. Use Settings\' default to follow Settings again.</string>
+    <string name="game_use_settings_default">Use Settings\' default</string>
+    <string name="settings_touch_look">On-screen controls look</string>
+    <string name="settings_panel_look">In-game panel look</string>
+    <string name="settings_player_one_away">The chosen controller (not connected)</string>
 </resources>

@@ -1424,4 +1424,12 @@
     <string name="settings_build_preview">Ти користуєшся тестовою збіркою (v%1$s). Тестові збірки можуть ламати ігри. Стабільна v%2$s замінить її, коли вийде.</string>
     <string name="settings_build_preview_channel">Твій канал: %1$s. Коли вийде стабільна v%2$s, застосунок переведе тебе на неї.</string>
     <string name="settings_build_hotfix">Ти користуєшся хотфіксом (v%1$s): невеликим виправленням між щотижневими випусками. Наступний щотижневий випуск його містить.</string>
+    <string name="common_picture_size">Розмір зображення</string>
+    <string name="game_lsfg_on_target">Увімкнено · %1$d к/с</string>
+    <string name="game_own_follows_settings">Ця гра використовує Налаштування (%1$s). Зміна тут стане власним налаштуванням цієї гри.</string>
+    <string name="game_own_settings_note">Це власні налаштування цієї гри. «Типово з Налаштувань» знову повертає Налаштування.</string>
+    <string name="game_use_settings_default">Типово з Налаштувань</string>
+    <string name="settings_touch_look">Вигляд екранного керування</string>
+    <string name="settings_panel_look">Вигляд ігрової панелі</string>
+    <string name="settings_player_one_away">Вибраний контролер (не під’єднано)</string>
 </resources>

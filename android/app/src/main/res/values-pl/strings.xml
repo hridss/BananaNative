@@ -1424,4 +1424,12 @@
     <string name="settings_build_preview">Używasz wersji podglądowej (v%1$s). Wersje podglądowe mogą psuć gry. Stabilna v%2$s zastąpi ją, gdy się pojawi.</string>
     <string name="settings_build_preview_channel">Twój kanał to %1$s: gdy pojawi się stabilna v%2$s, aplikacja przeniesie Cię na nią.</string>
     <string name="settings_build_hotfix">Używasz poprawki (v%1$s): małej poprawki między wydaniami tygodniowymi. Następne wydanie tygodniowe ją zawiera.</string>
+    <string name="common_picture_size">Rozmiar obrazu</string>
+    <string name="game_lsfg_on_target">Włączone · %1$d kl./s</string>
+    <string name="game_own_follows_settings">Ta gra korzysta z Ustawień (%1$s). Zmiana tutaj będzie dotyczyć tylko tej gry.</string>
+    <string name="game_own_settings_note">To są własne ustawienia tej gry. „Domyślne z Ustawień” przywraca korzystanie z Ustawień.</string>
+    <string name="game_use_settings_default">Domyślne z Ustawień</string>
+    <string name="settings_touch_look">Wygląd sterowania na ekranie</string>
+    <string name="settings_panel_look">Wygląd panelu w grze</string>
+    <string name="settings_player_one_away">Wybrany kontroler (niepodłączony)</string>
 </resources>

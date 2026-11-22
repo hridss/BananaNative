@@ -1416,4 +1416,12 @@
     <string name="settings_build_preview">Stai usando una versione di anteprima (v%1$s). Le anteprime possono rovinare i giochi. La stabile v%2$s la sostituisce quando esce.</string>
     <string name="settings_build_preview_channel">Il tuo canale è %1$s: l\'app ti porta alla versione stabile v%2$s quando esce.</string>
     <string name="settings_build_hotfix">Stai usando un hotfix (v%1$s): una piccola correzione tra le versioni settimanali. La prossima versione settimanale la include.</string>
+    <string name="common_picture_size">Dimensione immagine</string>
+    <string name="game_lsfg_on_target">Sì · %1$d fps</string>
+    <string name="game_own_follows_settings">Questo gioco segue le Impostazioni (%1$s). Una modifica qui diventa propria di questo gioco.</string>
+    <string name="game_own_settings_note">Queste sono le impostazioni proprie di questo gioco. «Valore delle Impostazioni» torna a seguire le Impostazioni.</string>
+    <string name="game_use_settings_default">Valore delle Impostazioni</string>
+    <string name="settings_touch_look">Aspetto dei comandi su schermo</string>
+    <string name="settings_panel_look">Aspetto del pannello di gioco</string>
+    <string name="settings_player_one_away">Il controller scelto (non collegato)</string>
 </resources>
