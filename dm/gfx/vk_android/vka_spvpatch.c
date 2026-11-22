@@ -257,6 +257,9 @@ static int is_annot(uint32_t op) { return op == OpDecorate || op == OpMemberDeco
 static int claim_pass(const uint32_t *w, size_t nw, uint32_t binding, const uint32_t *last, uint32_t *rec, vec_t *o, int *found, char *err, size_t errn) {
 #define FAIL(...) do { snprintf(err, errn, __VA_ARGS__); goto fail; } while (0)
     uint32_t bound = w[3], nb = bound;
+    // From SPIR-V 1.4 (a module vka_spv_no_int64 moved to 1.5) the claim buffer is a Block in the StorageBuffer class (BufferBlock is gone) and the entry point lists it and the
+    // guard variable (every global it uses); before, a BufferBlock in the Uniform class
+    const int v14 = w[1] >= 0x10400; const uint32_t scb = v14 ? SCStorageBuffer : SCUniform, blk = v14 ? 2u /* Block */ : DecBufferBlock;
     uint32_t *psc = calloc(bound, 4), *ty = calloc(bound, 4);   // psc[pointer type]: storage class + 1; ty[id]: the type of a pointer-valued id
     if (!psc || !ty) FAIL("out of memory");
     uint32_t t_bool = 0, t_u32 = 0, t_i32 = 0, p_in_i32 = 0, p_priv_bool = 0, p_uni_u32 = 0, main_fn = 0, prim_var = 0;
@@ -268,7 +271,7 @@ static int claim_pass(const uint32_t *w, size_t nw, uint32_t binding, const uint
         if (op == OpTypePointer && len >= 4) {
             if (w[i + 2] == SCInput && w[i + 3] && w[i + 3] == t_i32) p_in_i32 = w[i + 1];
             if (w[i + 2] == SCPrivate && w[i + 3] && w[i + 3] == t_bool) p_priv_bool = w[i + 1];
-            if (w[i + 2] == SCUniform && w[i + 3] && w[i + 3] == t_u32) p_uni_u32 = w[i + 1];
+            if (w[i + 2] == scb && w[i + 3] && w[i + 3] == t_u32) p_uni_u32 = w[i + 1];
         }
         else if ((op == OpVariable || op == OpAccessChain || op == OpInBoundsAccessChain || op == OpPtrAccessChain || op == OpInBoundsPtrAccessChain || op == OpConvertUToPtr ||
                   op == OpBitcast || op == OpCopyObject || op == OpImageTexelPointer || op == OpFunctionParameter) && len >= 3 && w[i + 2] < bound) ty[w[i + 2]] = w[i + 1];
@@ -294,13 +297,13 @@ static int claim_pass(const uint32_t *w, size_t nw, uint32_t binding, const uint
     uint32_t cur = 0, cur_orig = 0; int in_fn = 0, in_main_entry = 0;
     for (size_t i = 5; i < nw;) {
         uint32_t op = w[i] & 0xffff, len = w[i] >> 16; const uint32_t *in = w + i;
-        if (i == ep_at && !mk_prim) { if (!put_n(o, in, len)) FAIL("out of memory"); i += len; continue; }
-        if (i == ep_at) {   // the PrimitiveId input joins the interface
-            if (!put(o, (len + 1) << 16 | OpEntryPoint) || !put_n(o, in + 1, len - 1) || !put(o, prim_var)) FAIL("out of memory");
-            i += len; continue;
+        if (i == ep_at) {   // the PrimitiveId input joins the interface, and from 1.4 the claim buffer and the guard
+            size_t at = o->n;
+            if (!put_n(o, in, len) || (mk_prim && !put(o, prim_var)) || (v14 && (!put(o, cvar) || !put(o, gvar)))) FAIL("out of memory");
+            o->w[at] = (uint32_t)(o->n - at) << 16 | OpEntryPoint; i += len; continue;
         }
         if (i == first_annot) {
-            uint32_t x[] = {4u << 16 | OpDecorate, rta, DecArrayStride, 4, 3u << 16 | OpDecorate, st, DecBufferBlock, 5u << 16 | OpMemberDecorate, st, 0, DecOffset, 0,
+            uint32_t x[] = {4u << 16 | OpDecorate, rta, DecArrayStride, 4, 3u << 16 | OpDecorate, st, blk, 5u << 16 | OpMemberDecorate, st, 0, DecOffset, 0,
                             4u << 16 | OpDecorate, cvar, DecDescriptorSet, 0, 4u << 16 | OpDecorate, cvar, DecBinding, binding};
             if (!put_n(o, x, sizeof x / 4)) FAIL("out of memory");
             if (mk_prim) { uint32_t y[] = {4u << 16 | OpDecorate, mk_prim, DecBuiltIn, BIPrimitiveId}; if (!put_n(o, y, 4)) FAIL("out of memory"); }
@@ -310,10 +313,10 @@ static int claim_pass(const uint32_t *w, size_t nw, uint32_t binding, const uint
             if (mk_i32) { uint32_t x[] = {4u << 16 | OpTypeInt, mk_i32, 32, 1}; if (!put_n(o, x, 4)) FAIL("out of memory"); }
             if (mk_pin) { uint32_t x[] = {4u << 16 | OpTypePointer, mk_pin, SCInput, t_i32}; if (!put_n(o, x, 4)) FAIL("out of memory"); }
             if (mk_ppb) { uint32_t x[] = {4u << 16 | OpTypePointer, mk_ppb, SCPrivate, t_bool}; if (!put_n(o, x, 4)) FAIL("out of memory"); }
-            if (mk_pu) { uint32_t x[] = {4u << 16 | OpTypePointer, mk_pu, SCUniform, t_u32}; if (!put_n(o, x, 4)) FAIL("out of memory"); }
+            if (mk_pu) { uint32_t x[] = {4u << 16 | OpTypePointer, mk_pu, scb, t_u32}; if (!put_n(o, x, 4)) FAIL("out of memory"); }
             if (mk_prim) { uint32_t x[] = {4u << 16 | OpVariable, p_in_i32, mk_prim, SCInput}; if (!put_n(o, x, 4)) FAIL("out of memory"); }
-            uint32_t x[] = {3u << 16 | OpTypeRuntimeArray, rta, t_u32, 3u << 16 | OpTypeStruct, st, rta, 4u << 16 | OpTypePointer, pst, SCUniform, st,
-                            4u << 16 | OpVariable, pst, cvar, SCUniform, 4u << 16 | OpConstant, t_u32, c0, 0, 4u << 16 | OpConstant, t_u32, c1, 1,
+            uint32_t x[] = {3u << 16 | OpTypeRuntimeArray, rta, t_u32, 3u << 16 | OpTypeStruct, st, rta, 4u << 16 | OpTypePointer, pst, scb, st,
+                            4u << 16 | OpVariable, pst, cvar, scb, 4u << 16 | OpConstant, t_u32, c0, 0, 4u << 16 | OpConstant, t_u32, c1, 1,
                             4u << 16 | OpVariable, p_priv_bool, gvar, SCPrivate};
             if (!put_n(o, x, sizeof x / 4)) FAIL("out of memory");
         }
