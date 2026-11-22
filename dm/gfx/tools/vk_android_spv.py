@@ -1485,7 +1485,7 @@ def row_fetch_buffers(m):
     defs = {}
     for x in m.ins:
         op = x[0] & 0xffff
-        if op in (OP_FUNCTION_CALL, OP_IMAGE_FETCH, OP_IMAGE, OP_COMPOSITE_CONSTRUCT, OP_SHIFT_RIGHT_LOGICAL, OP_BITWISE_AND, OP_BITCAST, OP_LOAD) and len(x) >= 4: defs[x[2]] = x
+        if op in (OP_FUNCTION_CALL, OP_COPY_OBJECT, OP_IMAGE_FETCH, OP_IMAGE, OP_COMPOSITE_CONSTRUCT, OP_SHIFT_RIGHT_LOGICAL, OP_BITWISE_AND, OP_BITCAST, OP_LOAD) and len(x) >= 4: defs[x[2]] = x
     def cval(i):
         c = m.consts.get(i); return c[1][0] if c and len(c[1]) == 1 else None
     load_at = {}
@@ -1498,11 +1498,11 @@ def row_fetch_buffers(m):
             if o == OP_LABEL or o == OP_FUNCTION_CALL and p in y[4:]: return i   # (a call given the pointer may store there)
             if o == OP_STORE and y[1] == p: return y[2]
         return i
-    def strip(i):   # through bitcasts, the scale helper's call (its first argument is the coordinate) and locals
+    def strip(i):   # through bitcasts, the scale helper's call (its first argument is the coordinate) or the copy scale_identity leaves of it, and locals
         while True:
             i = through_local(i); x = defs.get(i)
-            if not x or x[0] & 0xffff not in (OP_BITCAST, OP_FUNCTION_CALL): return i
-            i = x[3] if x[0] & 0xffff == OP_BITCAST else (x[4] if len(x) >= 5 else None)
+            if not x or x[0] & 0xffff not in (OP_BITCAST, OP_COPY_OBJECT, OP_FUNCTION_CALL): return i
+            i = x[3] if x[0] & 0xffff in (OP_BITCAST, OP_COPY_OBJECT) else (x[4] if len(x) >= 5 else None)
     def half(i, op):   # a component of the coordinate: (x & 0x3FFF or x >> 14, x), or (a constant, None): the translator folded a constant x
         i = strip(i)
         if cval(i) is not None: return i, None

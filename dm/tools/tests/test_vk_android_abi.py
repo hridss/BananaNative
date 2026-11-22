@@ -412,8 +412,8 @@ OpFunctionEnd
 %i2 = OpImage %img %s2
 %q = OpImageQuerySizeLod %v2int %i2 %c0
 %f2 = OpImageFetch %v4float %i2 %co Lod %c0
-%ya = OpCopyObject %int %c70000
-%yb = OpCopyObject %int %c70000
+%ya = OpIAdd %int %c70000 %c0
+%yb = OpIAdd %int %c70000 %c0
 %l2 = OpBitwiseAnd %int %ya %c16383
 OpStore %lv %l2
 %l2r = OpLoad %int %lv
@@ -517,6 +517,8 @@ class Rewrites(unittest.TestCase):
         with no OpImage left (the runtime retyper follows a load straight to its reads); one whose halves come from two loads of x, the low one through a local
         (f1b3c237bfd5b871), read at hi << 14 | lo; one whose x the translator folded to a constant, beside row reads, read at that element; one read only at a constant texel, or also
         size-queried, stays a 2D slot"""
+        # after scale_identity (which runs first) the helper's calls are copies of their coordinate: the same two slots are rewritten (none were in the v0.3.50 merge)
+        self.assertEqual(spv.row_fetch_buffers(self.module(re.sub(r'OpFunctionCall %int %scale (%\w+) %c0', r'OpCopyObject %int \1', ROWS_CS))), 2)
         m = self.module(ROWS_CS)
         self.assertEqual(spv.row_fetch_buffers(m), 2)
         r = {e['name']: e for e in m.resources()}
