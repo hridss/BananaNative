@@ -2289,15 +2289,24 @@ public final class MainActivity extends Activity {
 
     void launch(Game card) {
         if (needAccess(new File(card.gameDir))) return;
-        if (Edition.on(this, card.titleId) && Edition.offered(card)) {   // the card's edition switch: program 1 of its set, as a game of its own (Edition.forPlay)
-            Game e = Edition.forPlay(this, card);
-            if (e == null) {
-                Ui.explain(this, Tx.s(R.string.home_no_pack_for_the_switch), Tx.s(R.string.home_edition_needs_pack, Edition.name(card), Edition.program1(new File(card.gameDir))),
-                        "Game: " + card.gameDir).setPositiveButton(android.R.string.ok, null).show();
-                return;
-            }
-            card = e;
+        if (Edition.on(this, card.titleId) && Edition.offered(card)) {   // the card's edition switch: program 1 of its set, as a game of its own (Edition.forPlay reads its packs: off the main thread)
+            new Thread(() -> {
+                Game e = Edition.forPlay(this, card);
+                String p1 = e == null ? Edition.program1(new File(card.gameDir)) : null;
+                runOnUiThread(() -> {
+                    if (isFinishing() || isDestroyed()) return;
+                    if (e != null) { launchGame(e); return; }
+                    Ui.explain(this, Tx.s(R.string.home_no_pack_for_the_switch), Tx.s(R.string.home_edition_needs_pack, Edition.name(card), p1), "Game: " + card.gameDir)
+                            .setPositiveButton(android.R.string.ok, null).show();
+                });
+            }, "nx-edition-pack").start();
+            return;
         }
+        launchGame(card);
+    }
+
+    /** Play for the game launch decided on (the card, or its edition's program 1) */
+    private void launchGame(Game card) {
         Game g = Folders.repack(this, card);   // a remembered pack folder that is gone: the usual search instead
         File saveGone = Folders.goneSave(this, g);
         if (saveGone != null) { Folders.saveGoneDialog(this, g, saveGone); return; }
