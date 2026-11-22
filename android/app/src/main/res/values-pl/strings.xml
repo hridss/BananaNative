@@ -813,6 +813,9 @@
     <string name="home_lossless_dll_missing">" · brak Lossless.dll"</string>
     <string name="home_why">Dlaczego?</string>
     <string name="home_shaders_need_one_update">Shadery wymagają aktualizacji</string>
+    <string name="home_other_pack_has_shaders">Inny pakiet ma shadery</string>
+    <string name="home_other_pack_has_shaders_message">Pakiet tej karty nie ma shaderów dla tej wersji aplikacji. Inny pakiet gry %1$s je ma. Użyć tego pakietu dla tej karty?</string>
+    <string name="home_use_that_pack">Użyj tego pakietu</string>
     <string name="home_nup">" (.nup)"</string>
     <string name="game_applies_from_the_next_frame">Działa od następnej klatki, zapamiętane dla tej gry (to samo ustawienie co Ustawienia gry › Skaler).</string>
     <string name="game_applies_from_the_next_frame_2">Działa od następnej klatki, zapamiętane dla tej gry (to samo ustawienie co Ustawienia gry › Skalowanie ekranu).</string>

@@ -823,6 +823,9 @@
     <string name="home_lossless_dll_missing">" · Lossless.dll مفقود"</string>
     <string name="home_why">لماذا؟</string>
     <string name="home_shaders_need_one_update">المُظلِّلات تحتاج إلى تحديث واحد</string>
+    <string name="home_other_pack_has_shaders">حزمة أخرى تحتوي على المُظلِّلات</string>
+    <string name="home_other_pack_has_shaders_message">الحزمة التي تستخدمها هذه البطاقة لا تحتوي على مُظلِّلات لهذا الإصدار من التطبيق. حزمة أخرى من %1$s تحتوي عليها. هل تريد استخدام تلك الحزمة لهذه البطاقة؟</string>
+    <string name="home_use_that_pack">استخدام تلك الحزمة</string>
     <string name="home_nup">" (.nup)"</string>
     <string name="game_applies_from_the_next_frame">يسري من الإطار التالي ويُحفظ لهذه اللعبة (هو نفس إعداد إعدادات اللعبة › مكبّر الدقة).</string>
     <string name="game_applies_from_the_next_frame_2">يسري من الإطار التالي ويُحفظ لهذه اللعبة (هو نفس إعداد إعدادات اللعبة › تحجيم الشاشة).</string>

@@ -798,6 +798,9 @@
     <string name="home_lossless_dll_missing">" · 缺少 Lossless.dll"</string>
     <string name="home_why">為什麼？</string>
     <string name="home_shaders_need_one_update">著色器需要更新一次</string>
+    <string name="home_other_pack_has_shaders">另一個遊戲包有著色器</string>
+    <string name="home_other_pack_has_shaders_message">此卡片使用的遊戲包沒有適用於此版本應用程式的著色器。%1$s 的另一個遊戲包有。為此卡片使用那個遊戲包？</string>
+    <string name="home_use_that_pack">使用那個遊戲包</string>
     <string name="home_nup">" (.nup)"</string>
     <string name="game_applies_from_the_next_frame">從下一影格起生效，並為此遊戲保留（與遊戲設定 › 放大器相同的設定）。</string>
     <string name="game_applies_from_the_next_frame_2">從下一影格起生效，並為此遊戲保留（與遊戲設定 › 螢幕縮放相同的設定）。</string>

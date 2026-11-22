@@ -808,6 +808,9 @@
     <string name="home_lossless_dll_missing">" · Lossless.dll manquant"</string>
     <string name="home_why">Pourquoi ?</string>
     <string name="home_shaders_need_one_update">Les shaders ont besoin d\'une mise à jour</string>
+    <string name="home_other_pack_has_shaders">Un autre pack a les shaders</string>
+    <string name="home_other_pack_has_shaders_message">Le pack de cette carte n\'a pas de shaders pour cette version de l\'application. Un autre pack de %1$s les a. Utiliser ce pack pour cette carte ?</string>
+    <string name="home_use_that_pack">Utiliser ce pack</string>
     <string name="home_nup">" (.nup)"</string>
     <string name="game_applies_from_the_next_frame">S\'applique dès l\'image suivante et reste enregistré pour ce jeu (le même réglage que Paramètres du jeu › Upscaler).</string>
     <string name="game_applies_from_the_next_frame_2">S\'applique dès l\'image suivante et reste enregistré pour ce jeu (le même réglage que Paramètres du jeu › Mise à l\'échelle de l\'écran).</string>

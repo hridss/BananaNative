@@ -1682,6 +1682,7 @@ public final class MainActivity extends Activity {
             String restamped = Pack.restamp(new File(g.packDir), g.titleId);
             if (restamped != null) android.util.Log.i("nxnative", g.titleId + ": shader library v-" + restamped + " taken over as v-" + BuildConfig.NX_DMSH_VK_CHAIN + " (restamp)");
             Problem problem = problem(g);
+            File other = problem != null ? Folders.packWithLibrary(this, g) : null;   // another pack of this game has this app's shaders: offered, not taken
             Boolean ok = null;
             if (problem == null || problem.onDemand) try { ok = PackCheck.code(this, Pack.read(new File(g.packDir)), new File(g.gameDir)); } catch (IOException e) { ok = null; }
             Boolean code = ok;
@@ -1719,6 +1720,15 @@ public final class MainActivity extends Activity {
                     play.setOnClickListener(v -> relink(g));
                     st.setOnClickListener(v -> play.performClick());   // the state chip does what the state needs
                     st.setContentDescription(play.label.getText() + ": " + st.getText());
+                }
+                if (other != null) {   // the player decides: a tap shows the pack and takes it for this card (Folders.usePack)
+                    TextView n = Ui.warnChip(this, Tx.s(R.string.home_other_pack_has_shaders), Tx.s(R.string.home_other_pack_has_shaders), "");
+                    n.setOnClickListener(v -> Ui.explain(this, Tx.s(R.string.home_other_pack_has_shaders), Tx.s(R.string.home_other_pack_has_shaders_message, g.name), "Pack now: " + g.packDir + "\nOther pack: " + other)
+                            .setPositiveButton(Tx.s(R.string.home_use_that_pack), (d, w) -> new Thread(() -> { Folders.usePack(this, g, other); runOnUiThread(this::refresh); }, "nx-use-pack").start())
+                            .setNegativeButton(Tx.s(R.string.common_cancel), null).show());
+                    LinearLayout.LayoutParams wl = Ui.wrap();
+                    wl.topMargin = dp(6);
+                    info.addView(n, wl);
                 }
                 if (problem != null && problem.legacy) {   // Play stays Play; a chip says why the shaders want one more update
                     TextView n = Ui.warnChip(this, Tx.s(R.string.home_shaders_need_one_update), Tx.s(R.string.home_shaders_need_one_update), ShaderLibs.legacyWarning(problem.prepare));

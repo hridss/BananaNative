@@ -803,6 +803,9 @@
     <string name="home_lossless_dll_missing">" · Lossless.dll eksik"</string>
     <string name="home_why">Neden?</string>
     <string name="home_shaders_need_one_update">Gölgelendiricilerin bir güncellemeye ihtiyacı var</string>
+    <string name="home_other_pack_has_shaders">Başka bir pakette gölgelendiriciler var</string>
+    <string name="home_other_pack_has_shaders_message">Bu kartın kullandığı pakette uygulamanın bu sürümü için gölgelendirici yok. %1$s için başka bir pakette var. Bu kart için o paket kullanılsın mı?</string>
+    <string name="home_use_that_pack">O paketi kullan</string>
     <string name="home_nup">" (.nup)"</string>
     <string name="game_applies_from_the_next_frame">Bir sonraki kareden itibaren uygulanır, bu oyun için saklanır (Oyun ayarları › Yükseltici ile aynı ayar).</string>
     <string name="game_applies_from_the_next_frame_2">Bir sonraki kareden itibaren uygulanır, bu oyun için saklanır (Oyun ayarları › Ekran ölçekleme ile aynı ayar).</string>

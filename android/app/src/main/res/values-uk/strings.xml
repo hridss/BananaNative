@@ -813,6 +813,9 @@
     <string name="home_lossless_dll_missing">" · відсутній Lossless.dll"</string>
     <string name="home_why">Чому?</string>
     <string name="home_shaders_need_one_update">Шейдерам потрібне разове оновлення</string>
+    <string name="home_other_pack_has_shaders">Інший пак має шейдери</string>
+    <string name="home_other_pack_has_shaders_message">Пак цієї картки не має шейдерів для цієї версії застосунку. Інший пак %1$s їх має. Використати той пак для цієї картки?</string>
+    <string name="home_use_that_pack">Використати той пак</string>
     <string name="home_nup">" (.nup)"</string>
     <string name="game_applies_from_the_next_frame">Застосовується з наступного кадру, зберігається для цієї гри (той самий параметр, що й Налаштування гри › Апскейлер).</string>
     <string name="game_applies_from_the_next_frame_2">Діє з наступного кадру й зберігається для цієї гри (це те саме налаштування, що Налаштування гри › Масштабування екрана).</string>

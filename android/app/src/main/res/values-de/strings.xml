@@ -803,6 +803,9 @@
     <string name="home_lossless_dll_missing">" · Lossless.dll fehlt"</string>
     <string name="home_why">Warum?</string>
     <string name="home_shaders_need_one_update">Shader brauchen ein Update</string>
+    <string name="home_other_pack_has_shaders">Ein anderes Paket hat die Shader</string>
+    <string name="home_other_pack_has_shaders_message">Das Paket dieser Karte hat keine Shader für diese Version der App. Ein anderes Paket von %1$s hat sie. Dieses Paket für die Karte verwenden?</string>
+    <string name="home_use_that_pack">Dieses Paket verwenden</string>
     <string name="home_nup">" (.nup)"</string>
     <string name="game_applies_from_the_next_frame">Gilt ab dem nächsten Bild und bleibt für dieses Spiel gespeichert (dieselbe Einstellung wie Spieleinstellungen › Upscaler).</string>
     <string name="game_applies_from_the_next_frame_2">Gilt ab dem nächsten Bild und bleibt für dieses Spiel gespeichert (dieselbe Einstellung wie Spieleinstellungen › Bildschirmskalierung).</string>
