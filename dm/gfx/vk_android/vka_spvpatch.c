@@ -1436,3 +1436,109 @@ fail:
     free(loc); free(ptr_sc); free(ptr_to); free(var_ty); free(kind); free(o.w);
     return NULL;
 }
+
+// vka_spv_nonuniform: NonUniform on the dynamically indexed texture arrays a game profile asks for (nonuniform_texture_arrays; vka_shader.c lib_words). The translator
+// never marks an index NonUniform (its host query for it answers no), so a pixel shader that picks an element of a sampled-image array by a per-pixel value reads it as
+// if the index were the same across the subgroup: Adreno takes one element per 64-lane wave, so in an 8x8 pixel tile whose pixels pick different elements all read one
+// of them (Fire Emblem Fortune's Weave's deferred lighting: its probe cube arrays, square blocks on the walls). Taken: each access chain into a UniformConstant array of
+// sampled images (or of images with Sampled 1), not a buffer or subpass image, outside the texture pool (set pool_set bindings pool_tex and pool_smp: left alone), with
+// an index that is not a constant. The index, the chain, each load of it and each OpSampledImage / OpImage / OpCopyObject of such a load are decorated NonUniform (the
+// Vulkan rule: the value an image instruction uses must be, when its descriptor is not dynamically uniform). ShaderNonUniform and SampledImageArrayNonUniformIndexing are
+// added when a site is decorated, OpExtension "SPV_EXT_descriptor_indexing" below SPIR-V 1.5. Nothing else moves and no id is added (the bound stays). Ids already
+// decorated and capabilities already there are kept, so a second run changes nothing. Counted, not changed: dynamic chains into the pool and into other arrays (storage,
+// buffer or input attachment images, samplers, buffer blocks). Refused (NULL with the reason in err; the module is then used as it is): a chain of more than one index
+// or into an array of such arrays, or a site's chain used by anything but an OpLoad. NULL with err empty: nothing to do. c may be NULL
+enum { NU_OpExtension = 10, NU_OpCapability = 17, NU_OpTypeImage = 25, NU_OpTypeSampler = 26, NU_OpTypeSampledImage = 27, NU_OpTypeArray = 28, NU_OpTypeRuntimeArray = 29,
+       NU_OpTypePointer = 32, NU_OpFunction = 54, NU_OpVariable = 59, NU_OpLoad = 61, NU_OpAccessChain = 65, NU_OpInBoundsAccessChain = 66, NU_OpDecorate = 71,
+       NU_OpCopyObject = 83, NU_OpSampledImage = 86, NU_OpImage = 100, NU_OpLine = 8,
+       NU_DecNonUniform = 5300, NU_CapShaderNonUniform = 5301, NU_CapSampledImageArrayNonUniformIndexing = 5307, NU_DimBuffer = 5, NU_DimSubpassData = 6,
+       NU_SCUniformConstant = 0, NU_SCUniform = 2, NU_SCStorageBuffer = 12, NU_ARRAY = 0x10 };
+static const char NU_EXT[] = "SPV_EXT_descriptor_indexing";
+uint32_t *vka_spv_nonuniform(const uint32_t *w, size_t nw, uint32_t pool_set, uint32_t pool_tex, uint32_t pool_smp, size_t *out_nw, vka_nu_count *c, char *err, size_t errn) {
+    vka_nu_count z; if (!c) c = &z;
+    memset(c, 0, sizeof *c);
+    if (err && errn) err[0] = 0;
+    if (nw < 5 || w[0] != 0x07230203u || !w[3]) { if (err && errn) snprintf(err, errn, "not a SPIR-V module"); c->refused = 1; return NULL; }
+    uint32_t bound = w[3], ver = w[1];
+    // per id: flag 1 a constant, 2 already NonUniform; tkind 1 an eligible element type, 2 another image or sampler type, NU_ARRAY an array (ptee its element);
+    // mark 1 a site's chain, 2 a load of one, 4 to be decorated
+    uint8_t *flag = calloc(bound, 1), *mark = calloc(bound, 1);
+    uint32_t *tkind = calloc(bound, 4), *ptee = calloc(bound, 4), *psc = calloc(bound, 4), *vptr = calloc(bound, 4), *dset = malloc(bound * 4), *dbind = malloc(bound * 4);
+    uint32_t *o = NULL;
+#define NU_FAIL(...) do { if (err && errn) snprintf(err, errn, __VA_ARGS__); c->refused = 1; goto done; } while (0)
+    if (!flag || !mark || !tkind || !ptee || !psc || !vptr || !dset || !dbind) NU_FAIL("out of memory");
+    memset(dset, 0xff, bound * 4); memset(dbind, 0xff, bound * 4);
+    int cap_nu = 0, cap_si = 0, has_ext = 0, in_fn = 0;
+    size_t cap_end = 0, annot_end = 0, pre_end = 0;
+    for (size_t i = 5; i < nw;) {
+        uint32_t op = w[i] & 0xffff, len = w[i] >> 16;
+        if (!len || i + len > nw) NU_FAIL("bad instruction at word %zu", i);
+        if (op == NU_OpFunction) in_fn = 1;
+        if (!in_fn) {
+            if (op == NU_OpCapability && len >= 2) { cap_end = i + len; if (w[i + 1] == NU_CapShaderNonUniform) cap_nu = 1; if (w[i + 1] == NU_CapSampledImageArrayNonUniformIndexing) cap_si = 1; }
+            else if (op == NU_OpExtension && (size_t)(len - 1) * 4 >= sizeof NU_EXT && !memcmp(w + i + 1, NU_EXT, sizeof NU_EXT)) has_ext = 1;
+            else if (is_annot(op)) annot_end = i + len;
+            if ((op >= 2 && op <= 17 && op != NU_OpLine) || op == 330 || op == 331) pre_end = i + len;   // the preamble and debug instructions (where decorations go in a module that has none)
+            if (op == NU_OpDecorate && len >= 3 && w[i + 1] < bound) {
+                if (w[i + 2] == NU_DecNonUniform) flag[w[i + 1]] |= 2;
+                else if (len >= 4 && w[i + 2] == DecDescriptorSet) dset[w[i + 1]] = w[i + 3];
+                else if (len >= 4 && w[i + 2] == DecBinding) dbind[w[i + 1]] = w[i + 3];
+            }
+            else if (op == NU_OpTypeImage && len >= 9 && w[i + 1] < bound) tkind[w[i + 1]] = w[i + 3] != NU_DimBuffer && w[i + 3] != NU_DimSubpassData && w[i + 7] == 1 ? 1 : 2;
+            else if (op == NU_OpTypeSampledImage && len >= 3 && w[i + 1] < bound) tkind[w[i + 1]] = w[i + 2] < bound && tkind[w[i + 2]] == 1 ? 1 : 2;
+            else if (op == NU_OpTypeSampler && len >= 2 && w[i + 1] < bound) tkind[w[i + 1]] = 2;
+            else if ((op == NU_OpTypeArray || op == NU_OpTypeRuntimeArray) && len >= 3 && w[i + 1] < bound) { tkind[w[i + 1]] = NU_ARRAY; ptee[w[i + 1]] = w[i + 2]; }
+            else if (op == NU_OpTypePointer && len >= 4 && w[i + 1] < bound) { psc[w[i + 1]] = w[i + 2] + 1; ptee[w[i + 1]] = w[i + 3]; }
+            else if (op >= 41 && op <= 52 && len >= 3 && w[i + 2] < bound) flag[w[i + 2]] |= 1;   // OpConstantTrue .. OpSpecConstantOp
+            else if (op == NU_OpVariable && len >= 4 && w[i + 2] < bound) vptr[w[i + 2]] = w[i + 1];
+            i += len; continue;
+        }
+        if ((op == NU_OpAccessChain || op == NU_OpInBoundsAccessChain) && len >= 5 && w[i + 3] < bound && vptr[w[i + 3]] && w[i + 4] < bound && !(flag[w[i + 4]] & 1)) {
+            uint32_t v = w[i + 3], pt = vptr[v] < bound ? vptr[v] : 0, sc = pt && psc[pt] ? psc[pt] - 1 : UINT32_MAX, arr = pt ? ptee[pt] : 0;
+            uint32_t el = arr && arr < bound && tkind[arr] == NU_ARRAY ? ptee[arr] : 0, ek = 0, depth = 1;
+            while (el && el < bound && tkind[el] == NU_ARRAY && depth < 8) el = ptee[el], depth++;   // (an array of arrays: its element type)
+            if (el && el < bound) ek = tkind[el];
+            if (el && (sc == NU_SCUniformConstant || sc == NU_SCUniform || sc == NU_SCStorageBuffer)) {   // a dynamic index into a descriptor array
+                if (dset[v] == pool_set && (dbind[v] == pool_tex || dbind[v] == pool_smp)) c->pool++;
+                else if (sc != NU_SCUniformConstant || ek != 1) c->skipped++;
+                else {
+                    if (len != 5 || depth != 1) NU_FAIL("a texture array access chain with %u indices", len - 4);
+                    c->sites++; mark[w[i + 2]] |= 1 | 4; mark[w[i + 4]] |= 4;
+                    i += len; continue;
+                }
+            }
+        }
+        // a site's chain may be used only as an OpLoad's pointer; an OpSampledImage / OpImage / OpCopyObject of a load of one is decorated too
+        for (uint32_t k = 1; k < len; k++) {
+            uint32_t id = w[i + k];
+            if (id >= bound || !(mark[id] & 3) || pf_lit(op, k) || (op == NU_OpLine && k >= 2)) continue;
+            if (mark[id] & 1) { if (op != NU_OpLoad || k != 3) NU_FAIL("a texture array access chain used by opcode %u, not a load", op); mark[w[i + 2]] |= 2 | 4; }
+            else if ((op == NU_OpSampledImage || op == NU_OpImage || op == NU_OpCopyObject) && k == 3) mark[w[i + 2]] |= 4;
+        }
+        i += len;
+    }
+    {
+        int ndec = 0;
+        for (uint32_t id = 1; id < bound; id++) if ((mark[id] & 4) && !(flag[id] & 2)) ndec++;
+        int add_nu = c->sites && !cap_nu, add_si = c->sites && !cap_si, add_ext = c->sites && ver < 0x10500 && !has_ext;
+        if (!ndec && !add_nu && !add_si && !add_ext) goto done;   // nothing to do: no site, or a module this has been through
+        if (!cap_end) NU_FAIL("no OpCapability");
+        size_t dec_at = annot_end ? annot_end : pre_end, extw = (sizeof NU_EXT + 3) / 4;
+        if (dec_at < cap_end) dec_at = cap_end;
+        if (!(o = malloc((nw + 2 * (size_t)(add_nu + add_si) + (add_ext ? 1 + extw : 0) + 3 * (size_t)ndec) * 4))) NU_FAIL("out of memory");
+        size_t n = cap_end;
+        memcpy(o, w, cap_end * 4);   // the header and capabilities, then the new capabilities and extension
+        if (add_nu) { o[n++] = 2u << 16 | NU_OpCapability; o[n++] = NU_CapShaderNonUniform; }
+        if (add_si) { o[n++] = 2u << 16 | NU_OpCapability; o[n++] = NU_CapSampledImageArrayNonUniformIndexing; }
+        if (add_ext) { o[n++] = (uint32_t)(1 + extw) << 16 | NU_OpExtension; memset(o + n, 0, extw * 4); memcpy(o + n, NU_EXT, sizeof NU_EXT); n += extw; }
+        memcpy(o + n, w + cap_end, (dec_at - cap_end) * 4); n += dec_at - cap_end;   // up to the end of the decorations, then the new ones by id
+        for (uint32_t id = 1; id < bound; id++) if ((mark[id] & 4) && !(flag[id] & 2)) { o[n++] = 3u << 16 | NU_OpDecorate; o[n++] = id; o[n++] = NU_DecNonUniform; }
+        memcpy(o + n, w + dec_at, (nw - dec_at) * 4); n += nw - dec_at;
+        c->decorated = ndec; c->caps = add_nu + add_si; c->ext = add_ext;
+        *out_nw = n;
+    }
+done:
+#undef NU_FAIL
+    free(flag); free(mark); free(tkind); free(ptee); free(psc); free(vptr); free(dset); free(dbind);
+    return o;
+}

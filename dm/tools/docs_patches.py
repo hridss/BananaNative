@@ -168,6 +168,8 @@ SWITCH_BINDING = [
      'why': 'a loss of detail chosen for a game that does not fit a device otherwise'}),
     ('occlusion_split_pass', 'on', {'what': 'split Qualcomm depth passes after counted occlusion queries', 'now': 'game', 'goal': 'host', 'purpose': 'rendering',
      'why': 'separate passes restore disappearing cave geometry on Qualcomm 891.14. The exact interaction between the queries and the depth attachment remains open'}),
+    ('nonuniform_texture_arrays', 'on', {'what': 'NonUniform on dynamically indexed texture arrays outside the texture pool', 'now': 'game', 'goal': 'host', 'purpose': 'shaders',
+     'why': "the translator never marks such an index NonUniform; asking for it in the translator would serve every game but moves every game's shader library, and the cost on other games' shaders is not measured"}),
     ('event_wait', 'off', {'what': 'GPU event and sync waits across queues passed on the Vulkan replay', 'now': 'game', 'goal': 'host', 'purpose': 'frame rate',
      'why': 'parked waits cost this game a third of its frame rate and lose the device on Turnip V39; waits that cost no extra submissions would let every game keep them'}),
     ('tex_dyn_slots', '', {'what': "buffer-texture handles indexed through c2's tables", 'now': 'game', 'goal': 'host', 'purpose': 'shaders',

@@ -112,6 +112,7 @@ typedef struct {
     int draw_count;                                 // drawIndirectCount (Vulkan 1.2): an indirect-count multi-draw's count read by the GPU (vka_draw.c vka_mdi_gpu)
     int push_desc, vin_dyn, null_desc, idx8, divisor, logic_op, dual_src, geom, tess, depth_clamp, fill_lines, depth_bias_clamp, multi_vp, a2c;
     int depth_bounds;   // depthBounds: NVN's depth bounds test (nvnCommandBufferSetDepthBounds, vka_draw.c); without it the bounds are ignored, as before
+    int nu_sampled, nu_sampled_native;   // shaderSampledImageArrayNonUniformIndexing (Vulkan 1.2, enabled with the rest of f12) and its ...Native property: the profile's nonuniform_texture_arrays (vka_shader.c)
     int vstores, fstores;   // vertexPipelineStoresAndAtomics, fragmentStoresAndAtomics: texture-use feedback of the pool (vka_tex.c "Texture pool reads") writes from those stages
     // NVN2 task and mesh programs (VK_EXT_mesh_shader: mesh = meshShader, task = taskShader too; DM_VK_MESH=0 leaves it off): their shaders are refused without it (vka_shader.c refusal)
     // and their draws skipped. mesh_inv / task_inv: the largest workgroup (maxMeshWorkGroupInvocations / maxTaskWorkGroupInvocations); mesh_out_v / mesh_out_p: the most vertices /

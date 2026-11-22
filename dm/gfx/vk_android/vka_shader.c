@@ -415,10 +415,42 @@ static void prep_words(const dmsh_vk_entry *e, uint64_t key, uint32_t **w, size_
     if (e->flags & DMSH_VK_F_SUBGROUP) single_lane(key, e->stage, w, nb);
     gs_fill(key, e->stage, w, nb);
 }
+// Profile nonuniform_texture_arrays (DM_GAME_NONUNIFORM_TEXTURE_ARRAYS): every library module gets NonUniform on its dynamically indexed sampled-image arrays outside
+// the texture pool (vka_spv_nonuniform), all stages, on a device with shaderSampledImageArrayNonUniformIndexing (enabled with the rest of f12, vka_dev.c). Fire Emblem
+// Fortune's Weave's deferred lighting picks a reflection probe per pixel from a cube array; read as uniform, Adreno takes one cube per 8x8 pixel wave: square blocks
+// on the walls. A per-game row, not a default: the decorations cost GPU time (that pass about 5 % more on an Adreno 740 at 59 % render), another game's shaders would
+// meet a driver compiler path none of them was tested on, and the cause is the translator never asking for NonUniform, whose change moves every game's shader library.
+// DM_VK_NONUNIFORM (restart): 0 off, 1 on for any game (a developer switch: untested beyond the profile's game). Not keyed in the pipeline cache: a driver finds a
+// pipeline by its own hash of the SPIR-V it is given. Applied after DM_VK_SPV_OVERRIDE (vka_shlib.c): a replaced module is decorated too (a decorated one is left as it is)
+static pthread_once_t g_nu_once = PTHREAD_ONCE_INIT; static int g_nu_on;
+static _Atomic uint64_t g_nu_mods, g_nu_sites, g_nu_refused;
+static void nu_init(void) {
+    const char *q = getenv("DM_VK_NONUNIFORM"); int set = q && *q, want = set ? atoi(q) != 0 : DM_GAME_NONUNIFORM_TEXTURE_ARRAYS;
+    g_nu_on = want && V.nu_sampled;
+    if (want || set)
+        VLOG("profile nonuniform_texture_arrays: %s", !want ? "off (DM_VK_NONUNIFORM=0)" : !V.nu_sampled ? "off: the device lacks shaderSampledImageArrayNonUniformIndexing"
+             : set ? "on (DM_VK_NONUNIFORM=1)" : "on (dynamically indexed texture arrays read NonUniform; DM_VK_NONUNIFORM=0: off)");
+}
+static void nonuniform_arrays(uint64_t key, uint32_t **w, size_t *nb) {
+    pthread_once(&g_nu_once, nu_init);
+    if (!g_nu_on) return;
+    size_t on = 0; vka_nu_count c; char e[200] = "";
+    uint32_t *o = vka_spv_nonuniform(*w, *nb / 4, DMSH_VK_SET_POOL, DMSH_VK_POOL_TEX_BINDING, DMSH_VK_POOL_SAMP_BINDING, &on, &c, e, sizeof e);
+    if (!o) {
+        if (e[0]) { uint64_t n = atomic_fetch_add(&g_nu_refused, 1); if (n < 8) VRED("shader %016llx: texture arrays not made NonUniform (%s): used as built", (unsigned long long)key, e); }
+        return;
+    }
+    free(*w); *w = o; *nb = on * 4;
+    uint64_t nm = atomic_fetch_add(&g_nu_mods, 1) + 1, ns = atomic_fetch_add(&g_nu_sites, (uint64_t)c.sites) + (uint64_t)c.sites;
+    if (nm <= 4 || !(nm & (nm - 1)))
+        VLOG("nonuniform_texture_arrays: %llu modules, %llu texture array reads NonUniform, %llu refused (shader %016llx: %d reads, %d pool reads left as they are)",
+             (unsigned long long)nm, (unsigned long long)ns, (unsigned long long)atomic_load(&g_nu_refused), (unsigned long long)key, c.sites, c.pool);
+}
 // A library module's words. With the mesh draws drawn through compute (V.memu, vka_memu.c), a pixel shader of per-primitive inputs is only ever drawn behind the generated
 // vertex shader: every module of it is made from its words with those inputs flat (vka_memu_fs_flat), so the variants and retypes made from them are too
 static uint32_t *lib_words(const vka_shlib *L, const dmsh_vk_entry *e, const dmsh_vk_module *m, size_t *nb, char *err, size_t errn) {
     uint32_t *w = vka_shlib_spirv(L, m, nb, err, errn);
+    if (w) nonuniform_arrays(e ? e->key : 0, &w, nb);   // the profile's nonuniform_texture_arrays (off: returns before any work)
     if (w && V.memu && e && e->stage == DMSH_VK_STAGE_FS && (e->flags & DMSH_VK_F_MESH_PRIM)) {
         size_t on = 0; char e2[160]; uint32_t *o = vka_memu_fs_flat(w, *nb / 4, &on, e2, sizeof e2);
         if (o) { free(w); w = o; *nb = on * 4; }

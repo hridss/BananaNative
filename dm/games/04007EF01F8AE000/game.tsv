@@ -31,6 +31,11 @@ depth_mode	zero
 # Android, Qualcomm's stock driver (Adreno 830, 512.800.77): the light grid's compute shader lost the device at its first dispatch, at the title (vkQueueSubmit -4);
 # its subgroup operations run as one invocation on Qualcomm's own driver (a workaround: dm/games/README.md subgroup_one_lane)
 subgroup_one_lane	35d12d6f98fa05e2
+# Android: square blocks of 8x8 render pixels on lit walls and floors, at every render scale, seen on Turnip (Adreno 740 and 830): the deferred lighting pixel shader
+# 1eb211a364c3cb36 picks a reflection probe per pixel from two cube arrays, and the translated shader does not mark the index NonUniform, so Adreno reads one cube for
+# each 64-pixel wave. Its texture arrays (and those of every shader that indexes one outside the texture pool) are read NonUniform: blocks gone on an Adreno 740 at
+# 100 % and 59 % render, that pass about 5 % slower at 59 % (dm/games/README.md nonuniform_texture_arrays)
+nonuniform_texture_arrays	on
 # Android: the game's DLSS (NVN2) runs on vka's stand-in, Snapdragon GSR2 3-pass (vka_dlss.c); the launcher's Upscaler row offers its modes, with Motion clarity
 # (DM_VK_GSR2_CLARITY) and Temporal sharpness (DM_VK_DLSS_SHARP) sliders, in Game settings and the in-game panel
 dlss_standin	1

@@ -254,6 +254,7 @@ static int init_once(void) {
     V.imageless = f12.imagelessFramebuffer;   // (enabled with the rest of f12)
     V.draw_count = f12.drawIndirectCount;
     V.minmax = f12.samplerFilterMinmax;   // (enabled with the rest of f12)
+    V.nu_sampled = f12.shaderSampledImageArrayNonUniformIndexing;   // (enabled with the rest of f12): NonUniform sampled-image array reads (vka_shader.c nonuniform_arrays)
     V.bda = f12.bufferDeviceAddress; V.uab = f12.descriptorBindingSampledImageUpdateAfterBind && f12.descriptorBindingPartiallyBound && f12.runtimeDescriptorArray;
     V.placed = placed && fmp.memoryMapPlaced; V.placed_range = placed && fmp.memoryMapRangePlaced; V.unmap_reserve = placed && fmp.memoryUnmapReserve;
     float prio = 1.f;
@@ -291,7 +292,8 @@ static int init_once(void) {
 
     VkPhysicalDeviceMapMemoryPlacedPropertiesEXT pmp = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAP_MEMORY_PLACED_PROPERTIES_EXT};
     VkPhysicalDeviceVulkan13Properties p13 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_PROPERTIES, .pNext = placed ? &pmp : NULL};
-    VkPhysicalDeviceVulkan11Properties p11 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_PROPERTIES, .pNext = &p13};
+    VkPhysicalDeviceDescriptorIndexingProperties pdi = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_PROPERTIES, .pNext = &p13};
+    VkPhysicalDeviceVulkan11Properties p11 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_PROPERTIES, .pNext = &pdi};
     VkPhysicalDevicePushDescriptorPropertiesKHR ppd = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PUSH_DESCRIPTOR_PROPERTIES_KHR, .pNext = &p11};
     VkPhysicalDeviceMaintenance3Properties pm3 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_3_PROPERTIES, .pNext = V.push_desc ? (void *)&ppd : (void *)&p11};
     VkPhysicalDeviceGraphicsPipelineLibraryPropertiesEXT pgpl = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_PROPERTIES_EXT, .pNext = &pm3};
@@ -302,6 +304,8 @@ static int init_once(void) {
     VLOG("driver: %s (%s), driver ID %d, conformance %u.%u.%u.%u, driver version %#x; %s", pdr.driverName, pdr.driverInfo, pdr.driverID, pdr.conformanceVersion.major,
          pdr.conformanceVersion.minor, pdr.conformanceVersion.subminor, pdr.conformanceVersion.patch, V.props.driverVersion, vka_driver_tag() ? "custom (DM_VK_DRIVER)" : "the system's");
     V.driver_id = (int)pdr.driverID;
+    V.nu_sampled_native = pdi.shaderSampledImageArrayNonUniformIndexingNative;
+    VLOG("descriptor indexing: shaderSampledImageArrayNonUniformIndexing %d, shaderSampledImageArrayNonUniformIndexingNative %d", V.nu_sampled, V.nu_sampled_native);
     if (vka_driver_tag()) {   // adrenotools hands back the system's driver when the custom one does not load (vka_driverpath.h): say so where the player's log shows it
         void vka_driver_lib(const char **dir, const char **name); int vka_driver_mapped(void); const char *dir, *name; vka_driver_lib(&dir, &name);
         int m = vka_driver_mapped();

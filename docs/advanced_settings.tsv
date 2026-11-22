@@ -643,6 +643,8 @@ DM_VK_NANSCAN_STEP	developer	Diagnostics			text			both
 DM_VK_NDSR	developer	Graphics			text			both							
 DM_VK_NDSR_INPUT	developer	Graphics			text			both							
 DM_VK_NDSR_SHARP	developer	Graphics			text			both							
+DM_VK_NONUNIFORM	developer	Graphics			text		The game profile's nonuniform_texture_arrays, on a device with the feature	both			nonuniform_texture_arrays				
+DM_VK_NU_SPV_DIR	internal	Diagnostics			text			both						test harness	
 DM_VK_OBJCOUNT	developer	Diagnostics			text			both							
 DM_VK_OCCLUSION	developer	Graphics			text			both							
 DM_VK_ONE_LANE	developer	Graphics			text		The game profile's one-lane shaders with Qualcomm's driver, none with others	both							

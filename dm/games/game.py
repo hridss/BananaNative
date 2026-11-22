@@ -202,6 +202,8 @@ def header(g):
     if evw not in ('on', 'off'): sys.exit(f'{g.id}: event_wait must be on or off: {evw}')
     oqs = g.get('occlusion_split_pass', 'off')
     if oqs not in ('on', 'off'): sys.exit(f'{g.id}: occlusion_split_pass must be on or off: {oqs}')
+    nut = g.get('nonuniform_texture_arrays', 'off')   # Android: dynamically indexed texture arrays read NonUniform (vka_shader.c nonuniform_arrays; DM_VK_NONUNIFORM overrides): on / off
+    if nut not in ('on', 'off'): sys.exit(f'{g.id}: nonuniform_texture_arrays must be on or off: {nut}')
     av1 = g.get('av1_decoder', 'hardware')   # Android: AV1 movies on the phone's hardware decoder (MediaCodec, the default) or dav1d frame-parallel (hle_movie_av1.c mav1_send)
     if av1 not in ('hardware', 'dav1d'): sys.exit(f'{g.id}: av1_decoder must be hardware or dav1d: {av1}')
     # Android, devices of 12 GB or less (MemTotal up to 12 GiB; vka_lowram.h): defaults the Vulkan replay takes there only, for a profile that sets them. 0 = not set
@@ -454,6 +456,7 @@ def header(g):
          f'#define DM_GAME_TEX_SOFT {int(tsf == "on")}',
          f'#define DM_GAME_RAM_SAVER_SOFT {int(rss == "on")}',
          f'#define DM_GAME_OCCLUSION_SPLIT_PASS {int(oqs == "on")}',
+         f'#define DM_GAME_NONUNIFORM_TEXTURE_ARRAYS {int(nut == "on")}',
          f'#define DM_GAME_EVENT_WAIT {int(evw == "on")}',
          f'#define DM_GAME_GPU_TS_SEGMENT {int(gts == "segment")}',
          f'#define DM_GAME_DRAW_BARRIERS_GAME {int(dbr == "game")}',
