@@ -207,6 +207,25 @@ def entry(where, st, ctl, code, key):
     if KEEP is not None and key not in KEEP and st not in ('ts', 'ms'): return (where, st, ctl[:0x760 if st == 'cs' else 0x80], code[:0x80], meta + (False,))
     return (where, st, bytes(ctl), bytes(code), meta + (True,))
 
+_REGISTERED = None
+def registered_sources():
+    """{(key, stage name): source} of the profile's shader_map.tsv (its rows: package, index, stage, key, source), read once, for the merge of the files' results (merge_results;
+    not in the scan, so the scan's cached results do not depend on the map). A key found in more than one file keeps the copy at the place its map names when the scan finds it there, instead of the first copy: Fast Fusion's map
+    names blocker_full.w3d for two keys a RomFS also holds in _clock.w3d, and the first copy moved those rows and their package indices (upstream nxnative #3130).
+    Our own splits' maps name the first copy, so nothing moves for them; a map from another split keeps its places, and a pack no longer finds its shaders
+    "at other places" than the map's (vk_android_build.py). Empty without a profile map"""
+    global _REGISTERED
+    if _REGISTERED is None:
+        _REGISTERED = {}
+        try: path = GAME.table('shader_map.tsv')
+        except Exception: path = None
+        if path and os.path.isfile(path):
+            with open(path, encoding='utf-8') as f:
+                for line in f:
+                    c = line.rstrip('\n').split('\t', 4)
+                    if len(c) == 5 and not line.startswith(('#', 'package\t')): _REGISTERED[c[3], c[2]] = c[4]
+    return _REGISTERED
+
 class Shaders:
     """The shaders a scan finds, one entry per key as they come (entry): the readers append (where, stage, control, code) here as to a list, and a copy of a key already
     found is compared and dropped at once instead of kept until the file ends (Pokopia's .fdata: 203,120 outputs, 125,950 keys). len() counts what was appended,
@@ -3529,8 +3548,35 @@ def uniq_keys(found):
     if isinstance(found, Shaders): return found.uniq
     s = Shaders(); s.extend(found); return s.uniq
 
-def last_entries(found):   # {key: entry} of the last copy of each key, unchecked (main's and the host's saved shaders, as before)
-    return {k: entry(w, s, c, code, k) for w, s, c, code in found for k in [skey(c, code)]}
+def merge_results(results, registered=None):
+    """The scan's results merged, one entry per key, the pairs, and the rows per source group. A key found in more than one file keeps its first copy, except that the game's
+    own copy (base or update) takes an add-on's place (/aoc/<index>/), and then that a copy at the place the profile's map names (registered: {(key, stage name): source},
+    registered_sources) takes the first copy's, when it is of the same stage and both are the game's or both an add-on's: a registered add-on copy never displaces the game's,
+    and a saved or captured copy (nvn_shdump, /glslc_play/) never takes a key. Every copy is checked against the first before one is chosen"""
+    keys, preferred, pairs = {}, {}, set()
+    for rel, uniq, pr, _ in results:
+        pairs |= pr
+        for key, v in uniq.items():
+            if key not in keys: keys[key] = v; continue
+            old = keys[key]
+            if old[4][0] != v[4][0]: red(f'key {key} is the same but the control section or code area differs ({v[0]} / {old[0]})')
+            if old[0].startswith('/aoc/') and not v[0].startswith('/aoc/'): keys[key] = v
+            elif registered and v[0] != old[0] and registered.get((key, STAGE_NAME.get(v[1]))) == v[0]: preferred.setdefault(key, v)
+    for key, v in preferred.items():
+        old = keys[key]
+        if v[1] == old[1] and not v[0].startswith('/glslc_play/') and v[0].startswith('/aoc/') == old[0].startswith('/aoc/'): keys[key] = v
+    return keys, pairs, collections.Counter(group(v[0]) for v in keys.values())
+
+def last_entries(found, registered=None):   # {key: entry} of the last copy of each key, unchecked (main's and the host's saved shaders, as before)
+    last, pref = {}, {}
+    for w, s, c, code in found:
+        k = skey(c, code); last[k] = (w, s, c, code)
+        if registered and registered.get((k, STAGE_NAME.get(s))) == w: pref.setdefault(k, (w, s, c, code))
+    # main's copies (registered: registered_sources): the copy at the place the profile's map names, when the scan finds the key there with the same stage, else the last
+    # (ACNH's main holds its BNSH variations in another order than a split made elsewhere names them: 22 of its rows)
+    for k, v in pref.items():
+        if v[1] == last[k][1]: last[k] = v
+    return {k: entry(w, s, c, code, k) for k, (w, s, c, code) in last.items()}
 
 def nso_image(path):   # an NSO's image (dm/tools/nso.py); nso.Error (a ValueError) on a damaged file
     import nso
@@ -3681,7 +3727,8 @@ def digest_sources():
     """The files a scan's results depend on besides the inputs: the Python of this folder, dm/tools and dm/games (shader_split.py and every module it can import:
     romfs, unityfs, uepak, cpk, frostbite, smash_arc, profile_guess, game, nso, ...) and what the scan reads of the game's profile: game.tsv (the shader_* keys:
     source groups, key skip; modules) and the profile's Python. Not its other tables: the split writes those (shader_map.tsv ...) or never reads them (README,
-    c1_full.tsv, cb_extent.tsv, the shader build's tables); shader_facts_manual.tsv is merged into the outputs after the scan"""
+    c1_full.tsv, cb_extent.tsv, the shader build's tables); shader_facts_manual.tsv is merged into the outputs after the scan (and the map's places, registered_sources,
+    only into the merge of the files' results, after the scan)"""
     here = os.path.dirname(os.path.abspath(__file__))
     out = []
     for d in (here, os.path.join(here, '../../tools'), os.path.join(here, '../../games')):
@@ -3796,7 +3843,7 @@ def main():
         names = sorted(f for f in os.listdir(ued) if f.endswith('.ushaderbytecode') and not f.startswith('._')) if os.path.isdir(ued) else []   # AppleDouble metadata, not decoded shader archives
         if not names and uepak.unreal_paks(romfs, inline=False, mains=[mainnso]): red(f'the RomFS has Unreal paks, but there are no decoded shader code archives in {ued} (the NSP script writes them)')
         for nm in names: found += ue_shaders(open(os.path.join(ued, nm), 'rb').read(), f'/ue_shaders/{nm}')
-        results.append(('main', last_entries(found), var_pairs(found), {}))
+        results.append(('main', last_entries(found, registered_sources()), var_pairs(found), {}))
     for romfs in dlc_v:
         name = os.path.basename(os.path.normpath(romfs))
         tag = 'aoc/' + (name.removesuffix('.img') if is_image(romfs) else name)
@@ -4020,16 +4067,7 @@ def split_tables(results, big, files, dumps, J, common, zdicts, cache, targeted=
     bad = [extra[1] for *_, extra in results if isinstance(extra, tuple) for _ in range(extra[2] if len(extra) > 2 else 1)]
     scanned = {r for _, r, *_ in big + files}
     holding = list(dict.fromkeys(rel for rel, uniq, pr, _ in results if (uniq or pr) and rel in scanned))   # the files any shader was found in (DM_SPLIT_FILES), in scan order
-    per_src = collections.Counter(); pairs = set()
-    for rel, uniq, pr, _ in results:
-        pairs |= pr
-        for key, v in uniq.items():
-            if key in keys:
-                old = keys[key]
-                if old[4][0] != v[4][0]: red(f'key {key} is the same but the control section or code area differs ({v[0]} / {old[0]})')
-                if old[0].startswith('/aoc/') and not v[0].startswith('/aoc/'): per_src[group(old[0])] -= 1; keys[key] = v; per_src[group(v[0])] += 1
-                continue
-            keys[key] = v; per_src[group(v[0])] += 1
+    merged, pairs, per_src = merge_results(results, registered_sources()); keys.update(merged)
     del results
     mesh_pairs = {x for x in pairs if x[2:] in (('mesh',), ('task',))}; pairs -= mesh_pairs
     prog = {(a, b) for a, b, *t in pairs if t} - pairs; pairs = {x for x in pairs if len(x) == 2}

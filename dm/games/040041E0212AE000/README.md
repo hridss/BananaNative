@@ -78,6 +78,7 @@ Regression level: moderate, because shared shader extraction and translation cha
 
 ## Found on this game
 
+- [A key's copy moved from the place the profile's map names](../../../docs/reference/packing.md#a-keys-copy-moved-from-the-place-the-profiles-map-names): `_clock.w3d` also holds two keys the map names under `blocker_full.w3d` (upstream nxnative #3130); the split keeps the map's place.
 - SHN resources and embedded shader objects.
 - Subword task and mesh payload accesses.
 - [The phone's shaders step fails on a shader that does not build on the Mac either](../../../docs/reference/packing.md#the-phones-shaders-step-fails-on-a-shader-that-does-not-build-on-the-mac-either) (Android, 0.3.50, Forgejo #566): the 62 task and mesh programs, until the profile's `vk_delta.tsv` listed them.
