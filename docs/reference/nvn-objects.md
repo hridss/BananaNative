@@ -573,6 +573,13 @@ Games read this count as a position in their own command memory and size their h
 - **Check:** `t_readback` clears a packaged texture through a render pass, reads the clear colour back from its storage, checks that resolving it does not upload it again, then copies the storage to another address with `memcpy` and reads the colour from a texture created there; without the readback both reads fail. In the log, `render→texture copy into ser=… read back into the storage when the GPU completes`.
 - **Found on:** [The Legend of Zelda: Tears of the Kingdom](../../dm/games/0100F2C0115B6000/README.md) on the Mac: meadows lost their grass and went dark within half a minute of loading; with the fix the grass stays through three minutes of standing and walking. Uploads of textures that changed in the pool, same script: 40 before, 449 after, almost all while loading; frame times the same (p50 about 18 ms).
 
+### Block-compressed textures written through an uncompressed alias (Android)
+
+- **Symptom:** (Android) a block-compressed texture that the GPU fills through an uncompressed texture over the same storage shows its old content or none: Unreal's runtime virtual texture pools (`PF_DXT5` / `PF_BC5`), which the engine renders as one texel per 4×4 block and samples as BC.
+- **Cause:** on Vulkan the two textures are separate images over the same guest storage. A GPU write into the uncompressed one stays in its image; the block-compressed image was uploaded from the storage once and never saw it.
+- **Fix:** general (`vka_tex.c` `bc_alias_match`, `bc_sync_queue_locked`, `vka_tex_prepare`): an uncompressed image the GPU writes whose storage has a block-compressed image with the same bytes per block, levels, layers and a texel per block (an alias) is queued; before the next submission the queue copies it into the alias, every level while the block grid lines up, then leaves it until its next GPU write. A block-compressed image made over a GPU-written alias queues it too. A dropped pool takes its images out of the queue; a full queue (64) is reported once.
+- **Found on:** in Peanuts Native (its PR #167, for DRAGON BALL: Sparking! ZERO's runtime virtual texture pools, which has no profile here); whether it ends that game's dark terrain is not recorded. Not run here.
+
 ### Sampled textures in a sparse pool uploaded through the page table
 
 - **Symptom:** textures that should hold CPU-written data come out magenta (ASTC's error colour) or black.
