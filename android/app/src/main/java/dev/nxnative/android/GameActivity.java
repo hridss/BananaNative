@@ -1257,7 +1257,7 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
         inputManager.registerInputDeviceListener(this, ui);
         padMotion = new PadMotion();
         order = new PadOrder(new PadOrder.Host() {
-            @Override public int add(PadOrder.Pad p) { int pl = Native.deviceAdded(p.id, p.name, false); if (pl >= 0) padConnected(p.id); return pl; }
+            @Override public int add(PadOrder.Pad p) { int pl = Native.deviceAdded(p.id, p.name, odinLabelled(p.id)); if (pl >= 0) padConnected(p.id); return pl; }
             @Override public int first(PadOrder.Pad p) {
                 int pl = Native.deviceFirst(p.id, p.name);
                 if (pl == 0 && rumble != null) rumble.reroute(pads);   // two players traded devices: each gets its device's vibrator
@@ -1468,6 +1468,12 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
         boolean full = keys[0] && keys[1] && d.getMotionRange(MotionEvent.AXIS_X, InputDevice.SOURCE_JOYSTICK) != null
                 && d.getMotionRange(MotionEvent.AXIS_Y, InputDevice.SOURCE_JOYSTICK) != null;
         return new PadOrder.Pad(d.getId(), d.getDescriptor(), d.getName(), d.isExternal(), full, d.getVendorId());
+    }
+    /** AYN's built-in controller (the Thor's and the Odins' "Odin Controller") reports Nintendo's labels unless the system's Controller style is Xbox: its face buttons
+     *  then go by label, every other pad by position as before (OdinPad; Xbox button labels and Button mapping still win, input_android.c take) */
+    private static boolean odinLabelled(int id) {
+        InputDevice d = InputDevice.getDevice(id);
+        return d != null && OdinPad.labelled(d.getVendorId(), d.getProductId(), d.getName(), OdinPad.style());
     }
     /** A pad key that gives a device without a player one (the keys the host takes: gamepad buttons and the D-pad) */
     private static boolean padKey(int code) {
