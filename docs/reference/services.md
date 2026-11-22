@@ -325,6 +325,13 @@ Most service calls can be found before they crash, before the first boot or the 
 - **Fix:** `aoc::CountAddOnContent` and `ListAddOnContent` run on the big host stack (`HLE_FORCE_BIG`, `hle_misc.c`).
 - **Found on:** [Digimon Story Cyber Sleuth: Complete Edition](../../dm/games/010014E00DB56000/README.md) (SDK 6.4.0; one boot).
 
+### Notification and focus calls on a small guest stack
+
+- **Symptom:** the game closes when the player goes to Home: SIGSEGV in `vfprintf` on a guard page below a guest thread's stack, under `h_oe_TryPopMsg` or `h_oe_PopMsg`.
+- **Cause:** a game that sets focus handling mode 2 is told of focus changes and pauses itself; the thread that pops the notification has little stack left, and the host's log line for the pop runs it off its stack.
+- **Fix:** `TryPopNotificationMessage`, `PopNotificationMessage`, `SetFocusHandlingMode` and the other `oe` take-overs that log run on the big host stack (`HLE_FORCE_BIG`, `hle_oe.c`), as the file system and the add-on content queries do.
+- **Found on:** Resident Evil 4 in Peanuts Native (which of its two releases, `010099A00BC1E000` or `0400569027BF4000`, is not recorded; not run here).
+
 ### An add-on content mount name used again after Unmount
 
 - **Symptom:** the game shows the add-on content version error (`game asks to show an error: add-on content version mismatch`) after its title screen, with every add-on in `DM_AOC_DIR`; with `DM_FS=1` the first add-on's file opens and the second's is not found under the same mount name (Pokémon Friends: `AVCtitle:/AocVersion/AocVersion_DLC01.json` opens, `AocVersion_DLC02.json` is `fs stat not found`).
