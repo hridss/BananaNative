@@ -2673,6 +2673,32 @@ static VkComponentSwizzle swz1(int n) { return n >= 0 && n <= 5 ? (VkComponentSw
 // spread into white blotches and black speckles over the whole level)
 static vka_img *g_fb_im[9]; static uint32_t g_fb_lv[9]; static int g_nfb;
 void vka_tex_feedback(vka_img *const *ims, const uint32_t *levels, int n) { g_nfb = n > 9 ? 9 : n; for (int i = 0; i < g_nfb; i++) { g_fb_im[i] = ims[i]; g_fb_lv[i] = levels[i]; } }
+// a mip-chain pass whose sampler pins one level samples that level alone (nxnative's fb_pinned_level, nvn_mtl.m; "Upsample pass reading
+// the level above the one it renders" in docs/reference/rendering.md). The cut above assumes the pass downsamples. An upsample pass renders level n and reads level n + 1,
+// chosen by its sampler's LOD clamp (n + 1..n + 1); in the view of the levels below n Vulkan clamps that read to level n - 1, a sharper level, and the chain adds it back up:
+// Breath of the Wild's Sheikah glow came out blocky. Peanuts Native issue #170
+// The level a sampler lets a draw read, counted from the view's base, or -1: with a mip filter, a minimum and maximum LOD that are the same whole number pin every fetch to
+// that level, whatever LOD the shader asks for (bias and anisotropy too: Vulkan clamps after them)
+static int fb_samp_pin(const samp_par *p) {
+    if (p->minf < NVN_MIN_FILTER_NEAREST_MIPMAP_NEAREST || p->lod_min != p->lod_max || !(p->lod_min >= 0.0f && p->lod_min <= 15.0f) || p->lod_min != (float)(int)p->lod_min) return -1;
+    return (int)p->lod_min;
+}
+// The levels *l0, *nl (image levels) of a sampled view of a pass's own target, against its attached level att. pin: fb_samp_pin of the draw's sampler, or -1.
+// A pinned level other than att (a view's last one when pin is past it, where the sampler's clamp ends): that level alone, on either side of att. Otherwise, a view
+// starting below att: the levels below it. A view leaving att out, a single-level view and a view starting at att itself are left as they are (0); 1 = pinned, 2 = cut below
+static int fb_view_levels(uint32_t *l0, uint32_t *nl, uint32_t att, int pin) {
+    if (att < *l0 || att - *l0 >= *nl || *nl < 2) return 0;
+    if (pin >= 0) { uint32_t lv = *l0 + ((uint32_t)pin < *nl ? (uint32_t)pin : *nl - 1); if (lv != att) { *l0 = lv; *nl = 1; return 1; } }
+    if (att > *l0) { *nl = att - *l0; return 2; }
+    return 0;
+}
+// The sampler a sampled view is read through (vka_tex_id_view_samp_rec; 0 = not known), on the recording thread
+static _Thread_local int t_view_sid;
+static int fb_pin_of(int sid) {
+    if (sid <= 0 || !VKA_ENV("DM_VK_FB_PIN", 1)) return -1;
+    pthread_mutex_lock(&g_tmu); int pin = sid < g_nsreg ? fb_samp_pin(&g_sreg[sid]) : -1; pthread_mutex_unlock(&g_tmu);
+    return pin;
+}
 static VkImageView view_of(const treg_ent *e, vka_img *im, int vt_want, int storage, VkFormat ovr) {
     vka_fmt f; const view_t *v = e->has_v ? &e->v : NULL;
     if (!vka_fmt_of(v && v->set_format ? v->format : e->t.d.format, &f)) f = im->f;
@@ -2685,9 +2711,14 @@ static VkImageView view_of(const treg_ent *e, vka_img *im, int vt_want, int stor
     if (l0 >= im->levels || a0 >= im->layers) return VK_NULL_HANDLE;
     if (l0 + nl > im->levels) nl = im->levels - l0;
     if (a0 + na > im->layers) na = im->layers - a0;
-    if (vt_want >= 0 && !storage) for (int i = 0; i < g_nfb; i++) if (g_fb_im[i] == im && g_fb_lv[i] > l0 && g_fb_lv[i] < l0 + nl) {
-        static _Atomic int n; if (!atomic_exchange(&n, 1)) VLOG("a pass samples the texture it renders (serial %llu level %u) through levels %u+%u: sampled through the levels below it", (unsigned long long)im->serial, g_fb_lv[i], l0, nl);
-        nl = g_fb_lv[i] - l0; }
+    // the pinned level alone, else the levels below (fb_view_levels; upstream cut to the levels below only)
+    if (vt_want >= 0 && !storage) for (int i = 0, pin = -2; i < g_nfb; i++) if (g_fb_im[i] == im) {
+        uint32_t ol0 = l0, onl = nl;
+        if (pin == -2) pin = fb_pin_of(t_view_sid);   // (once a view, and only for a pass's own target)
+        int how = fb_view_levels(&l0, &nl, g_fb_lv[i], pin);
+        if (how == 1) { static _Atomic int n; if (!atomic_exchange(&n, 1)) VLOG("a pass samples the texture it renders (serial %llu level %u) through levels %u+%u, its sampler pinned to level %u: sampled through that level alone", (unsigned long long)im->serial, g_fb_lv[i], ol0, onl, l0); }
+        if (how == 2) { static _Atomic int n; if (!atomic_exchange(&n, 1)) VLOG("a pass samples the texture it renders (serial %llu level %u) through levels %u+%u: sampled through the levels below it", (unsigned long long)im->serial, g_fb_lv[i], ol0, onl); }
+    }
     int tgt = v && v->set_target ? v->target : e->t.d.target;
     VkComponentMapping m = {0};
     if (storage) nl = 1;
@@ -2911,6 +2942,12 @@ VkImageView vka_tex_id_view_rec(int id, VkCommandBuffer cb, uint8_t dim, int sto
     vka_img *im = NULL; VkImageView v = id_view(id, cb, dim, 0, &im, VK_FORMAT_UNDEFINED);
     if (im) { im->last_frame = vka_frame(); im->last_fence = vka_fence_last(); }
     if (v && im && g_tver && !in_fb(im)) *m = (vmemo){id, dim, ver, gen, im, v};
+    return v;
+}
+// the same read through sampler ID sid (0: not known), whose pinned level a view of the open pass's own target follows (fb_view_levels).
+// Such a view is never memoized (above), so the memo needs no sampler
+VkImageView vka_tex_id_view_samp_rec(int id, int sid, VkCommandBuffer cb, uint8_t dim, int storage, VkImageLayout *layout) {
+    t_view_sid = sid; VkImageView v = vka_tex_id_view_rec(id, cb, dim, storage, layout); t_view_sid = 0;
     return v;
 }
 int vka_tex_id_pending_rec(int id, uint8_t dim) {   // 0 at once when the memo holds the ID (its image was made)

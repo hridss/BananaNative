@@ -527,6 +527,7 @@ DM_VK_EVENT_GATE	developer	Graphics			text			both
 DM_VK_EVENT_LOG	developer	Diagnostics			text			both							
 DM_VK_EVENT_PARK_MS	developer	Diagnostics			text			both							
 DM_VK_EVENT_WAIT	developer	Graphics			text			both							
+DM_VK_FB_PIN	developer	Diagnostics			text			both							
 DM_VK_FD_ALIAS	developer	Graphics			text			both							
 DM_VK_FG	developer	Graphics			text			both							
 DM_VK_FG_OWNFMT	developer	Diagnostics			text			both							
