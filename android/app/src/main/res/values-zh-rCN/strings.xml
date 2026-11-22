@@ -803,6 +803,7 @@
     <string name="game_applies_from_the_next_frame">从下一帧起生效，并为此游戏保留（与游戏设置 › 放大器相同的设置）。</string>
     <string name="game_applies_from_the_next_frame_2">从下一帧起生效，并为此游戏保留（与游戏设置 › 屏幕缩放相同的设置）。</string>
     <string name="game_applies_at_the_next_start">下次启动时生效（本次运行不接受实时更改：DM_CTL 已关闭）。</string>
+    <string name="game_restart_for_fg_stability">重启游戏可获得最佳的插帧稳定性。</string>
     <string name="game_applies_at_once_kept_for">立即生效，并为此游戏保留（与游戏设置 › 高级相同的设置）。</string>
     <string name="game_shaders_the_game_lacks_are_3">游戏缺少的着色器会在运行时生成。开关位于游戏页面 › 高级 › 游玩时生成着色器（默认开启；更改在下次启动时生效）。</string>
     <string name="game_the_game_runs_on_behind">游戏仍在此面板后面运行；所有更改立即生效并保留，标注为下次启动的除外。</string>

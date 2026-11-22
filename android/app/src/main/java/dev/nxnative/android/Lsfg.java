@@ -234,6 +234,12 @@ final class Lsfg {
     /** The main screen row's value: the choice, with LSFG its frames per game frame (or its target rate) */
     static String summary(Context c) { int m = mode(c); return m == OFF ? Tx.s(R.string.game_off) : m == NATIVE ? Tx.s(R.string.game_fg_native)
                                        : Tx.s(R.string.game_fg_lsfg) + " · " + (target(c) > 0 ? target(c) + " fps" : multiplier(c) + "x"); }
+    /** Native FG is running now: its status says it generates ("generating (Native FG)"), or it is on and not generating (a still picture, a map) with Native FG the choice; not the fallback to LSFG */
+    static boolean nativeFgLive(Context c) {
+        String st = Native.frameGenStatus();
+        if (st.contains("Native FG is not available")) return false;
+        return st.startsWith("1 ") ? st.contains("(Native FG)") : st.startsWith("2 ") && nativeFg(c);
+    }
     /** The overlay's word for the engine that runs: Native FG picked on a game the host runs LSFG for (its status: "Native FG is not available for this game: ...") reads LSFG */
     static String label(Context c) { return Tx.s(nativeFg(c) && !Native.frameGenStatus().contains("Native FG is not available") ? R.string.game_fg_native : R.string.game_fg_lsfg); }
 }

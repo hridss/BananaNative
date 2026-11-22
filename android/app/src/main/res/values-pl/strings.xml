@@ -818,6 +818,7 @@
     <string name="game_applies_from_the_next_frame">Działa od następnej klatki, zapamiętane dla tej gry (to samo ustawienie co Ustawienia gry › Skaler).</string>
     <string name="game_applies_from_the_next_frame_2">Działa od następnej klatki, zapamiętane dla tej gry (to samo ustawienie co Ustawienia gry › Skalowanie ekranu).</string>
     <string name="game_applies_at_the_next_start">Zadziała od następnego uruchomienia (to uruchomienie nie przyjmuje zmian na żywo: DM_CTL jest wyłączone).</string>
+    <string name="game_restart_for_fg_stability">Uruchom grę ponownie, aby generowanie klatek działało najstabilniej.</string>
     <string name="game_applies_at_once_kept_for">Działa od razu, zapamiętane dla tej gry (to samo ustawienie co Ustawienia gry › Zaawansowane).</string>
     <string name="game_shaders_the_game_lacks_are_3">Shadery, których grze brakuje, powstają w trakcie działania. Przełącznik jest podczas gry w: strona gry › Zaawansowane › Shadery (domyślnie włączony; zmiana zadziała od następnego uruchomienia).</string>
     <string name="game_the_game_runs_on_behind">Gra działa dalej za tym panelem; każda zmiana działa od razu i jest zapamiętana, poza oznaczonymi jako od następnego uruchomienia.</string>

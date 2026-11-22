@@ -803,6 +803,7 @@
     <string name="game_applies_from_the_next_frame">다음 프레임부터 적용되며 이 게임에 유지돼요(게임 설정 › 업스케일러와 같은 설정).</string>
     <string name="game_applies_from_the_next_frame_2">다음 프레임부터 적용되며 이 게임에 유지돼요(게임 설정 › 화면 확대 방식과 같은 설정이에요).</string>
     <string name="game_applies_at_the_next_start">다음 실행부터 적용돼요(이번 실행은 실시간 변경을 받지 않아요: DM_CTL 꺼짐).</string>
+    <string name="game_restart_for_fg_stability">프레임 생성이 가장 안정적으로 동작하도록 게임을 다시 시작하세요.</string>
     <string name="game_applies_at_once_kept_for">바로 적용되며 이 게임에 유지돼요(게임 설정 › 고급과 같은 설정).</string>
     <string name="game_shaders_the_game_lacks_are_3">게임에 없는 셰이더는 실행 중에 빌드돼요. 스위치는 게임 페이지 › 고급 › 플레이 중 셰이더 빌드에 있어요(기본값 켬, 변경은 다음 실행부터 적용).</string>
     <string name="game_the_game_runs_on_behind">게임은 이 패널 뒤에서 계속 실행돼요. 다음 실행부터 적용으로 표시된 항목을 빼면 모든 변경이 바로 적용되고 유지돼요.</string>

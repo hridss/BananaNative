@@ -808,6 +808,7 @@
     <string name="game_applies_from_the_next_frame">Gilt ab dem nächsten Bild und bleibt für dieses Spiel gespeichert (dieselbe Einstellung wie Spieleinstellungen › Upscaler).</string>
     <string name="game_applies_from_the_next_frame_2">Gilt ab dem nächsten Bild und bleibt für dieses Spiel gespeichert (dieselbe Einstellung wie Spieleinstellungen › Bildschirmskalierung).</string>
     <string name="game_applies_at_the_next_start">Gilt ab dem nächsten Start (dieser Lauf nimmt keine Live-Änderungen an: DM_CTL ist aus).</string>
+    <string name="game_restart_for_fg_stability">Starte das Spiel neu, für die beste Stabilität der Frame Generation.</string>
     <string name="game_applies_at_once_kept_for">Gilt sofort und bleibt für dieses Spiel gespeichert (dieselbe Einstellung wie Spieleinstellungen › Erweitert).</string>
     <string name="game_shaders_the_game_lacks_are_3">Shader, die dem Spiel fehlen, werden während des Laufs gebaut. Der Schalter steht auf der Spielseite › Erweitert › Shader beim Spielen (standardmäßig an; eine Änderung gilt ab dem nächsten Start).</string>
     <string name="game_the_game_runs_on_behind">Das Spiel läuft hinter diesem Panel weiter; jede Änderung gilt sofort und bleibt gespeichert, außer den für den nächsten Start markierten.</string>

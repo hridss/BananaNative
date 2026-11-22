@@ -715,9 +715,16 @@ final class SidePanel extends FrameLayout {
         fpsNow = note("");
         boolean simple = Prefs.simpleRes(act, game());   // a game with Resolution presets, tester rows off: no Upscaler or Dynamic resolution here (Settings › Help › Tester settings)
         if (!simple && (Prefs.dlssGame(game()) || GameUpscaler.shown(act, game()))) {   // right under the frame rate cap: the Upscaler (the game's own upscaler and the window's scaling to the screen), for games whose network it replaces; for a game on the DLSS stand-in (no network to replace), the stand-in's modes with Motion clarity / sharpness
-            GameUpscaler.rows(act, game(), box);
+            TextView[] fgRestart = new TextView[1];   // under the Upscaler's note, once a change of the upscaler was made with Native FG running (until the game restarts)
+            GameUpscaler.rows(act, game(), box, () -> {
+                if (!(act instanceof GameActivity) || !Lsfg.nativeFgLive(act)) return;
+                ((GameActivity) act).fgRestartNote(true);
+                if (fgRestart[0] != null) fgRestart[0].setVisibility(VISIBLE);
+            });
             note(act instanceof GameActivity && ((GameActivity) act).live() ? Tx.s(R.string.game_applies_from_the_next_frame)
                     : Tx.s(R.string.game_applies_at_the_next_start));
+            fgRestart[0] = note(Tx.s(R.string.game_restart_for_fg_stability));
+            fgRestart[0].setVisibility(act instanceof GameActivity && ((GameActivity) act).fgRestartNote() ? VISIBLE : GONE);
             if (Prefs.dlssGame(game())) {   // a game on the DLSS stand-in: Screen scaling (the window to the screen) right under its Game upscaler, the two stages together
                 GameUpscaler.screenRows(act, game(), box);
                 note(act instanceof GameActivity && ((GameActivity) act).live() ? Tx.s(R.string.game_applies_from_the_next_frame_2)

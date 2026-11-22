@@ -813,6 +813,7 @@
     <string name="game_applies_from_the_next_frame">Si applica dal prossimo fotogramma e resta salvato per questo gioco (stessa impostazione di Impostazioni di gioco › Upscaler).</string>
     <string name="game_applies_from_the_next_frame_2">Si applica dal prossimo fotogramma e resta salvato per questo gioco (stessa impostazione di Impostazioni di gioco › Scalatura dello schermo).</string>
     <string name="game_applies_at_the_next_start">Si applica al prossimo avvio (questa esecuzione non accetta modifiche dal vivo: DM_CTL è disattivato).</string>
+    <string name="game_restart_for_fg_stability">Riavvia il gioco per la migliore stabilità della frame generation.</string>
     <string name="game_applies_at_once_kept_for">Si applica subito e resta salvato per questo gioco (stessa impostazione di Impostazioni di gioco › Avanzate).</string>
     <string name="game_shaders_the_game_lacks_are_3">Gli shader che mancano al gioco vengono creati mentre è in esecuzione. L\'interruttore è nella pagina del gioco › Avanzate › Shader durante il gioco (attivo di default; una modifica si applica al prossimo avvio).</string>
     <string name="game_the_game_runs_on_behind">Il gioco continua dietro questo pannello; ogni modifica si applica subito e resta salvata, tranne quelle indicate per il prossimo avvio.</string>

@@ -535,6 +535,9 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
 
     private Profile.Render startRender;   // the render setting this run started with (settingsEnv), null for a game without a render_cfg row
     Profile.Render startRender() { return startRender; }
+    private boolean fgRestartNote;   // the upscaler was changed in the panel while Native FG ran: the panel says to restart until this run ends
+    boolean fgRestartNote() { return fgRestartNote; }
+    void fgRestartNote(boolean v) { fgRestartNote = v; }
 
     private String settingsEnv(String id, List<String> env) {
         // Game resolution: the game's own setting, else the main screen's: the window size the host gives the game (window_fn), or the graphics scale and operation

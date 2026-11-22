@@ -828,6 +828,7 @@
     <string name="game_applies_from_the_next_frame">يسري من الإطار التالي ويُحفظ لهذه اللعبة (هو نفس إعداد إعدادات اللعبة › مكبّر الدقة).</string>
     <string name="game_applies_from_the_next_frame_2">يسري من الإطار التالي ويُحفظ لهذه اللعبة (هو نفس إعداد إعدادات اللعبة › تحجيم الشاشة).</string>
     <string name="game_applies_at_the_next_start">يسري عند البدء التالي (هذا التشغيل لا يقبل تغييرات مباشرة: DM_CTL متوقف).</string>
+    <string name="game_restart_for_fg_stability">أعد تشغيل اللعبة للحصول على أفضل استقرار لتوليد الإطارات.</string>
     <string name="game_applies_at_once_kept_for">يسري فورًا ويُحفظ لهذه اللعبة (هو نفس إعداد إعدادات اللعبة › متقدم).</string>
     <string name="game_shaders_the_game_lacks_are_3">المُظلِّلات التي تنقص اللعبة تُبنى أثناء تشغيلها. المفتاح في صفحة اللعبة › متقدم › المُظلِّلات أثناء اللعب (مفعّل افتراضيًا؛ ويسري التغيير عند البدء التالي).</string>
     <string name="game_the_game_runs_on_behind">تستمر اللعبة في العمل خلف هذه اللوحة؛ كل تغيير يسري الآن ويُحفظ، عدا ما عُلّم للبدء التالي.</string>

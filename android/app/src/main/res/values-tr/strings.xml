@@ -808,6 +808,7 @@
     <string name="game_applies_from_the_next_frame">Bir sonraki kareden itibaren uygulanır, bu oyun için saklanır (Oyun ayarları › Yükseltici ile aynı ayar).</string>
     <string name="game_applies_from_the_next_frame_2">Bir sonraki kareden itibaren uygulanır, bu oyun için saklanır (Oyun ayarları › Ekran ölçekleme ile aynı ayar).</string>
     <string name="game_applies_at_the_next_start">Bir sonraki başlatmada uygulanır (bu çalıştırma canlı değişiklik almaz: DM_CTL kapalı).</string>
+    <string name="game_restart_for_fg_stability">Kare üretiminin en iyi kararlılığı için oyunu yeniden başlatın.</string>
     <string name="game_applies_at_once_kept_for">Hemen uygulanır, bu oyun için saklanır (Oyun ayarları › Gelişmiş ile aynı ayar).</string>
     <string name="game_shaders_the_game_lacks_are_3">Oyunda eksik olan gölgelendiriciler oyun çalışırken oluşturulur. Anahtar, oynarken oyun sayfası › Gelişmiş › Gölgelendiriciler altındadır (varsayılan olarak açık; değişiklik bir sonraki başlatmada uygulanır).</string>
     <string name="game_the_game_runs_on_behind">Oyun bu panelin arkasında çalışmaya devam eder; sonraki başlatma için işaretlenenler hariç her değişiklik hemen uygulanır ve saklanır.</string>

@@ -129,9 +129,10 @@ final class GameUpscaler {
         return st != 0 || Prefs.of(c).getBoolean(k, false);
     }
 
-    /** The in-game panel's rows: the upscaler, and FSR's sharpness while FSR 1 is the choice; each applied at once (the same per-game choice as Game settings › Upscaler). A game on the DLSS stand-in gets dlssRows instead */
-    static void rows(Context c, String titleId, LinearLayout box) {
-        if (Prefs.dlssGame(titleId)) { dlssRows(c, titleId, box); return; }
+    /** The in-game panel's rows: the upscaler, and FSR's sharpness while FSR 1 is the choice; each applied at once (the same per-game choice as Game settings › Upscaler). A game on the DLSS stand-in gets dlssRows instead,
+     *  which runs modeChanged (may be null) after each change of its mode */
+    static void rows(Context c, String titleId, LinearLayout box, Runnable modeChanged) {
+        if (Prefs.dlssGame(titleId)) { dlssRows(c, titleId, box, modeChanged); return; }
         TextView head = new TextView(c);
         head.setText(Tx.s(R.string.common_upscaler));
         head.setPadding(0, 24, 0, 0);
@@ -174,7 +175,7 @@ final class GameUpscaler {
     }
 
     /** A game on the DLSS stand-in: "Upscaler" (the stand-in's mode) with Motion clarity and Temporal sharpness under GSR 2, the sharpness alone ("FSR sharpness") under FSR 1. Each applied at once */
-    private static void dlssRows(Context c, String titleId, LinearLayout box) {
+    private static void dlssRows(Context c, String titleId, LinearLayout box, Runnable modeChanged) {
         TextView head = new TextView(c);
         head.setText(Tx.s(R.string.common_game_upscaler));   // the game's own upscaler (its DLSS, the stand-in); Screen scaling follows right under it
         head.setPadding(0, 24, 0, 0);
@@ -196,6 +197,6 @@ final class GameUpscaler {
             shHead.setText(StepSlider.title(DlssTune.sharpTitle(m), DlssTune.sharpNames(), dlssSharp(c, titleId)));
         };
         shown.run();
-        g.setOnCheckedChangeListener((gr, id) -> { dlssMode(c, titleId, id - 3300); shown.run(); });
+        g.setOnCheckedChangeListener((gr, id) -> { dlssMode(c, titleId, id - 3300); shown.run(); if (modeChanged != null) modeChanged.run(); });
     }
 }
