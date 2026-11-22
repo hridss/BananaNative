@@ -754,6 +754,12 @@ void dm_fps_step_fold(void) {
     }
 }
 int nxhost_fps_limit_get(void) { int s = dm_fps_limit_step(); return s ? s : limit_raw(); }   // the rate the limit holds (0: none; a frame-step game's whole-vsync rate); probe.c aims the dynamic resolution at it, frame generation fits its frames to it
+// The active pre-frame-generation cap (0 = uncapped): the lower positive rate of the host frame limiter and an active engine cap
+int dm_fps_cap_get(void) {
+    int l = nxhost_fps_limit_get();
+    int t = (dm_fps_state || dm_fps_lock_engine() || dm_fps_lock_floor()) ? dm_fps_target() : 0;
+    return l > 0 && (!t || l < t) ? l : t;
+}
 // Whether the game's speed follows its measured frame rate (the rewriter gated sead's controller in this main, DM_FPS_DECOUPLE not 0): frame generation's pacer then takes any base rate
 // above its floor (a slower base does not slow the game), where a game held by the limiter alone steps as it would at that rate
 int nxhost_fps_decoupled(void) {
