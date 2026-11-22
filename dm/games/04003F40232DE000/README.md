@@ -1,6 +1,6 @@
 # Hyrule Warriors: Age of Imprisonment (`04003F40232DE000`)
 
-A Switch 2 game: update v196608, SDK 20.5.15 built for the Switch 2 (`Ounce`). Koei Tecmo's KTGL engine on NVN2, modules `main`, `subsdk0` (NintendoSDK_movie: VP9 movies) and `sdk`. **Plays on the Mac** from a new save through the first-run settings, the opening movies and cutscenes into the first field, where Zelda walks; the frame time's median is 16.6 ms there, with long frames every few frames on a 16 GB Mac ([Performance](#performance)). Battles have not been reached. No IPA has been built.
+A Switch 2 game: update v196608, SDK 20.5.15 built for the Switch 2 (`Ounce`). Koei Tecmo's KTGL engine on NVN2, modules `main`, `subsdk0` (NintendoSDK_movie: VP9 movies) and `sdk`. **Plays on the Mac** from a new save through the first-run settings, the opening movies and cutscenes into the first field, where Zelda walks; the frame time's median is 16.6 ms there, with long frames every few frames on a 16 GB Mac ([Performance](#performance)). **In bring-up on Android** on a 16 GB handheld (Turnip) through the first-run settings, opening movie, realtime cutscenes and the first 3D forest field ([Android](#android)). Battles have not been reached on either platform. No IPA has been built.
 
 ## What it needs
 
@@ -54,3 +54,15 @@ Run headless: `DM_WINDOW` set to anything, `0` too, opens a window, and a covere
 - Dedicated c1 constants as slices of a bank: about 10 fps in the first field.
 - [Barrier moves around warp shuffles](../../../docs/reference/shaders.md#barrier-moves-around-warp-shuffles): two pixel shaders left out of the build.
 - [LDC with the bank in its address register (`.IS`)](../../../docs/reference/shaders.md#ldc-with-the-bank-in-its-address-register-is): two shaders left out of the build.
+
+## Android
+
+Verified on a 16 GB AYN Thor (`QCS8550` / `Adreno (TM) 740`, Android 13 SDK `33`, `14.9 GiB` `totalMem`) running Turnip `Mesa 27.0.0-devel (git-3e8621cc0e)` (driver ID `18`, Vulkan `1.4.363`) with a pre-built Android shader library from [`shader_seen.tsv`](shader_seen.tsv) (`15,449` shader keys / `25,591` SPIR-V modules):
+
+- **Menus and container streaming:** Initial settings and the autosave notice run at `59.8 fps` (`GPU busy p50/p90 1.7–1.9 ms`). Compressed NUP v1 `PKG[1]` `v196608` archives (`65`, `200`, `203`, `131`, `234 MiB`) decompress in `0.1–0.3 s` each; the flat `8 MB` (`8,388,608` B) `DATA.BIN` save initializes cleanly under `saves/04003F40232DE000/`.
+- **Opening VP9 movie:** `libvpx v1.17.0` (`4` threads, `1920x1080`) decoded `2,363` packets into `2,359` frames (`8.17 ms/packet` average, `25.20 ms` max) at `59.7–59.8 fps` (`GPU busy p50/p90 2.2/4.3 ms`); movie pixel shader `3aafef4169955790` is included in `shader_seen.tsv`.
+- **Opening realtime cutscene and first playable 3D field (`1920x1080`):** The realtime cutscene peaked at `881` draws/frame (`46.6 fps`, `GPU busy p50/p90 20.0/21.3 ms`). In the first playable 3D forest field with Princess Zelda: `52.3–55.7 fps`, `300–357` draws/frame (`0` skipped draws in steady `ctl: stats`), `7` compute dispatches, `53` render passes, `6.0` submissions, `GPU 16.10–17.57 ms`, placed memory `1,440 MB`, images `868 MB` (`757` live). Pause menu (`Plus` / `B`): `59.8 fps`, `28` draws/frame, `GPU busy 5.1 ms`, `0` dropped frames.
+- **Pipelines and audio:** `316` graphics + `14` compute pipelines built with `0` failed and `0` missing shaders. AAudio `48000 Hz`, `2` channels (`OpenAudioOut` `6` ch) ran with `0` underruns across callbacks `4001–20000` (`0.0 ms` zero-padded) after `3` initial boot underruns (`60.0 ms`).
+- **Controls (`DM_CTL`):** `A` menu confirmation, `LUp`/`LRight` movement, `RLeft`/`RRight` camera rotation, `Plus` pause and `B` unpause verified against `1920x1080` swapchain screenshots.
+- **Memory footprint (frame `20,812`, first field):** `TOTAL PSS: 7,183,483 kB` (`6.85 GiB`), `TOTAL RSS: 7,298,216 kB` (`6.96 GiB`), `MemAvailable: 6,183,676 kB` (`5.90 GiB` free), `SwapFree: 3,587,172 kB`, `0` `lmkd` events, `0` crashes.
+- **Open on Android:** Combat encounters / later missions, mid-mission autosave write/reload, Qualcomm's own system driver, and phones with less than `16 GB` RAM have not been tested yet. In [`shader_facts.tsv`](shader_facts.tsv) (`101,860` shaders, `0` mesh/task programs), `160` compute shaders ask for more than `32,768` bytes of shared memory (up to `48,128` bytes); none of the `15,449` shaders in `shader_seen.tsv` ask for more than `14,896` bytes.

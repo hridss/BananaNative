@@ -30,6 +30,7 @@ PAGES = {
     "0400E88025B1A000": "Game-Star-Fox",
     "0400380020056000": "Game-Splatoon-Raiders",
     "040041E0212AE000": "Game-Fast-Fusion",
+    "04003F40232DE000": "Game-Hyrule-Warriors-Age-of-Imprisonment",
 }
 
 
