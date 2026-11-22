@@ -91,7 +91,7 @@ class Wiring(unittest.TestCase):
 
     def test_the_chain_is_untouched(self):
         import hashlib
-        r = subprocess.run(['python3', str(REPO / 'dm/gfx/tools/vk_android_build.py'), '--digest'], capture_output=True, text=True)
+        r = subprocess.run(['python3', str(REPO / 'dm/gfx/tools/vk_android_build.py'), '--version'], capture_output=True, text=True)
         self.assertEqual(r.stdout.strip(), '6eaa66f9f1e4')
 
     def test_skip_backoff_and_resume_outlive_the_process(self):

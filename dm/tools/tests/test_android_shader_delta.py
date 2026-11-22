@@ -308,6 +308,21 @@ class KeyList(unittest.TestCase):
                 self.assertEqual(set(delta.package_keys(wanted, locations, pairs, absent, build_keys)), wanted)
                 self.assertEqual(set(delta.package_keys(set(), locations, pairs, absent, build_keys)), wanted)
 
+    def test_no_absences_build_the_keys_as_before(self):
+        # a full dump (no DMSH_VK_ABSENT_FILE): package_keys is build_keys itself, the same keys in the same order, so the library is the one the tools made before
+        # (vk_android_same.tsv keeps its version)
+        load_pairs, build_keys = borrowed('load_pairs', 'build_keys')
+        for title in ('040074A01BF12000', '0400C3F00006E000', '0100152000022000', '010015100B514000'):
+            with self.subTest(title=title):
+                profile = REPO / 'dm/games' / title
+                rows = (profile / 'shader_map.tsv').read_text().splitlines()
+                locations = {c[3]: c[4] for c in (r.split('\t') for r in rows) if c[0].endswith('.bin')}
+                game = type('Game', (), {'table': lambda self, t: profile / t})()
+                pairs = load_pairs(game, str(profile / 'shader_map.tsv'))
+                for want in (set(locations), set()):
+                    for absent in (set(), None):
+                        self.assertEqual(delta.package_keys(want, locations, pairs, absent, build_keys), build_keys(want, locations, pairs))
+
     def test_selected_vertex_keeps_required_pixel(self):
         # a lacking pixel shader does not take its vertex shader's other pixel shader with it
         build_keys, = borrowed('build_keys')
