@@ -36,7 +36,7 @@ From the title: `L+R`, then four separate `A` presses select Championship, the f
 
 Played with the Android app on the AYN Odin 3 (Adreno 830, 24 GB), on the phone's own driver and on Turnip v32 (2026-11-19): title, menus and races, about 60 fps. A race in Docked (1080p) takes about 14.5 ms of GPU time (DLSS 960x540 to 1920x1080 on the stand-in, GSR 2); in Handheld (720p) about 12.3 ms (640x360 to 1920x1080). Memory: the host's footprint up to about 1 GB on the phone's driver and 3 GB on Turnip, GPU memory up to about 4.6 GB ([readiness.tsv](readiness.tsv)).
 
-- **Pack.** `pack_android.py` builds 2,914 of its 2,976 shaders; the 62 that fail are its 31 task and 31 mesh programs, which the game does not use on the tested route (no mesh draw is made).
+- **Pack.** `pack_android.py` builds 2,914 of its 2,976 shaders; the 62 that fail are its 31 task and 31 mesh programs, which the game does not use on the tested route (no mesh draw is made). Since 2026-11-22 the profile's [`vk_delta.tsv`](vk_delta.tsv) lists those 62 as not built (`-`) for Vulkan chain `6eaa66f9f1e4` and inputs `48fb7f0c192e`, so the phone's Prepare passes without them: in 0.3.50 it stopped with `62 of 2976 shaders did not build: no library written (DMSH_VK_REQUIRE_ALL)` (Forgejo #566; [the shaders step fails on a shader that does not build on the Mac either](../../../docs/reference/packing.md#the-phones-shaders-step-fails-on-a-shader-that-does-not-build-on-the-mac-either)). The cause, task and mesh programs without a mesh layout in the Vulkan chain, is open.
 - **Choices.** Docked (1080p) and Handheld (720p) from the `graphics_scale` rows, and the Upscaler row (`dlss_standin`): see [Graphics on Android](#graphics-on-android).
 - **Starter set.** [shader_first.tsv](shader_first.tsv): the 391 shaders a first start with no library asked for, from one run on the phone's driver. Without a library the picture is black for the whole first route while they build.
 - **Not in the profile.** A prewarm seed: the key lists of runs on both drivers (254 pipelines) were made and play their keys back in 0.1 s; the seed is a binary file built from them.
@@ -80,6 +80,7 @@ Regression level: moderate, because shared shader extraction and translation cha
 
 - SHN resources and embedded shader objects.
 - Subword task and mesh payload accesses.
+- [The phone's shaders step fails on a shader that does not build on the Mac either](../../../docs/reference/packing.md#the-phones-shaders-step-fails-on-a-shader-that-does-not-build-on-the-mac-either) (Android, 0.3.50, Forgejo #566): the 62 task and mesh programs, until the profile's `vk_delta.tsv` listed them.
 - Indexed texture handles in NVN2 compute c0.
 - [The DLSS stand-in wrote alpha 1 over the colour's alpha](../../../docs/reference/rendering.md#the-dlss-stand-in-wrote-alpha-1-over-the-colours-alpha-android) (Android): the main menu showed only the ship; resolved on GSR 2 and FSR 1, open on FSR 3.1.
 - DLSS scalers released under their encoders: already fixed before this bring-up; the earlier report reached its eighth network after about nine minutes.
