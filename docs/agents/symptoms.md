@@ -1149,6 +1149,10 @@ One line per symptom in the [subsystem references](../reference/): what you see 
 - `vkCreateComputePipelines` returns `-13` on a module that passes `spirv-val --target-env vulkan1.3`. The compute dispatch cannot run. → [Valid compute SPIR-V rejected by Qualcomm's pipeline compiler](../reference/shaders.md#valid-compute-spir-v-rejected-by-qualcomms-pipeline-compiler)
 - (Android) draws of one program stay missing for the whole run; the log has `[RED] vk: shader <key> (program stage N) is not in the shader library` and `[shaders-missing] <key><TAB><stage>`, and `missing_shaders.tsv` in the game's temp folder lists the key. → [A game asked for a shader its library lacks (Android)](../reference/shaders.md#a-game-asked-for-a-shader-its-library-lacks-android)
 
+## Cheats on a Switch
+
+- `scripts/cheat_anchor.py import` keeps every pointer cheat bound to its own build (`kept for build … only: address 0xC284D8 is outside the main NSO image or crosses a segment`), and `compile` / `check` refuse `.bss` targets (`address … is outside the main NSO image`), for addresses the NSO header places in `.bss`. → [Pointer bases in .bss refused as outside the image](../reference/cheats.md#pointer-bases-in-bss-refused-as-outside-the-image)
+
 ## Game state
 
 - "stuck" at a screen with one draw per frame. → [Most draws are in command buffers replayed later](../reference/game-state.md#most-draws-are-in-command-buffers-replayed-later)
