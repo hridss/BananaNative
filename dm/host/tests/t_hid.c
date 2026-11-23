@@ -332,7 +332,16 @@ static void t_vibration(void) {
     uint32_t h[2] = {0}, id = 0, info[2];
     dm_vibration v = {0.25, 160, 0.5, 320}, got;
     g_mode = 1; ids((uint32_t[]){0, 1, NPAD_HANDHELD}, 3); dm_pad_players(3);
-    CHECK(!h_hid_VibPermit() && !h_hid_VibHandles(h, 2, &id, STYLE_FULLKEY), "no sink: no vibration devices");
+    uint32_t hh[2] = {0}, disconnected[2] = {0};
+    CHECK(!h_hid_VibPermit() && h_hid_VibHandles(h, 2, &id, STYLE_FULLKEY) == 2, "no sink: handles exist, vibration is not permitted");
+    CHECK(h_hid_VibHandles(hh, 2, &(uint32_t){NPAD_HANDHELD}, STYLE_HANDHELD) == 2 && hh[0] == 0x2004 && hh[1] == 0x12004 && !h_hid_VibMounted(&hh[0]),
+          "inactive handheld handles while docked");
+    CHECK(h_hid_VibHandles(disconnected, 2, &(uint32_t){7}, STYLE_FULLKEY) == 2 && disconnected[0] == 0x703 && disconnected[1] == 0x10703 && !h_hid_VibMounted(&disconnected[0]),
+          "disconnected player has two full-key handles with no mounted device");
+    h_hid_VibInfo(info, &disconnected[0]); CHECK(info[0] == 1 && info[1] == 1, "disconnected full-key left motor: type and position");
+    h_hid_VibInfo(info, &disconnected[1]); CHECK(info[0] == 1 && info[1] == 2, "disconnected full-key right motor: type and position");
+    h_hid_VibInfo(info, &(uint32_t){0x20003}); CHECK(info[0] == 0 && info[1] == 0, "invalid motor: unknown device info");
+    CHECK(h_hid_VibHandles(hh, 2, &(uint32_t){8}, STYLE_FULLKEY) == 0 && hh[0] == 0x2004, "invalid npad ID leaves the output alone");
     dm_haptics_init(vibration_sink, 1);
     CHECK(!h_hid_VibPermit() && h_hid_VibHandles(h, 2, &id, STYLE_FULLKEY) == 2,
           "startup handles do not wait for a routed haptics output");
@@ -346,8 +355,8 @@ static void t_vibration(void) {
     CHECK(!memcmp(&vibration[0].motor[0], &v, sizeof v), "cached startup handles reach an output routed later");
     CHECK(h_hid_VibPermit() && h_hid_VibHandles(h, 2, &id, STYLE_FULLKEY) == 2, "two vibration motors available");
     CHECK(h[0] == 3 && h[1] == 0x10003, "SDK vibration handle bytes: style 3, npad 0, motors 0 and 1");
-    CHECK(!h_hid_VibHandles(h, 2, &id, STYLE_HANDHELD), "wrong controller style gets no motors");
-    CHECK(!h_hid_VibHandles(h, 2, &(uint32_t){2}, STYLE_FULLKEY), "disconnected player gets no motors");
+    CHECK(h_hid_VibHandles(hh, 2, &id, STYLE_HANDHELD) == 2 && hh[0] == 4 && !h_hid_VibMounted(&hh[0]), "handles use the requested style even when the connected style differs");
+    CHECK(h_hid_VibHandles(hh, 2, &(uint32_t){2}, STYLE_FULLKEY) == 2 && !h_hid_VibMounted(&hh[0]), "a disconnected player gets handles, not mounted");
     CHECK(h_hid_VibHandles(h, 1, &id, STYLE_FULLKEY) == 1, "handle count respects caller capacity");
     h_hid_SendVib(&h[0], &v); h_hid_VibActual(&got, &h[0]);
     CHECK(!memcmp(&got, &v, sizeof v) && vibration[1].motor[0].amplitude_low == 0, "game value is retained for the addressed player only");
@@ -383,7 +392,7 @@ static void t_vibration(void) {
     dm_haptics_route(1, 0);
     CHECK(!h_hid_VibPermit(), "disconnecting the last output disables vibration");
     dm_haptics_init(vibration_sink, 0); dm_haptics_route(0, 1);
-    CHECK(!h_hid_VibPermit() && !h_hid_VibHandles(h, 2, &id, STYLE_HANDHELD), "rumble disabled: no vibration devices");
+    CHECK(!h_hid_VibPermit() && h_hid_VibHandles(h, 2, &id, STYLE_HANDHELD) == 2, "rumble disabled: not permitted, the handles still exist (a console whose vibration setting is off)");
 }
 
 static void *vibration_sender(void *arg) {
