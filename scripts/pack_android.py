@@ -40,7 +40,7 @@ import game
 sys.path.insert(0, str(REPO / 'dm/gfx/tools'))
 import dmsh_chain
 
-REWRITER = ('patch_nso.py', 'nso.py', 'nso_code.py', 'nso_asm.py', 'nso_match.py', 'sdk_patches.py', 'engine_patches.py', 'jump_solver.py', 'ue_cvar.py', 'ue_malloc.py', 'fps_target.py',
+REWRITER = ('patch_nso.py', 'nso.py', 'mod_layout.py', 'nso_code.py', 'nso_asm.py', 'nso_match.py', 'sdk_patches.py', 'engine_patches.py', 'jump_solver.py', 'ue_cvar.py', 'ue_malloc.py', 'fps_target.py',
             'ue_region.py', 'loader_census.py', 'monolith_fps.py', 'ue_fixed_rate.py', 'unity_fps.py', 'unity_bucket.py', 'ue_ring.py', 'snowdrop_pools.py')
 FORMAT = 1   # pack.tsv format; the launcher refuses another
 

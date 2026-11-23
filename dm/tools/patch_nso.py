@@ -63,7 +63,7 @@ src, outdir, NAME = ARGS
 # against its header before anything is allocated (a damaged module stops here with a [RED] line)
 MOD = nso.cli_read(src)
 ORIG_TEXT = bytes(MOD.image[:MOD.text_end])   # the text as the file has it, before any relayout, cut or site: <name>.changed.tsv compares against it
-# Horizon maps modules at 4 KB, Apple hosts at 16 KB (W^X / signed __TEXT): move writable data up by whole 4 KB pages when it would share the code's 16 KB page (mod_layout.py)
+# Horizon maps modules at 4 KB, the hosts' loaders seal code at 16 KB (Apple's W^X / signed __TEXT; Android's loader rounds the same way on any kernel page size): move writable data up by whole 4 KB pages when it would share the code's 16 KB page (mod_layout.py)
 try: MOD, _relayout_D, _relayout_notes = mod_layout.relayout_module(MOD)
 except mod_layout.Error as e: sys.exit(f'[RED] {NAME}: {e}')
 if _relayout_D: print(f'{NAME}: ' + '; '.join(_relayout_notes))
@@ -1982,7 +1982,7 @@ else:
     open(P('patched.bin'), 'wb').write(IMG + bytearray(PATCH_OFF - len(IMG)) + patch)
 import hashlib
 with open(os.path.join(outdir, 'build_src.sha256'), 'w', encoding='utf-8', newline='\n') as f:   # the same for every module: the rewriter and every patch file, by path from dm/tools
-    for src_ in (os.path.abspath(__file__), nso.__file__, nso_code.__file__, nso_asm.__file__, ue_cvar.__file__, ue_malloc.__file__, fps_target.__file__, monolith_fps.__file__, ue_fixed_rate.__file__, unity_fps.__file__, unity_bucket.__file__, ue_region.__file__, ue_ring.__file__, snowdrop_pools.__file__, os.path.join(os.path.dirname(ue_malloc.__file__), 'loader_census.py'), *PATCH_FILES): f.write(hashlib.sha256(open(src_, 'rb').read()).hexdigest() + f'  {os.path.relpath(os.path.abspath(src_), os.path.dirname(os.path.abspath(__file__))).replace(os.sep, "/")}\n')
+    for src_ in (os.path.abspath(__file__), nso.__file__, mod_layout.__file__, nso_code.__file__, nso_asm.__file__, ue_cvar.__file__, ue_malloc.__file__, fps_target.__file__, monolith_fps.__file__, ue_fixed_rate.__file__, unity_fps.__file__, unity_bucket.__file__, ue_region.__file__, ue_ring.__file__, snowdrop_pools.__file__, os.path.join(os.path.dirname(ue_malloc.__file__), 'loader_census.py'), *PATCH_FILES): f.write(hashlib.sha256(open(src_, 'rb').read()).hexdigest() + f'  {os.path.relpath(os.path.abspath(src_), os.path.dirname(os.path.abspath(__file__))).replace(os.sep, "/")}\n')
 with open(P('fixups.tsv'), 'w', encoding='utf-8', newline='\n') as f:
     f.write(f'# PATCH_OFF\t{PATCH_OFF:#x}\n# KEY_PAGE_OFF\t{KEY_PAGE_OFF:#x}\n# KEY_PAGE_SIZE\t0x4000\n# TEXT_END\t{TEXT_END:#x}\n# RO_OFF\t{RO_OFF:#x}\n# DATA_OFF\t{DATA_OFF:#x}\n')
     if FAR: f.write(f'# IMAGE_SIZE\t{IMAGE_SIZE:#x}\n# FILE_IMAGE_LEN\t{FILE_IMAGE_LEN:#x}\n')   # patch area before the base (negative PATCH_OFF): whole image size, length of the image part of the file
