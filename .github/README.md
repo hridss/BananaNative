@@ -23,7 +23,7 @@ graphics to Vulkan. It is an Android port of [nxnative](https://github.com/seedd
 | Star Fox (`0400E88025B1A000`) | update 131072 | Supported | played from start to finish by a player, who reported no problems; frame rate and memory not measured |
 | Mario Tennis Fever (`0400D4201C6EA000`) | update 327680 (1.1.1) | Experimental | plays at 60 fps on Turnip on the tested phone; Qualcomm's own driver stalls and shows dark patches on the player intros; a long first Prepare (35,045 shaders) |
 | Fast Fusion (`040041E0212AE000`) | update 262144 | Experimental | in bring-up: title, menus and races at about 60 fps on the system driver and Turnip on the tested phone; the game's own GRAPHICS modes have no effect yet |
-| Hyrule Warriors: Age of Imprisonment (`04003F40232DE000`) | update 196608 | Experimental | in bring-up: menus, opening movie, cutscenes and the first field at 52-56 fps on Turnip on the tested 16 GB handheld; battles and the system driver are not tested yet |
+| Hyrule Warriors: Age of Imprisonment (`04003F40232DE000`) | update 196608 | Supported | 35-56 fps in field and battles (median 46 fps) on Turnip on the tested 16 GB handheld; the system driver is not tested yet |
 | Super Mario Bros. Wonder - Nintendo Switch 2 Edition (`040015100B514001`) | update 327680 (1.2.1), program 1 | Experimental | reached a first course at 30 fps on Turnip on one phone; the system driver is not tested; needs a dump with the edition's own program |
 | Splatoon Raiders (`0400380020056000`) | update 65536 | Experimental | boots and runs, but not playable yet (very low frame rate) |
 
