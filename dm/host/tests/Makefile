@@ -90,6 +90,7 @@ run: $(B)/t_language $(B)/t_motion $(B)/t_heap_size $(B)/t_touch $(B)/t_gesture 
 	$(B)/t_pack_modules
 	$(B)/t_game_args
 	$(B)/t_symbols
+	$(B)/t_gates
 	$(B)/t_android_av
 	$(B)/t_android_input
 	$(B)/t_android_shlib
@@ -139,6 +140,12 @@ run: $(B)/t_nro
 run: $(B)/t_pack_modules
 run: $(B)/t_game_args
 run: $(B)/t_symbols
+run: $(B)/t_gates
+$(B)/t_gates: t_gates.c ../hle.c ../hle.h ../dm.h $(GAME_H) | $(B)
+	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -Wno-deprecated-declarations -I.. $(GINC) -o $@ t_gates.c
+.PHONY: gates
+gates: $(B)/t_gates
+	$(B)/t_gates
 run: $(B)/t_server_environment
 $(B)/t_server_environment: t_server_environment.c ../hle_offline.c ../hle_net.c ../hle.h ../dm.h $(GAME_H) | $(B)
 	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -I.. $(GINC) -o $@ t_server_environment.c
