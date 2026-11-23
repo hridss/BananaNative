@@ -341,6 +341,21 @@ static void nx_s2e_tests(const char *root) {
         g_nmnt = 0; setenv("DM_ROMFS", np, 1);
         CHECK(h_fs_MountRom("rom", NULL, 0) == RES_OK && read_fs("rom:/top.txt", got, sizeof got) && !strcmp(got, "p0-update"), "with no program of the application's ID, program 0 is the lowest index (not the primary one)");
     }
+    {   // an add-on and a later version of it (a console's install: Super Mario Bros. Wonder's 010015100B515001 at v0 and v131072): the newest is the add-on;
+        // two snapshots of one version stay ambiguous
+        const nxw_file d2[] = {{"romfs/d.txt", (const uint8_t *)"dlc v2", 6, 16, 0}};
+        const nxw_snap S3[] = {S[0], S[1], S[2], {app, -1, 2, 131072, 0x010015100B515001ull, d2, 1}, S[3]};
+        uint8_t *b3 = NULL; size_t n3 = nx_fixture_write(S3, 5, P, 2, 0, &b3); nup_write(np, b3, n3); free(b3);
+        const char *sel[] = {":addon/010015100b515001", ":aoc/1"};
+        for (size_t i = 0; i < 2; i++) {
+            g_nmnt = 0; snprintf(spec, sizeof spec, "%s%s", np, sel[i]); setenv("DM_ROMFS", spec, 1);
+            CHECK(h_fs_MountRom("rom", NULL, 0) == RES_OK && read_fs("rom:/d.txt", got, sizeof got) && !strcmp(got, "dlc v2"), "\"%s\" of an add-on at v0 and v131072 is v131072 (%s)", sel[i], got);
+        }
+        const nxw_snap S4[] = {S[0], S[1], S[2], {app, -1, 2, 0, 0x010015100B515001ull, d2, 1}, S[3]};
+        uint8_t *b4 = NULL; size_t n4 = nx_fixture_write(S4, 5, P, 2, 0, &b4); nup_write(np, b4, n4); free(b4);
+        snprintf(spec, sizeof spec, "%s:addon/010015100b515001", np); char why[400] = ""; romfs_img *m = nup_image_open(spec, why, sizeof why);
+        CHECK(!m, "two snapshots of one add-on version are refused: %s", why); romfs_image_close(m);
+    }
     g_nmnt = 0; unsetenv("DM_ROMFS");
 }
 static void nx_tests(const char *root) {

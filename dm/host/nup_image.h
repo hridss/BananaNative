@@ -172,7 +172,11 @@ static romfs_img *nup_image_open(const char *spec, char *why, size_t wn) {
         uint64_t tid = nup_u64(p); uint32_t ver = nup_u32(p + 0x14);
         if (want_kind == -2) { if (kind == 1 && (pick < 0 || toc[o_pk + 0x40 * pick + 0x18] != 1 || ver > best_ver)) { pick = i; best_ver = ver; }
                                else if (kind == 0 && pick < 0) pick = i; }
-        else if (kind == want_kind && (want_kind == 0 || (want_kind == 1 && ver == want_ver) || (want_kind == 2 && (aoc >= 0 ? (int)(tid & 0xfff) == aoc : tid == want_tid)))) { pick = i; break; }
+        else if (kind == 2 && want_kind == 2 && (aoc >= 0 ? (int)(tid & 0xfff) == aoc : tid == want_tid)) {
+            // an add-on: its newest version (a container can hold an add-on and a later version of it; Horizon installs only the newest, which replaces the older)
+            if (pick < 0 || ver > best_ver) { pick = i; best_ver = ver; }
+        }
+        else if (kind == want_kind && want_kind != 2 && (want_kind == 0 || (want_kind == 1 && ver == want_ver))) { pick = i; break; }
     }
     if (pick < 0) NUP_BAD("no package %s with a RomFS", sel[0] ? sel : "(update or base)");
     uint32_t root = nup_u32(toc + o_pk + 0x40 * pick + 0x10);

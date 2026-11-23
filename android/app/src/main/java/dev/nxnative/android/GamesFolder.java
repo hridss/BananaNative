@@ -144,7 +144,7 @@ final class GamesFolder {
                 Nup me = Nup.peek(f);
                 Nup.Pkg n = me.newest();
                 List<Long> ad = new ArrayList<>();
-                for (Nup.Pkg p : me.packages) if (p.kind == Nup.ADDON) ad.add(p.titleId);
+                for (Nup.Pkg p : me.of(Nup.ADDON)) ad.add(p.titleId);   // (each add-on once: its newest version)
                 long[] a = new long[ad.size()];
                 for (int i = 0; i < a.length; i++) a[i] = ad.get(i);
                 return new Facts(null, me.base() != null, n != null, n == null ? 0 : n.titleId, n == null ? 0 : n.version, a);

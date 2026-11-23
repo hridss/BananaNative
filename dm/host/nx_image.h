@@ -546,7 +546,11 @@ static romfs_img *nx_image_open_fd(int fd, uint64_t fsize, const char *file, con
                 nx_ncx_free(&x);
                 if (!tid) continue;
             }
-            if (aoc >= 0 ? (int)(tid & 0xfff) == aoc : tid == want_tid) { pick = i; nmatch++; }
+            // the add-on's newest version: an archive of a console's install can hold an add-on and a later version of it (Super Mario Bros. Wonder's 010015100B515001
+            // at v0 and v131072); Horizon installs only the newest, which replaces the older. Two snapshots of the same version stay ambiguous
+            if (aoc >= 0 ? (int)(tid & 0xfff) == aoc : tid == want_tid) {
+                if (pick < 0 || ver > best) { pick = i; best = ver; nmatch = 1; } else if (ver == best) nmatch++;
+            }
             continue;
         }
         if (!nca && (mainp == NX_NONE || nup_u32(s) != mainp)) continue;

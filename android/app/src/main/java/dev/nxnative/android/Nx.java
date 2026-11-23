@@ -691,8 +691,8 @@ final class Nx {
             }
             Nup.Pkg p = new Nup.Pkg(out.size(), tid, root, exefs, romfs, kind == Nup.BASE ? 0 : ver, kind, type == 3 ? 1 : 0);
             p.program = program;
-            String sel = p.selector();   // two bases of a program, an update and a standalone update of one version: ambiguous
-            if (!sels.add(sel)) throw new Nsp.Refused(UNKNOWN, name + ": two snapshots are both " + sel + ", which this app cannot tell apart");
+            String sel = p.selector();   // two bases of a program, an update and a standalone update of one version: ambiguous (an add-on's versions are not: same())
+            if (!sels.add(same(p))) throw new Nsp.Refused(UNKNOWN, name + ": two snapshots are both " + sel + ", which this app cannot tell apart");
             snapOf.put(out.size(), si);
             out.add(p);
         }
@@ -715,16 +715,23 @@ final class Nx {
             for (Nup.Pkg q : NxNca.packages(nx, r, (int) ns[2], files, where)) {
                 Nup.Pkg p = new Nup.Pkg(out.size(), q.titleId, q.rootDir, q.exefsDir, q.romfsDir, q.version, q.kind, q.flags);
                 p.program = q.program;
-                String sel = p.selector();
-                if (ncaRoot.containsKey(sel) && ncaRoot.get(sel) == ns[1]) continue;
-                if (!sels.add(sel)) throw new Nsp.Refused(UNKNOWN, name + ": two snapshots are both " + sel + ", which this app cannot tell apart");
-                ncaRoot.put(sel, ns[1]);
+                String sel = p.selector(), key = same(p);
+                if (ncaRoot.containsKey(key) && ncaRoot.get(key) == ns[1]) continue;
+                if (!sels.add(key)) throw new Nsp.Refused(UNKNOWN, name + ": two snapshots are both " + sel + ", which this app cannot tell apart");
+                ncaRoot.put(key, ns[1]);
                 nx.snapOf.put(out.size(), si);
                 out.add(p);
             }
         }
         return nx;
     }
+
+    /**
+     * What two snapshots must not share: their selector, and for an add-on its version too. An archive of a console's install can hold an add-on and a later version
+     * of it (Super Mario Bros. Wonder's 010015100B515001 at v0 and v131072); Horizon installs only the newest, which replaces the older, and addon/&lt;title ID&gt;
+     * names that one ({@link Nup#find}). Two snapshots of one add-on and one version stay ambiguous
+     */
+    static String same(Nup.Pkg p) { return p.kind == Nup.ADDON ? p.selector() + "@" + p.version : p.selector(); }
 
     // ---- The tree, read by position (the Manifest's SHA-256 was checked at open; Nup's cache keys on the file's size and time) ----
 

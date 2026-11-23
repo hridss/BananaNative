@@ -154,6 +154,18 @@ class Read(Fixture):
         self.assertEqual(romfs.Path(f'{self.nup}:addon/{DLC:016x}/romfs/dlcfile').read_text(), 'dlc ' * 10)
         self.assertEqual(romfs.os.listdir(f'{self.nup}:addon/{DLC:016x}'), ['romfs'])   # an add-on has no exefs
 
+    def test_addon_versions(self):
+        # an add-on and a later version of it in one container (an .nx of a console's install): addon/<title id> is the newest, listed once; one version twice is ambiguous
+        import copy
+        n = copy.copy(nup.open_nup(self.nup))   # (a copy: open_nup's object is shared with the other tests)
+        old = n.packages[-1]; self.assertEqual(old.kind, nup.ADDON)
+        new = nup.Package(old.index, old.title_id, old.root, old.exefs, old.romfs, 131072, nup.ADDON, 0)
+        n.packages = [n.packages[0], new, n.packages[1], old]   # (the order of the records does not matter)
+        self.assertIs(n.select(f'addon/{DLC:016x}'), new)
+        self.assertEqual(n.children('addon'), [(f'{DLC:016x}', ('pkg', old.index))])
+        n.packages.append(nup.Package(old.index, old.title_id, old.root, old.exefs, old.romfs, 131072, nup.ADDON, 0))
+        with self.assertRaisesRegex(nup.Error, '2 packages addon'): n.select(f'addon/{DLC:016x}')
+
     def test_streams_seek_and_mmap(self):
         for small in (nup.SMALL, 1000):   # in memory, and streamed (a seek back starts the frame again)
             with mock.patch.object(nup, 'SMALL', small):

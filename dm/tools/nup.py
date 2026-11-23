@@ -289,11 +289,20 @@ class Nup:
         if not m: raise Error(f'{selector!r} is not a package selector (base, update/<version>, addon/<16 hex digits>)')
         if selector == 'base': hits = [p for p in self.packages if p.kind == BASE]
         elif m.group(1) is not None: hits = [p for p in self.packages if p.kind == UPDATE and p.version == int(m.group(1))]
-        else: hits = [p for p in self.packages if p.kind == ADDON and p.title_id == int(m.group(2), 16)]
+        else: hits = self._newest_addons([p for p in self.packages if p.kind == ADDON and p.title_id == int(m.group(2), 16)])
         if not hits:
             raise Error(f'{self.path}: no package {selector} (has: {", ".join(p.selector for p in self.packages if p.selector) or "none"})')
         if len(hits) > 1: raise Error(f'{self.path}: {len(hits)} packages {selector}')
         return hits[0]
+
+    @staticmethod
+    def _newest_addons(ps):
+        """An add-on's newest version only: a container can hold an add-on and a later version of it (an .nx of a console's install: Super Mario Bros. Wonder's
+        add-on 010015100B515001 at v0 and v131072); Horizon installs one version of an add-on, the newest, which replaces the older, so addon/<title id> names
+        that one. Two packages of the same title ID and version stay two (an error for select)"""
+        top = {}
+        for p in ps: top[p.title_id] = max(top.get(p.title_id, p.version), p.version)
+        return [p for p in ps if p.kind != ADDON or p.version == top[p.title_id]]
 
     # ---- the tree ----
     def children(self, k):
@@ -303,7 +312,7 @@ class Nup:
             return ([('addon', 'addon')] if any(p.kind == ADDON for p in self.packages) else []) + ([('base', ('pkg', base[0].index))] if base else []) + \
                    ([('update', 'update')] if any(p.kind == UPDATE for p in self.packages) else [])
         if k in ('update', 'addon'):
-            ps = [p for p in self.packages if p.kind == (UPDATE if k == 'update' else ADDON)]
+            ps = self._newest_addons([p for p in self.packages if p.kind == (UPDATE if k == 'update' else ADDON)])   # (addon/: each add-on's newest version)
             return sorted(((p.selector.split('/')[1], ('pkg', p.index)) for p in ps), key=lambda c: c[0].encode())
         if isinstance(k, tuple):
             p = self.packages[k[1]]

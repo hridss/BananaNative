@@ -81,7 +81,7 @@ final class DumpLayout {
                     else if (p.kind == Nup.UPDATE)
                         out.add(new Item("update", "Update " + versionLabel(prof, p.version), "version " + p.version + (supported.contains(p.version) ? ", a build this app supports" : "")
                                 + (p.flags != 0 ? ", a whole game (packed from an update dump)" : "")));
-                    else if (p.kind == Nup.ADDON) {
+                    else if (p.kind == Nup.ADDON && n.find(p.selector()) == p) {   // (an add-on's newest version only: Nup.find)
                         String name = null;
                         try { byte[] m = n.metaBlock(p); if (m != null) name = Nup.Meta.parse(m).title; } catch (IOException e) { /* no name */ }
                         String tid = String.format(Locale.ROOT, "%016X", p.titleId);

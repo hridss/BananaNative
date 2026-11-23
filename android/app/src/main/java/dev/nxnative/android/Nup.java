@@ -533,7 +533,7 @@ final class Nup {
     /** The packages of a kind of program n of an .nx (n 0: the game's own; the add-ons under any program) */
     List<Pkg> of(int kind, int program) {
         List<Pkg> out = new ArrayList<>();
-        for (Pkg p : packages) if (p.kind == kind && (p.program == program || kind == ADDON)) out.add(p);
+        for (Pkg p : packages) if (p.kind == kind && (p.program == program || kind == ADDON) && (kind != ADDON || find(p.selector()) == p)) out.add(p);   // (an add-on: its newest version, find)
         return out;
     }
 
@@ -547,8 +547,14 @@ final class Nup {
 
     /** The package a selector names, null when none (NUP.md: an error for the caller to say) */
     Pkg find(String selector) {
-        for (Pkg p : packages) if (selector.equals(p.selector())) return p;
-        return null;
+        Pkg hit = null;
+        for (Pkg p : packages) {
+            if (!selector.equals(p.selector())) continue;
+            if (p.kind != ADDON) return p;
+            // an add-on: its newest version (an .nx of a console's install can hold an add-on and a later version of it; Horizon installs only the newest)
+            if (hit == null || p.version > hit.version) hit = p;
+        }
+        return hit;
     }
 
     /** No selector: the highest-version update, else the base */
