@@ -19,7 +19,7 @@
 #include "vka_memu_order.h"
 enum { MEMU_MAX = VKA_MEMU_ORDER_MAX };
 typedef struct { int ok, rec, indexed, points; vka_shader *vs, *ts, *ms, *tcs, *mcs; vka_layout tl, ml; VkPipeline tp, mp; } memu_ent;
-static struct { int live, ntask, bars; vka_memu_order o; memu_ent e[MEMU_MAX]; uint16_t bar[MEMU_MAX]; vka_span rec; VkBuffer arena, ctl; uint32_t cap; } MB;
+static struct { int live, ntask, bars; vka_memu_order o; memu_ent e[MEMU_MAX]; uint16_t bar[MEMU_MAX]; vka_span rec; VkBuffer arena, ctl; uint32_t cap; int fresh; } MB;
 static memu_ent *g_memu_cur;
 uint64_t vka_memu_n_cross, vka_memu_n_dropped, vka_memu_n_nbar;   // entries made past a game barrier, entries dropped at a barrier not taken in the pass, the batches' own barriers
 // A task or mesh shader whose compute may run before draws that came before a game barrier in the pass: it writes no memory (those draws may read what it overwrites)
@@ -98,10 +98,19 @@ static void memu_bar(int last) {
     vka_memu_n_nbar++;
     if (vka_gp_active) vka_gp_mark(g_cb, __FILE_NAME__, __LINE__ + last);   // (DM_VK_GPUPROF: a step ends here)
 }
+// Each batch hands out the arena from its start (DM_VK_MESH_EMU_RESET=1, live; default 1): the counter (control word 0) is cleared before the batch's first full barrier.
+// The arena then holds one batch's mesh output, not every batch of the submission. A batch's output is read only by its own draws, which come before the next batch:
+// a batch is made when a pass is about to open (or after the pass a split ended), so the next batch's first barrier, every stage to every stage, orders all of them
+// before its compute writes the arena again, and the clear before it is ordered after the last batch's compute by that batch's last barrier (to every stage).
+// The most asked (control word 1) is still kept over the whole submission, so the arena grows to the largest batch. 0 hands out across the submission, as before
+static void memu_restart(void) {
+    if (MB.fresh || !VKA_ENV("DM_VK_MESH_EMU_RESET", 1)) return;   // (a fresh arena's control words were cleared when it was taken)
+    vk.vkCmdFillBuffer(g_cb, MB.ctl, (VkDeviceSize)VKA_MEMU_CTL_COUNTER * 4, 4, 0);
+}
 enum { MEMU_BEGIN, MEMU_ADD, MEMU_SETUP, MEMU_TASK, MEMU_DIST, MEMU_MESH, MEMU_END };
 // Phase MEMU_ADD returns 0 when the look-ahead stops before this draw (bars: the game barriers the look-ahead crossed before it; its shaders are not hoistable), else 1
 int vka_memu_batch(int phase, const vka_dstate *d, const p_draw *dw, const uint8_t *p, int idx, int bars) {
-    if (phase == MEMU_BEGIN) { vka_memu_order_reset(&MB.o); MB.live = 0; MB.ntask = 0; MB.bars = 0; g_memu_cur = NULL; return 1; }
+    if (phase == MEMU_BEGIN) { vka_memu_order_reset(&MB.o); MB.live = 0; MB.ntask = 0; MB.bars = 0; MB.fresh = 0; g_memu_cur = NULL; return 1; }
     if (phase == MEMU_ADD) {
         if (MB.o.n == MEMU_MAX || !g_cb) return 1;
         vka_shader *ts = NULL, *ms = NULL; unsigned bad = 0;
@@ -112,7 +121,9 @@ int vka_memu_batch(int phase, const vka_dstate *d, const p_draw *dw, const uint8
         if (!MB.live) {
             MB.live = -1;
             int sa = V.sb_align > 64 ? (int)V.sb_align : 64;
-            if (!vka_scratch((VkDeviceSize)MEMU_MAX * VKA_MEMU_REC_WORDS * 4, (VkDeviceSize)sa, &MB.rec) || !vka_memu_arena(g_cb, &MB.arena, &MB.ctl, &MB.cap)) return 1;
+            if (!vka_scratch((VkDeviceSize)MEMU_MAX * VKA_MEMU_REC_WORDS * 4, (VkDeviceSize)sa, &MB.rec)) return 1;
+            int got = vka_memu_arena(g_cb, &MB.arena, &MB.ctl, &MB.cap); if (!got) return 1;
+            MB.fresh = got == 2;   // (the submission's first batch: its control words were just cleared)
             vka_disp_settle(g_cb);   // (the dispatches before write what the batch reads: indirect records, buffers)
             MB.live = 1;
         }
@@ -142,7 +153,7 @@ int vka_memu_batch(int phase, const vka_dstate *d, const p_draw *dw, const uint8
     }
     if (MB.live <= 0 || !MB.o.n) return 1;
     switch (phase) {
-    case MEMU_SETUP: vka_barrier(g_cb); memu_helper(0); memu_bar(0); break;
+    case MEMU_SETUP: memu_restart(); vka_barrier(g_cb); memu_helper(0); memu_bar(0); break;
     case MEMU_TASK: if (idx < MB.o.n && MB.e[idx].ok && MB.e[idx].tcs) memu_dispatch(d, 6, MB.e[idx].tcs, &MB.e[idx].tl, MB.e[idx].tp, idx, VKA_MEMU_R_TASK_X); break;
     case MEMU_DIST: if (MB.ntask) { memu_bar(0); memu_helper(1); memu_bar(0); } break;
     case MEMU_MESH: if (idx < MB.o.n && MB.e[idx].ok) memu_dispatch(d, 7, MB.e[idx].mcs, &MB.e[idx].ml, MB.e[idx].mp, idx, VKA_MEMU_R_MESH_X); break;

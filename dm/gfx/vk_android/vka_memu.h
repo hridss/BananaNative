@@ -27,7 +27,8 @@ struct vka_shader *vka_memu_by_key(uint64_t key);                // a compute fo
 // Qualcomm's driver answers VK_ERROR_UNKNOWN): no mesh draw pairs them, so a prewarm record of the pair is stale (vka_pso.c). 1 otherwise, or when it cannot tell
 int vka_memu_vs_feeds(struct vka_shader *vs, struct vka_shader *fs);
 // The arena of the submission being recorded (acquired at its first emulated draw: its control words cleared in cb), the records of a batch, the helper passes
-int vka_memu_arena(VkCommandBuffer cb, VkBuffer *buf, VkBuffer *ctl, uint32_t *cap_words);   // 0 = none (logged)
+int vka_memu_arena(VkCommandBuffer cb, VkBuffer *buf, VkBuffer *ctl, uint32_t *cap_words);   // 0 = none (logged), 2 = taken now (its control words cleared), 1 = the submission's
+int vka_memu_batch_cap(void);                                   // the most mesh draws a batch takes now (vka_exec.c memu_walk; 128 unless a batch outgrew the arena)
 void vka_memu_retire(uint64_t fence);                            // the arena used since the last call belongs to the submission of fence
 int vka_memu_helpers(VkPipeline *setup, VkPipeline *dist, VkPipelineLayout *layout);   // the setup and distribution pipelines, their layout (push descriptors: records, control, arena)
 void vka_memu_stats(char *b, size_t n);                          // the replay's statistics line part

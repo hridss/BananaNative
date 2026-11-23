@@ -1736,7 +1736,7 @@ int vka_qdx_args(uint64_t ind, VkBuffer *b, VkDeviceSize *o) {
 // so a mesh draw after a barrier between the draws of one pass no longer ends that pass (OoT: about 80 such barriers and 27 split passes a frame on an Adreno 740, Forgejo
 // #249). A draw past a barrier is taken when its task and mesh shaders write no memory and sample no texture (vka_memu_draw.inc memu_hoistable); otherwise the look-ahead
 // stops there. A barrier the replay does not take inside the pass (a draw before it wrote memory, or no pass open) drops the entries past it (vka_memu_bar_met)
-// Why a look-ahead stopped (the replay statistics' "look-ahead stops" part): the record kind, by op; MEMU_STOP_LIMIT the batch's 128 draws, _HOIST a draw past a barrier
+// Why a look-ahead stopped (the replay statistics' "look-ahead stops" part): the record kind, by op; MEMU_STOP_LIMIT the batch's most draws (128, fewer after a batch outgrew the arena: vka_memu_batch_cap), _HOIST a draw past a barrier
 enum { MEMU_BEGIN, MEMU_ADD, MEMU_SETUP, MEMU_TASK, MEMU_DIST, MEMU_MESH, MEMU_END };
 int vka_memu_batch(int phase, const vka_dstate *d, const p_draw *dw, const uint8_t *p, int idx, int bars);
 int vka_memu_on(void); int vka_memu_has(const uint8_t *p); void vka_memu_cur(const uint8_t *p); void vka_memu_bar_met(int kept);
@@ -1790,7 +1790,7 @@ static int memu_walk(const uint8_t *p, int phase) {
         if (!memu_allowed(h.op) || h.size < 8) { stop = memu_stop_kind(h.op); break; }
         if (h.op == OP_DRAW) { p_draw t; const p_draw *d = draw_rec(a, h.size, &t);
             if (d->prim == NVN_PRIM_MESH && !d->mdi_cnt) {
-                if (n == 128) { stop = MEMU_STOP_LIMIT; break; }
+                if (n >= vka_memu_batch_cap()) { stop = MEMU_STOP_LIMIT; break; }
                 if (phase < 0) return 1;
                 if (!vka_memu_batch(phase, &g_memu_st, d, p, n, bars)) { stop = MEMU_STOP_HOIST; break; }
                 n++; } }

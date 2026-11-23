@@ -52,7 +52,7 @@ class Memu(unittest.TestCase):
 
     def test_switches_documented(self):
         env = (REPO / 'docs/env_switches.tsv').read_text()
-        for name in ('DM_VK_MESH_EMU', 'DM_VK_MESH_EMU_MB'):
+        for name in ('DM_VK_MESH_EMU', 'DM_VK_MESH_EMU_MB', 'DM_VK_MESH_EMU_RESET', 'DM_VK_MESH_EMU_BATCH'):
             self.assertRegex(env, r'(?m)^%s\t' % name)
 
 
