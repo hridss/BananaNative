@@ -130,6 +130,7 @@ Current (2026-11-13, branch `dkb-wide`): the 3D camera and the 2D layer follow t
 
 ## Found on this game
 
+- [Half-float pair atomics in storage memory](../../../docs/reference/shaders.md#half-float-pair-atomics-in-storage-memory): the muck normal pass (`be71d8f78b52e62f`, `e5f7ed151822e560`) adds face normals with RED.ADD.F16x2, which the translator dropped. The normals stayed zero and melting muck in Layer 1400 drew black blots with a white bloom halo. Resolved on the Mac upstream (nxnative PR #3200); on Android the libraries get the swap loop with the next shader rebuild, not yet checked on a phone.
 - [Shaders in a loose file that only an archive's reader was reached for](../../../docs/reference/shaders.md#shaders-in-a-loose-file-that-only-an-archives-reader-was-reached-for): sead's NVN2 primitive drawer, two shaders the split passed over; open until the profile is split again.
 - [Saves that look deleted after an update or a forced restart (Android, open)](../../../docs/reference/services.md#saves-that-look-deleted-after-an-update-or-a-forced-restart-android-open): #428: saves that looked deleted after an update; open, two data-loss paths hardened (commit fsync, an unwritable save folder no longer replaced by an empty one).
 - [A tools change without a Mac build leaves every player on an older library (Android)](../../../docs/reference/shaders.md#a-tools-change-without-a-mac-build-leaves-every-player-on-an-older-library-android): sampled keep takes the older library over when a random sample of its shaders comes out the same.

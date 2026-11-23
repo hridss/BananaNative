@@ -10,6 +10,11 @@ from test_dmsh_ampere_mem import EXIT, Translated, inst
 STORE = (0x000fe8000000c800, 0x0000080609008388)   # STS.U32 [R9 * 16 + 8], R6 (Mario Kart World f94552a2a2bff505): the sink, R9 the thread index
 
 
+# The 64-bit address of storage buffer 0 in R8:R9, as agl's analysis shaders and Bananza's muck normal pass take theirs
+ULDC_SB0 = (0x000fe20000000a00, 0x0000040000047ab9)   # ULDC.64 UR4, c[0][0x10]: storage entry 0 of an NVN2 compute c0 with one storage slot
+MOV_R8_UR4, MOV_R9_UR5 = (0x000fe20008000000, 0x0000000400087c02), (0x000fe20008000000, 0x0000000500097c02)
+
+
 def waiting(i): return (i[0] | 0x3f << 52, i[1])   # the instruction waits on every scoreboard (control bits 116..121): it reads what an S2R before it wrote
 def s2r_tid(rd): return (0x000e260000002100, 0x0000000000007919 | rd << 16)   # S2R Rd, SR_TID.X (Mario Kart World's encoding, write barrier 0)
 
@@ -44,6 +49,26 @@ class HalfImmediate(Alu):
         msl = self.kept(self.HMUL2, srcs=(6,))
         self.assertIn('spvFMul', msl)
         self.assertRegex(msl, r'\b2\.0\b')
+
+
+class HalfRed(Translated):
+    """RED.E.ADD.F16x2.FTZ.RN (0x98e, type 4 at bits 73..75): Donkey Kong Bananza's muck normal pass (be71d8f78b52e62f, e5f7ed151822e560) adds each face normal into its vertices'
+    half4 normal, two halves per word. Dropped with a log line, the normals stayed the zeros the mesh pass writes, and normalizing them made NaN: black blots in the scene.
+    A compare-and-swap loop on the word (InstEmitMemory.cs EmitAtomicAddF16x2). Upstream's GPU checks of the sums (metal_kernel.py) need its Mac compile flags, which this
+    tree's dmsh_chain.py does not have, so they are not taken"""
+    RED = (0x000fe20000000000 | 4 << 9, 0x0000000608ff098e)   # RED.F16x2.FTZ.RN [R8], R6: (control and type, opcode and registers)
+    RED_E_PT = (RED[0] | 1 << 8, RED[1] | 7 << 12)   # RED.E.F16x2.FTZ.RN [R8.64], R6, unpredicated (PT)
+    LDG_R6 = (0x000fe2200c1e1900, 0x0000043f08067981)   # LDG.E R6, [R8.64 + 4]: the value from the word after the sum, so it is not folded
+
+    def test_adds_in_a_loop(self):
+        msl = self.translate(b''.join(inst(*waiting(i)) for i in (s2r_tid(6), s2r_tid(8), s2r_tid(9), self.RED)) + inst(*EXIT))
+        self.assertIn('atomic_compare_exchange_weak_explicit', msl)
+
+    def test_storage_add_is_a_swap_loop(self):   # on storage buffer 0 through its 64-bit address, as the game adds
+        code = b''.join(inst(*i) for i in (ULDC_SB0, MOV_R8_UR4, MOV_R9_UR5, self.LDG_R6)) + inst(*waiting(self.RED_E_PT)) + inst(*EXIT)
+        msl = self.translate(code, nvn2_cs=[0, 1, 0, 0x20, 0])
+        self.assertIn('atomic_compare_exchange_weak_explicit', msl)
+        self.assertNotIn('if (false)', msl)
 
 
 class Vote(Alu):
