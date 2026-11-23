@@ -47,6 +47,8 @@
 #   · PDAT (the engine with the namespace phx, Kirby Air Riders): flatbuffer records tagged PMAP, zstd frames in the .dat archives, each holding a program's control sections and code areas, see pdat_jobs and pdat_shaders
 #   · Unreal Engine 3 (Batman: Arkham Knight): shader records in its global shader cache (BMSG) and in the packages (the combined shader cache), whose compressed chunks are Oodle blocks decoded by the game's own decoder in the Mac host, see ue3_body and ue3_shaders
 #   · MVGL / NXSH (Media.Vision, Digimon Story Time Stranger): MDB1 archives (wide 64-bit LZ4 or legacy 32-bit doboz, mvgl.py) whose .shad entries and embedded main records are NXVS / NXFS / NXCS containers with control and code spans; see mvgl_jobs and nxsh_shader
+#   · Anvil forges (Ubisoft's Anvil, Immortals Fenyx Rising): 'GPUCODEONLY' shader records (code area, then control section) in the forge files' Oodle containers (decoded by the game's own
+#     decoder in the Mac host) and in the loose ShaderDataNVN.bin, see forge_jobs and anvil_shaders
 # Code area: 0x30 header + (graphics) 0x50 SPH + instructions; header magic 0x12345678 for graphics, 0x12345679 for compute. The control section starts with 0x98761234, +0x704 = code area length,
 #   +0x700 = start of the c1 constant segment within the code area; for compute +0x748 thread group xyz (u32 ×3), +0x754 shared memory bytes (checked one by one against PC reflection on D2R's 22 compute shaders).
 # Stage: BNSH uses the stage slot; BAHS uses bits 10..13 of SPH word 0 (1 vertex 2 hull 3 domain 4 geometry 5 pixel), and a compute header means compute.
@@ -2355,6 +2357,87 @@ def frostbite_shaders(path, rel, ents, out):
             if why: print(f'[RED] {label}: {why}; left out', flush=True); continue
             out.append((label, st, ctl, code))
 
+FORGE, FORGE_DATA, ANVIL_CODE = b'scimitar\0', bytes.fromhex('33aafb5799fa0410'), b'GPUCODEONLY\0'
+ANVIL_FORGE = 'Anvil forge'
+
+def forge_entries(f, label):
+    """The files of an Anvil forge (Ubisoft's Anvil, Immortals Fenyx Rising: version 28): 'scimitar\\0', u32 version, u64 data header offset; the data header holds the u32 file count,
+    and at +0x24 the offset of the first index header {u32 count, u32, u64 index table offset, u64 next index header or -1}; each index table row is {u64 offset, u64 file ID, u32 size}.
+    → [(offset, size, file ID), …]; the counts of the chained index headers must add up to the data header's"""
+    f.seek(0); h = f.read(0x15)
+    if h[:9] != FORGE: red(f'{label}: not an Anvil forge')
+    ver, dh = struct.unpack_from('<IQ', h, 9)
+    if ver != 28: red(f'{label}: forge version {ver}, only version 28 (Immortals Fenyx Rising) is known')
+    f.seek(dh); d = f.read(0x2c); total = field(d, '<I', 0, label)[0]; ih = field(d, '<Q', 0x24, label)[0]
+    out, seen = [], set()
+    while ih != 0xffffffffffffffff:
+        if ih in seen: red(f'{label}: index header {ih:#x} chained twice')
+        seen.add(ih); f.seek(ih); cnt, _, tab, nxt = field(f.read(0x18), '<IIQQ', 0, f'{label}: index header {ih:#x}')
+        f.seek(tab); t = f.read(20 * cnt)
+        if len(t) != 20 * cnt: red(f'{label}: index table at {tab:#x} runs past the end')
+        out += [(o, s, i) for o, i, s in struct.iter_unpack('<QQI', t)]; ih = nxt
+    if len(out) != total: red(f'{label}: the index tables list {len(out)} files, the data header {total}')
+    return out
+
+def forge_container(d, o, label):
+    """One Anvil compressed data container at o: 33 AA FB 57 99 FA 04 10, u16 version, u8 compression, u32 chunk size, u32 chunk count, per chunk {u32 raw size, u32 stored size},
+    then per chunk {u32 checksum, data}; a chunk whose two sizes are equal is stored, the others are Oodle (8C 0A), decoded with the game's own decoder. → (the decoded bytes, end offset)"""
+    if d[o:o + 8] != FORGE_DATA: red(f'{label}: no data container at {o:#x}')
+    n = field(d, '<I', o + 15, label)[0]; tab = span(d, o + 19, 8 * n, f'{label}: chunk table at {o:#x}'); p = o + 19 + 8 * n
+    out = []
+    for u, c in struct.iter_unpack('<II', tab):
+        blk = span(d, p + 4, c, f'{label}: chunk at {p:#x}'); p += 4 + c
+        out.append(blk if u == c else oodle(blk, u))
+    return b''.join(out), p
+
+def forge_jobs(files, parts=64):
+    """Anvil forges (Immortals Fenyx Rising: 372 forges in the game, its update and its DLC, 15 GB): their files, each a small metadata container and the resource's own container,
+    Oodle-compressed. → ([(forge path, rel, (ANVIL_FORGE, ((offset, size, file ID), …))), …] in about equal stored sizes, the forges taken)"""
+    jobs, taken, ents = [], set(), []
+    for p, r in files:
+        if not p.endswith('.forge'): continue
+        with open(p, 'rb') as f:
+            if f.read(9) != FORGE: continue
+            ents.append((p, r, sorted(forge_entries(f, '/' + r))))
+        taken.add(p)
+    if not ents: return jobs, taken
+    step = sum(s for _, _, e in ents for _, s, _ in e) / parts
+    for p, r, e in ents:
+        cur, size = [], 0
+        for x in e:
+            cur.append(x); size += x[1]
+            if size >= step: jobs.append((p, r, (ANVIL_FORGE, tuple(cur)))); cur, size = [], 0
+        if cur: jobs.append((p, r, (ANVIL_FORGE, tuple(cur))))
+    return jobs, taken
+
+def anvil_shaders(d, label):
+    """Anvil's shader records (Immortals Fenyx Rising), in its material, UI and entity resources and in the loose ShaderDataNVN.bin: 'GPUCODEONLY\\0', u32 code area length, the code area,
+    u32 control section length, the control section. Labels: <label>#GPUCODEONLY@<offset>"""
+    out = []
+    for m in re.finditer(re.escape(ANVIL_CODE), d):
+        o = m.start(); where = f'{label}#GPUCODEONLY@{o:x}'
+        n = field(d, '<I', o + 12, where)[0]; code = span(d, o + 16, n, where)
+        k = field(d, '<I', o + 16 + n, where)[0]; ctl = span(d, o + 20 + n, k, where)
+        if ctl[:4] != CTL_MAGIC: red(f'{where}: no control section after the {n:#x}-byte code area')
+        st = glslc_stage(ctl, code)
+        why = check(where, st, ctl, code) if st else 'no stage in the code area header'
+        if why: red(f'{where}: {why}')
+        out.append((where, st, ctl, code))
+    return out
+
+def forge_shaders(path, rel, ents, out):
+    """A range of one forge's files (forge_jobs): each file's containers decoded and its shader records read (anvil_shaders). Labels: /<forge>#<file ID>#GPUCODEONLY@<offset>"""
+    from romfs import mmap
+    with open(path, 'rb') as f, mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as d:
+        for off, size, fid in ents:
+            label = f'/{rel}#{fid:x}'
+            if off + size > len(d): red(f'{label}: {size} bytes at {off:#x} run past the forge')
+            p, end = off, off + size
+            while p < end and d[p:p + 8] == FORGE_DATA:   # a metadata container, then the resource's (a few files have only one)
+                b, p = forge_container(d, p, label)
+                if ANVIL_CODE in b: out += anvil_shaders(b, label)
+            if p > end: red(f'{label}: its containers run {p - end} bytes past its index size')
+
 def smash_arc_jobs(files, parts=128):
     """Super Smash Bros. Ultimate's data.arc (17.6 GB, smash_arc.py): the game's current files, in ranges of about equal stored size. → ([(path, rel, entries), …], the paths taken)"""
     import smash_arc
@@ -3101,6 +3184,7 @@ NEST = 16   # archives in archives scan_blob opens (SARC, PlatinumGames' DAT): r
 def scan_blob(d, label, out, depth=0, left=None):
     if depth > NEST: red(f'{label}: archives nested more than {NEST} deep')
     if d[:4] == b'SHN!': out.extend(shn_shaders(d, label)); return
+    if d[:12] == ANVIL_CODE: out.extend(anvil_shaders(d, label)); return   # Anvil's ShaderDataNVN.bin: shader records from its first byte
     if bytes(d[:4]) in NXSH_STAGES: out.append(nxsh_shader(d, 0, label, strict=True)); return
     if d[:8] == SUMO_MUX:
         members = list(sumo_members(d, label))
@@ -3495,6 +3579,9 @@ def scan_file_in(args):
         return rel, uniq_keys(found), var_pairs(found), lost or trees
     if len(args) > 2 and args[2][0] == FB_CAS:   # CompiledBytecode resources of a Frostbite cas file (frostbite_jobs)
         frostbite_shaders(path, rel, args[2][1], found)
+        return rel, uniq_keys(found), var_pairs(found), trees
+    if len(args) > 2 and args[2][0] == ANVIL_FORGE:   # files of an Anvil forge (forge_jobs)
+        forge_shaders(path, rel, args[2][1], found)
         return rel, uniq_keys(found), var_pairs(found), trees
     if len(args) > 2 and head[:4] == PKZL:   # entries of a PlatinumGames PKZ (pkz_jobs)
         pkz_shaders(path, rel, args[2], found)
@@ -4075,10 +4162,11 @@ def scan_jobs(files, want=None, mains=(), nros=()):
     zp_jobs, zips = zip_jobs(by_head)
     ah_jobs, arhs = arh_jobs(files)   # Monolith's ARH1/ARD archives and embedded XBC1/HCPS programs
     fb_jobs, fbs = frostbite_jobs(files)   # EA SPORTS FC 27's Frostbite bundles, Oodle Leviathan decoded by the game's own decoder in the Mac host
+    fg_jobs, forges = forge_jobs(files)   # Immortals Fenyx Rising's Anvil forges, Oodle decoded by the game's own decoder in the Mac host
     pd_jobs, pdats = pdat_jobs(by_head)
     mv_jobs, mvgls = mvgl_jobs(by_head)   # Media.Vision's MVGL archives (Digimon Story Time Stranger's wide MDB1; Cyber Sleuth's legacy MDB1)
-    big += pak_jobs + tr_jobs + ue_jobs + bd_jobs + arc_jobs + pz_jobs + ck_jobs + mv_jobs + cr_jobs + zp_jobs + ah_jobs + fb_jobs + pd_jobs
-    files = [(p, r) for p, r in files if not linkdata_jobs(p, r) and p not in paks and p not in trp and p not in uep and p not in bdts and p not in arcs and p not in pkzs and p not in cpks and p not in mvgls and p not in cras and p not in zips and p not in arhs and p not in fbs and p not in pdats]
+    big += pak_jobs + tr_jobs + ue_jobs + bd_jobs + arc_jobs + pz_jobs + ck_jobs + mv_jobs + cr_jobs + zp_jobs + ah_jobs + fb_jobs + fg_jobs + pd_jobs
+    files = [(p, r) for p, r in files if not linkdata_jobs(p, r) and p not in paks and p not in trp and p not in uep and p not in bdts and p not in arcs and p not in pkzs and p not in cpks and p not in mvgls and p not in cras and p not in zips and p not in arhs and p not in fbs and p not in forges and p not in pdats]
     if want is not None: big, files = [j for j in big if j[1] in want], [f for f in files if f[1] in want]
     return big, files
 
