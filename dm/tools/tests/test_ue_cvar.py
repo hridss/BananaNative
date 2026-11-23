@@ -1,6 +1,7 @@
 """Unreal console variables found by their registered names (dm/tools/ue_cvar.py) on synthetic code, no game files: UE 4.18's constructor form with the object loaded before the
 name, UE 4.2x / 5's register call with the value pointer stored after it (and a base constructor between), a lookup that only reads the name, a name registered twice, UTF-32 names,
 the next variable's registration not taken for this one's; and every profile's ue_fps_cvar is a name the rewriter looks for."""
+import re
 import struct
 import sys
 import unittest
@@ -59,6 +60,11 @@ def inline_form(at, name, obj, vtable=True, clobber=False, far=False):
     w += [LDRX(8, 0), BLR(8), STRX(0, 22, (k + 0x10) // 8), RET]
     w[2] = B(at + 8, at + 4 * (len(w) + 4 if far else 4))   # skips the else block (one word), or jumps past the store
     return w
+def ref_form(at, name, glob, call=True):
+    """FAutoConsoleVariableRef: the name into x1, the global into x2, the help into x3, the flags into w4, blr (register); the object then gets the result through a constructor.
+    Without call: the global's address is taken but no register call follows (a plain read)"""
+    w = [LDRX(8, 0), ADRP(1, at + 4, name), ADDI(1, 1, name & 0xfff), ADRP(2, at + 12, glob), ADDI(2, 2, glob & 0xfff), LDRX(8, 8)]
+    return w + ([BLR(8), mov(1, 0), RET] if call else [RET])
 
 
 def image(*seqs, z=2):
@@ -117,7 +123,25 @@ class FindTest(unittest.TestCase):
     def test_find_all(self):
         found, why = ue_cvar.find_all(bytes(image(lambda a: register_form(a, NAME, OBJ))), TEXT, RO, DATA)
         self.assertEqual(found, {'t.MaxFPS': OBJ})
-        self.assertEqual(len(why), len(ue_cvar.NAMES) - 1)
+        self.assertEqual(len(why), len(ue_cvar.NAMES) + len(ue_cvar.REFS) - 1)
+
+    def test_ref_form(self):   # a variable registered by reference: the global passed in x2
+        o, why = ue_cvar.find(bytes(image(lambda a: ref_form(a, NAME, OBJ))), TEXT, RO, DATA, 't.MaxFPS', ue_cvar.ref_at)
+        self.assertEqual(o, OBJ, why)
+        o, why = ue_cvar.find(bytes(image(lambda a: ref_form(a, NAME, OBJ, call=False))), TEXT, RO, DATA, 't.MaxFPS', ue_cvar.ref_at)
+        self.assertIsNone(o, why)
+        o, why = ue_cvar.find(bytes(image(lambda a: register_form(a, NAME, OBJ))), TEXT, RO, DATA, 't.MaxFPS', ue_cvar.ref_at)   # x2 not an address: no global
+        self.assertIsNone(o, why)
+
+
+class NamesTest(unittest.TestCase):
+    def test_names_fit_the_loader(self):
+        # dm/host/dm.h module_t ue_cvar[16], name[48]: loader.c dies on a fixups row past either (r.DynamicRes.MinScreenPercentage, 32 characters, did past name[32])
+        h = (Path(__file__).resolve().parents[3] / 'dm/host/dm.h').read_text(encoding='utf-8')
+        m = re.search(r'struct \{ char name\[(\d+)\]; uint64_t off; \} ue_cvar\[(\d+)\]', h)
+        self.assertIsNotNone(m, 'dm.h ue_cvar field not found')
+        self.assertLessEqual(len(ue_cvar.NAMES) + len(ue_cvar.REFS), int(m.group(2)))
+        for n in ue_cvar.NAMES + ue_cvar.REFS: self.assertLess(len(n), int(m.group(1)), n)
 
 
 class ProfileTest(unittest.TestCase):

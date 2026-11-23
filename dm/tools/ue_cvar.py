@@ -11,8 +11,16 @@ Usage on its own: ue_cvar.py <module>... (the objects of NAMES in each)"""
 import re, struct, sys, os
 
 # The variables the host may write: the engine's frame limit, its present interval (rhi., or nvn. in the Switch RHI of UE 4.18), the texture streaming pool, and a game's own frame-limit
-# variable a profile names with ue_fps_cvar (SHIN MEGAMI TENSEI V: Vengeance's Project.FrameRateLimit, which its settings apply to t.MaxFPS). A name a profile names must be listed here
-NAMES = ('t.MaxFPS', 'rhi.SyncInterval', 'nvn.SyncInterval', 'r.Streaming.PoolSize', 'Project.FrameRateLimit')
+# variable a profile names with ue_fps_cvar (SHIN MEGAMI TENSEI V: Vengeance's Project.FrameRateLimit, which its settings apply to t.MaxFPS), and the dynamic resolution's floor
+# (hle_uecvar.c, DM_UE_DYNRES_MIN), and the static meshes' LOD distance scale (hle_uecvar.c, ue_lod_scale), and the tonemapper's sharpening and the upscale filter that
+# brings a dynamic resolution under 100 % back to the output, and the anti-aliasing method (2: temporal, with its upsampling) (a profile's ue_set rows: Orbitals). A name a
+# profile names must be listed here
+NAMES = ('t.MaxFPS', 'rhi.SyncInterval', 'nvn.SyncInterval', 'r.Streaming.PoolSize', 'Project.FrameRateLimit', 'r.DynamicRes.MinScreenPercentage',
+         'r.StaticMeshLODDistanceScale', 'r.Tonemapper.Sharpen', 'r.Upscale.Quality', 'r.AntiAliasingMethod')
+# Variables registered by reference (FAutoConsoleVariableRef): the engine reads a global of its own, which the static constructor passes to IConsoleManager's register call
+# (x2, an address made by adrp + add) with the name (x1). Their fixup (UE_CVAR:<name>) gives that global's offset, not an object's (game.py marks a profile's ue_set rows of
+# these): the translucent lighting volume and its size, the lights' draw distance, the skeletal meshes' LOD bias (hle_uecvar.c dm_ue_set_tick)
+REFS = ('r.TranslucentLightingVolume', 'r.TranslucencyLightingVolumeDim', 'r.LightMaxDrawDistanceScale', 'r.SkeletalMeshLODBias')
 RET = 0xD65F03C0
 
 def adrp_page(w, pc):
@@ -121,7 +129,25 @@ def registered_at(word, text_end, j):
         else: val[d] = v
     return None
 
-def find(img, text_end, ro_off, data_off, name):
+def ref_at(word, text_end, j):
+    """The global registered by reference under the name whose reference ends at byte offset j (add x1, the name): x2 at the first call after it, which must be a blr
+    (IConsoleManager's register call) with x1 still the name; an address made by adrp + add. None otherwise"""
+    if not (name_add := add_imm(word(j))) or name_add[0] != 1: return None
+    val = {}
+    for t in range(max(0, j - 64), min(text_end, j + 64), 4):
+        u = word(t)
+        call = (u & 0xFC000000) == 0x94000000 or (u & 0xFFFFFC1F) == 0xD63F0000
+        if t < j and (call or (u & 0xFC000000) == 0x14000000 or u == RET): val.clear(); continue
+        if call: return val.get(2) if (u & 0xFFFFFC1F) == 0xD63F0000 and t > j else None
+        if t > j and ((u & 0xFC000000) == 0x14000000 or u == RET): return None
+        a, d = add_imm(u), u & 31
+        if is_adrp(u): val[d] = adrp_page(u, t)
+        elif a and a[1] in val: val[d] = val[a[1]] + a[2]
+        elif t != j and d in val and not (u & 0x0A000000) == 0x08000000: val.pop(d, None)   # (stores write no register)
+        elif t != j and (u & 0x0A000000) == 0x08000000 and (u >> 22) & 1: val.pop(d, None)   # a load
+    return None
+
+def find(img, text_end, ro_off, data_off, name, at=None):
     """(main's offset of the TAutoConsoleVariable registered under name, reason), or (None, why not); why starts '[RED] ' when the name is registered at more than one object"""
     word = lambda a: struct.unpack_from('<I', img, a)[0]
     objs = set()
@@ -140,7 +166,7 @@ def find(img, text_end, ro_off, data_off, name):
                     a = add_imm(word(j))
                     if not a or a[2] != lo: continue
                     if not any(is_adrp(word(i)) and word(i) & 31 == a[1] and adrp_page(word(i), i) == s & ~0xFFF for i in range(max(0, j - 20), j, 4)): continue
-                    o = registered_at(word, text_end, j)
+                    o = (at or registered_at)(word, text_end, j)
                     if o is not None: objs.add(o)
             s = img.find(pat, s + z, data_off)
     if not objs: return None, f'{name}: not registered'
@@ -151,8 +177,8 @@ def find(img, text_end, ro_off, data_off, name):
 def find_all(img, text_end, ro_off, data_off):
     """{name: offset} of the NAMES registered once, and the reasons of those not found (a [RED] one first)"""
     found, why = {}, []
-    for n in NAMES:
-        o, r = find(img, text_end, ro_off, data_off, n)
+    for n in NAMES + REFS:
+        o, r = find(img, text_end, ro_off, data_off, n, ref_at if n in REFS else None)
         if o is not None: found[n] = o
         else: why.append(r)
     return found, sorted(why, key=lambda r: not r.startswith('[RED] '))

@@ -91,6 +91,22 @@ Most service calls can be found before they crash, before the first boot or the 
 - **Check:** `t_friends` resolves both overloads by their registered names and checks the failure result and the untouched output for both local flags, including guest bool arguments with upper bits set.
 - **Found on:** Super Nintendo Entertainment System – Nintendo Classics (`01008D300C50C000`, 6.0.0, SDK 20.5.21, `main+0xc608`; its profile is not in this repository). [PR #2162](https://github.com/seedds/nxnative/pull/2162) reports the original abort and a Mac boot past it with separate mission-events and profile changes; this hook does not add those changes.
 
+### SDK 14's `friends` calls without a `Uid`, blocked-user list availability, and cut-object methods
+
+- **Symptom:** `[RED] sf: the game connects to service friend:u itself`, then an `nn::diag` abort with Result 0xe15 in `friends::detail::ipc::Initialize` under `friends::EnsureBlockedUserListAvailable` (`sdk+0x341d28`) when leaving the title screen.
+- **Cause:** `hle_friends.c` / `hle_offline.c` did not take over `EnsureBlockedUserListAvailable` / `CheckBlockedUserListAvailability` (either form), several no-`Uid` overloads (`EnsureFriendListAvailable`, `CheckFriendListAvailability`, `DeclareOpenOnlinePlaySession`, `DeclareCloseOnlinePlaySession`, `GetProfileList`, `UpdateFriendInfo`, `NotificationQueue::Initialize`, `UserPresence::Initialize`, plus `Friend::Update`), or methods (`AsyncContext::Cancel`, `NotificationQueue::Clear`, `NotificationQueue::Finalize`) that lock mutexes left uninitialized by the cut constructors.
+- **Fix:** all 16 SDK symbols are taken over in `hle_friends.c` with the same offline policy as their existing `Uid` and `nn::account::AsyncContext` counterparts: `Ensure*` and service queries fail at once (`RES_FAIL`), `Check*Availability` reports unavailable (`*out = 0`) with `RES_OK`, `UserPresence::Initialize()` and `AsyncContext::Cancel()` return `RES_OK`, and `NotificationQueue::Finalize()` is a no-op. Bound to the SDK symbols with no title or build gate.
+- **Open:** returning `RES_FAIL` from `EnsureBlockedUserListAvailable` matches `EnsureFriendListAvailable` and works on SUPER BOMBERMAN R 2, though another title could turn it into an error applet (as DARK SOULS: REMASTERED did with SDK 4's `GetBlockedUserList`).
+- **Check:** `make -C dm/host/tests GAME=<id> build/t_friends`, then `dm/host/tests/build/t_friends`, resolves all 16 registered symbols and verifies their results, output flags, null safety and untouched buffers.
+- **Found on:** SUPER BOMBERMAN R 2 (`0100B87017D94000`, 1.0.0, SDK 14.3.0; provisional profile, no note yet, [issue #3177](https://github.com/seedds/nxnative/issues/3177)): Mac gameplay through the title screen, main menu, Story (World 1) and Battle Offline vs 3 COMs at 60 fps with no `[RED]` lines or aborts.
+
+### Friend-ID lists and network error Results on SDK 7
+
+- **Symptom:** `friends::GetFriendList` or `err::ShowNetworkServiceError` enters the SDK's service path despite the host's offline replacements.
+- **Cause:** the account-ID list overloads (with and without `Uid`) and the error overload taking `nn::Result` were not registered. The existing hooks cover `Friend` objects and an `ErrorCode` pair, which have different exported names and argument layouts.
+- **Fix:** both account-ID list overloads follow the host's offline policy. They return `RES_FAIL`, set the count to zero, and leave the ID array untouched. The Result overload logs the module and description and sends the usual applet enter and leave notifications.
+- **Found on:** Super Kirby Clash 1.0.1, SDK 7.4.0, in [PikaMan80's patch for issue #987](https://github.com/seedds/nxnative/issues/987).
+
 ### SDK 6's `account::OpenPreselectedUser` returns a Result
 
 - **Symptom:** the first loading screen never ends; `DM_FS=1` shows `save:/system` "not found" and no `fs mount save`.
@@ -527,7 +543,7 @@ Most service calls can be found before they crash, before the first boot or the 
 ### Whether a vibration device is mounted
 
 - **Symptom:** with rumble on, `[RED] sf: the game connects to service hid itself`, then `CRASH sig=11 addr=0` in `hid::detail::IsVibrationDeviceMounted` (`sdk+0x24254c` in SDK 7), under `hid::IsVibrationDeviceMounted`. With rumble off in the host's settings the game never asks.
-- **Cause:** the SDK's own call opens the hid service, which sm refuses (0xe15), and reads the null service object. Games ask only for handles `GetVibrationDeviceHandles` returned, which it returns none of with rumble off.
+- **Cause:** the SDK's own call opens the hid service, which sm refuses (0xe15), and reads the null service object. With rumble off the affected game did not ask; the handles do not depend on the rumble setting.
 - **Fix:** `hle_hid.c` answers it. On Horizon a device is mounted when the npad's connected controller has the handle's style and an actuator on that side; the host reports it mounted when the handle names a channel of the npad's controller (`vib_valid`), whether or not a haptics output is routed yet ([A vibration device before its controller connects](#a-vibration-device-before-its-controller-connects)).
 - **Found on:** [Super Mario Odyssey](../../dm/games/0100000000010000/README.md) 1.4.1, entering a Sand Kingdom pipe (`main+0x5d3150` asks for each handle of a controller whether any is mounted; GitHub issue #715). No other local game imports it.
 
@@ -548,18 +564,26 @@ Most service calls can be found before they crash, before the first boot or the 
 
 ### Vibration handles before a controller is reported
 
-- **Symptom:** `DM_RUMBLE_LOG=1` shows the game's startup handle request answered with none, then every vibration value sent to handle 0 and reaching no output for the whole session, although a controller with haptics (a DualSense on the Mac) is connected. A game that rumbles would stay silent.
-- **Cause:** `hid::GetVibrationDeviceHandles` answered 0 handles until a controller's haptics were routed. Games ask once at startup, before GameController reports the pad, and keep the answer. On Horizon the handles are computed from the npad id and style alone (libnx `_hidGetVibrationDeviceHandles`).
-- **Fix (resolved):** the handles no longer wait for a routed output: with an output sink installed (`dm_haptics_has_output`), a connected npad style gets its handles even with rumble off; `vib_send` checks for a permitted, routed output at each send (`hle_hid.c`). A missing sink or a disconnected npad still yields no handles. `IsVibrationPermitted` follows the app's rumble setting when a sink is installed, independently of routed outputs ([A vibration device before its controller connects](#a-vibration-device-before-its-controller-connects)). `DM_RUMBLE_LOG=1` logs the handle requests and, once a second, the values sent, those with no routed output and the peak amplitude. Each input value is counted separately, including mixed batches; a mutex protects the diagnostic totals across game threads. `t_hid` covers cached startup handles delivering a nonzero value after routing, mixed-batch diagnostics and concurrent sends; `t_hid_tsan` checks those sends for data races.
+- **Symptom:** `DM_RUMBLE_LOG=1` shows the game's startup handle request answered with none, then every vibration value sent to handle 0 and reaching no output for the whole session, although a controller with haptics (a DualSense on the Mac) is connected. A game that rumbles would stay silent. Trails into Reverie stops at boot with `PH3 FATAL ERROR: Assertion failed: noOfDevices == 2` when it asks for two full-key handles of the second controller slot.
+- **Cause:** `hid::GetVibrationDeviceHandles` answered 0 handles until a controller's haptics were routed, and later still needed a connected npad of the requested style and the rumble setting on. Games ask once at startup, before GameController reports the pad, and keep the answer. On Horizon the handles are computed from the npad ID and style alone (libnx `_hidGetVibrationDeviceHandles`; Nintendo SDK 14.3's `hid::utility::GetVibrationDeviceHandles` writes the bytes without asking about the hardware). Trails into Reverie asks at startup for the handheld slot and every full-key slot, connected or not.
+- **Fix (resolved):** a style this host knows and a valid npad ID give the handles, also for an empty slot, with rumble off or with no output (upstream nxnative dc75d1fc8); a mask of several styles is resolved against the connected style. Mounting and `vib_send` resolve a handle against the controller of that moment, and a send needs a permitted, routed output (`hle_hid.c`). `IsVibrationPermitted` follows the app's rumble setting when a sink is installed, independently of routed outputs ([A vibration device before its controller connects](#a-vibration-device-before-its-controller-connects)). `DM_RUMBLE_LOG=1` logs the handle requests and, once a second, the values sent, those with no routed output and the peak amplitude. Each input value is counted separately, including mixed batches; a mutex protects the diagnostic totals across game threads. `t_hid` covers cached startup handles delivering a nonzero value after routing, mixed-batch diagnostics and concurrent sends; `t_hid_tsan` checks those sends for data races.
 - **Found on:** [Unicorn Overlord](../../dm/games/010069401ADB8000/README.md) (the Asian release, `010054B01AD92000`), in the log only: the game has no rumble of its own (it sends amplitude 0 throughout), so nothing could be felt before or after. A later [Echoes of Wisdom test](../../dm/games/01008CF01BAAC000/README.md) checks startup handles and device-info answers on a game that rumbles.
 
 ### A vibration device before its controller connects
 
 - **Symptom:** with rumble on, a game asks for vibration handles at boot and gets two, then sends one idle value and none for the rest of the session; nothing vibrates although a controller connects a few seconds later. `DM_RUMBLE_LOG=1` shows `GetVibrationDeviceInfo` answering mounted 0 (and `IsVibrationDeviceMounted`, when asked, false) before the pad connects.
 - **Cause:** `IsVibrationDeviceMounted`, `IsOunceVibrationDeviceMounted` and `GetVibrationDeviceInfo` answered from `vib_targets`, which keeps only the players with a routed haptics output. A game that asks once at boot, before a Bluetooth pad has connected (the Switch 2 transport connects on a button press while the game runs), keeps "not mounted" for the session and never sends rumble. On Horizon the controller is there before the game boots.
-- **Fix:** `hle_hid.c`'s `vib_valid` is the handle and npad-style check behind `vib_targets` without the routed-output mask; the three calls answer from it regardless of the rumble setting, and `IsVibrationPermitted` follows the app's rumble setting with an output sink installed (`dm_haptics_enabled`), as the console's system setting does, instead of requiring a connected pad. `vib_targets` keeps the mask, so values sent before the pad connects are still dropped rather than played later.
+- **Fix:** `hle_hid.c`'s `vib_valid` is the handle and npad-style check behind `vib_targets` without the routed-output mask; both mounted calls answer from it regardless of the rumble setting (device info: [Vibration device type and position](#vibration-device-type-and-position)), and `IsVibrationPermitted` follows the app's rumble setting with an output sink installed (`dm_haptics_enabled`), as the console's system setting does, instead of requiring a connected pad. `vib_targets` keeps the mask, so values sent before the pad connects are still dropped rather than played later.
 - **Found on:** [The Legend of Zelda: Echoes of Wisdom](../../dm/games/01008CF01BAAC000/README.md); its game note records the before/after traffic and physical controller validation from [PR #2859](https://github.com/seedds/nxnative/pull/2859).
 - **Check:** `t_hid` (both mounted forms and actuator answers before a route and with rumble off, permission with no controller, values still dropped until permitted and routed); `t_hid_tsan` also queries capabilities and permission concurrently with sends and rumble-setting changes. Diagnostic counters are atomic across game threads.
+
+### Vibration device type and position
+
+- **Symptom:** `PH3 FATAL ERROR: Unknown Vibration device position` at boot, after the game got two vibration handles for an empty full-key slot.
+- **Cause:** `GetVibrationDeviceInfo` answered zeros for a handle whose device was not mounted. Its two fields are the actuator type and its position; Trails into Reverie checks that the position is left or right (`main+0xa24214`), also for controllers it may use later ([libnx HID ABI](https://switchbrew.github.io/libnx/hid_8h_source.html)).
+- **Fix:** general (upstream nxnative dc75d1fc8; `hle_hid.c` `vib_handle_channel`): `GetVibrationDeviceInfo` reports a linear resonant actuator and its position from the handle's device, whether or not a controller is there. `IsVibrationDeviceMounted` still checks the npad of that moment.
+- **Check:** `t_hid` (`t_vibration`): both positions on a disconnected npad, unknown info for an invalid handle, handles for an empty slot, an inactive style and an invalid npad ID.
+- **Found on:** The Legend of Heroes: Trails into Reverie 1.0.4 in upstream nxnative (no profile here).
 
 ### Controller haptic engines without advanced players
 
@@ -721,8 +745,15 @@ Most service calls can be found before they crash, before the first boot or the 
 
 - **Symptom:** SIGSEGV in `android::Surface::getQueuedFrameNumber` under `nn::vi::GetLatestFrameNumber`.
 - **Cause:** Unreal paces frames by the layer's frame number (`main+0x10140e8`); the SDK reads the vi service's surface, which the host never made.
-- **Fix:** `hle_vi.c` answers with the frames presented so far; `ListFrameHistory` returns no entries.
+- **Fix:** `hle_vi.c` answers with the frames presented so far; `ListFrameHistory` lists them ([Layer frame history](#layer-frame-history)).
 - **Found on:** [Octopath Traveler 0](../../dm/games/01005270232F2000/README.md).
+
+### Layer frame history
+
+- **Symptom:** right after a logo movie or a load nothing is presented again, with no red line; the watchdog reports `no progress … stage present frame`. The game thread is in Unreal's `FlushRenderingCommands` or `FFrameEndSync`, waking each millisecond, while the render, RHI, frame-flip and interrupt threads wait idle; minutes later Unreal may abort with `GameThread timed out waiting for %s after %.02f secs`.
+- **Cause:** Unreal Engine 5's Switch RHI learns which frames reached the screen only from `nn::vi::ListFrameHistory`: its "Viewport Thread" waits for each vsync, asks for the entry count (a null buffer: the SDK answers 8, the history's size), reads the 40-byte `FrameInfo` entries and takes the first one shown as the latest flip. Those flips complete the frame-end fences that wait for the swap chain (`r.GTSyncType` 2). With no entries no flip ever comes; with a frame listed as queued for ever (one the host did not put on screen), the game waits for that frame's flip before it presents another, as a Switch's compositor shows every frame it is handed, in order.
+- **Fix:** `dm/gfx/hle_vi.c` keeps the last 8 presents (recorded at each NVN present, `dm_vi_frame_queued`, numbered as `GetLatestFrameNumber`, with the present queue's ticket) and answers as the SDK fills `FrameInfo` (`sdk+0x4510a0` in SDK 20.5.15): status (2 shown with a present time, 1 queued and not shown yet), frame number, queue tick and present tick twice, newest first. A frame is shown once the present queue has handed it on (`mtl_present_progress`: `vka_present.c` on Android), whether or not it reached the panel; its present time is the display timing's when the driver reports one, else the time it was first seen handed on. Ported from nxnative 51cc8bce and 23af6283.
+- **Found on:** upstream's Minecraft Dungeons II and [Orbitals](../../dm/games/040032B023CA4000/README.md) on the Mac; [Octopath Traveler 0](../../dm/games/01005270232F2000/README.md) and [OCTOPATH TRAVELER II](../../dm/games/0100A3501946E000/README.md) call it from the same RHI code.
 
 ### Default display panel identifier
 
@@ -877,6 +908,13 @@ Most service calls can be found before they crash, before the first boot or the 
 - **Symptom:** play report calls met entering the save select (3D World); undefined `nn::ldn::` / `nn::socket::` imports with no hook, found from the import list before they were met (Big Brain Academy).
 - **Fix:** hooked (`hle_net.c`, `hle_offline.c`): the `nifm` IP queries with SDK 10's `socket::InAddr` / `in_addr` mangling; `prepo::AddSessionId` / `AddInternetConnectionStatus`; `ldn::GetNetworkConfig`; SDK 11's socket overloads with plain `sockaddr` / `int` arguments (`Connect`, `Accept`, `GetSockName`, `Get` / `SetSockOpt`, `Fcntl`, `Recv`, `Send`).
 - **Found on:** [Super Mario 3D World + Bowser's Fury](../../dm/games/010028600EBDA000/README.md) (SDK 10: `nifm`, `prepo`); [Big Brain Academy: Brain vs. Brain](../../dm/games/0100620012D6E000/README.md) (SDK 11.4.3: LDN, sockets).
+
+### Play report upload status
+
+- **Symptom:** a won Chambara match ends in `nn::diag` abort Result `0xe15`, after `[RED] sf: the game connects to service prepo:u itself`.
+- **Cause:** the SDK's `nn::prepo::GetTransmissionStatus` opens `prepo:u` through `sm`. The host has no play report service process, and `sm` returns ResultNotRegistered.
+- **Fix:** `hle_offline.c` answers success with status 0 (idle). The offline host discards reports, so the upload queue is always empty.
+- **Found on:** Nintendo Switch Sports 1.5.0 (SDK 13.3.4), with a won match replayed after the fix in [PR #2908](https://github.com/seedds/nxnative/pull/2908).
 
 ### Opt-in LDN sessions and virtual UDP sockets
 
@@ -1134,6 +1172,13 @@ Most service calls can be found before they crash, before the first boot or the 
 
 - `nn::ro::ProtectRelro` (called from `main`'s DSO init), a new import of SDK 20, needs nothing: it runs natively on the host's no-op `SetMemoryPermission` / `SetMemoryAttribute`. Found on [The Legend of Zelda: Breath of the Wild](../../dm/games/01007EF00011E000/README.md) (1.9.0, SDK 20.5.22).
 
+### The SDK rejects a module that `svcQueryMemory` finds
+
+- **Symptom:** `Failed to get our const data section!` before `nnMain`. The SDK's `GetRequiredBufferSizeForGetAllModuleInfo` finds the game's code mapping but returns zero.
+- **Cause:** `nn::ro::GetModuleAddressRange` and `LookupModuleSymbol` by base consult the guest rtld lists. The host runs its own loader, so the SDK's automatic-load list is empty. The native range lookup rejects the game's code address, and the native symbol lookup returns `0xa16` for its own `nndetailRoGetRoDataStart` export.
+- **Fix:** answer both `nn::ro` lookups from the host's loaded modules. The module size ends at the 4 KiB-aligned MOD0 bss end, as rtld computes it. The symbol lookup takes the exact module base and searches that module. The SDK keeps its own module list and calls the game's exports for the exact read-only data range. See also [whole-process memory walks](memory.md#svcquerymemory-walks-the-whole-guest-process).
+- **Found on:** [Hitman Absolution, PR #3023](https://github.com/seedds/nxnative/pull/3023) (v131072, SDK 22.2.0). The native walk lists all four modules and both boundary exports resolve before `nnMain` on the Mac.
+
 ### Loading NROs with `ro::LoadModule`
 
 - **Symptom:** the frame loop runs, but the game waits for code it loads itself (`ro::RegisterModuleInfo` / `ro::GetBufferSize` red lines; `main` imports 1,045 `lua2cpp::create_agent_*` functions, global, that no ExeFS module defines, bound to stubs at start).
@@ -1272,6 +1317,14 @@ Most service calls can be found before they crash, before the first boot or the 
 - **Fix:** it is logged, as nothing reads it (`hle_hid.c`; upstream nxnative's pull request #1425, b0f14c1a).
 - **Found on:** [Nintendo Switch 2 Welcome Tour](../../dm/games/040057C02159A000/README.md): its scene modules.
 
+### GameShare HID feature query opens the service
+
+- **Symptom:** `[RED] sf: the game connects to service stpl:u itself, which the host does not serve`, followed by `Result 0xe15` in a guest input loop, despite the streamplay initialization takeovers.
+- **Cause:** `nn::streamplay::GetSupportedHidFeatureSet()` was missing from the host. Unlike the hooked initialization functions, this public getter still ran in the SDK and lazily opened the service through `detail::GetUserService()` and `detail::CreateUserServiceByHipc()`. It returns a 32-bit configured feature mask; the game tests its bits before reading guest inputs. This is neither a different Initialize overload nor an internal call bypassing its hook.
+- **Fix:** take over the getter by symbol and retain the mask in the existing setter (`hle_misc.c`), as for the guest style and hold configuration. The default mask is zero. No IPC commands, aborts or executable addresses are changed.
+- **Found on:** [Star Fox](../../dm/games/0400E88025B1A000/README.md), base v0, main build ID `898024ffa42c059518eb38196f1ee0f635ecdf89`, SDK build ID `41d4de4a3b78214ad20c896960df0e5ea0ed595f`. On these builds only, the observed path is `main+0xad98620` (PLT call) → `sdk+0x770db0` (getter) → `sdk+0x77a280` (lazy service) → `sdk+0x777770` (connect / abort). These are diagnostic offsets, not patch addresses.
+- **Check:** `t_pctl` resolves both takeover registrations and checks default, replacement, clearing and high-bit masks without a guest service. The PR #3162 author verified startup and played from an existing save through to Andross once on an M4 Max, macOS 27.2.1 (2026-11-21); other titles remain unchecked.
+
 ### GameShare guest displays
 
 - **Symptom:** a crash at boot in `nn::vi` under `nn::streamplay::CreateIndividualDisplays`.
@@ -1348,3 +1401,10 @@ Most service calls can be found before they crash, before the first boot or the 
 - **Cause:** `PlayReport::Send` returns a nontrivial `AsyncContext` in the caller's x8 storage that expects an initialized state and connects to `prepo:u` if unhandled.
 - **Fix:** in `dm/host/hle_offline.c`, `h_prepo_SendU` invokes the guest's `nn::prepo::AsyncContext::AsyncContext(Result)` constructor with `RES_OK` via x8, completing the asynchronous telemetry report offline without requiring a service session.
 - **Found on:** [The Legend of Zelda: Ocarina of Time](../../dm/games/0400486024DEC000/README.md).
+
+### `oe::GetDefaultDisplayResolution` returns 720p in handheld mode on Switch 2
+
+- **Symptom:** Fast Fusion draws its 1080p DLSS output into `WindowCrop 0,0 1280x720` in handheld mode, leaving HUD elements and edges soft.
+- **Cause:** `oe::GetDefaultDisplayResolution` answered 1280×720 in handheld mode for every SDK, whereas Switch 2's screen is 1080p (matching `vi::QueryDisplayBufferMaxResolution`).
+- **Fix:** return 1920×1080 in handheld mode when `dm_sdk_ounce()` is true; Switch 1 keeps 1280×720.
+- **Found on:** [Fast Fusion](../../dm/games/040041E0212AE000/README.md#found-on-this-game) on the Android app on the Odin 3 (system driver and Turnip v32): `WindowCrop 0,0 1920x1080`, sharper HUD and edges, GPU 12.4 → 13.8 ms, fps unchanged; docked unchanged. Mario Tennis Fever stores it in a global it never reads (no effect).

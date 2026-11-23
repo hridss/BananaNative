@@ -2,7 +2,8 @@
 // (a component read through an access chain at location 0, whole loads at location 1) retyped as uint / int, checked by structure and, when spirv-val is on the PATH,
 // by validation. DM_VK_SPV_DIR=<folder of .spv vertex modules> also rewrites each of those (every vec4 input as uint) and validates it. DM_VK_GS_SPV=<a geometry module
 // that writes memory> puts its writes under a per-primitive claim (vka_spv_gs_claim, after the one-invocation subgroup rewrite) and validates it. A small culling
-// geometry shader gets a degenerate primitive where a run emits nothing (vka_spv_gs_fill)
+// geometry shader gets a degenerate primitive where a run emits nothing (vka_spv_gs_fill). Small pixel shaders get NonUniform on their dynamically indexed texture arrays
+// (vka_spv_nonuniform); DM_VK_NU_SPV_DIR=<folder of .spv modules> runs that on each of those too
 #include "../../gfx/vk_android/vka_spvpatch.h"
 #include "../../gfx/vk_android/vka_selftest_spv.h"
 #include <dirent.h>
@@ -181,6 +182,78 @@ static const uint32_t SPV_REMAP_FRAG[] = {
     0x000200f8, 0x00000016, 0x000100fc, 0x000200f8, 0x00000017, 0x0004003d, 0x00000007, 0x0000001c, 0x0000001b, 0x00050041, 0x0000000c, 0x0000001e,
     0x00000009, 0x0000001d, 0x0004003d, 0x00000006, 0x0000001f, 0x0000001e, 0x0005008e, 0x00000007, 0x00000020, 0x0000001c, 0x0000001f, 0x0003003e,
     0x0000001a, 0x00000020, 0x000100fd, 0x00010038};
+// A buffer address made a pointer through a 64-bit integer (vka_spv_no_int64), assembled in the translator's shape (SPIR-V 1.3): a compute shader reads two 32-bit words
+// from a BufferBlock storage buffer, bitcasts them to a uint64 and that to a physical-storage-buffer pointer, loads through it, adds a constant whose value equals
+// the uint64 type's id (6) and stores the sum to the storage buffer. SPV_I64_BAD also adds the uint64 to itself before the pointer is made
+static const uint32_t SPV_I64_ADDR[] = {
+    0x07230203, 0x00010300, 0x00000000, 0x0000001c, 0x00000000, 0x00020011, 0x00000001, 0x00020011, 0x0000000b, 0x00020011, 0x000014e3, 0x0009000a,
+    0x5f565053, 0x5f52484b, 0x73796870, 0x6c616369, 0x6f74735f, 0x65676172, 0x6675625f, 0x00726566, 0x0003000e, 0x000014e4, 0x00000001, 0x0005000f,
+    0x00000005, 0x00000001, 0x6e69616d, 0x00000000, 0x00060010, 0x00000001, 0x00000011, 0x00000001, 0x00000001, 0x00000001, 0x00040005, 0x00000015,
+    0x72646461, 0x00000000, 0x00030047, 0x00000009, 0x00000003, 0x00050048, 0x00000009, 0x00000000, 0x00000023, 0x00000000, 0x00050048, 0x00000009,
+    0x00000001, 0x00000023, 0x00000008, 0x00040047, 0x0000000b, 0x00000022, 0x00000000, 0x00040047, 0x0000000b, 0x00000021, 0x00000000, 0x00030047,
+    0x00000007, 0x00000002, 0x00050048, 0x00000007, 0x00000000, 0x00000023, 0x00000000, 0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002,
+    0x00040015, 0x00000004, 0x00000020, 0x00000000, 0x00040017, 0x00000005, 0x00000004, 0x00000002, 0x00040015, 0x00000006, 0x00000040, 0x00000000,
+    0x0003001e, 0x00000007, 0x00000004, 0x00040020, 0x00000008, 0x000014e5, 0x00000007, 0x0004001e, 0x00000009, 0x00000005, 0x00000004, 0x00040020,
+    0x0000000a, 0x00000002, 0x00000009, 0x0004003b, 0x0000000a, 0x0000000b, 0x00000002, 0x00040015, 0x0000000c, 0x00000020, 0x00000001, 0x0004002b,
+    0x0000000c, 0x0000000d, 0x00000000, 0x0004002b, 0x0000000c, 0x0000000e, 0x00000001, 0x00040020, 0x0000000f, 0x00000002, 0x00000005, 0x00040020,
+    0x00000010, 0x00000002, 0x00000004, 0x00040020, 0x00000011, 0x000014e5, 0x00000004, 0x0004002b, 0x00000004, 0x0000001a, 0x00000006, 0x00050036,
+    0x00000002, 0x00000001, 0x00000000, 0x00000003, 0x000200f8, 0x00000012, 0x00050041, 0x0000000f, 0x00000013, 0x0000000b, 0x0000000d, 0x0004003d,
+    0x00000005, 0x00000014, 0x00000013, 0x0004007c, 0x00000006, 0x00000015, 0x00000014, 0x00040078, 0x00000008, 0x00000016, 0x00000015, 0x00050041,
+    0x00000011, 0x00000017, 0x00000016, 0x0000000d, 0x0006003d, 0x00000004, 0x00000018, 0x00000017, 0x00000002, 0x00000004, 0x00050080, 0x00000004,
+    0x0000001b, 0x00000018, 0x0000001a, 0x00050041, 0x00000010, 0x00000019, 0x0000000b, 0x0000000e, 0x0003003e, 0x00000019, 0x0000001b, 0x000100fd,
+    0x00010038};
+static const uint32_t SPV_I64_BAD[] = {
+    0x07230203, 0x00010300, 0x00000000, 0x0000001d, 0x00000000, 0x00020011, 0x00000001, 0x00020011, 0x0000000b, 0x00020011, 0x000014e3, 0x0009000a,
+    0x5f565053, 0x5f52484b, 0x73796870, 0x6c616369, 0x6f74735f, 0x65676172, 0x6675625f, 0x00726566, 0x0003000e, 0x000014e4, 0x00000001, 0x0005000f,
+    0x00000005, 0x00000001, 0x6e69616d, 0x00000000, 0x00060010, 0x00000001, 0x00000011, 0x00000001, 0x00000001, 0x00000001, 0x00040005, 0x00000015,
+    0x72646461, 0x00000000, 0x00030047, 0x00000009, 0x00000003, 0x00050048, 0x00000009, 0x00000000, 0x00000023, 0x00000000, 0x00050048, 0x00000009,
+    0x00000001, 0x00000023, 0x00000008, 0x00040047, 0x0000000b, 0x00000022, 0x00000000, 0x00040047, 0x0000000b, 0x00000021, 0x00000000, 0x00030047,
+    0x00000007, 0x00000002, 0x00050048, 0x00000007, 0x00000000, 0x00000023, 0x00000000, 0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002,
+    0x00040015, 0x00000004, 0x00000020, 0x00000000, 0x00040017, 0x00000005, 0x00000004, 0x00000002, 0x00040015, 0x00000006, 0x00000040, 0x00000000,
+    0x0003001e, 0x00000007, 0x00000004, 0x00040020, 0x00000008, 0x000014e5, 0x00000007, 0x0004001e, 0x00000009, 0x00000005, 0x00000004, 0x00040020,
+    0x0000000a, 0x00000002, 0x00000009, 0x0004003b, 0x0000000a, 0x0000000b, 0x00000002, 0x00040015, 0x0000000c, 0x00000020, 0x00000001, 0x0004002b,
+    0x0000000c, 0x0000000d, 0x00000000, 0x0004002b, 0x0000000c, 0x0000000e, 0x00000001, 0x00040020, 0x0000000f, 0x00000002, 0x00000005, 0x00040020,
+    0x00000010, 0x00000002, 0x00000004, 0x00040020, 0x00000011, 0x000014e5, 0x00000004, 0x0004002b, 0x00000004, 0x0000001a, 0x00000006, 0x00050036,
+    0x00000002, 0x00000001, 0x00000000, 0x00000003, 0x000200f8, 0x00000012, 0x00050041, 0x0000000f, 0x00000013, 0x0000000b, 0x0000000d, 0x0004003d,
+    0x00000005, 0x00000014, 0x00000013, 0x0004007c, 0x00000006, 0x00000015, 0x00000014, 0x00050080, 0x00000006, 0x0000001c, 0x00000015, 0x00000015,
+    0x00040078, 0x00000008, 0x00000016, 0x0000001c, 0x00050041, 0x00000011, 0x00000017, 0x00000016, 0x0000000d, 0x0006003d, 0x00000004, 0x00000018,
+    0x00000017, 0x00000002, 0x00000004, 0x00050080, 0x00000004, 0x0000001b, 0x00000018, 0x0000001a, 0x00050041, 0x00000010, 0x00000019, 0x0000000b,
+    0x0000000e, 0x0003003e, 0x00000019, 0x0000001b, 0x000100fd, 0x00010038};
+// A geometry shader that writes a storage buffer, as SPIR-V 1.5 (glslc --target-env=vulkan1.2): the per-primitive claim (vka_spv_gs_claim) takes the 1.4 rules
+//   layout(points) in; layout(points, max_vertices = 1) out; layout(std430, set = 0, binding = 0) buffer B { uint v[]; } b;
+//   b.v[gl_PrimitiveIDIn] = 1u; gl_Position = gl_in[0].gl_Position; EmitVertex();
+static const uint32_t SPV_GS15[] = {
+    0x07230203, 0x00010500, 0x000d000a, 0x00000022, 0x00000000, 0x00020011, 0x00000002, 0x0006000b, 0x00000001, 0x4c534c47, 0x6474732e, 0x3035342e,
+    0x00000000, 0x0003000e, 0x00000000, 0x00000001, 0x0009000f, 0x00000003, 0x00000004, 0x6e69616d, 0x00000000, 0x0000000a, 0x0000000e, 0x00000018,
+    0x0000001c, 0x00030010, 0x00000004, 0x00000013, 0x00040010, 0x00000004, 0x00000000, 0x00000001, 0x00030010, 0x00000004, 0x0000001b, 0x00040010,
+    0x00000004, 0x0000001a, 0x00000001, 0x00030003, 0x00000002, 0x000001c2, 0x000a0004, 0x475f4c47, 0x4c474f4f, 0x70635f45, 0x74735f70, 0x5f656c79,
+    0x656e696c, 0x7269645f, 0x69746365, 0x00006576, 0x00080004, 0x475f4c47, 0x4c474f4f, 0x6e695f45, 0x64756c63, 0x69645f65, 0x74636572, 0x00657669,
+    0x00040005, 0x00000004, 0x6e69616d, 0x00000000, 0x00030005, 0x00000008, 0x00000042, 0x00040006, 0x00000008, 0x00000000, 0x00000076, 0x00030005,
+    0x0000000a, 0x00000062, 0x00070005, 0x0000000e, 0x505f6c67, 0x696d6972, 0x65766974, 0x6e494449, 0x00000000, 0x00060005, 0x00000016, 0x505f6c67,
+    0x65567265, 0x78657472, 0x00000000, 0x00060006, 0x00000016, 0x00000000, 0x505f6c67, 0x7469736f, 0x006e6f69, 0x00070006, 0x00000016, 0x00000001,
+    0x505f6c67, 0x746e696f, 0x657a6953, 0x00000000, 0x00070006, 0x00000016, 0x00000002, 0x435f6c67, 0x4470696c, 0x61747369, 0x0065636e, 0x00070006,
+    0x00000016, 0x00000003, 0x435f6c67, 0x446c6c75, 0x61747369, 0x0065636e, 0x00030005, 0x00000018, 0x00000000, 0x00060005, 0x00000019, 0x505f6c67,
+    0x65567265, 0x78657472, 0x00000000, 0x00060006, 0x00000019, 0x00000000, 0x505f6c67, 0x7469736f, 0x006e6f69, 0x00070006, 0x00000019, 0x00000001,
+    0x505f6c67, 0x746e696f, 0x657a6953, 0x00000000, 0x00070006, 0x00000019, 0x00000002, 0x435f6c67, 0x4470696c, 0x61747369, 0x0065636e, 0x00070006,
+    0x00000019, 0x00000003, 0x435f6c67, 0x446c6c75, 0x61747369, 0x0065636e, 0x00040005, 0x0000001c, 0x695f6c67, 0x0000006e, 0x00040047, 0x00000007,
+    0x00000006, 0x00000004, 0x00050048, 0x00000008, 0x00000000, 0x00000023, 0x00000000, 0x00030047, 0x00000008, 0x00000002, 0x00040047, 0x0000000a,
+    0x00000022, 0x00000000, 0x00040047, 0x0000000a, 0x00000021, 0x00000000, 0x00040047, 0x0000000e, 0x0000000b, 0x00000007, 0x00050048, 0x00000016,
+    0x00000000, 0x0000000b, 0x00000000, 0x00050048, 0x00000016, 0x00000001, 0x0000000b, 0x00000001, 0x00050048, 0x00000016, 0x00000002, 0x0000000b,
+    0x00000003, 0x00050048, 0x00000016, 0x00000003, 0x0000000b, 0x00000004, 0x00030047, 0x00000016, 0x00000002, 0x00050048, 0x00000019, 0x00000000,
+    0x0000000b, 0x00000000, 0x00050048, 0x00000019, 0x00000001, 0x0000000b, 0x00000001, 0x00050048, 0x00000019, 0x00000002, 0x0000000b, 0x00000003,
+    0x00050048, 0x00000019, 0x00000003, 0x0000000b, 0x00000004, 0x00030047, 0x00000019, 0x00000002, 0x00020013, 0x00000002, 0x00030021, 0x00000003,
+    0x00000002, 0x00040015, 0x00000006, 0x00000020, 0x00000000, 0x0003001d, 0x00000007, 0x00000006, 0x0003001e, 0x00000008, 0x00000007, 0x00040020,
+    0x00000009, 0x0000000c, 0x00000008, 0x0004003b, 0x00000009, 0x0000000a, 0x0000000c, 0x00040015, 0x0000000b, 0x00000020, 0x00000001, 0x0004002b,
+    0x0000000b, 0x0000000c, 0x00000000, 0x00040020, 0x0000000d, 0x00000001, 0x0000000b, 0x0004003b, 0x0000000d, 0x0000000e, 0x00000001, 0x0004002b,
+    0x00000006, 0x00000010, 0x00000001, 0x00040020, 0x00000011, 0x0000000c, 0x00000006, 0x00030016, 0x00000013, 0x00000020, 0x00040017, 0x00000014,
+    0x00000013, 0x00000004, 0x0004001c, 0x00000015, 0x00000013, 0x00000010, 0x0006001e, 0x00000016, 0x00000014, 0x00000013, 0x00000015, 0x00000015,
+    0x00040020, 0x00000017, 0x00000003, 0x00000016, 0x0004003b, 0x00000017, 0x00000018, 0x00000003, 0x0006001e, 0x00000019, 0x00000014, 0x00000013,
+    0x00000015, 0x00000015, 0x0004001c, 0x0000001a, 0x00000019, 0x00000010, 0x00040020, 0x0000001b, 0x00000001, 0x0000001a, 0x0004003b, 0x0000001b,
+    0x0000001c, 0x00000001, 0x00040020, 0x0000001d, 0x00000001, 0x00000014, 0x00040020, 0x00000020, 0x00000003, 0x00000014, 0x00050036, 0x00000002,
+    0x00000004, 0x00000000, 0x00000003, 0x000200f8, 0x00000005, 0x0004003d, 0x0000000b, 0x0000000f, 0x0000000e, 0x00060041, 0x00000011, 0x00000012,
+    0x0000000a, 0x0000000c, 0x0000000f, 0x0003003e, 0x00000012, 0x00000010, 0x00060041, 0x0000001d, 0x0000001e, 0x0000001c, 0x0000000c, 0x0000000c,
+    0x0004003d, 0x00000014, 0x0000001f, 0x0000001e, 0x00050041, 0x00000020, 0x00000021, 0x00000018, 0x0000000c, 0x0003003e, 0x00000021, 0x0000001f,
+    0x000100da, 0x000100fd, 0x00010038};
 // Whether a variable is decorated Location loc (*var: the first one), and a global variable's storage class (-1: none)
 static int loc_of(const uint32_t *w, size_t n, uint32_t loc, uint32_t *var) {
     for (size_t i = 5; i < n && (w[i] >> 16); i += w[i] >> 16) if ((w[i] & 0xffff) == 71 && (w[i] >> 16) >= 4 && w[i + 2] == 30 && w[i + 3] == loc) { if (var) *var = w[i + 1]; return 1; }
@@ -190,9 +263,168 @@ static int storage_of(const uint32_t *w, size_t n, uint32_t var) {
     for (size_t i = 5; i < n && (w[i] >> 16); i += w[i] >> 16) if ((w[i] & 0xffff) == 59 && w[i + 2] == var) return (int)w[i + 3];
     return -1;
 }
+// NonUniform on dynamically indexed texture arrays (vka_spv_nonuniform), modules assembled with spirv-as (generator 7), pixel shaders that index arrays by a flat int input i:
+// SPV_NU_FRAG (SPIR-V 1.3)  set 0 b5 sampler2D tex[4]: tex[i] (a site) and tex[0] (a constant index, not one); b6 samplerBuffer-like image buf[4] (Dim Buffer): buf[i] fetched
+//                           (counted, left); b7 texture2D imgs[4]: imgs[i] with the sampler at b8 through OpSampledImage (a site: the OpSampledImage decorated too);
+//                           set 1 b0 / b1, the texture pool: pool[i] with samplers[i] (counted, left)
+// SPV_NU_FRAG15             the same as SPIR-V 1.5 (every global in the entry point's interface): no extension added
+// SPV_NU_TWO_INDEX          tex[2][4] read as tex[i][i] (an array of arrays: not valid for Vulkan, refused all the same)
+// SPV_NU_COPY               tex[i]'s pointer copied with OpCopyObject before its load (refused)
+static const uint32_t SPV_NU_FRAG[] = {
+    0x07230203, 0x00010300, 0x00070000, 0x00000044, 0x00000000, 0x00020011, 0x00000001, 0x00020011, 0x0000002e, 0x0003000e, 0x00000000, 0x00000001,
+    0x0007000f, 0x00000004, 0x00000001, 0x6e69616d, 0x00000000, 0x00000002, 0x00000003, 0x00030010, 0x00000001, 0x00000007, 0x00040047, 0x00000002,
+    0x0000001e, 0x00000000, 0x00030047, 0x00000002, 0x0000000e, 0x00040047, 0x00000003, 0x0000001e, 0x00000000, 0x00040047, 0x00000004, 0x00000022,
+    0x00000000, 0x00040047, 0x00000004, 0x00000021, 0x00000005, 0x00040047, 0x00000005, 0x00000022, 0x00000000, 0x00040047, 0x00000005, 0x00000021,
+    0x00000006, 0x00040047, 0x00000006, 0x00000022, 0x00000000, 0x00040047, 0x00000006, 0x00000021, 0x00000007, 0x00040047, 0x00000007, 0x00000022,
+    0x00000000, 0x00040047, 0x00000007, 0x00000021, 0x00000008, 0x00040047, 0x00000008, 0x00000022, 0x00000001, 0x00040047, 0x00000008, 0x00000021,
+    0x00000000, 0x00040047, 0x00000009, 0x00000022, 0x00000001, 0x00040047, 0x00000009, 0x00000021, 0x00000001, 0x00020013, 0x0000000a, 0x00030021,
+    0x0000000b, 0x0000000a, 0x00030016, 0x0000000c, 0x00000020, 0x00040017, 0x0000000d, 0x0000000c, 0x00000004, 0x00040017, 0x0000000e, 0x0000000c,
+    0x00000002, 0x00040015, 0x0000000f, 0x00000020, 0x00000000, 0x00040015, 0x00000010, 0x00000020, 0x00000001, 0x0004002b, 0x0000000f, 0x00000011,
+    0x00000004, 0x0004002b, 0x0000000f, 0x00000012, 0x00000008, 0x0004002b, 0x00000010, 0x00000013, 0x00000000, 0x0004002b, 0x0000000c, 0x00000014,
+    0x00000000, 0x0005002c, 0x0000000e, 0x00000015, 0x00000014, 0x00000014, 0x00090019, 0x00000016, 0x0000000c, 0x00000001, 0x00000000, 0x00000000,
+    0x00000000, 0x00000001, 0x00000000, 0x0003001b, 0x00000017, 0x00000016, 0x00090019, 0x00000018, 0x0000000c, 0x00000005, 0x00000000, 0x00000000,
+    0x00000000, 0x00000001, 0x00000000, 0x0002001a, 0x00000019, 0x0004001c, 0x0000001a, 0x00000017, 0x00000011, 0x0004001c, 0x0000001b, 0x00000018,
+    0x00000011, 0x0004001c, 0x0000001c, 0x00000016, 0x00000011, 0x0004001c, 0x0000001d, 0x00000016, 0x00000012, 0x0004001c, 0x0000001e, 0x00000019,
+    0x00000012, 0x00040020, 0x0000001f, 0x00000000, 0x0000001a, 0x00040020, 0x00000020, 0x00000000, 0x0000001b, 0x00040020, 0x00000021, 0x00000000,
+    0x0000001c, 0x00040020, 0x00000022, 0x00000000, 0x0000001d, 0x00040020, 0x00000023, 0x00000000, 0x0000001e, 0x00040020, 0x00000024, 0x00000000,
+    0x00000017, 0x00040020, 0x00000025, 0x00000000, 0x00000018, 0x00040020, 0x00000026, 0x00000000, 0x00000016, 0x00040020, 0x00000027, 0x00000000,
+    0x00000019, 0x00040020, 0x00000028, 0x00000001, 0x00000010, 0x00040020, 0x00000029, 0x00000003, 0x0000000d, 0x0004003b, 0x00000028, 0x00000002,
+    0x00000001, 0x0004003b, 0x00000029, 0x00000003, 0x00000003, 0x0004003b, 0x0000001f, 0x00000004, 0x00000000, 0x0004003b, 0x00000020, 0x00000005,
+    0x00000000, 0x0004003b, 0x00000021, 0x00000006, 0x00000000, 0x0004003b, 0x00000027, 0x00000007, 0x00000000, 0x0004003b, 0x00000022, 0x00000008,
+    0x00000000, 0x0004003b, 0x00000023, 0x00000009, 0x00000000, 0x00050036, 0x0000000a, 0x00000001, 0x00000000, 0x0000000b, 0x000200f8, 0x0000002a,
+    0x0004003d, 0x00000010, 0x0000002b, 0x00000002, 0x00050041, 0x00000024, 0x0000002c, 0x00000004, 0x0000002b, 0x0004003d, 0x00000017, 0x0000002d,
+    0x0000002c, 0x00050057, 0x0000000d, 0x0000002e, 0x0000002d, 0x00000015, 0x00050041, 0x00000024, 0x0000002f, 0x00000004, 0x00000013, 0x0004003d,
+    0x00000017, 0x00000030, 0x0000002f, 0x00050057, 0x0000000d, 0x00000031, 0x00000030, 0x00000015, 0x00050041, 0x00000025, 0x00000032, 0x00000005,
+    0x0000002b, 0x0004003d, 0x00000018, 0x00000033, 0x00000032, 0x0005005f, 0x0000000d, 0x00000034, 0x00000033, 0x00000013, 0x00050041, 0x00000026,
+    0x00000035, 0x00000006, 0x0000002b, 0x0004003d, 0x00000016, 0x00000036, 0x00000035, 0x0004003d, 0x00000019, 0x00000037, 0x00000007, 0x00050056,
+    0x00000017, 0x00000038, 0x00000036, 0x00000037, 0x00050057, 0x0000000d, 0x00000039, 0x00000038, 0x00000015, 0x00050041, 0x00000026, 0x0000003a,
+    0x00000008, 0x0000002b, 0x0004003d, 0x00000016, 0x0000003b, 0x0000003a, 0x00050041, 0x00000027, 0x0000003c, 0x00000009, 0x0000002b, 0x0004003d,
+    0x00000019, 0x0000003d, 0x0000003c, 0x00050056, 0x00000017, 0x0000003e, 0x0000003b, 0x0000003d, 0x00050057, 0x0000000d, 0x0000003f, 0x0000003e,
+    0x00000015, 0x00050081, 0x0000000d, 0x00000040, 0x0000002e, 0x00000031, 0x00050081, 0x0000000d, 0x00000041, 0x00000040, 0x00000034, 0x00050081,
+    0x0000000d, 0x00000042, 0x00000041, 0x00000039, 0x00050081, 0x0000000d, 0x00000043, 0x00000042, 0x0000003f, 0x0003003e, 0x00000003, 0x00000043,
+    0x000100fd, 0x00010038};
+static const uint32_t SPV_NU_FRAG15[] = {
+    0x07230203, 0x00010500, 0x00070000, 0x00000044, 0x00000000, 0x00020011, 0x00000001, 0x00020011, 0x0000002e, 0x0003000e, 0x00000000, 0x00000001,
+    0x000d000f, 0x00000004, 0x00000001, 0x6e69616d, 0x00000000, 0x00000002, 0x00000003, 0x00000004, 0x00000005, 0x00000006, 0x00000007, 0x00000008,
+    0x00000009, 0x00030010, 0x00000001, 0x00000007, 0x00040047, 0x00000002, 0x0000001e, 0x00000000, 0x00030047, 0x00000002, 0x0000000e, 0x00040047,
+    0x00000003, 0x0000001e, 0x00000000, 0x00040047, 0x00000004, 0x00000022, 0x00000000, 0x00040047, 0x00000004, 0x00000021, 0x00000005, 0x00040047,
+    0x00000005, 0x00000022, 0x00000000, 0x00040047, 0x00000005, 0x00000021, 0x00000006, 0x00040047, 0x00000006, 0x00000022, 0x00000000, 0x00040047,
+    0x00000006, 0x00000021, 0x00000007, 0x00040047, 0x00000007, 0x00000022, 0x00000000, 0x00040047, 0x00000007, 0x00000021, 0x00000008, 0x00040047,
+    0x00000008, 0x00000022, 0x00000001, 0x00040047, 0x00000008, 0x00000021, 0x00000000, 0x00040047, 0x00000009, 0x00000022, 0x00000001, 0x00040047,
+    0x00000009, 0x00000021, 0x00000001, 0x00020013, 0x0000000a, 0x00030021, 0x0000000b, 0x0000000a, 0x00030016, 0x0000000c, 0x00000020, 0x00040017,
+    0x0000000d, 0x0000000c, 0x00000004, 0x00040017, 0x0000000e, 0x0000000c, 0x00000002, 0x00040015, 0x0000000f, 0x00000020, 0x00000000, 0x00040015,
+    0x00000010, 0x00000020, 0x00000001, 0x0004002b, 0x0000000f, 0x00000011, 0x00000004, 0x0004002b, 0x0000000f, 0x00000012, 0x00000008, 0x0004002b,
+    0x00000010, 0x00000013, 0x00000000, 0x0004002b, 0x0000000c, 0x00000014, 0x00000000, 0x0005002c, 0x0000000e, 0x00000015, 0x00000014, 0x00000014,
+    0x00090019, 0x00000016, 0x0000000c, 0x00000001, 0x00000000, 0x00000000, 0x00000000, 0x00000001, 0x00000000, 0x0003001b, 0x00000017, 0x00000016,
+    0x00090019, 0x00000018, 0x0000000c, 0x00000005, 0x00000000, 0x00000000, 0x00000000, 0x00000001, 0x00000000, 0x0002001a, 0x00000019, 0x0004001c,
+    0x0000001a, 0x00000017, 0x00000011, 0x0004001c, 0x0000001b, 0x00000018, 0x00000011, 0x0004001c, 0x0000001c, 0x00000016, 0x00000011, 0x0004001c,
+    0x0000001d, 0x00000016, 0x00000012, 0x0004001c, 0x0000001e, 0x00000019, 0x00000012, 0x00040020, 0x0000001f, 0x00000000, 0x0000001a, 0x00040020,
+    0x00000020, 0x00000000, 0x0000001b, 0x00040020, 0x00000021, 0x00000000, 0x0000001c, 0x00040020, 0x00000022, 0x00000000, 0x0000001d, 0x00040020,
+    0x00000023, 0x00000000, 0x0000001e, 0x00040020, 0x00000024, 0x00000000, 0x00000017, 0x00040020, 0x00000025, 0x00000000, 0x00000018, 0x00040020,
+    0x00000026, 0x00000000, 0x00000016, 0x00040020, 0x00000027, 0x00000000, 0x00000019, 0x00040020, 0x00000028, 0x00000001, 0x00000010, 0x00040020,
+    0x00000029, 0x00000003, 0x0000000d, 0x0004003b, 0x00000028, 0x00000002, 0x00000001, 0x0004003b, 0x00000029, 0x00000003, 0x00000003, 0x0004003b,
+    0x0000001f, 0x00000004, 0x00000000, 0x0004003b, 0x00000020, 0x00000005, 0x00000000, 0x0004003b, 0x00000021, 0x00000006, 0x00000000, 0x0004003b,
+    0x00000027, 0x00000007, 0x00000000, 0x0004003b, 0x00000022, 0x00000008, 0x00000000, 0x0004003b, 0x00000023, 0x00000009, 0x00000000, 0x00050036,
+    0x0000000a, 0x00000001, 0x00000000, 0x0000000b, 0x000200f8, 0x0000002a, 0x0004003d, 0x00000010, 0x0000002b, 0x00000002, 0x00050041, 0x00000024,
+    0x0000002c, 0x00000004, 0x0000002b, 0x0004003d, 0x00000017, 0x0000002d, 0x0000002c, 0x00050057, 0x0000000d, 0x0000002e, 0x0000002d, 0x00000015,
+    0x00050041, 0x00000024, 0x0000002f, 0x00000004, 0x00000013, 0x0004003d, 0x00000017, 0x00000030, 0x0000002f, 0x00050057, 0x0000000d, 0x00000031,
+    0x00000030, 0x00000015, 0x00050041, 0x00000025, 0x00000032, 0x00000005, 0x0000002b, 0x0004003d, 0x00000018, 0x00000033, 0x00000032, 0x0005005f,
+    0x0000000d, 0x00000034, 0x00000033, 0x00000013, 0x00050041, 0x00000026, 0x00000035, 0x00000006, 0x0000002b, 0x0004003d, 0x00000016, 0x00000036,
+    0x00000035, 0x0004003d, 0x00000019, 0x00000037, 0x00000007, 0x00050056, 0x00000017, 0x00000038, 0x00000036, 0x00000037, 0x00050057, 0x0000000d,
+    0x00000039, 0x00000038, 0x00000015, 0x00050041, 0x00000026, 0x0000003a, 0x00000008, 0x0000002b, 0x0004003d, 0x00000016, 0x0000003b, 0x0000003a,
+    0x00050041, 0x00000027, 0x0000003c, 0x00000009, 0x0000002b, 0x0004003d, 0x00000019, 0x0000003d, 0x0000003c, 0x00050056, 0x00000017, 0x0000003e,
+    0x0000003b, 0x0000003d, 0x00050057, 0x0000000d, 0x0000003f, 0x0000003e, 0x00000015, 0x00050081, 0x0000000d, 0x00000040, 0x0000002e, 0x00000031,
+    0x00050081, 0x0000000d, 0x00000041, 0x00000040, 0x00000034, 0x00050081, 0x0000000d, 0x00000042, 0x00000041, 0x00000039, 0x00050081, 0x0000000d,
+    0x00000043, 0x00000042, 0x0000003f, 0x0003003e, 0x00000003, 0x00000043, 0x000100fd, 0x00010038};
+static const uint32_t SPV_NU_TWO_INDEX[] = {
+    0x07230203, 0x00010300, 0x00070000, 0x0000001d, 0x00000000, 0x00020011, 0x00000001, 0x0003000e, 0x00000000, 0x00000001, 0x0007000f, 0x00000004,
+    0x00000001, 0x6e69616d, 0x00000000, 0x00000002, 0x00000003, 0x00030010, 0x00000001, 0x00000007, 0x00040047, 0x00000002, 0x0000001e, 0x00000000,
+    0x00030047, 0x00000002, 0x0000000e, 0x00040047, 0x00000003, 0x0000001e, 0x00000000, 0x00040047, 0x00000004, 0x00000022, 0x00000000, 0x00040047,
+    0x00000004, 0x00000021, 0x00000005, 0x00020013, 0x00000005, 0x00030021, 0x00000006, 0x00000005, 0x00030016, 0x00000007, 0x00000020, 0x00040017,
+    0x00000008, 0x00000007, 0x00000004, 0x00040017, 0x00000009, 0x00000007, 0x00000002, 0x00040015, 0x0000000a, 0x00000020, 0x00000001, 0x00040015,
+    0x0000000b, 0x00000020, 0x00000000, 0x0004002b, 0x0000000b, 0x0000000c, 0x00000002, 0x0004002b, 0x0000000b, 0x0000000d, 0x00000004, 0x0004002b,
+    0x00000007, 0x0000000e, 0x00000000, 0x0005002c, 0x00000009, 0x0000000f, 0x0000000e, 0x0000000e, 0x00090019, 0x00000010, 0x00000007, 0x00000001,
+    0x00000000, 0x00000000, 0x00000000, 0x00000001, 0x00000000, 0x0003001b, 0x00000011, 0x00000010, 0x0004001c, 0x00000012, 0x00000011, 0x0000000d,
+    0x00040020, 0x00000013, 0x00000000, 0x00000011, 0x00040020, 0x00000014, 0x00000001, 0x0000000a, 0x00040020, 0x00000015, 0x00000003, 0x00000008,
+    0x0004003b, 0x00000014, 0x00000002, 0x00000001, 0x0004003b, 0x00000015, 0x00000003, 0x00000003, 0x0004001c, 0x00000016, 0x00000012, 0x0000000c,
+    0x00040020, 0x00000017, 0x00000000, 0x00000016, 0x0004003b, 0x00000017, 0x00000004, 0x00000000, 0x00050036, 0x00000005, 0x00000001, 0x00000000,
+    0x00000006, 0x000200f8, 0x00000018, 0x0004003d, 0x0000000a, 0x00000019, 0x00000002, 0x00060041, 0x00000013, 0x0000001a, 0x00000004, 0x00000019,
+    0x00000019, 0x0004003d, 0x00000011, 0x0000001b, 0x0000001a, 0x00050057, 0x00000008, 0x0000001c, 0x0000001b, 0x0000000f, 0x0003003e, 0x00000003,
+    0x0000001c, 0x000100fd, 0x00010038};
+static const uint32_t SPV_NU_COPY[] = {
+    0x07230203, 0x00010300, 0x00070000, 0x0000001d, 0x00000000, 0x00020011, 0x00000001, 0x0003000e, 0x00000000, 0x00000001, 0x0007000f, 0x00000004,
+    0x00000001, 0x6e69616d, 0x00000000, 0x00000002, 0x00000003, 0x00030010, 0x00000001, 0x00000007, 0x00040047, 0x00000002, 0x0000001e, 0x00000000,
+    0x00030047, 0x00000002, 0x0000000e, 0x00040047, 0x00000003, 0x0000001e, 0x00000000, 0x00040047, 0x00000004, 0x00000022, 0x00000000, 0x00040047,
+    0x00000004, 0x00000021, 0x00000005, 0x00020013, 0x00000005, 0x00030021, 0x00000006, 0x00000005, 0x00030016, 0x00000007, 0x00000020, 0x00040017,
+    0x00000008, 0x00000007, 0x00000004, 0x00040017, 0x00000009, 0x00000007, 0x00000002, 0x00040015, 0x0000000a, 0x00000020, 0x00000001, 0x00040015,
+    0x0000000b, 0x00000020, 0x00000000, 0x0004002b, 0x0000000b, 0x0000000c, 0x00000002, 0x0004002b, 0x0000000b, 0x0000000d, 0x00000004, 0x0004002b,
+    0x00000007, 0x0000000e, 0x00000000, 0x0005002c, 0x00000009, 0x0000000f, 0x0000000e, 0x0000000e, 0x00090019, 0x00000010, 0x00000007, 0x00000001,
+    0x00000000, 0x00000000, 0x00000000, 0x00000001, 0x00000000, 0x0003001b, 0x00000011, 0x00000010, 0x0004001c, 0x00000012, 0x00000011, 0x0000000d,
+    0x00040020, 0x00000013, 0x00000000, 0x00000011, 0x00040020, 0x00000014, 0x00000001, 0x0000000a, 0x00040020, 0x00000015, 0x00000003, 0x00000008,
+    0x0004003b, 0x00000014, 0x00000002, 0x00000001, 0x0004003b, 0x00000015, 0x00000003, 0x00000003, 0x00040020, 0x00000016, 0x00000000, 0x00000012,
+    0x0004003b, 0x00000016, 0x00000004, 0x00000000, 0x00050036, 0x00000005, 0x00000001, 0x00000000, 0x00000006, 0x000200f8, 0x00000017, 0x0004003d,
+    0x0000000a, 0x00000018, 0x00000002, 0x00050041, 0x00000013, 0x00000019, 0x00000004, 0x00000018, 0x00040053, 0x00000013, 0x0000001a, 0x00000019,
+    0x0004003d, 0x00000011, 0x0000001b, 0x0000001a, 0x00050057, 0x00000008, 0x0000001c, 0x0000001b, 0x0000000f, 0x0003003e, 0x00000003, 0x0000001c,
+    0x000100fd, 0x00010038};
+static uint32_t var_at(const uint32_t *w, size_t n, uint32_t set, uint32_t binding) {   // the variable decorated DescriptorSet set, Binding binding (0: none)
+    for (size_t i = 5; i < n; i += w[i] >> 16) { if (!(w[i] >> 16)) break; if ((w[i] & 0xffff) == 71 && w[i + 2] == 33 && w[i + 3] == binding)
+        for (size_t j = 5; j < n; j += w[j] >> 16) { if (!(w[j] >> 16)) break; if ((w[j] & 0xffff) == 71 && w[j + 1] == w[i + 1] && w[j + 2] == 34 && w[j + 3] == set) return w[i + 1]; } }
+    return 0;
+}
+static int is_nu(const uint32_t *w, size_t n, uint32_t id) { for (size_t i = 5; i < n; i += w[i] >> 16) { if (!(w[i] >> 16)) break; if ((w[i] & 0xffff) == 71 && w[i + 1] == id && w[i + 2] == 5300) return 1; } return 0; }
+static int nu_chains(const uint32_t *w, size_t n, uint32_t var, int *total) {   // access chains into var: how many (*total) and how many with a NonUniform result
+    int k = 0; *total = 0;
+    for (size_t i = 5; i < n; i += w[i] >> 16) { if (!(w[i] >> 16)) break; if ((w[i] & 0xffff) == 65 && w[i + 3] == var) { (*total)++; k += is_nu(w, n, w[i + 2]); } }
+    return k;
+}
+static size_t nu_strip(const uint32_t *w, size_t n, uint32_t *o) {   // the module without the instructions vka_spv_nonuniform adds
+    size_t k = 5; memcpy(o, w, 20);
+    for (size_t i = 5; i < n;) {
+        uint32_t op = w[i] & 0xffff, len = w[i] >> 16; if (!len) break;
+        int add = (op == 17 && len == 2 && (w[i + 1] == 5301 || w[i + 1] == 5307)) || (op == 10 && len == 8 && !memcmp(w + i + 1, "SPV_EXT_descriptor_indexing", 28)) || (op == 71 && len == 3 && w[i + 2] == 5300);
+        if (!add) { memcpy(o + k, w + i, len * 4); k += len; }
+        i += len;
+    }
+    return k;
+}
+static int nu_only_adds(const uint32_t *x, size_t xn, const uint32_t *w, size_t n) {   // x is w with only those instructions added, and its bound is w's
+    uint32_t *s = malloc(xn * 4), *s0 = malloc(n * 4); size_t sn = s ? nu_strip(x, xn, s) : 0, sn0 = s0 ? nu_strip(w, n, s0) : 1;
+    int r = s && s0 && sn == sn0 && !memcmp(s, s0, sn * 4) && x[3] == w[3];
+    free(s); free(s0); return r;
+}
 int main(void) {
     int val = have_val();
     size_t n = sizeof SPV_TRI_VERT / 4, on = 0; char err[200] = "";
+    {   // depth = fma(product, k, product) + k, with a precise product and a separate colour add.
+        static const uint32_t shader[] = {
+            0x07230203, 0x00010000, 0x00070000, 0x00000010, 0x00000000, 0x00020011, 0x00000001, 0x0006000b,
+            0x00000001, 0x4c534c47, 0x6474732e, 0x3035342e, 0x00000000, 0x0003000e, 0x00000000, 0x00000001,
+            0x0007000f, 0x00000004, 0x00000002, 0x6e69616d, 0x00000000, 0x00000003, 0x00000004, 0x00030010,
+            0x00000002, 0x00000007, 0x00030010, 0x00000002, 0x0000000c, 0x00040047, 0x00000003, 0x0000000b,
+            0x00000016, 0x00040047, 0x00000004, 0x0000001e, 0x00000000, 0x00030047, 0x0000000c, 0x0000002a,
+            0x00020013, 0x00000005, 0x00030021, 0x00000006, 0x00000005, 0x00030016, 0x00000007, 0x00000020,
+            0x00040020, 0x00000008, 0x00000003, 0x00000007, 0x0004003b, 0x00000008, 0x00000003, 0x00000003,
+            0x0004003b, 0x00000008, 0x00000004, 0x00000003, 0x0004002b, 0x00000007, 0x00000009, 0x3f000000,
+            0x0004002b, 0x00000007, 0x0000000a, 0x3dfbe76d, 0x00050036, 0x00000005, 0x00000002, 0x00000000,
+            0x00000006, 0x000200f8, 0x0000000b, 0x00050085, 0x00000007, 0x0000000c, 0x00000009, 0x0000000a,
+            0x0008000c, 0x00000007, 0x0000000d, 0x00000001, 0x00000032, 0x0000000c, 0x00000009, 0x0000000c,
+            0x00050081, 0x00000007, 0x0000000e, 0x0000000d, 0x00000009, 0x00050081, 0x00000007, 0x0000000f,
+            0x0000000a, 0x0000000a, 0x0003003e, 0x00000003, 0x0000000e, 0x0003003e, 0x00000004, 0x0000000f,
+            0x000100fd, 0x00010038,
+        };
+        size_t words = sizeof shader / sizeof *shader, patched_words = 0;
+        uint32_t *patched = vka_spv_precise_depth(shader, words, &patched_words);
+        CHECK(patched && patched_words == words + 6, "two new depth precision decorations");
+        if (patched) {
+            unsigned count[16] = {0};
+            for (size_t i = 5; i < patched_words; i += patched[i] >> 16)
+                if (patched[i] == ((3u << 16) | 71u) && patched[i+2] == 42 && patched[i+1] < 16) count[patched[i+1]]++;
+            CHECK(count[12] == 1 && count[13] == 1 && count[14] == 1 && !count[15], "only the depth expression is precise");
+            CHECK(!vka_spv_precise_depth(patched, patched_words, &words), "depth precision is idempotent");
+            if (val) CHECK(validate(patched, patched_words, "precise depth"), "valid precise depth SPIR-V");
+            free(patched);
+        }
+    }
     uint32_t *o = vka_spv_vin_retype(SPV_TRI_VERT, n, 1, 2, &on, err, sizeof err);
     CHECK(o, "selftest vertex shader not rewritten: %s", err);
     if (o) {
@@ -430,6 +662,77 @@ int main(void) {
             free(r); free(x);
         }
     }
+    {   // vka_spv_nonuniform: the profile's nonuniform_texture_arrays
+        size_t fn = sizeof SPV_NU_FRAG / 4, xn = 0, yn = 0; vka_nu_count c, c2; int tot = 0;
+        uint32_t *x = vka_spv_nonuniform(SPV_NU_FRAG, fn, 1, 0, 1, &xn, &c, err, sizeof err);
+        CHECK(x, "nonuniform: refused: %s", err);
+        if (x) {
+            CHECK(c.sites == 2 && c.decorated == 6 && c.caps == 2 && c.ext == 1 && c.pool == 2 && c.skipped == 1 && !c.refused,
+                  "nonuniform: sites %d, decorations %d, capabilities %d, extension %d, pool %d, skipped %d", c.sites, c.decorated, c.caps, c.ext, c.pool, c.skipped);
+            uint32_t tex = var_at(SPV_NU_FRAG, fn, 0, 5), buf = var_at(SPV_NU_FRAG, fn, 0, 6), imgs = var_at(SPV_NU_FRAG, fn, 0, 7), pimg = var_at(SPV_NU_FRAG, fn, 1, 0), psmp = var_at(SPV_NU_FRAG, fn, 1, 1);
+            CHECK(tex && buf && imgs && pimg && psmp, "test module's arrays found");
+            CHECK(nu_chains(x, xn, tex, &tot) == 1 && tot == 2, "nonuniform: tex[i] decorated, tex[0] not");
+            CHECK(nu_chains(x, xn, imgs, &tot) == 1, "nonuniform: imgs[i] decorated");
+            CHECK(nu_chains(x, xn, buf, &tot) == 0 && tot == 1, "nonuniform: the buffer image array left alone");
+            CHECK(nu_chains(x, xn, pimg, &tot) == 0 && nu_chains(x, xn, psmp, &tot) == 0, "nonuniform: the texture pool left alone");
+            CHECK(count_op(x, xn, 86) == 2, "two OpSampledImage");
+            for (size_t i = 5; i < xn; i += x[i] >> 16) if ((x[i] & 0xffff) == 86) for (size_t j = 5; j < xn; j += x[j] >> 16)   // the OpSampledImage of imgs[i]'s load: decorated
+                if ((x[j] & 0xffff) == 61 && x[j + 2] == x[i + 3]) for (size_t k = 5; k < xn; k += x[k] >> 16)
+                    if ((x[k] & 0xffff) == 65 && x[k + 2] == x[j + 3] && x[k + 3] == imgs) CHECK(is_nu(x, xn, x[i + 2]) && is_nu(x, xn, x[j + 2]), "imgs[i]'s load and OpSampledImage decorated");
+            CHECK(nu_only_adds(x, xn, SPV_NU_FRAG, fn), "nonuniform: only decorations, capabilities and the extension added, the bound unchanged");
+            if (val) CHECK(validate(x, xn, "nonuniform"), "nonuniform valid");
+            uint32_t *y = vka_spv_nonuniform(x, xn, 1, 0, 1, &yn, &c2, err, sizeof err);
+            CHECK(!y && !err[0] && c2.sites == 2, "nonuniform: a second run changes nothing (%s)", err);
+            free(y); free(x);
+        }
+        size_t f15 = sizeof SPV_NU_FRAG15 / 4;
+        x = vka_spv_nonuniform(SPV_NU_FRAG15, f15, 1, 0, 1, &xn, &c, err, sizeof err);
+        CHECK(x && c.sites == 2 && c.decorated == 6 && c.caps == 2 && !c.ext && count_op(x, xn, 10) == 0, "nonuniform: SPIR-V 1.5 takes no extension (%s)", err);
+        if (x && val) CHECK(validate(x, xn, "nonuniform 1.5"), "nonuniform (1.5) valid");
+        free(x);
+        x = vka_spv_nonuniform(SPV_NU_TWO_INDEX, sizeof SPV_NU_TWO_INDEX / 4, 1, 0, 1, &xn, &c, err, sizeof err);
+        CHECK(!x && err[0] && c.refused, "nonuniform: an access chain of two indices refused");
+        free(x);
+        x = vka_spv_nonuniform(SPV_NU_COPY, sizeof SPV_NU_COPY / 4, 1, 0, 1, &xn, &c, err, sizeof err);
+        CHECK(!x && err[0] && c.refused, "nonuniform: a chain used other than by a load refused");
+        free(x);
+        x = vka_spv_nonuniform(SPV_PFB_FRAG, sizeof SPV_PFB_FRAG / 4, 1, 0, 1, &xn, &c, err, sizeof err);
+        CHECK(!x && !err[0] && c.pool == 3 && !c.sites, "nonuniform: pool reads only, nothing to do (pool %d, %s)", c.pool, err);
+        free(x);
+        x = vka_spv_nonuniform(SPV_TRI_FRAG, sizeof SPV_TRI_FRAG / 4, 1, 0, 1, &xn, &c, err, sizeof err);
+        CHECK(!x && !err[0] && !c.sites && !c.pool, "nonuniform: a module without arrays is left alone (%s)", err);
+        free(x);
+        // DM_VK_NU_SPV_DIR=<folder of .spv modules>: each one through the pass: only additions, a second run changes nothing, validated
+        const char *nd = getenv("DM_VK_NU_SPV_DIR");
+        if (nd) {
+            DIR *dir = opendir(nd); int nmod = 0, nchg = 0; long ns = 0;
+            struct dirent *de;
+            while (dir && (de = readdir(dir))) {
+                size_t l = strlen(de->d_name); if (l < 5 || strcmp(de->d_name + l - 4, ".spv")) continue;
+                char path[1024]; snprintf(path, sizeof path, "%s/%s", nd, de->d_name);
+                FILE *f = fopen(path, "rb"); if (!f) continue;
+                long sz = fseek(f, 0, SEEK_END) ? -1 : ftell(f);
+                if (sz < 20 || fseek(f, 0, SEEK_SET)) { fclose(f); continue; }
+                uint32_t *w = malloc((size_t)sz); size_t nw = w ? fread(w, 1, (size_t)sz, f) / 4 : 0; fclose(f);
+                if (!w) continue;
+                nmod++;
+                x = vka_spv_nonuniform(w, nw, 1, 0, 1, &xn, &c, err, sizeof err);
+                CHECK(x || !err[0], "%s: nonuniform refused: %s", path, err);
+                if (x) {
+                    nchg++; ns += c.sites;
+                    CHECK(nu_only_adds(x, xn, w, nw), "%s: nonuniform added more than decorations, capabilities and the extension", path);
+                    uint32_t *y = vka_spv_nonuniform(x, xn, 1, 0, 1, &yn, &c2, err, sizeof err);
+                    CHECK(!y && !err[0], "%s: nonuniform's second run changed it", path);
+                    free(y);
+                    if (val) CHECK(validate(x, xn, path), "%s nonuniform valid", path);
+                    free(x);
+                }
+                free(w);
+            }
+            if (dir) closedir(dir);
+            printf("t_android_spvpatch: %d of %d modules in %s decorated NonUniform (%ld texture array reads)\n", nchg, nmod, nd, ns);
+        }
+    }
     // DM_VK_PFB_SPV_DIR=<folder of .spv modules>: each one that reads the pool rewritten (vertex-pipeline stores allowed, early tests asked for) and validated
     const char *pd = getenv("DM_VK_PFB_SPV_DIR");
     if (pd) {
@@ -451,6 +754,46 @@ int main(void) {
         }
         if (dir) closedir(dir);
         printf("t_android_spvpatch: %d of %d modules in %s read the pool and were rewritten\n", nrw, nmod, pd);
+    }
+    {   // 64-bit integers only for a buffer address (vka_spv_no_int64): made without them, as SPIR-V 1.5 with the storage buffer StorageBuffer-class
+        size_t in = sizeof SPV_I64_ADDR / 4; int ch = 0;
+        CHECK(vka_spv_declares_int64(SPV_I64_ADDR, in) && !vka_spv_declares_int64(SPV_TRI_VERT, n), "Int64 found in the address module only");
+        uint32_t *x = vka_spv_no_int64(SPV_I64_ADDR, in, &on, &ch, err, sizeof err);
+        CHECK(x && ch, "address module not rewritten: %s", err);
+        if (x) {
+            int cap64 = 0, int64t = 0, bufblock = 0, uni = 0, sbuf = 0;
+            for (size_t i = 5; i < on && (x[i] >> 16); i += x[i] >> 16) {
+                uint32_t op = x[i] & 0xffff;
+                cap64 += op == 17 && x[i + 1] == 11; int64t += op == 21 && x[i + 2] == 64; bufblock += op == 71 && x[i + 2] == 3;
+                if (op == 59) { uni += x[i + 3] == 2; sbuf += x[i + 3] == 12; }
+            }
+            CHECK(x[1] == 0x10500, "SPIR-V 1.5 (%08x)", x[1]);
+            CHECK(!cap64 && !int64t && !count_op(x, on, 120), "no Int64 capability, 64-bit type or OpConvertUToPtr left");
+            CHECK(count_op(x, on, 124) == 1, "the pointer made by one bitcast from the two words");
+            CHECK(!bufblock && !uni && sbuf == 1, "the storage buffer Block-decorated and StorageBuffer-class");
+            if (val) CHECK(validate(x, on, "no-Int64 address module"), "valid SPIR-V");
+            free(x);
+        }
+        err[0] = 1; x = vka_spv_no_int64(SPV_I64_BAD, sizeof SPV_I64_BAD / 4, &on, &ch, err, sizeof err);
+        CHECK(!x && !ch && !err[0], "a 64-bit integer used some other way: left as it is, without an error");
+        x = vka_spv_no_int64(SPV_TRI_VERT, n, &on, &ch, err, sizeof err);
+        CHECK(!x && !ch && !err[0], "a module without Int64: nothing to do");
+    }
+    {   // The per-primitive claim of a SPIR-V 1.5 geometry shader (a module vka_spv_no_int64 rewrote): a StorageBuffer-class Block, and the claim buffer and the guard in the interface
+        uint32_t *x = NULL; size_t xn = 0;
+        int r = vka_spv_gs_claim(SPV_GS15, sizeof SPV_GS15 / 4, 5, &x, &xn, err, sizeof err);
+        CHECK(r > 0 && x, "1.5 geometry shader not claimed: %s", err);
+        if (x) {
+            int bufblock = 0, uni = 0, ep_words = 0, ep0 = 0;
+            for (size_t i = 5; i < xn && (x[i] >> 16); i += x[i] >> 16) {
+                uint32_t op = x[i] & 0xffff;
+                bufblock += op == 71 && x[i + 2] == 3; if (op == 59) uni += x[i + 3] == 2; if (op == 15) ep_words = (int)(x[i] >> 16);
+            }
+            for (size_t i = 5; i < sizeof SPV_GS15 / 4 && (SPV_GS15[i] >> 16); i += SPV_GS15[i] >> 16) if ((SPV_GS15[i] & 0xffff) == 15) ep0 = (int)(SPV_GS15[i] >> 16);
+            CHECK(!bufblock && !uni && ep_words == ep0 + 2, "no BufferBlock or Uniform buffer; two more interface ids (%d -> %d)", ep0, ep_words);
+            if (val) CHECK(validate(x, xn, "claimed 1.5 geometry shader"), "valid SPIR-V");
+            free(x);
+        }
     }
     printf("t_android_spvpatch: %s%s\n", g_fail ? "FAILED" : "ok", val ? "" : " (no spirv-val: structure only)");
     return g_fail != 0;

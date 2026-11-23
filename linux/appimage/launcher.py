@@ -74,7 +74,7 @@ def games():
         t = tsv(os.path.join(d, 'pack.tsv')); i = t.get('title_id', '').upper()
         if not i: continue
         m = re.search(r'v-([0-9a-f]+)/', t.get('shaders', ''))
-        e = {'name': t.get('name', i), 'pack': d, 'chain': m.group(1) if m else None, 'shaders': t.get('shaders'), 'mtime': os.path.getmtime(os.path.join(d, 'pack.tsv'))}
+        e = {'name': t.get('name', i), 'pack': d, 'chain': m.group(1) if m else None, 'library': 'shaders' in t, 'shaders': t.get('shaders'), 'mtime': os.path.getmtime(os.path.join(d, 'pack.tsv'))}
         if i not in g or e['mtime'] > g[i].get('mtime', 0): g.setdefault(i, {}).update(e)
     for f in nup_files():
         m = ID_RE.search(os.path.basename(f))
@@ -114,6 +114,21 @@ def kept_library(i, e, chain):
     h = lib_header(os.path.join(e['pack'], e['shaders'])) if e.get('pack') and e.get('shaders') else None
     return bool(h and SRC.get('abi') and h['abi'] == SRC['abi'] and h['game'].upper() == i and (h['vk_chain'], chain) in KNOWN)
 
+def layer_counts(i):
+    """(built, waiting) of the game's shaders built while playing (AppRun's layer_watch.py: ~/.local/share/banananative/<ID>/temp/shader_layer)"""
+    root = os.path.join(os.path.dirname(PE), i, 'temp', 'shader_layer')
+    try: req = {f[:-4] for f in os.listdir(os.path.join(root, 'req')) if f.endswith('.ctl')}
+    except OSError: return 0, 0
+    ok = set()
+    v = SRC.get('chain')
+    try:
+        for l in open(os.path.join(root, 'lib', f'v-{v}', 'built.tsv')):
+            p = l.split('\t')
+            if len(p) > 1 and p[1].strip() == 'ok': ok.add(p[0])
+            elif p and p[0]: req.discard(p[0])
+    except OSError: pass
+    return len(ok), len(req - ok)
+
 def yes(parent, text):   # NX_LAUNCHER_YES=1: every question answered yes (unattended tests)
     return os.environ.get('NX_LAUNCHER_YES') == '1' or QMessageBox.question(parent, 'BananaNative', text) == QMessageBox.StandardButton.Yes
 
@@ -149,6 +164,9 @@ OPTIONS = [
     ('NX_GOVERNOR', 'CPU speed policy', 'Needs the governor helper (see the README).',
      [('schedutil', 'Balanced (schedutil)'), ('performance', 'Always fastest (hotter)'), ('0', "The system's own")], 'Balanced (schedutil)', None),
     ('NX_GAMESCOPE_WSI', "Gamescope's Vulkan layer", 'Game Mode only. It caused GPU faults on the Odin 2.', [('0', 'Off'), ('1', 'On')], 'Off', None),
+    ('Shaders', None),
+    ('NX_LAYER', 'Shaders while playing', "Builds the shaders a game's pack lacks while it runs (after a quick Prepare: all of them at first, so things pop in "
+     'for a while). Off: what a pack lacks is never drawn.', [('1', 'On'), ('0', 'Off')], 'On', None),
 ]
 KEY_LINE = re.compile(r'^\s*(#?)\s*([A-Z][A-Z0-9_]*)\s*=(.*)$')
 
@@ -309,6 +327,12 @@ class Window(QWidget):
             b = QPushButton(text); b.clicked.connect(fn); b.setMinimumWidth(190)
             if kind: b.setObjectName(kind)
             btns.addWidget(b); return b
+        def steam(name):   # a ready pack's Steam line: in Steam already, or the button that adds it
+            if name + STEAM_SUFFIX in self.in_steam:
+                det.setText(det.text() + '<br>In Steam: “' + name + STEAM_SUFFIX + '” (Game Mode: Library, Non-Steam)')
+            elif steam_shortcut:
+                b = button('Add to Steam', lambda: self.add_steam(i, name), 'flat')
+                b.setToolTip('A Steam shortcut for Game Mode, with the launch options it needs already filled in')
         if self.busy == i:
             st.setText('Preparing…'); st.setObjectName('todo'); self.bar = QProgressBar(); self.bar.setRange(0, 100); left.addWidget(self.bar)
             self.step = QLabel('Starting'); self.step.setObjectName('detail'); left.addWidget(self.step)
@@ -325,18 +349,24 @@ class Window(QWidget):
         elif chain and e.get('chain') and e['chain'] != chain and not kept_library(i, e, chain):
             st.setText('Needs preparing again: BananaNative was updated'); st.setObjectName('todo')
             button('Prepare again', lambda: self.prepare(nup), 'primary')
+        elif not e.get('library', True):
+            built, waiting = layer_counts(i)
+            st.setText('Ready to play · shaders are built while you play'); st.setObjectName('ok')
+            det.setText(det.text() + f'<br>Shaders built so far: {built}' + (f', {waiting} waiting (built the next time you play)' if waiting else '') +
+                        '<br>Until a shader is built, what uses it is not drawn: some things pop in during the first minutes.')
+            button('Play', lambda: self.play(pack), 'primary')
+            b = button('Build all shaders', lambda: self.prepare(nup, full=True), 'flat')
+            b.setToolTip('Prepare again with every shader (10-40 minutes): no pop-in afterwards')
+            b = button('Prepare again (Quick)', lambda: self.prepare(nup, full=False), 'flat')
+            b.setToolTip('The game code again and the starter shaders (a few minutes); what was built while playing is kept')
+            steam(e.get('name', i))
         else:
             st.setText('Ready to play'); st.setObjectName('ok')
             if chain and e.get('chain') and e['chain'] != chain:
                 det.setText(det.text() + f'<br>Shaders: version {e["chain"]}, kept for {chain} (an update known to change nothing visible)')
             button('Play', lambda: self.play(pack), 'primary')
             b = button('Prepare again', lambda: self.prepare(nup), 'flat'); b.setToolTip('Not needed: only when the game says so')
-            name = e.get('name', i)
-            if name + STEAM_SUFFIX in self.in_steam:
-                det.setText(det.text() + '<br>In Steam: “' + name + STEAM_SUFFIX + '” (Game Mode: Library, Non-Steam)')
-            elif steam_shortcut:
-                b = button('Add to Steam', lambda: self.add_steam(i, name), 'flat')
-                b.setToolTip('A Steam shortcut for Game Mode, with the launch options it needs already filled in')
+            steam(e.get('name', i))
         if runnable and self.busy != i:
             b = button('Options', lambda: self.options(i, e), 'flat')
             if os.path.exists(os.path.join(CONF, i + '.env')) and env_read(os.path.join(CONF, i + '.env')): b.setText('Options (changed)')
@@ -381,7 +411,7 @@ class Window(QWidget):
     def open_games(self): subprocess.Popen(['xdg-open', GAMES], start_new_session=True)
 
     # ---- preparing
-    def prepare(self, nup):
+    def prepare(self, nup, full=None):
         i = ID_RE.search(os.path.basename(nup)).group(1).upper()
         if subprocess.run(['pgrep', '-f', '[u]sr/bin/nxhost_'], stdout=subprocess.DEVNULL).returncode == 0:
             QMessageBox.warning(self, 'BananaNative', 'A game is running. Close it first: preparing needs the memory.'); return
@@ -394,11 +424,25 @@ class Window(QWidget):
         if need_tools and not yes(self, 'Preparing needs the pack tools of this BananaNative version, once:\n• its source (about 130 MB)\n'
                                                '• Python packages and the .NET 10 runtime (first time only)\n\nAbout 10 minutes. Download them now?'):
             return
+        if full is None: full = self.ask_full(i)
+        if full is None: return
+        self.full = full
         self.busy, self.nup, self.out = i, nup, os.path.join(PACKS, i)
         self.log = os.path.join(PE, f'prepare-{i}.log'); os.makedirs(PE, exist_ok=True); os.makedirs(PACKS, exist_ok=True)
         self.refresh()
         if need_tools: self.step.setText('Downloading the pack tools (about 10 minutes, once)…'); self.bar.setRange(0, 0); self.run_tools()
         else: self.run_pack()
+
+    def ask_full(self, i):
+        """True: every shader first (10-40 minutes); False: the code only, shaders built while playing (a few minutes); None: cancelled"""
+        if os.environ.get('NX_LAUNCHER_YES') == '1': return os.environ.get('NX_PREPARE_FULL') == '1'
+        if env_read(os.path.join(CONF, i + '.env')).get('NX_LAYER', env_read(os.path.join(CONF, 'settings.env')).get('NX_LAYER')) == '0': return True
+        m = QMessageBox(self); m.setWindowTitle('BananaNative'); m.setText('How should this game be prepared?')
+        m.setInformativeText('Quick: the game code only, ready in a few minutes. Its shaders are built while you play: some things pop in during the first '
+                             'minutes, and a little more each time you reach a new place.\n\nEverything: every shader first, 10-40 minutes, then no pop-in.')
+        q = m.addButton('Quick', QMessageBox.ButtonRole.AcceptRole); f = m.addButton('Everything', QMessageBox.ButtonRole.AcceptRole)
+        m.addButton(QMessageBox.StandardButton.Cancel); m.setDefaultButton(q); m.exec()
+        return False if m.clickedButton() is q else True if m.clickedButton() is f else None
 
     def start(self, script, done):
         self.proc = QProcess(self); self.proc.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
@@ -421,7 +465,22 @@ class Window(QWidget):
 
     def run_pack(self):
         shutil.rmtree(self.out + '.new', ignore_errors=True); self.bar.setRange(0, 100); self.bar.setValue(1); self.step.setText('Reading the game file…')
-        script = (f'NX_PACK_ENV="{PE}" exec "{self.src}/linux/tools/linux-pack.sh" "$0" -j 4 -J 6 --made-by "AppImage {SRC["commit"]}" --out "{self.out}.new"')
+        script = (f'NX_PACK_ENV="{PE}" "{self.src}/linux/tools/linux-pack.sh" "$0" -j 4 -J 6 --made-by "AppImage {SRC["commit"]}" --out "{self.out}.new"'
+                  + ('' if self.full else ' --no-shaders') + ' || exit $?')
+        if not self.full:
+            # A Quick pack has no shader library: the game's starter list (shader_first.tsv) is built now, before the first start, into the folder the host's
+            # layer reads (layer_watch.py's): a game's first frames can need shaders whose work is skipped while they are missing (Star Fox on the desktop,
+            # 2026-11-17: five compute shaders missing in the first 30 s, black picture with sound for the whole run). It never fails the Prepare: what is
+            # not built now is built while playing
+            lay = os.path.join(os.path.dirname(PE), self.busy, 'temp', 'shader_layer'); tools = os.path.join(self.src, 'dm/gfx/tools')
+            first = os.path.join(self.src, 'dm/games', self.busy, 'shader_first.tsv')
+            env = (f'DOTNET_ROOT="{PE}/dotnet" XLATE="{tools}/dmsh_xlate_bin/dmsh_xlate-linux" J=4 DMSH_VK_PROCS=2 DMSH_VK_XLATE_J=4')
+            script += (f'; n={shq(self.nup)}; [ -f "{first}" ] || exit 0; echo "stage: building the shaders the game needs first (a minute or two)"; '
+                       f'rf=$(awk -F"\\t" \'$1=="romfs"{{print $2; exit}}\' "{self.out}.new/pack.tsv"); case "$rf" in *:*) sr="$n:${{rf#*:}}";; *) sr="$n";; esac; '
+                       f'mp=; case "$sr" in *:*/romfs) mp="${{sr%/romfs}}/exefs/main";; esac; mkdir -p "{lay}"; cd "{tools}" && '
+                       f'( {env} "{PE}/venv/bin/python" shader_seed.py --game {self.busy} --root "{lay}" --first "{first}" --romfs "$sr" ${{mp:+--main}} ${{mp:+"$mp"}} --jobs 4 | tee /dev/stderr | '
+                       f'grep -q "^seeded [1-9]" && touch "{lay}/.seeded-{SRC.get("chain")}" && {env} "{PE}/venv/bin/python" shader_layer.py --game {self.busy} --root "{lay}" --build --batch 100000 ) '
+                       f'|| echo "stage: the first shaders were not built now: they are built while you play"; exit 0')
         open(self.log, 'w').close(); self.start(script.replace('"$0"', shq(self.nup)), self.pack_done)
 
     def output(self):

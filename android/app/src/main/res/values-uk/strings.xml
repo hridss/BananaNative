@@ -231,6 +231,9 @@
     <string name="settings_updates">Оновлення</string>
     <string name="settings_what_s_new">Що нового</string>
     <string name="settings_while_home_shows_a_game">Поки на головному екрані триває підготовка гри</string>
+    <string name="settings_update_shaders_automatically">Оновлювати шейдери автоматично</string>
+    <string name="settings_auto_shader_update_on">Гра із застарілими шейдерами оновлює їх у фоновому режимі</string>
+    <string name="settings_auto_shader_update_off">Вимкнено: сторінка гри оновлює їх на ваш запит</string>
     <string name="settings_xbox_button_label_swap">Підміна позначень кнопок під Xbox</string>
     <string name="game_1_player">1 гравець</string>
     <string name="game_3d_scene">3D-сцена</string>
@@ -813,6 +816,9 @@
     <string name="home_lossless_dll_missing">" · відсутній Lossless.dll"</string>
     <string name="home_why">Чому?</string>
     <string name="home_shaders_need_one_update">Шейдерам потрібне разове оновлення</string>
+    <string name="home_other_pack_has_shaders">Інший пак має шейдери</string>
+    <string name="home_other_pack_has_shaders_message">Пак цієї картки не має шейдерів для цієї версії застосунку. Інший пак %1$s їх має. Використати той пак для цієї картки?</string>
+    <string name="home_use_that_pack">Використати той пак</string>
     <string name="home_nup">" (.nup)"</string>
     <string name="game_applies_from_the_next_frame">Застосовується з наступного кадру, зберігається для цієї гри (той самий параметр, що й Налаштування гри › Апскейлер).</string>
     <string name="game_applies_from_the_next_frame_2">Діє з наступного кадру й зберігається для цієї гри (це те саме налаштування, що Налаштування гри › Масштабування екрана).</string>
@@ -1424,4 +1430,12 @@
     <string name="settings_build_preview">Ти користуєшся тестовою збіркою (v%1$s). Тестові збірки можуть ламати ігри. Стабільна v%2$s замінить її, коли вийде.</string>
     <string name="settings_build_preview_channel">Твій канал: %1$s. Коли вийде стабільна v%2$s, застосунок переведе тебе на неї.</string>
     <string name="settings_build_hotfix">Ти користуєшся хотфіксом (v%1$s): невеликим виправленням між щотижневими випусками. Наступний щотижневий випуск його містить.</string>
+    <string name="common_picture_size">Розмір зображення</string>
+    <string name="game_lsfg_on_target">Увімкнено · %1$d к/с</string>
+    <string name="game_own_follows_settings">Ця гра використовує Налаштування (%1$s). Зміна тут стане власним налаштуванням цієї гри.</string>
+    <string name="game_own_settings_note">Це власні налаштування цієї гри. «Типово з Налаштувань» знову повертає Налаштування.</string>
+    <string name="game_use_settings_default">Типово з Налаштувань</string>
+    <string name="settings_touch_look">Вигляд екранного керування</string>
+    <string name="settings_panel_look">Вигляд ігрової панелі</string>
+    <string name="settings_player_one_away">Вибраний контролер (не під’єднано)</string>
 </resources>

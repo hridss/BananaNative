@@ -121,10 +121,36 @@ int vka_memu_vs_feeds(vka_shader *vs, vka_shader *fs) {
 
 // ---------- The arena ----------
 // One per submission in flight: taken at the submission's first emulated batch (its counter cleared in the command buffer), given the submission's fence at its commit
-// (vka_memu_retire), free again once that fence is done. Its control words are host-visible: before reuse, the most the last submission asked for is read, and an arena
-// that was too small is made again larger (to DM_VK_MESH_EMU_MB, default 256 MiB; it starts at 16 MiB)
+// (vka_memu_retire), free again once that fence is done. Each batch hands it out from its start (vka_memu_draw.inc memu_restart, DM_VK_MESH_EMU_RESET), so it holds the
+// largest batch, not the whole submission. Its control words are host-visible: before reuse, the most a batch of the last submission asked for is read, and an arena
+// that was too small is made again larger (to DM_VK_MESH_EMU_MB, default 256 MiB, and the device's maxStorageBufferRange, 128 MiB on Turnip; it starts at 16 MiB)
 enum { NARENA = 6 };
-typedef struct { VkBuffer buf, ctl; VkDeviceMemory mem, cmem; volatile uint32_t *cp; uint32_t words; uint64_t fence; int used; } arena;
+// The most mesh draws a batch takes (vka_exec.c memu_walk; at most VKA_MEMU_ORDER_MAX, 128). One batch's output can still pass the arena's limit (a Hyrule Field
+// batch of Ocarina of Time asked 128.5 MiB on Turnip, whose maxStorageBufferRange is 128 MiB): when a batch of the last submission asked for more than the arena
+// at its limit, the next batches take half as many draws (down to 8), and after 64 submissions whose largest batch used at most a third of the limit they may
+// take twice as many again, but never again as many as the size that outgrew it, for the rest of the run (the phone: back at 128 after a few seconds, the same
+// Hyrule Field batches outgrew it again). DM_VK_MESH_EMU_BATCH=<n> (live) fixes it instead
+static _Atomic int g_bcap = 128; static int g_bcap_calm, g_bceil = 128;
+int vka_memu_batch_cap(void) {
+    int f = VKA_ENV("DM_VK_MESH_EMU_BATCH", 0);
+    if (f > 0) return f < 128 ? f : 128;
+    return atomic_load_explicit(&g_bcap, memory_order_relaxed);
+}
+static void bcap_after(uint64_t asked, uint32_t maxw, int used) {   // the largest batch of a submission that ended (made with batches of at most used draws), against the arena's limit (words)
+    int c = atomic_load_explicit(&g_bcap, memory_order_relaxed);
+    if (asked > maxw) {
+        // Halved from the size that submission was made with, not from the current one: the submissions still in flight when the first overflow is read
+        // were made with the old size and report the same overflow (the phone: four in two seconds took 128 down to 8)
+        int n = used / 2 > 8 ? used / 2 : 8;
+        g_bcap_calm = 0;
+        if (n < c) { atomic_store(&g_bcap, n); if (g_bceil > n) g_bceil = n;
+            VLOG("mesh draws through compute: a batch of at most %d draws asked for %.1f MiB, more than the arena's %u MiB: batches take at most %d draws now, for the rest of the run (DM_VK_MESH_EMU_BATCH)", used, asked / 262144.0, maxw >> 18, n); }
+    } else if (c < g_bceil && asked * 3 <= maxw && ++g_bcap_calm >= 64) {
+        g_bcap_calm = 0; atomic_store(&g_bcap, c * 2);
+        VLOG("mesh draws through compute: 64 submissions with every batch within a third of the arena's %u MiB: batches take at most %d draws again", maxw >> 18, c * 2);
+    } else if (asked * 3 > maxw) g_bcap_calm = 0;
+}
+typedef struct { VkBuffer buf, ctl; VkDeviceMemory mem, cmem; volatile uint32_t *cp; uint32_t words; uint64_t fence; int used, bcap; } arena;   // bcap: the batch size its submission was made with
 static arena g_ar[NARENA]; static int g_cur = -1;
 static void arena_free(arena *a) {
     if (a->buf) { vk.vkDestroyBuffer(V.dev, a->buf, NULL); vk.vkFreeMemory(V.dev, a->mem, NULL); }
@@ -152,6 +178,7 @@ static int arena_make(arena *a, uint32_t words) {
     return 1;
 }
 int vka_memu_arena(VkCommandBuffer cb, VkBuffer *buf, VkBuffer *ctl, uint32_t *cap) {
+    int fresh = 0;
     if (g_cur < 0) {
         uint64_t done = vka_done(); int k = -1;
         for (int i = 0; i < NARENA && k < 0; i++) if (g_ar[i].buf && !g_ar[i].used && g_ar[i].fence <= done) k = i;
@@ -159,21 +186,23 @@ int vka_memu_arena(VkCommandBuffer cb, VkBuffer *buf, VkBuffer *ctl, uint32_t *c
         if (k < 0) { VRED_ONCE("mesh draws through compute: more than %d submissions in flight with them; the draws of this one are skipped", NARENA); return 0; }
         arena *a = &g_ar[k];
         uint32_t maxw = (uint32_t)((uint64_t)VKA_ENV("DM_VK_MESH_EMU_MB", 256) << 18), want = 4u << 20;   // (words: 16 MiB to start)
-        uint32_t rng = V.props.limits.maxStorageBufferRange / 4; if (rng && maxw > rng) maxw = rng;   // (bound whole as a storage buffer)
+        uint32_t rng = V.props.limits.maxStorageBufferRange / 4, byrng = rng && maxw > rng; if (byrng) maxw = rng;   // (bound whole as a storage buffer)
         if (maxw < want) want = maxw;
+        if (a->buf && a->cp) bcap_after(a->cp[VKA_MEMU_CTL_ASKED], maxw, a->bcap ? a->bcap : 128);   // (the submission that used this arena last is done: its fence was reached)
         if (a->buf && a->cp && a->cp[VKA_MEMU_CTL_ASKED] > a->words && a->words < maxw) {   // the last submission asked for more: larger, up to the limit
             uint64_t asked = a->cp[VKA_MEMU_CTL_ASKED], w = a->words; while (w < asked && w < maxw) w *= 2; if (w > maxw) w = maxw;
-            VLOG("mesh draws through compute: a submission asked for %.1f MiB of arena, it had %.1f: now %.1f MiB (DM_VK_MESH_EMU_MB=%u at most)", asked / 262144.0, a->words / 262144.0, w / 262144.0, maxw >> 18);
+            VLOG("mesh draws through compute: a batch asked for %.1f MiB of arena, it had %.1f: now %.1f MiB (at most %u MiB: %s)", asked / 262144.0, a->words / 262144.0, w / 262144.0, maxw >> 18,
+                 byrng ? "the device's maxStorageBufferRange" : "DM_VK_MESH_EMU_MB");
             arena_free(a); want = (uint32_t)w;
-        } else if (a->buf && a->cp && a->cp[VKA_MEMU_CTL_ASKED] > a->words) VRED_ONCE("mesh draws through compute: a submission asked for %.1f MiB of arena, more than DM_VK_MESH_EMU_MB=%u: some mesh workgroups were not drawn",
-                                                                                    a->cp[VKA_MEMU_CTL_ASKED] / 262144.0, maxw >> 18);
+        } else if (a->buf && a->cp && a->cp[VKA_MEMU_CTL_ASKED] > a->words) VRED_ONCE("mesh draws through compute: a batch asked for %.1f MiB of arena, more than %u MiB (%s): some mesh workgroups were not drawn",
+                                                                                    a->cp[VKA_MEMU_CTL_ASKED] / 262144.0, maxw >> 18, byrng ? "the device's maxStorageBufferRange" : "DM_VK_MESH_EMU_MB");
         else if (a->buf) want = a->words;
         if (!a->buf && !arena_make(a, want)) { VRED_ONCE("mesh draws through compute: no arena of %.0f MiB; the mesh draws are skipped", want / 262144.0); return 0; }
-        a->used = 1; g_cur = k;
+        a->used = 1; g_cur = k; fresh = 1; a->bcap = vka_memu_batch_cap();
         vk.vkCmdFillBuffer(cb, a->ctl, 0, 64, 0);   // (outside a pass; the batch's barrier after it)
     }
     arena *a = &g_ar[g_cur]; *buf = a->buf; *ctl = a->ctl; *cap = a->words;
-    return 1;
+    return fresh ? 2 : 1;
 }
 void vka_memu_retire(uint64_t fence) { if (g_cur >= 0) { g_ar[g_cur].fence = fence; g_ar[g_cur].used = 0; g_cur = -1; } }
 

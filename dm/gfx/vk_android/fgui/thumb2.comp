@@ -1,0 +1,17 @@
+// SPDX-License-Identifier: MIT
+#version 450
+// one thumbnail (C's) for the cut guard, one invocation per thumb pixel: the mean luma of its 8x8 picture pixels from 16 bilinear taps at the centres
+// of its 2x2 quads (the same box mean as thumb.comp, with A's thumbnail kept from the frame before instead of made again)
+layout(local_size_x = 16, local_size_y = 16) in;
+layout(set = 0, binding = 0) uniform sampler2D src;
+layout(set = 0, binding = 1, std430) buffer Thumbs { float th[]; };
+layout(push_constant) uniform PC { uint W, H, off, bw, bh, st; } pc;   // st: tap step 2 (16 taps an 8x8 block) or 4 (4 taps at +2, +6, when the block sides are multiples of 4)
+const uint TW = 240u, TH = 135u;
+void main() {
+    uvec2 t = gl_GlobalInvocationID.xy;
+    if (t.x >= TW || t.y >= TH) return;
+    vec3 k = vec3(0.2126, 0.7152, 0.0722) * 255.0; float s = 0.0; vec2 sz = vec2(pc.W, pc.H);
+    float h = float(pc.st / 2u);
+    for (uint y = 0u; y < pc.bh; y += pc.st) for (uint x = 0u; x < pc.bw; x += pc.st) s += dot(textureLod(src, (vec2(t * uvec2(pc.bw, pc.bh) + uvec2(x, y)) + h) / sz, 0.0).rgb, k);
+    th[pc.off + t.y * TW + t.x] = s / float((pc.bw / pc.st) * (pc.bh / pc.st));
+}

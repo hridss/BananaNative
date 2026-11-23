@@ -1,4 +1,4 @@
-# Orbitals (Switch 2, Deluxe Edition, update v327680, version 1.1.2.0)
+# Orbitals (Switch 2, Deluxe Edition, update v327680, version 1.1.2.0). In bring-up on Android: see README.md
 # Shapefarm's two-player co-op game on Unreal Engine 5.6.1 (SDK MW+EpicGames+UnrealEngine-5_6_1 in main; SF_GLSL_SWITCH2 / SP_GLSL_SWITCH2 shaders), SDK 21.4.2 built for the Switch 2 (Ounce), NVN2,
 # Wwise sound, Bink 2 movies. Modules main + subsdk0 (NintendoSDK_movie) + sdk. Packed from a NUP container (scripts/pack_nup.py); the Deluxe add-on is a licence with no content
 # Format: see dm/games/README.md
@@ -13,6 +13,9 @@ ipa	Orbitals.ipa
 app_category	public.app-category.adventure-games
 # a 3D field for two players, both sticks in use
 pad_layout	full
+# Handheld mode (README.md "Android", 2026-11-15): Unreal's Switch 2 handheld profile renders the scene into 1600x900 targets instead of 1920x1080 (the graphics
+# scale changes nothing); split-screen gameplay on the AYN Thor 14.4 -> 18.0 fps, GPU 69 -> 55 ms, the picture slightly softer
+op_mode	handheld
 
 # ---- Versions ----
 # v327680 is the update's title version, the title screen says 1.1.2.0-178968 (the NUP carries no display version)
@@ -23,19 +26,33 @@ shader_versions	v327680
 # ---- Files ----
 modules	main subsdk0 sdk
 romfs_marker	Orbitals/Content/Paks/Orbitals-Switch2.ucas
-zip_store	.bk2:.pak:.ttf:.txt:.ucas:.utoc:.metallib
+zip_store	.bk2:.pak:.ttf:.txt:.ucas:.utoc
 
 # ---- Graphics ----
 # The game sets near-zero NVN depth (nvnDeviceSetDepthMode); offline pipeline bases use main0_z.
 depth_mode	zero
+# Turnip renders every pass in system memory (README.md "Android", 2026-11-15): its bandwidth autotune puts the depth prepass (1,200 draws, 6.8 M vertices a frame) in GMEM,
+# where binning runs the vertex shader twice: 8.7 ms a 600-draw part against 5.4 in sysmem, every other pass the same. GPU 83 -> 72.5-75 ms a frame, 11.8 -> 13.1-13.7 fps
+turnip_env	TU_DEBUG=sysmem
+# Contiguous placed segments joined always, as before the host joined them only under memory-map pressure (vka_mem.c coalesce_pressure; README.md "Android",
+# 2026-11-15): the game finalizes pools and makes new ones on the same storage all through its gameplay; apart, each finalize gives its segment back and the new pool is
+# placed again, about 1.3 placements a frame: 16.5-17.5 fps against 17.7-18.1 with the joins (the maps stay at 11 % of the limit)
+place_coalesce_pct	0
+
+# ---- Recommended settings (the launcher, Recommend.java; dm/games/README.md recommend) ----
+# Qualcomm's own driver before 512.800 (driverID 8, major 512, minor below 800) -> an installed Turnip (driverID 18). README.md "Android": on the AYN Thor (Adreno 740) the stock
+# 512.676 corrupts the process heap (malloc_debug free_track caught it reading freed memory in libadreno_app_profiles.so ApplyApplicationProfile under vkCreateInstance;
+# the host's and the game's heap blocks overwritten, a crash within 25-75 s in every one of 12 runs), GPU about 25 ms a frame at the first screens; Turnip T30 ran 8 minutes
+# to the level load with none of it, GPU about 10.6 ms
+recommend	driver.id=8,driver.version&0xffc00000=0x80000000,driver.version&0x3ff000<0x320000	driver=18
 
 # ---- Memory ----
 # Unreal Engine 5.6: nninitStartup reserves one 62 GB region for the engine; the rewriter's engine-wide rules cut the FMallocBinned3 constructor call (the host runs Unreal's heap on a malloc zone,
 # dm/tools/ue_malloc.py, hle_uemalloc.c) and give the region what the alias region has room for (dm/tools/ue_region.py, hle_svc.c), after the SDK's node area cut to 62 MB (sdk_patches.py, the
-# SDK 21.4 rule). Engage's 5 GB block, as Yoshi and the Mysterious Book's: a 4.375 GB alias region for an iPhone (the Mac reserves 64 GB whatever this says). See the note's Memory section.
-# 9 GB application pool as the Switch 2's. The NPDM declares 20 MB of system resource, so virtual address memory is on
-mem_reserve	0x140000000
-mem_alias	0x118000000
+# SDK 21.4 rule). Android: the 16 GB alias region of the other Switch 2 profiles (Star Fox, Fire Emblem Fortune's Weave), address space only; upstream's Mac run mapped 2.56 GB of it in the
+# first area (the note's Memory section). 9 GB application pool as the Switch 2's. The NPDM declares 20 MB of system resource, so virtual address memory is on
+mem_reserve	0x550000000
+mem_alias	0x400000000
 mem_stack	0x10000000
 app_pool	0x240000000
 sys_resource	0x1400000
@@ -44,3 +61,49 @@ sys_resource	0x1400000
 # Two IoStore shader libraries in Orbitals-Switch2.utoc (global 4,515 and game 36,480 shaders) of NVN2 records (uepak.sage_record), written out as decoded archives by the NSP script's UE decode
 shader_groups	ShaderArchive-Global-=global ShaderArchive-=game
 shader_note	Orbitals shaders
+
+# Unreal's dynamic resolution (r.DynamicRes.OperationMode 2, 83.3-100 %) reads the GPU time between a frame's timestamp reports: with one time for the whole
+# submission it read 0 and stayed at 100 % while the GPU took ~58 ms a frame in the split-screen gameplay (2026-11-15: 10.5-11 -> 12.0 fps)
+gpu_timestamps	segment
+# The static meshes' coarser LODs nearer (r.StaticMeshLODDistanceScale, raised to 2, 2026-11-15): the frame is bound by its geometry (7.06 M primitives,
+# the shader launch block busy 97 %); at 2, 5.54 M primitives, GPU 71.8 -> 68.7 ms, 13.8 -> 14.4 fps, screenshots within the noise of two at the game's own scale
+ue_lod_scale	2
+# Coarser fragment shading on the soft passes (vka_draw.c vrs_pass; the Lighter shading option, DM_VK_VRS_COARSE): the lighting and translucency over the scene colour
+# (VkFormat 97) with the depth target (130), 9.8 ms of 42 at the 67 % floor, and the post-processing pass over the scene colour alone, 4.8 ms. At 2x2 on the AYN Thor (Mesa
+# main, split screen, cameras turning, 2026-11-17): 22.6 -> 25.0 fps, GPU 43.1 -> 38.7 ms; the lighting alone 23.2 -> 24.7, the post-processing pass alone 22.9 -> 23.9
+vrs_passes	c0:97 d:130,c0:97
+# The translucent lighting volume at 16 cells a side, always (ue_set without a toggle; r.TranslucencyLightingVolumeDim, the game's 32): its pass 2.4 -> 0.7 ms a frame
+# in handheld with both cameras turning, the hall alike by eye
+ue_set	r.TranslucencyLightingVolumeDim	16
+# The picture brought back to the output, always (2026-11-17, Docked 1080p under the 67 % resolution floor, live A/B with both cameras turning): the tonemapper's sharpening
+# at full strength (r.Tonemapper.Sharpen, the game's -1: its post-process settings), no GPU cost, outlines and text crisper; the upscale filter at 5 (r.Upscale.Quality, the
+# game's 2; from 3 to 5 about 0.7 ms a frame). The game outputs 1920x1080 itself, so the launcher's upscalers have nothing to scale: Unreal's own upscale is the one that counts
+ue_set	r.Tonemapper.Sharpen	1.0
+ue_set	r.Upscale.Quality	5
+# Game options: Unreal console variables the host holds (ue_set, hle_uecvar.c dm_ue_set_tick), each behind its toggle (measured at 1080p docked
+# on the AYN Thor): the translucent lighting volume off (r.TranslucentLightingVolume, GPU about 3.8 ms a frame less, light shafts and smoke slightly duller); the lights' draw
+# distance halved (r.LightMaxDrawDistanceScale 0.5: GPU 2.9 ms less); coarser static mesh LODs
+# (r.StaticMeshLODDistanceScale 3 over ue_lod_scale 2: 0.5 ms less); the dynamic resolution's floor at 83, 67 or 50 % (r.DynamicRes.MinScreenPercentage: the game sets
+# 83.3 at its start and 5 in split-screen gameplay, where its resolution then drops far for 30 fps, a blocky picture; held at 83.3 19.5 fps, 67 % 22.7, 50 % 27.1 with Mesa
+# main on 2026-11-17; of several on, the later row, the lower floor, holds); temporal anti-aliasing and upscaling instead of FXAA (r.AntiAliasingMethod 2, the game's 1; its
+# r.TemporalAA.Upsampling is already 1): under the 50 % floor, Docked 1080p, 23.2 -> 23.1 fps and a much sharper still picture; under the 67 % floor 22.0 -> 20.4 fps; the floors and the temporal
+# upscaling switch live from the in-game panel (2026-11-17)
+# The skeletal meshes one LOD coarser (r.SkeletalMeshLODBias 1, the game's 0, a global registered by reference): split screen at the 67 % floor 22.8 -> 23.8 fps, GPU
+# 1.6 ms less, the characters hardly different on screen (2026-11-17); live too
+ue_set	r.TranslucentLightingVolume	0	DM_UE_TRANSLUCENT_VOLUME_OFF
+ue_set	r.LightMaxDrawDistanceScale	0.5	DM_UE_LIGHT_DISTANCE
+ue_set	r.StaticMeshLODDistanceScale	3.0	DM_UE_COARSER_MESHES
+ue_set	r.SkeletalMeshLODBias	1	DM_UE_SKEL_LOD
+ue_set	r.DynamicRes.MinScreenPercentage	83.3	DM_UE_RES_FLOOR_83
+ue_set	r.DynamicRes.MinScreenPercentage	67.0	DM_UE_RES_FLOOR_67
+ue_set	r.DynamicRes.MinScreenPercentage	50.0	DM_UE_RES_FLOOR_50
+ue_set	r.AntiAliasingMethod	2	DM_UE_TAAU
+option	DM_UE_TRANSLUCENT_VOLUME_OFF	Particle light volume off	Faster (about 4 ms a frame): smoke, particles and light shafts lose some of their lighting and look slightly duller	restart
+option	DM_UE_LIGHT_DISTANCE	Shorter light distance	Distant lights turn off at half the distance: about 3 ms a frame faster, far lamps appear later	restart
+option	DM_UE_COARSER_MESHES	Coarser distant objects	Simpler versions of objects come nearer: fewer triangles, a little less detail at a distance	restart
+option	DM_VK_VRS_COARSE	Lighter shading	Lighting, translucency and a post-processing pass shaded once per 2x2 pixels: about 2.5 fps faster in split screen, outlines a little more stepped	live
+option	DM_UE_SKEL_LOD	Simpler characters	Characters drawn with their next, lighter level of detail: about 1 fps faster in split screen, hardly visible	live
+option	DM_UE_RES_FLOOR_83	Resolution floor 83 %	The sharpest floor: in split screen the game lets its resolution drop as far as 5 % for 30 fps, this keeps it at 83 % or more (slower)	live
+option	DM_UE_RES_FLOOR_67	Resolution floor 67 %	The dynamic resolution stays at 67 % or more: faster than 83 %, softer picture (wins over 83 %)	live
+option	DM_UE_RES_FLOOR_50	Resolution floor 50 %	Stays at 50 % or more: much faster in heavy scenes, visibly softer picture (wins over 83 and 67 %)	live
+option	DM_UE_TAAU	Temporal upscaling	Sharper picture under a resolution floor (Unreal's temporal anti-aliasing and upscaling instead of FXAA): best with the 50 % floor, may smear a little in fast motion	live

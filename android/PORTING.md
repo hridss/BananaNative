@@ -91,7 +91,7 @@ Status column: **done** is implemented on Android in this milestone; **stub** lo
 | `front_mac.m`, `pad_*.h`, `motion_*.h`, `haptics_apple.m` | AppKit / UIKit, GameController, CoreHaptics, CoreMotion, IOKit HID | a JNI shim from the Activity: `InputDevice` / `MotionEvent` / `KeyEvent` into `dm_input.h` and `dm_touch_set`, `ASensorManager` for motion, a rumble callback for `Vibrator` / `VibratorManager` (`dm/host/android/input_android.c`; the launcher calls it from `nxlaunch.c`) | done (not run on a phone); the launcher does not draw on-screen controls or vibrate yet |
 | `front_mac.m` | the window, `CAMetalLayer`, the text input box, the progress screen | a `SurfaceView` → `ANativeWindow` → `VkSurfaceKHR` (`nxhost_set_window`, `vka_present.c`); Android dialogs over JNI | window: done on the replay side; text input and progress screen: stub |
 | `memstat.m` | `malloc_zone_statistics` | `mallinfo` | not built |
-| `nvn_mtl.m` and the other Metal files | Metal, MetalFX | the NVN → Vulkan replay, `dm/gfx/vk_android` | memory, textures, clears, copies, fences, present: done; draws, dispatches: done; frame captures and their replay on the phone: done (`vka_capture.c`, `vka_replay.c`); CPU texel reads, statistics: stub |
+| `nvn_mtl.m` and the other Metal files | Metal, MetalFX | the NVN → Vulkan replay, `dm/gfx/vk_android` | memory, textures, clears, copies, fences, present: done; draws, dispatches: done; frame captures and their replay on the phone: done (`vka_capture.c`, `vka_replay.c`); CPU texel reads: stub; Metal's own statistics (render target bandwidth, argument buffers, resource use, vertex buffer bindings, packaged texture edges): off, with no `[RED]` line, since the replay has its own counters (`android_stub.c`) |
 
 ABI notes:
 

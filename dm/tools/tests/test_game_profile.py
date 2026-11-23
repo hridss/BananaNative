@@ -282,6 +282,51 @@ class LowRam(unittest.TestCase):
         self.assertIn("below the profile's app_pool (1 MiB)", out)
 
 
+class FrameGen(unittest.TestCase):   # the fg_* rows (the motion-vector frame generator, vka_fgprof.c): one value a row, each checked; none of them, no lines
+    PRE, LAY = 'fg_ui_pre\t4e9941d610533734\n', 'fg_ui_layer\tc478e7c70173f0b8\n'
+
+    def text(self, rows):
+        with tempfile.TemporaryDirectory() as d:
+            Path(d, ID).mkdir()
+            (Path(d, ID) / 'game.tsv').write_text(TSV + rows)
+            out = Path(d, ID) / 'game.h'
+            r = subprocess.run([sys.executable, str(GAME), 'header', ID, str(out)], env={**os.environ, 'DM_GAMES_DIR': d}, capture_output=True, text=True)
+            return r.returncode, (r.stderr + r.stdout).strip(), out.read_text() if out.exists() else ''
+
+    def test_none_no_lines(self):
+        rc, out, h = self.text('')
+        self.assertEqual((rc, out), (0, ''))
+        self.assertNotIn('DM_GAME_FG_', h)
+
+    def test_valid(self):
+        rc, out, h = self.text('dlss_standin\t1\nfg_mv\ton\n' + self.PRE + self.LAY + 'fg_feature\tuiflow\nfg_feature\tuigate\nfg_feature\tcut\n'
+                               'fg_tune\tratio\t0.05\nfg_tune\tcut_mv\t0.220848056537\n')
+        self.assertEqual((rc, out), (0, ''))
+        for line in ('#define DM_GAME_FG_MV 1', '#define DM_GAME_FG_UI_PRE 0x4e9941d610533734ull', '#define DM_GAME_FG_UI_LAYER 0xc478e7c70173f0b8ull',
+                     '#define DM_GAME_FG_FEATURES 0x43', '#define DM_GAME_FG_TUNE_RATIO 0.05', '#define DM_GAME_FG_TUNE_CUT_MV 0.220848056537'):
+            self.assertIn(line, h)
+
+    def test_ui_rules(self):   # the three UI-flow rules of the motion-vector gate: bits 7, 8, 9
+        rc, out, h = self.text('dlss_standin\t1\nfg_mv\ton\n' + self.PRE + self.LAY + 'fg_feature\tuiflow\nfg_feature\tuigate\nfg_feature\tuipick\nfg_feature\tuicons\n'
+                               'fg_feature\tuismall\n')
+        self.assertEqual((rc, out), (0, ''))
+        self.assertIn('#define DM_GAME_FG_FEATURES 0x383', h)
+
+    def test_rejected(self):
+        for rows, msg in (('fg_mv\ton\n', 'needs dlss_standin 1'), ('fg_mv\tyes\n', 'fg_mv must be on or off'), ('fg_repeat\tx\n', 'unknown frame generation key'),
+                          (self.PRE, 'go together'), ('fg_ui_pre\t4E9941D610533734\n' + self.LAY, 'fg_ui_pre takes one fragment shader key'),
+                          (self.PRE + self.LAY + 'fg_ui_blend\ttransmittance\n', 'unknown frame generation key'), ('fg_feature\tuiflow,static\n', 'fg_feature takes one of'),
+                          ('fg_feature\tuiflow\n', 'need the UI layer'), (self.PRE + self.LAY + 'fg_feature\tuigate\n', 'uigate is a rule of uiflow'),
+                          (self.PRE + self.LAY + 'fg_feature\tuiflow\nfg_feature\tuipick\n', 'uipick is a rule of uigate'),
+                          (self.PRE + self.LAY + 'fg_feature\tuiflow\nfg_feature\tuismall\n', 'uismall is a rule of uigate'),
+                          ('fg_feature\tstaticz\n', 'staticz is a rule of static'), ('fg_feature\tcut\nfg_feature\tcut\n', 'cut twice'),
+                          ('fg_tune\tratio=0.05\n', 'fg_tune takes <name> <value>'), ('fg_tune\tfill\t7\n', 'fg_tune fill takes a whole number from 0 to 6'),
+                          ('fg_tune\tuisinteg\t1\n', '(0 or 2)'), ('fg_tune\ttol\t40\nfg_tune\ttol\t41\n', 'fg_tune tol twice'), ('fg_mv\ton\nfg_mv\toff\n', 'one row at most')):
+            rc, out, _ = self.text(rows)
+            self.assertNotEqual(rc, 0, rows)
+            self.assertIn(msg, out, rows)
+
+
 class SkipLayers(unittest.TestCase):   # skip_layers (DM_VK_SKIP_FS through the launcher's Speedhack): keys found to be visible elsewhere stay out
     def test_oot_castle_town_material_out(self):
         sys.path.insert(0, str(REPO / 'dm/games')); sys.path.insert(0, str(REPO / 'dm/tools'))
@@ -291,6 +336,104 @@ class SkipLayers(unittest.TestCase):   # skip_layers (DM_VK_SKIP_FS through the 
         # "Hidden layers that are not hidden everywhere")
         self.assertNotIn('5684f5e658eda176', keys)
         self.assertTrue(all(len(k) == 16 and int(k, 16) >= 0 for k in keys))
+class UeSet(unittest.TestCase):   # ue_set (hle_uecvar.c dm_ue_set_tick): rows of a name ue_cvar.py finds, a number, an optional switch; REFS marked
+    def test_rows(self):
+        with tempfile.TemporaryDirectory() as d:
+            Path(d, ID).mkdir()
+            (Path(d, ID) / 'game.tsv').write_text(TSV + 'ue_set\tr.TranslucencyLightingVolumeDim\t16\tDM_UE_LIGHT_VOLUME_16\nue_set\tr.StaticMeshLODDistanceScale\t3.0\n')
+            r = subprocess.run([sys.executable, str(GAME), 'header', ID, str(Path(d, ID) / 'game.h')], env={**os.environ, 'DM_GAMES_DIR': d}, capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn('#define DM_GAME_UE_SET {{"r.TranslucencyLightingVolumeDim", "16", "DM_UE_LIGHT_VOLUME_16", 1}, {"r.StaticMeshLODDistanceScale", "3.0", "", 0}}',
+                          (Path(d, ID) / 'game.h').read_text())
+
+    def test_without_rows(self):   # no table at all: the host's tick does nothing
+        with tempfile.TemporaryDirectory() as d:
+            Path(d, ID).mkdir()
+            (Path(d, ID) / 'game.tsv').write_text(TSV)
+            r = subprocess.run([sys.executable, str(GAME), 'header', ID, str(Path(d, ID) / 'game.h')], env={**os.environ, 'DM_GAMES_DIR': d}, capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertNotIn('DM_GAME_UE_SET', (Path(d, ID) / 'game.h').read_text())
+
+    def test_rejected(self):
+        for rows in ('ue_set\tr.Unknown\t1\n', 'ue_set\tr.StaticMeshLODDistanceScale\tthree\n', 'ue_set\tr.StaticMeshLODDistanceScale\t3.0\tlower_case\n'):
+            rc, out = header(rows)
+            self.assertNotEqual(rc, 0, rows)
+            self.assertIn('ue_set takes', out, rows)
+
+
+class UeLodScale(unittest.TestCase):   # ue_lod_scale (hle_uecvar.c dm_ue_lod_tick): a scale in [0, 16], the header's float
+    def test_rows(self):
+        with tempfile.TemporaryDirectory() as d:
+            Path(d, ID).mkdir()
+            (Path(d, ID) / 'game.tsv').write_text(TSV + 'ue_lod_scale\t2\n')
+            r = subprocess.run([sys.executable, str(GAME), 'header', ID, str(Path(d, ID) / 'game.h')], env={**os.environ, 'DM_GAMES_DIR': d}, capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn('#define DM_GAME_UE_LOD_SCALE 2.0f', (Path(d, ID) / 'game.h').read_text())
+
+    def test_rejected(self):
+        for rows in ('ue_lod_scale\t-1\n', 'ue_lod_scale\t17\n', 'ue_lod_scale\ttwo\n'):
+            rc, out = header(rows)
+            self.assertNotEqual(rc, 0, rows)
+            self.assertIn('ue_lod_scale must be', out, rows)
+
+
+class PlaceCoalescePct(unittest.TestCase):   # place_coalesce_pct (vka_mem.c coalesce_pressure): a percentage, -1 when unset (the host's default)
+    def test_rows(self):
+        for rows, want in (('', '-1'), ('place_coalesce_pct\t0\n', '0'), ('place_coalesce_pct\t75\n', '75')):
+            with tempfile.TemporaryDirectory() as d:
+                Path(d, ID).mkdir()
+                (Path(d, ID) / 'game.tsv').write_text(TSV + rows)
+                r = subprocess.run([sys.executable, str(GAME), 'header', ID, str(Path(d, ID) / 'game.h')], env={**os.environ, 'DM_GAMES_DIR': d}, capture_output=True, text=True)
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertIn('#define DM_GAME_PLACE_COALESCE_PCT ' + want + '\n', (Path(d, ID) / 'game.h').read_text())
+
+    def test_rejected(self):
+        for rows in ('place_coalesce_pct\t-1\n', 'place_coalesce_pct\t101\n', 'place_coalesce_pct\tmost\n'):
+            rc, out = header(rows)
+            self.assertNotEqual(rc, 0, rows)
+            self.assertIn('place_coalesce_pct must be', out, rows)
+
+
+class VrsPasses(unittest.TestCase):   # vrs_passes (vka_draw.c vrs_pass): pass shapes, the header's string
+    def macro(self, rows):
+        with tempfile.TemporaryDirectory() as d:
+            Path(d, ID).mkdir()
+            (Path(d, ID) / 'game.tsv').write_text(TSV + rows)
+            r = subprocess.run([sys.executable, str(GAME), 'header', ID, str(Path(d, ID) / 'game.h')], env={**os.environ, 'DM_GAMES_DIR': d}, capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            return [ln for ln in (Path(d, ID) / 'game.h').read_text().splitlines() if 'VRS_PASSES' in ln]
+
+    def test_rows(self):
+        self.assertEqual(self.macro(''), ['#define DM_GAME_VRS_PASSES ""'])
+        self.assertEqual(self.macro('vrs_passes\tc0:97 d:130, c0:97\n'), ['#define DM_GAME_VRS_PASSES "c0:97 d:130,c0:97"'])
+        self.assertEqual(self.macro('vrs_passes\tc0:97 c1:64 c2:44 d:130\n'), ['#define DM_GAME_VRS_PASSES "c0:97 c1:64 c2:44 d:130"'])
+
+    def test_rejected(self):
+        for rows in ('vrs_passes\tc0:97;d:130\n', 'vrs_passes\tc9:97\n', 'vrs_passes\td:130 c0:97\n', 'vrs_passes\tc0:97C\n', 'vrs_passes\tlight\n'):
+            rc, out = header(rows)
+            self.assertNotEqual(rc, 0, rows)
+            self.assertIn('vrs_passes takes', out, rows)
+
+
+class TurnipEnv(unittest.TestCase):   # turnip_env (vka_driver.c turnip_env): Mesa variables as NAME=value words, the header's string
+    def macro(self, rows):
+        with tempfile.TemporaryDirectory() as d:
+            Path(d, ID).mkdir()
+            (Path(d, ID) / 'game.tsv').write_text(TSV + rows)
+            r = subprocess.run([sys.executable, str(GAME), 'header', ID, str(Path(d, ID) / 'game.h')], env={**os.environ, 'DM_GAMES_DIR': d}, capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            return [ln for ln in (Path(d, ID) / 'game.h').read_text().splitlines() if 'TURNIP_ENV' in ln]
+
+    def test_rows(self):
+        self.assertEqual(self.macro(''), ['#define DM_GAME_TURNIP_ENV ""'])
+        self.assertEqual(self.macro('turnip_env\tFD_DEV_FEATURES=enable_tp_ubwc_flag_hint=1\n'), ['#define DM_GAME_TURNIP_ENV "FD_DEV_FEATURES=enable_tp_ubwc_flag_hint=1"'])
+        self.assertEqual(self.macro('turnip_env\tTU_DEBUG=sysmem,nolrz  TU_AUTOTUNE_ALGO=profiled\n'), ['#define DM_GAME_TURNIP_ENV "TU_DEBUG=sysmem,nolrz TU_AUTOTUNE_ALGO=profiled"'])
+
+    def test_rejected(self):
+        for rows in ('turnip_env\tDM_VK_X=1\n', 'turnip_env\tTU_DEBUG\n', 'turnip_env\tTU_DEBUG=\n', 'turnip_env\tTU_DEBUG=a"b\n', 'turnip_env\tTU_DEBUG=a;b\n', 'turnip_env\ttu_debug=sysmem\n'):
+            rc, out = header(rows)
+            self.assertNotEqual(rc, 0, rows)
+            self.assertIn('turnip_env takes', out, rows)
 
 
 if __name__ == '__main__':

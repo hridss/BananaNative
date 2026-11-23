@@ -268,6 +268,7 @@ static void pace_tick(double period_s) {
          (unsigned long long)f, s, itv, nf / s, vkpace_pct(P.gpu_us, P.ng, 50), vkpace_pct(P.gpu_us, P.ng, 90), vkpace_pct(P.span_us, P.ns, 50), vkpace_pct(P.span_us, P.ns, 90),
          nf ? (rec - P.rec0) / 1e6 / nf : 0.0, nf ? (cpu - P.cpu0) / 1e6 / nf : 0.0, nf ? (draws - P.draws0) / nf : 0.0, flb, adpf, wfps, hz, th, (double)head, cpus, gpus);
     pace_cost(f, nf, draws - P.draws0, nf ? (rec - P.rec0) / 1e6 / nf : 0.0);
+    { void vka_kgsl_perf(uint64_t, double); vka_kgsl_perf(f, nf); }   // DM_VK_KGSL_PERF: the GPU's performance counters a frame over the same window (vka_dev.c)
     vkpace_reset(&P, now, f, draws, rec, cpu);
 }
 // hle_nvn.c's time-constraint request for its acquire / present thread (Apple's THREAD_TIME_CONSTRAINT_POLICY): that thread joins the session, at display priority

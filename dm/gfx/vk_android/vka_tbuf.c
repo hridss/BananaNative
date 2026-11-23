@@ -17,7 +17,7 @@
 
 uint64_t vka_frame(void);
 void vka_mem_describe(uint64_t addr, char *out, size_t n);   // (vka_mem.c, diagnostics)
-enum { ROW = 16384, NVIEW = 256, NIMG = 256 };
+enum { ROW = 16384, NVIEW = 4096, NIMG = 256 };   // NVIEW: Orbitals' split-screen frame binds ~5,200 texel buffers over ~1,240 views
 
 static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;
 
@@ -39,43 +39,87 @@ static int not_placed(const tb_t *t, const char *as) {
 // ---------- Texel buffer views ----------
 typedef struct { VkBuffer buf; VkDeviceSize off, range; VkFormat fmt; VkBufferView v; uint64_t last; } tview;
 static tview g_v[NVIEW]; static int g_nv; static uint32_t g_vgen;
+// The views by (buffer, offset, range, format): an open-addressing table of indices into g_v (+1, 0 empty), twice its size, rebuilt when a view is replaced or all go.
+// A linear walk of the views cost Orbitals ~300 entries a binding at ~5,200 bindings a frame (as the per-submission list before: ~11 ms of 28.5 of the draws' recording)
+enum { NHASH = 2 * NVIEW };
+static uint16_t g_vh[NHASH];
+static unsigned vh_of(VkBuffer buf, VkDeviceSize off, VkDeviceSize range, VkFormat fmt) {
+    uint64_t x = (uint64_t)(uintptr_t)buf * 0x9e3779b97f4a7c15ull ^ off * 0xbf58476d1ce4e5b9ull ^ range * 0x94d049bb133111ebull ^ (uint64_t)fmt;
+    x ^= x >> 31; return (unsigned)(x ^ x >> 17) & (NHASH - 1);
+}
+static void vh_put(int i) { unsigned h = vh_of(g_v[i].buf, g_v[i].off, g_v[i].range, g_v[i].fmt); while (g_vh[h]) h = (h + 1) & (NHASH - 1); g_vh[h] = (uint16_t)(i + 1); }
+static void vh_rebuild(void) { memset(g_vh, 0, sizeof g_vh); for (int i = 0; i < g_nv; i++) vh_put(i); }
+static int vh_find(VkBuffer buf, VkDeviceSize off, VkDeviceSize range, VkFormat fmt) {
+    for (unsigned h = vh_of(buf, off, range, fmt); g_vh[h]; h = (h + 1) & (NHASH - 1)) {
+        const tview *t = &g_v[g_vh[h] - 1];
+        if (t->buf == buf && t->off == off && t->range == range && t->fmt == fmt) return g_vh[h] - 1;
+    }
+    return -1;
+}
 static void destroy_view(void *a) { vk.vkDestroyBufferView(V.dev, (VkBufferView)a, NULL); }
 static void retire_view(VkBufferView v) { if (v) vka_after(vka_fence_last(), destroy_view, (void *)v); }
 // DM_VK_TBUF (live; A/B): 1 (default) binds buffer textures as above, 2 leaves the storage texel buffers unbound (shaders read buffer textures but write none), 0 binds none (as before)
 static int tbuf_mode(void) { return VKA_ENV("DM_VK_TBUF", 1); }
-VkBufferView vka_tbuf_view(int id, int writes) {
+// The view's format in the shader's numeric class (want: 0 float, 1 uint, 2 sint; vka_fmt.kind numbers them the same), at the buffer texture's texel size. A typed buffer
+// the engine made with one format and a shader declares with another class (Unreal Engine's RWBuffer<uint> over a float buffer) is read and written as raw bits on NVN;
+// a view of the texture's own format would convert them, and Orbitals' indirect dispatch arguments written that way hung the GPU at its level load
+static VkFormat class_twin(const vka_fmt *f, int want) {
+    if (want == f->kind) return f->vk;
+    static const VkFormat tw[3][5] = {   // [class][size: 1, 2, 4, 8, 16 bytes]
+        {VK_FORMAT_R8_UNORM, VK_FORMAT_R16_SFLOAT, VK_FORMAT_R32_SFLOAT, VK_FORMAT_R32G32_SFLOAT, VK_FORMAT_R32G32B32A32_SFLOAT},
+        {VK_FORMAT_R8_UINT, VK_FORMAT_R16_UINT, VK_FORMAT_R32_UINT, VK_FORMAT_R32G32_UINT, VK_FORMAT_R32G32B32A32_UINT},
+        {VK_FORMAT_R8_SINT, VK_FORMAT_R16_SINT, VK_FORMAT_R32_SINT, VK_FORMAT_R32G32_SINT, VK_FORMAT_R32G32B32A32_SINT}};
+    int b = f->bpb, s = b == 1 ? 0 : b == 2 ? 1 : b == 4 ? 2 : b == 8 ? 3 : b == 16 ? 4 : -1;
+    return s < 0 || want < 0 || want > 2 ? VK_FORMAT_UNDEFINED : tw[want][s];
+}
+VkBufferView vka_tbuf_view(int id, int writes, int want) {
     int mode = tbuf_mode(); if (!mode || (writes && mode == 2)) return VK_NULL_HANDLE;
-    tb_t t; if (!tb_of(id, &t)) return VK_NULL_HANDLE;
+    tb_t t;
+    if (!tb_of(id, &t)) { static _Atomic int k; if (atomic_fetch_add(&k, 1) < 8) VRED("texel buffer binding: texture ID %d is no buffer texture with storage: bound as null", id); return VK_NULL_HANDLE; }
     uint64_t max = V.props.limits.maxTexelBufferElements, n = t.elems < max ? t.elems : max;
     if (n < t.elems) { static _Atomic int k; if (atomic_fetch_add(&k, 1) < 4) VRED("buffer texture ID %d: %u elements, the device's texel buffers hold %llu: the rest reads as zero", id, t.elems, (unsigned long long)max); }
     VkDeviceSize range = (VkDeviceSize)n * t.f.bpb, off = 0; VkBuffer buf = VK_NULL_HANDLE;
     if (vka_addr_run(t.addr, range, &buf, &off) < range) { not_placed(&t, "texel buffer"); return VK_NULL_HANDLE; }
-    VkDeviceSize al = V.props.limits.minTexelBufferOffsetAlignment;
+    // Vulkan 1.3's rule (texel buffer alignment, core): a multiple of the alignment in bytes, or of one texel (a component for a 3-component format) where the device takes
+    // single-texel offsets; the guest segments carry both texel buffer usages, so both rules hold. minTexelBufferOffsetAlignment (64 on the Adreno 740) left Orbitals' buffer
+    // textures at offsets the game picks at run time unbound in some runs
+    uint32_t tsz = t.f.bpb % 3 == 0 ? t.f.bpb / 3 : t.f.bpb;
+    VkDeviceSize au = !V.tb_align_u ? V.props.limits.minTexelBufferOffsetAlignment : V.tb_single_u && tsz < V.tb_align_u ? tsz : V.tb_align_u;
+    VkDeviceSize as_ = !V.tb_align_s ? V.props.limits.minTexelBufferOffsetAlignment : V.tb_single_s && tsz < V.tb_align_s ? tsz : V.tb_align_s;
+    VkDeviceSize al = au > as_ ? au : as_;
     if (al > 1 && off % al) {
         static _Atomic int k; if (atomic_fetch_add(&k, 1) < 8)
             VRED("buffer texture ID %d at %#llx: offset %#llx in its segment is not a multiple of the device's texel buffer alignment %llu: not bound", id, (unsigned long long)t.addr, (unsigned long long)off, (unsigned long long)al);
         return VK_NULL_HANDLE;
     }
-    VkFormat fmt = t.f.vk;   // (an sRGB format's raw twin: a texel buffer has no sRGB decode)
-    VkFormatProperties fp; vk.vkGetPhysicalDeviceFormatProperties(V.pd, fmt, &fp);
+    VkFormat fmt = class_twin(&t.f, want);   // (an sRGB format's raw twin: a texel buffer has no sRGB decode)
+    if (!fmt) { static _Atomic int k; if (atomic_fetch_add(&k, 1) < 8) VRED("buffer texture ID %d: no format of the shader's class %d at %u bytes a texel: not bound", id, want, t.f.bpb); return VK_NULL_HANDLE; }
+    if (writes) vka_tex_gw_opaque(t.addr, range);   // the shader may store into the memory: images over it are uploaded again (vka_tex.c)
+    uint64_t now = vka_frame();
+    pthread_mutex_lock(&g_mu);
+    uint32_t gen = atomic_load(&vka_seg_gen);
+    if (gen != g_vgen) { for (int i = 0; i < g_nv; i++) retire_view(g_v[i].v); g_nv = 0; g_vgen = gen; memset(g_vh, 0, sizeof g_vh); }
+    int hit = vh_find(buf, off, range, fmt);
+    if (hit >= 0) { g_v[hit].last = now; VkBufferView v = g_v[hit].v; pthread_mutex_unlock(&g_mu); return v; }
+    pthread_mutex_unlock(&g_mu);
+    VkFormatProperties fp; vk.vkGetPhysicalDeviceFormatProperties(V.pd, fmt, &fp);   // (only for a view not made yet: a driver call)
     VkFormatFeatureFlags need = writes ? VK_FORMAT_FEATURE_STORAGE_TEXEL_BUFFER_BIT : VK_FORMAT_FEATURE_UNIFORM_TEXEL_BUFFER_BIT;
     if (!(fp.bufferFeatures & need)) {
         static _Atomic int k; if (atomic_fetch_add(&k, 1) < 8)
             VRED("buffer texture ID %d: VkFormat %d is not a %s texel buffer format on this device: not bound", id, fmt, writes ? "storage" : "uniform");
         return VK_NULL_HANDLE;
     }
-    if (writes) vka_tex_gw_opaque(t.addr, range);   // the shader may store into the memory: images over it are uploaded again (vka_tex.c)
-    uint64_t now = vka_frame();
     pthread_mutex_lock(&g_mu);
-    uint32_t gen = atomic_load(&vka_seg_gen);
-    if (gen != g_vgen) { for (int i = 0; i < g_nv; i++) retire_view(g_v[i].v); g_nv = 0; g_vgen = gen; }
-    for (int i = 0; i < g_nv; i++) if (g_v[i].buf == buf && g_v[i].off == off && g_v[i].range == range && g_v[i].fmt == fmt) { g_v[i].last = now; VkBufferView v = g_v[i].v; pthread_mutex_unlock(&g_mu); return v; }
+    if (atomic_load(&vka_seg_gen) != g_vgen || (hit = vh_find(buf, off, range, fmt)) >= 0) {   // (the segments changed, or another thread made it meanwhile)
+        VkBufferView v = hit >= 0 ? g_v[hit].v : VK_NULL_HANDLE; if (hit >= 0) g_v[hit].last = now; pthread_mutex_unlock(&g_mu); return v;
+    }
     VkBufferViewCreateInfo ci = {VK_STRUCTURE_TYPE_BUFFER_VIEW_CREATE_INFO, .buffer = buf, .format = fmt, .offset = off, .range = range};
     VkBufferView v = VK_NULL_HANDLE; VkResult r = vk.vkCreateBufferView(V.dev, &ci, NULL, &v);
     if (r) { pthread_mutex_unlock(&g_mu); static _Atomic int k; if (atomic_fetch_add(&k, 1) < 8) VRED("buffer texture ID %d: vkCreateBufferView (VkFormat %d, %llu bytes) failed (%d): not bound", id, fmt, (unsigned long long)range, r); return VK_NULL_HANDLE; }
-    int slot = g_nv < NVIEW ? g_nv++ : 0;
-    if (slot == 0 && g_nv == NVIEW) { for (int i = 1; i < NVIEW; i++) if (g_v[i].last < g_v[slot].last) slot = i; retire_view(g_v[slot].v); }
+    int slot = g_nv < NVIEW ? g_nv++ : -1, replaced = slot < 0;
+    if (replaced) { slot = 0; for (int i = 1; i < NVIEW; i++) if (g_v[i].last < g_v[slot].last) slot = i; retire_view(g_v[slot].v); }
     g_v[slot] = (tview){buf, off, range, fmt, v, now};
+    if (replaced) vh_rebuild(); else vh_put(slot);
     static int noted; if (!noted++) VLOG("buffer textures: bound as texel buffers over guest memory (first: texture ID %d, %u elements, VkFormat %d)", id, t.elems, fmt);
     pthread_mutex_unlock(&g_mu);
     return v;

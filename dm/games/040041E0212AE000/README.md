@@ -78,6 +78,7 @@ Regression level: moderate, because shared shader extraction and translation cha
 
 ## Found on this game
 
+- [A key's copy moved from the place the profile's map names](../../../docs/reference/packing.md#a-keys-copy-moved-from-the-place-the-profiles-map-names): `_clock.w3d` also holds two keys the map names under `blocker_full.w3d` (upstream nxnative #3130); the split keeps the map's place.
 - SHN resources and embedded shader objects.
 - Subword task and mesh payload accesses.
 - [The phone's shaders step fails on a shader that does not build on the Mac either](../../../docs/reference/packing.md#the-phones-shaders-step-fails-on-a-shader-that-does-not-build-on-the-mac-either) (Android, 0.3.50, Forgejo #566): the 62 task and mesh programs, until the profile's `vk_delta.tsv` listed them.
@@ -88,6 +89,7 @@ Regression level: moderate, because shared shader extraction and translation cha
 - [DLSS debug overlay setters](../../../docs/reference/rendering.md#dlss-debug-overlay-setters): `nvnDlssParametersSetOverlayDebugLayer`, `nvnDlssParametersSetOverlayFullScreen`, `nvnDlssParametersSetOverlayJitterDebug`, and `nvnDlssParametersSetOverlayShowNans` implemented as no-ops (Android app on the Odin 3, system driver and Turnip v32).
 - [Shin'en engine runs at half speed under a 30 fps cap](../../../docs/reference/frame-rate.md#shinen-engine-runs-at-half-speed-under-a-30-fps-cap): fixed `1/60 s` step requires `eFrameskipType` `odd` at 30 fps (0.97–1.03× speed on the Android app on the Odin 3, system driver and Turnip v32).
 - [NVN2 draws with 32 vertex attributes](../../../docs/reference/rendering.md#nvn2-draws-with-32-vertex-attributes-android) (Android): `BindVertexAttribState` with `n=32` recorded and replayed on Android Vulkan (Android app on the Odin 3, system driver and Turnip v32).
+- [`oe::GetDefaultDisplayResolution` returns 720p in handheld mode on Switch 2](../../../docs/reference/services.md#oegetdefaultdisplayresolution-returns-720p-in-handheld-mode-on-switch-2): returning 1920×1080 for `dm_sdk_ounce()` gives `WindowCrop 0,0 1920x1080` and sharper HUD and edges on the Android app on the Odin 3 (system driver and Turnip v32; GPU 12.4 → 13.8 ms, fps unchanged).
 
 ## Open
 

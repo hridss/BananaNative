@@ -38,6 +38,11 @@ def scan():
         if p.endswith('.md'):
             for n in set(re.findall(r'`(' + NAME + r')', text)): docs.setdefault(n, set()).add(p)
             continue
+        if p.endswith('/game.tsv'):   # a profile's ue_set rows name the switch that turns each one on: hle_uecvar.c reads it through the profile header (game.py DM_GAME_UE_SET)
+            for l in text.split('\n'):
+                c = [x.strip() for x in l.split('\t')]
+                if c[0] == 'ue_set' and len(c) > 3 and re.fullmatch(NAME, c[3]): reads.setdefault(c[3], set()).add(p)
+            continue
         if not p.endswith(CODE) and not p.startswith('scripts/'): continue
         # names the code defines as preprocessor macros (the generated profile header's DM_GAME_*, host constants) are not switches, unless something also reads
         # them from the environment (DM_GAME_ENV, which overrides the profile's macro of that name)

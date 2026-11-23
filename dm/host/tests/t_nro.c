@@ -3,6 +3,7 @@
 #include "../hle_ro.c"
 void dm_thread_service_connect(void) {}   // threads started so far have nothing to wait for here
 #include <assert.h>
+#include <stdbool.h>
 #include <stddef.h>
 
 struct dm_flags g_flag;
@@ -32,6 +33,7 @@ static void fini(void) { assert(guest_sym("shared")); finis++; }
 static void fixture(int i) {
     image *im = &images[i]; module_t *m = &g_mod[i];
     m->base = (uint8_t *)im; m->size = sizeof *im;
+    m->guest_size = offsetof(image, bss);
     snprintf(m->name, sizeof m->name, "test%d", i);
     memcpy(im->names, "\0shared\0late\0absent\0", 20);
     m->symtab = im->sym; m->strtab = im->names; m->nsym = 4; m->dyn = im->dyn;
@@ -61,6 +63,20 @@ int main(void) {
     g_nmod = 3; for (int i = 0; i < 3; i++) fixture(i);
     // An NRO's imports count, loaded or not (Mario Tennis Fever: main is a boot stub, and the game's code is one NRO): test2 imports "late", no module is named main
     assert(dm_game_imports("lat") && !dm_game_imports("nothing"));
+    force_init();
+    bool (*module_range)(uintptr_t *, size_t *, uintptr_t) =
+        (bool (*)(uintptr_t *, size_t *, uintptr_t))force_lookup("_ZN2nn2ro21GetModuleAddressRangeEPmS1_m");
+    assert(module_range);
+    Result (*lookup_at_base)(uintptr_t *, uintptr_t, const char *) =
+        (Result (*)(uintptr_t *, uintptr_t, const char *))force_lookup("_ZN2nn2ro18LookupModuleSymbolEPmmPKc");
+    assert(lookup_at_base);
+    uintptr_t base = 0, main_base = (uintptr_t)&images[0], nro_base = (uintptr_t)&images[1];
+    size_t span = 0;
+    assert(module_range(&base, &span, main_base + 1) && base == main_base && span == offsetof(image, bss));
+    assert(!module_range(&base, &span, main_base + span) && base == main_base && span == offsetof(image, bss));
+    assert(!module_range(&base, &span, nro_base));
+    uintptr_t found = 1;
+    assert(lookup_at_base(&found, nro_base, "shared") == 0xa16 && found == 1);
     relocate(&g_mod[0]);
     assert(images[0].slots[0] == (uint64_t)&missing + 8);
     assert(images[0].slots[1] == 0 && images[0].slots[2] == 0);
@@ -69,8 +85,12 @@ int main(void) {
 
     assert(!g_mod[1].pristine && !g_mod[2].pristine);
     load(2); load(1);   // deliberately opposite to manifest/hash order
+    assert(module_range(&base, &span, nro_base) && base == nro_base && span == offsetof(image, bss));
     assert(g_mod[1].pristine && g_mod[2].pristine);
     uint64_t second = (uint64_t)&images[2].value, first = (uint64_t)&images[1].value;
+    assert(lookup_at_base(&found, nro_base, "shared") == 0 && found == first);
+    assert(lookup_at_base(&found, nro_base + 1, "shared") == 0xa16 && found == first);
+    assert(lookup_at_base(&found, main_base, "shared") == 0xa16 && found == first);
     assert((uint64_t)guest_sym("shared") == second);
     assert(images[0].slots[0] == second + 8 && images[1].slots[0] == second + 8);
     assert(images[0].slots[1] == first && images[2].slots[1] == first);
@@ -85,6 +105,8 @@ int main(void) {
     assert(images[2].value == 123 && images[2].bss == 0 && images[2].slots[0] == first + 8);
     assert((uint64_t)guest_sym("shared") == first);
     unload(1);
+    assert(!module_range(&base, &span, nro_base));
+    assert(lookup_at_base(&found, nro_base, "shared") == 0xa16 && found == first);
     assert(images[0].slots[0] == second + 8 && images[0].slots[1] == 0 && images[2].slots[1] == 0);
     unload(2);
     assert(!guest_sym("shared") && images[0].slots[0] == (uint64_t)&missing + 8);
@@ -113,5 +135,7 @@ int main(void) {
     for (int i = 0; i < g_nmod; i++) { free(g_mod[i].symh); free(g_mod[i].pristine); }
     free(g_mod); free(g_loaded);
     puts("NRO relocation, load order, lifecycle, weak symbols and refusal: OK");
+    free(g_force_hits); free(g_fidx);
+    puts("NRO relocation, load order, lifecycle, weak symbols, refusal and loading alone (reload, isolation from linked loads, no second load, no initialized data): OK");
     return 0;
 }

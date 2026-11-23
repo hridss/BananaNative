@@ -102,6 +102,8 @@ typedef struct {
     VkInstance inst; VkPhysicalDevice pd; VkDevice dev; VkQueue q; uint32_t qf;
     VkPhysicalDeviceProperties props; VkPhysicalDeviceMemoryProperties memp;
     int placed, placed_range, unmap_reserve, fd_alias, bda, uab, display_timing, has_android_surface;
+    uint32_t tb_align_u, tb_align_s; uint8_t tb_single_u, tb_single_s;   // Vulkan 1.3 texel buffer offset alignment, uniform / storage (vka_tbuf.c vka_tbuf_view)
+    int int64;   // shaderInt64: 64-bit integers in shaders (vka_shader.c lib_words rewrites the modules that use them only for buffer addresses when the device has none)
     int mem_budget;                                 // VK_EXT_memory_budget: the texture cache's limit reads the image heap's budget and usage (vka_tex.c, vka_texlimit.h)
     int cal_ts;                                     // VK_KHR / EXT_calibrated_timestamps: GPU timestamps can be put on the host clock (vka_exec.c DM_VK_TSCAL)
     void *perf_hint;                                // vkQueueSetPerfHintQCOM (VK_QCOM_queue_perf_hint), NULL without it: vka_gpu_floor
@@ -110,8 +112,9 @@ typedef struct {
     int imageless;   // imagelessFramebuffer (Vulkan 1.2): classic render passes need it (DM_VK_CLASSIC_RP)
     int minmax;      // samplerFilterMinmax (Vulkan 1.2): NVN's min / max sampler reduction (vka_tex.c sampler_of)
     int draw_count;                                 // drawIndirectCount (Vulkan 1.2): an indirect-count multi-draw's count read by the GPU (vka_draw.c vka_mdi_gpu)
-    int push_desc, vin_dyn, null_desc, idx8, divisor, logic_op, dual_src, geom, tess, depth_clamp, fill_lines, depth_bias_clamp, multi_vp, a2c;
+    int push_desc, vin_dyn, null_desc, idx8, divisor, logic_op, dual_src, geom, tess, depth_clamp, pexec, fill_lines, depth_bias_clamp, multi_vp, a2c;
     int depth_bounds;   // depthBounds: NVN's depth bounds test (nvnCommandBufferSetDepthBounds, vka_draw.c); without it the bounds are ignored, as before
+    int nu_sampled, nu_sampled_native;   // shaderSampledImageArrayNonUniformIndexing (Vulkan 1.2, enabled with the rest of f12) and its ...Native property: the profile's nonuniform_texture_arrays (vka_shader.c)
     int vstores, fstores;   // vertexPipelineStoresAndAtomics, fragmentStoresAndAtomics: texture-use feedback of the pool (vka_tex.c "Texture pool reads") writes from those stages
     // NVN2 task and mesh programs (VK_EXT_mesh_shader: mesh = meshShader, task = taskShader too; DM_VK_MESH=0 leaves it off): their shaders are refused without it (vka_shader.c refusal)
     // and their draws skipped. mesh_inv / task_inv: the largest workgroup (maxMeshWorkGroupInvocations / maxTaskWorkGroupInvocations); mesh_out_v / mesh_out_p: the most vertices /
@@ -121,6 +124,9 @@ typedef struct {
     // never (restart). cs_groups: maxComputeWorkGroupCount[0]
     int memu; uint32_t cs_groups;
     int cache_ctl;                                  // pipelineCreationCacheControl (core 1.3): a pipeline may be asked for with FAIL_ON_PIPELINE_COMPILE_REQUIRED (vka_pso.c cs_obtain's cache-only try)
+    // DM_VK_VRS=1 (restart) and the device's pipeline fragment shading rate (VK_KHR_fragment_shading_rate): the game's pipelines take the rate as dynamic state and each pass
+    // sets it (vka_draw.c vrs_pass); vrs_max: the largest side of a fragment (maxFragmentSize)
+    int vrs; uint32_t vrs_max; PFN_vkCmdSetFragmentShadingRateKHR cmd_fsr;
     int gpl;                                        // graphics pipeline libraries with fast linking (VK_EXT_graphics_pipeline_library): a pipeline the cache lacks is linked from stage libraries at once, the optimized one made in the background (vka_pso.c)
     uint32_t max_push, max_vin_bindings, subgroup_size, subgroup_min, subgroup_max, subgroup_stages;   // subgroup_stages: VkShaderStageFlags with subgroup operations
     uint32_t subgroup_req_stages;                   // VkShaderStageFlags a pipeline may pin the subgroup size in (requiredSubgroupSizeStages; 0 without subgroupSizeControl)
@@ -138,6 +144,9 @@ typedef struct {
     int tl_host;                                    // the GPU signals no timeline: submissions get fences and the host signals their values (vka_dev.c "Host-signalled timelines")
 } vka_dev;
 extern vka_dev V;
+#ifndef DM_GAME_VRS_PASSES
+#define DM_GAME_VRS_PASSES ""   // the game profile's vrs_passes (vka_draw.c vrs_pass): none in a header made before the key
+#endif
 // Custom GPU drivers (vka_driver.c): DM_VK_DRIVER=<folder with meta.json, or a .so> loads that driver through libadrenotools (restart only); unset, empty or "system" = the
 // system libvulkan.so. vka_driver_open returns the libvulkan handle (NULL = use the system one); vka_driver_tag is a file-name-safe name of the custom driver in use, NULL for the system's
 void *vka_driver_open(void);
@@ -210,7 +219,7 @@ enum { QT_SUB = 1, QT_PARK, QT_PASS, QT_RELEASE, QT_GATE, QT_FORCE, QT_SIGNAL, Q
 void vka_tex_slot_counts(uint64_t *writes, uint64_t *changes);   // vka_tex.c: pool table slot writes, and of them changes of a slot's view
 void vka_qtrace(int kind, uint64_t q, uint64_t fence, uint64_t x, uint32_t a, uint32_t b, uint32_t c, uint32_t d, const volatile void *w);
 int vka_qtrace_on(void);
-void vka_qtrace_dump(void);
+void vka_qtrace_dump(int hang);   // hang: from the hang report; 0: asked for (DM_VK_QS_TRACE_DUMP)
 // GPU breadcrumbs (vka_exec.c, DM_VK_CRUMBS): the GPU writes a number into host memory at each point; after a lost device the last number written says how far it got
 enum { CR_PART_BEGIN = 1, CR_PART_END, CR_DISPATCH, CR_PASS_END, CR_GATE };   // (CR_GATE: past a gate's wait, level 1)
 void vka_crumb(VkCommandBuffer cb, int kind, uint64_t key);
@@ -265,6 +274,9 @@ uint64_t vks_bytes_nolock(void);
 int vka_addr(uint64_t addr, uint64_t len, VkBuffer *buf, VkDeviceSize *off, VkDeviceAddress *bda);   // 1 = [addr, addr + len) lies in one placed segment
 int vka_mem_release(uintptr_t lo, uintptr_t hi);    // the host gives [lo, hi) back: segments there are given back first; 0 = the host releases the range itself
 uint64_t vka_addr_run(uint64_t addr, uint64_t len, VkBuffer *buf, VkDeviceSize *off);   // bytes from addr (at most len) in the segment that holds addr, 0 = none
+// GPU-only lookups also resolve NVN virtual pools; their virtual addresses are still inaccessible to the CPU.
+uint64_t vka_gpu_addr_run(uint64_t addr, uint64_t len, VkBuffer *buf, VkDeviceSize *off);
+int vka_gpu_addr(uint64_t addr, uint64_t len, VkBuffer *buf, VkDeviceSize *off);
 extern _Atomic uint32_t vka_seg_gen;   // vka_mem.c: bumped when a segment's buffer is destroyed (views over segment buffers are made again)
 void vka_mem_join_due(void);   // the replay thread at a submission's start: joins the parts of pools placed by parts that a range given to the GPU lies across (vka_mem.c)
 int vka_pool_bda(uint64_t addr, VkDeviceAddress *bda);   // the device address of a pool byte (the table the binding side reads)
@@ -308,6 +320,7 @@ typedef struct vka_img {
     // Content from guest storage (vka_tex.c storage_mode): track = re-uploaded when the CPU writes its pages (write-protected after each upload, nvn_dirty.c),
     // stamp = the dirty-page generation taken before the last upload, span = the tracked pool range that holds the storage
     int track, wb_pending; uint64_t stamp; const void *span;
+    uint32_t tiled_wb_levels;   // render-written mips pending block-linear write-back
     uint64_t wb_fence;       // the fence of the submission that holds the last copy of its GPU content back into its storage (vka_tex_writeback; 0: none): vka_wbfollow.h
     int wbf_waiting;         // the prepare's last scan found it waiting for that copy-back; a scan that only runs for waiting images visits just these (wbf_visit)
     int wt;                  // the game writes it through WriteTexels (vka_tex.c mtl_tex_write_region): never tracked again
@@ -361,9 +374,10 @@ vka_img *vka_tex_ref(vka_img *im);                  // one more reference to im 
 void vka_tex_drop_pool(const void *pool);            // drop all images belonging to a finalized memory pool
 // The GPU writes im (render target, clear, copy destination, storage image): its content is the GPU's from now on (no re-upload from storage), and a linear texture's level 0
 // is copied back into its storage when the submission ends (vka_tex_writeback), where the CPU reads it as it would on the Switch
-void vka_img_written_at(vka_img *im, const char *file, int line);
+void vka_img_written_at(vka_img *im, int color_level, const char *file, int line);
 extern int vka_pso_redrawn;   // the open pass's targets were all drawn in the two frames before (vka_draw.c pass_redrawn): its draws may be skipped for a pipeline made in the background (vka_pso.c)
-#define vka_img_written(im) vka_img_written_at(im, __FILE_NAME__, __LINE__)   // (the site is logged for a large image's first write, DM_VK_BIGIMG_MB)
+#define vka_img_written(im) vka_img_written_at(im, -1, __FILE_NAME__, __LINE__)   // (the site is logged for a large image's first write, DM_VK_BIGIMG_MB)
+#define vka_img_color_written(im, lv) vka_img_written_at(im, (int)(lv), __FILE_NAME__, __LINE__)
 // Before a write is recorded into im (an attachment, a clear, a copy destination, a storage image): a zero-shared image gets memory of its own, cleared (vka_tex.c img_own).
 // Call it before taking a view of im for the write. Any thread that records (takes the table lock); no render pass may be open in cb unless upload batches are on
 void vka_tex_own(vka_img *im, VkCommandBuffer cb);
@@ -406,6 +420,8 @@ int vka_gp_split(void);   // DM_VK_GPUPROF_SPLIT of the frame being profiled, 0 
 void vka_gp_mark(VkCommandBuffer cb, const char *file, int line);
 void vka_gp_pass(const char *desc);
 void vka_gp_note(char k, uint64_t key, uint64_t pkey, uint64_t work);   // DM_VK_GPUPROF: a draw ('v' / 'm') or dispatch ('c') in the open step
+int vka_gp_draw_begin(VkCommandBuffer cb, uint64_t vs, uint64_t fs, uint32_t w, uint32_t h, uint64_t ib, uint32_t cnt, int32_t bv, float vx);   // DM_VK_GPUPROF_PSTATS: a draw call's pipeline statistics query (-1 = none)
+void vka_gp_draw_end(VkCommandBuffer cb, int q);
 void vka_gp_part(VkCommandBuffer cb);
 void vka_gp_sub_begin(VkCommandBuffer cb, uint64_t frame);
 void vka_gp_commit(VkCommandBuffer cb, uint64_t fence);
@@ -417,6 +433,21 @@ void vka_img_barrier(VkCommandBuffer cb, VkImage img, VkImageAspectFlags aspect,
 // twin), so the result is written sRGB-encoded
 int vka_dlss_fsr3(VkCommandBuffer cb, vka_img *src, VkFormat sfmt, vka_img *dst, int enc, vka_img *depth, vka_img *motion, const p_dlss_t2t *o);   // vka_fsr3.c: FSR 3.1 for DM_VK_DLSS=4; 0 = not done (the caller falls back to FSR 1)
 int vka_dlss_run(VkCommandBuffer cb, const p_dlss *o, int mode, vka_img *s, uint32_t sl, VkFormat sfmt, int sx, int sy, int iw, int ih, vka_img *d, uint32_t dl, int enc, int dx, int dy, int ow, int oh);
+// vka_fgui.c
+int vka_fgui_on(void); void vka_fgui_draw(uint64_t fkey, vka_img *c0); void vka_fgui_tex(uint64_t key, int tid); void vka_fgui_pass_end(VkCommandBuffer cb);
+typedef struct { VkImage pre, layer; VkImageView pre_v, layer_v, mv_v; uint32_t w, h, mw, mh; float mvs[2]; uint64_t sfence, pre_serial, layer_serial, op_q; int has_ui, has_mv; } vka_fgui_frame;
+int vka_fgui_take(uint64_t serial, vka_fgui_frame *u); int vka_fgui_layer(void); int vka_fgui_cut(void); void vka_fgui_dlss(VkCommandBuffer cb, vka_img *m, int iw, int ih, const float *scale);
+int vka_fgui_post(VkCommandBuffer cb, unsigned k, VkImage a, VkImage c, const VkImageView *gen, size_t ng, uint32_t w, uint32_t h, const vka_fgui_frame *u, int layer, int force, int dlss_change, uint64_t count);
+void vka_fgui_post_done(unsigned k); void vka_fgui_post_reset(void);
+void vka_fgui_note_present(uint64_t serial); void vka_fgui_t2t(const vka_img *s, const vka_img *d, int sx, int sy, int dx, int dy, int w, int h, uint32_t flags, const char *path);
+void vka_fgui_pass_begin(uint64_t c0_serial, uint32_t w, uint32_t h); void vka_fgui_draw_log(uint64_t vkey, uint64_t fkey, uint64_t c0_serial);
+int vka_fgui_cutpass(VkCommandBuffer cb, unsigned k, VkImage a, VkImage c, uint32_t w, uint32_t h, const vka_fgui_frame *u, int dlss_change, uint64_t count, VkBuffer *rb, VkDeviceSize *roff);
+VkImageView vka_fgui_view(VkImage img);
+// vka_fgprof.c: the frame generator's per-game profile (game.tsv fg_* rows over the core defaults) and the engine choice
+typedef struct { int mv; uint64_t ui_pre, ui_layer; unsigned features; double ratio, tol, edge, cut_res, cut_corr, cut_mv; int fill, soft, uisr, uissupr, uisinteg, uispass, uisguard; } vka_fgprof;
+enum { VKA_FGF_UIFLOW = 1, VKA_FGF_UIGATE = 2, VKA_FGF_STATIC = 4, VKA_FGF_STATICZ = 8, VKA_FGF_BOTHFAR = 16, VKA_FGF_DITHER = 32, VKA_FGF_CUT = 64, VKA_FGF_UIPICK = 128, VKA_FGF_UICONS = 256,
+       VKA_FGF_UISMALL = 512, VKA_FGF_UICAP = 1024, VKA_FGF_UISPLIT = 2048 };
+const vka_fgprof *vka_fgprof_get(void); int vka_fgprof_engine(int *from_env), vka_fgprof_fallback(void);   // fallback: Native FG picked, LSFG runs (no fg_mv row)
 int vka_dlss_scale(VkCommandBuffer cb, VkImageView in, int sx, int sy, int iw, int ih, uint32_t tw, uint32_t th, vka_img *d, uint32_t dl, int dx, int dy, int ow, int oh, int enc);   // a scaled copy, sRGB-encoded with enc
 int vka_dlss_scale_alpha(VkCommandBuffer cb, VkImageView in, int sx, int sy, int iw, int ih, uint32_t tw, uint32_t th, VkImageView alpha_in, float jx, float jy, int aw, int ah, uint32_t atw, uint32_t ath, vka_img *d, uint32_t dl, int dx, int dy, int ow, int oh, int enc);
 int vka_dlss_ready(void);   // the stand-in's pipelines are made (vka_dlss_scale can run)
@@ -434,12 +465,14 @@ void vka_tex_id_peek(int id, char *b, size_t n);   // the same with its storage 
 void vka_tex_feedback(vka_img *const *ims, const uint32_t *levels, int n);   // the open pass's attachments and their levels (n 0: none), for vka_tex_id_view
 int vka_tex_id_in_pass(int id);   // texture ID id's image is an attachment of the open pass (1 = colour, 2 = depth / stencil, 0 = neither)
 int vka_tex_id_in_pass_rec(int id, uint8_t dim);
+int vka_tex_id_ds_planes(int id);   // vka_tex.c: the plane (vka_dsplanes.h) a texture ID of a depth / stencil image reads
 int vka_tex_id_target(int id);                      // the NVN target texture ID id stands for (its view's), -1 = not registered
 int vka_tex_id_can_cube(int id);                    // 1 when texture ID id's image (or registration) can form a Vulkan cube / cube-array view
 int vka_tex_id_buffer(int id, uint64_t *addr, uint32_t *elems, int *format);   // a buffer texture: its storage's guest address, elements and NVN format; 0 = not one
 int vka_tex_id_is_buffer(int id);                   // texture ID id was registered as a buffer texture (no lock)
 // ---------- Buffer textures (vka_tbuf.c) ----------
-VkBufferView vka_tbuf_view(int id, int storage);     // a texel buffer view over buffer texture id's guest memory; VK_NULL_HANDLE = none (logged)
+VkBufferView vka_tbuf_view(int id, int storage, int want);   // a texel buffer view over buffer texture id's guest memory, in the shader's class (want: 0 float, 1 uint,
+                                                              // 2 sint); VK_NULL_HANDLE = none (logged)
 int vka_tbuf_pending(int id, uint8_t dim);           // buffer texture id read as an image of shape dim needs its copy refreshed (outside a render pass: vka_tbuf_refresh)
 void vka_tbuf_refresh(int id, uint8_t dim, VkCommandBuffer cb);   // copies buffer texture id's guest memory into its image (outside a render pass)
 VkImageView vka_tbuf_image_view(int id, uint8_t dim);   // that image's view (after vka_tbuf_refresh); VK_NULL_HANDLE = none
@@ -602,6 +635,9 @@ void vka_dispatch(vka_dstate *d, const p_dispatch *dp);
 // Whether the game is a Switch 2 one (NVN2: its compute reads the group counts at c0 + DMSH_C0_DISPATCH_NVN2): dm_sdk_ounce() unless set (the replayer sets it from the capture)
 int vka_nvn2(void);
 void vka_set_nvn2(int on);
+// The GOB order (nvn_texdesc.gob_order, nvn_deswizzle.h) of a texture the replay makes itself with no game texture to take it from: the order nvnTextureInitialize gives a texture
+// whose builder names no device (hle_nvn.c), the Switch 2's for an NVN2 game and the X1's otherwise. A texture made from a game's one takes that texture's order instead
+static inline uint16_t vka_gob_order(void) { return (uint16_t)(vka_nvn2() != 0); }
 void vka_draw_force(int on);   // draws on whatever the memory (the selftest, whose memory may be a mapped allocation)
 // DM_VK_NANSCAN (vka_nanscan.c): NaN / infinite texels in each pass's float attachments, logged with the pass's shaders
 int vka_nan_on(void);
@@ -667,6 +703,6 @@ void vka_fps_fg(int state, int mult);
 // to present before it (gen, at most VKA_FG_MAX, the present takes its own references), how long each image of this frame should stay (hold, seconds; 0 = the game's period)
 // and the output period for the window's frame rate (0 = frame generation off). Present thread only
 enum { VKA_FG_MAX = 3 };
-int vka_fg_frame(uint64_t serial, const int *crop, double period, uint64_t fence, int format, vka_img **gen, double *hold, double *out_period);
+int vka_fg_frame(uint64_t serial, const int *crop, double period, uint64_t fence, int format, vka_img **gen, double *hold, double *out_period, double game_t);   // game_t: when the frame had every submission on the queue (seconds, CLOCK_MONOTONIC; 0 = unknown)
 void vka_present_picture_size(int cw, int ch, int *pw, int *ph);   // vka_present.c: the size in swapchain pixels a crop is shown at, 0 x 0 without a swapchain (present thread)
 uint64_t vka_refresh_ns(void);   // vka_present.c: the panel's refresh period in ns from display timing, 0 when not known (present thread)

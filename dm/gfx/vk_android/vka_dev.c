@@ -211,6 +211,15 @@ static int init_once(void) {
     const char *fault_env = getenv("DM_VK_DEVICE_FAULT");
     int x_fault = has_ext(de, nde, VK_EXT_DEVICE_FAULT_EXTENSION_NAME) && !(fault_env && !strcmp(fault_env, "0"));
     if (x_fault) dext[ndext++] = VK_EXT_DEVICE_FAULT_EXTENSION_NAME;
+    // VK_KHR_pipeline_executable_properties, only for DM_VK_PSO_STATS (vka_pso.c pso_stats): each pipeline's per-stage statistics and code as the driver compiled them
+    int x_pexec = VKA_ENV("DM_VK_PSO_STATS", 0) && has_ext(de, nde, VK_KHR_PIPELINE_EXECUTABLE_PROPERTIES_EXTENSION_NAME);
+    if (x_pexec) dext[ndext++] = VK_KHR_PIPELINE_EXECUTABLE_PROPERTIES_EXTENSION_NAME;
+    // VK_KHR_fragment_shading_rate, only for DM_VK_VRS (restart): its pipeline rate (vka_draw.c vrs_pass). Off by default: the dynamic state changes every game pipeline
+    // On by default for a game whose profile names its passes (vrs_passes): its pipelines then take the rate from the start, and the coarse rate switches live
+    int want_vrs = VKA_ENV("DM_VK_VRS", DM_GAME_VRS_PASSES[0] != 0);
+    int x_vrs = want_vrs && has_ext(de, nde, VK_KHR_FRAGMENT_SHADING_RATE_EXTENSION_NAME);
+    if (want_vrs && !x_vrs) VRED("DM_VK_VRS: the device has no VK_KHR_fragment_shading_rate: every pass shades each pixel");
+    if (x_vrs) dext[ndext++] = VK_KHR_FRAGMENT_SHADING_RATE_EXTENSION_NAME;
     V.mem_budget = has_ext(de, nde, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);   // the image heap's budget, for the texture cache's limit (vka_tex.c img_limit_update)
     if (V.mem_budget) dext[ndext++] = VK_EXT_MEMORY_BUDGET_EXTENSION_NAME;
     // GPU timestamps on the host clock, for DM_VK_TSCAL (vka_exec.c): where the device has calibrated timestamps
@@ -228,10 +237,12 @@ static int init_once(void) {
     VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT fgpl = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_FEATURES_EXT};
     VkPhysicalDeviceMeshShaderFeaturesEXT fmesh = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT};
     VkPhysicalDeviceFaultFeaturesEXT ffault = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FAULT_FEATURES_EXT};
+    VkPhysicalDevicePipelineExecutablePropertiesFeaturesKHR fpexec = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_EXECUTABLE_PROPERTIES_FEATURES_KHR};
+    VkPhysicalDeviceFragmentShadingRateFeaturesKHR fvrs = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADING_RATE_FEATURES_KHR};
     void *chain = placed ? &fmp : NULL;
 #define LINK(on, st) if (on) { (st).pNext = chain; chain = &(st); }
     struct { VkStructureType sType; void *pNext; VkBool32 queuePerfHint; } fph = {(VkStructureType)1000302001};   // VkPhysicalDeviceQueuePerfHintFeaturesQCOM (not in the NDK's headers yet)
-    LINK(x_vin, fvin) LINK(x_rob, frob) LINK(x_i8, fi8) LINK(x_div, fdiv) LINK(x_ph, fph) LINK(x_gpl, fgpl) LINK(x_mesh, fmesh) LINK(x_fault, ffault)
+    LINK(x_vin, fvin) LINK(x_rob, frob) LINK(x_i8, fi8) LINK(x_div, fdiv) LINK(x_ph, fph) LINK(x_gpl, fgpl) LINK(x_mesh, fmesh) LINK(x_fault, ffault) LINK(x_pexec, fpexec) LINK(x_vrs, fvrs)
 #undef LINK
     VkPhysicalDeviceVulkan13Features f13 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES, .pNext = chain};
     VkPhysicalDeviceVulkan12Features f12 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, .pNext = &f13};
@@ -245,15 +256,20 @@ static int init_once(void) {
     // Mesh shading: the task and mesh stages only (multiview, shading-rate and query support each need more of the device than the replay enables or uses)
     fmesh.multiviewMeshShader = VK_FALSE; fmesh.primitiveFragmentShadingRateMeshShader = VK_FALSE; fmesh.meshShaderQueries = VK_FALSE;
     if (x_mesh && !fmesh.meshShader) fmesh.taskShader = VK_FALSE;   // (task shading is of no use without mesh shading)
+    fvrs.primitiveFragmentShadingRate = fvrs.attachmentFragmentShadingRate = VK_FALSE;   // the pipeline's rate only (DM_VK_VRS)
+    V.vrs = x_vrs && fvrs.pipelineFragmentShadingRate;
+    if (x_vrs && !V.vrs) { VRED("DM_VK_VRS: the device's fragment shading rate has no pipeline rate: every pass shades each pixel"); x_vrs = 0; }
     V.push_desc = x_push; V.vin_dyn = x_vin && fvin.vertexInputDynamicState; V.null_desc = x_rob && frob.nullDescriptor; V.idx8 = x_i8 && fi8.indexTypeUint8;
     V.divisor = x_div && fdiv.vertexAttributeInstanceRateDivisor; V.logic_op = f2.features.logicOp; V.dual_src = f2.features.dualSrcBlend; V.geom = f2.features.geometryShader;
-    V.tess = f2.features.tessellationShader; V.depth_clamp = f2.features.depthClamp; V.fill_lines = f2.features.fillModeNonSolid; V.depth_bias_clamp = f2.features.depthBiasClamp;
+    V.tess = f2.features.tessellationShader; V.depth_clamp = f2.features.depthClamp; V.pexec = x_pexec && fpexec.pipelineExecutableInfo; V.fill_lines = f2.features.fillModeNonSolid; V.depth_bias_clamp = f2.features.depthBiasClamp;
     V.depth_bounds = f2.features.depthBounds && VKA_ENV("DM_VK_DEPTH_BOUNDS", 1);   // (enabled with the rest of f2; DM_VK_DEPTH_BOUNDS=0: the bounds ignored, as before)
     V.multi_vp = f2.features.multiViewport; V.a2c = 1; V.vstores = f2.features.vertexPipelineStoresAndAtomics; V.fstores = f2.features.fragmentStoresAndAtomics; V.mesh = x_mesh && fmesh.meshShader; V.task = V.mesh && fmesh.taskShader;
     if (!f12.timelineSemaphore || !f13.dynamicRendering) { VRED("the device lacks timeline semaphores (%d) or dynamic rendering (%d)", f12.timelineSemaphore, f13.dynamicRendering); return 0; }
     V.imageless = f12.imagelessFramebuffer;   // (enabled with the rest of f12)
     V.draw_count = f12.drawIndirectCount;
     V.minmax = f12.samplerFilterMinmax;   // (enabled with the rest of f12)
+    V.nu_sampled = f12.shaderSampledImageArrayNonUniformIndexing;   // (enabled with the rest of f12): NonUniform sampled-image array reads (vka_shader.c nonuniform_arrays)
+    V.int64 = f2.features.shaderInt64;   // (enabled with the rest of f2)
     V.bda = f12.bufferDeviceAddress; V.uab = f12.descriptorBindingSampledImageUpdateAfterBind && f12.descriptorBindingPartiallyBound && f12.runtimeDescriptorArray;
     V.placed = placed && fmp.memoryMapPlaced; V.placed_range = placed && fmp.memoryMapRangePlaced; V.unmap_reserve = placed && fmp.memoryUnmapReserve;
     float prio = 1.f;
@@ -267,6 +283,17 @@ static int init_once(void) {
     void vka_hostmem_install(void); vka_hostmem_install();   // the live objects counted (vka_hostmem.c): first, so the wrappers below call through it
     fp_wrap_compiles();
     vka_shader_pfb_hook();   // (over the FPCR wrapper: the module it makes is the rewritten one)
+    if (V.vrs) {
+        V.cmd_fsr = (PFN_vkCmdSetFragmentShadingRateKHR)vk.vkGetDeviceProcAddr(V.dev, "vkCmdSetFragmentShadingRateKHR");
+        VkPhysicalDeviceFragmentShadingRatePropertiesKHR pv = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADING_RATE_PROPERTIES_KHR};
+        VkPhysicalDeviceProperties2 pp = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = &pv};
+        vk.vkGetPhysicalDeviceProperties2(V.pd, &pp);
+        V.vrs_max = pv.maxFragmentSize.width < pv.maxFragmentSize.height ? pv.maxFragmentSize.width : pv.maxFragmentSize.height;
+        if (!V.cmd_fsr || V.vrs_max < 2) { VRED("DM_VK_VRS: no vkCmdSetFragmentShadingRateKHR or no fragment larger than a pixel (%u): off", V.vrs_max); V.vrs = 0; }
+        else VLOG("DM_VK_VRS: the game's pipelines take the fragment shading rate as dynamic state; fragments up to %ux%u, with depth or stencil written by the shader %s, "
+                  "the passes of DM_VK_VRS_PASSES shaded at DM_VK_VRS_RATE (live)", pv.maxFragmentSize.width, pv.maxFragmentSize.height,
+                  pv.fragmentShadingRateWithShaderDepthStencilWrites ? "too" : "not (such a draw is shaded per pixel)");
+    }
     if (!vk.vkMapMemory2KHR) vk.vkMapMemory2KHR = (PFN_vkMapMemory2KHR)vk.vkGetDeviceProcAddr(V.dev, "vkMapMemory2");   // core in 1.4
     if (!vk.vkUnmapMemory2KHR) vk.vkUnmapMemory2KHR = (PFN_vkUnmapMemory2KHR)vk.vkGetDeviceProcAddr(V.dev, "vkUnmapMemory2");
     if (!vk.vkMapMemory2KHR || !vk.vkUnmapMemory2KHR) V.placed = V.placed_range = 0;
@@ -291,7 +318,8 @@ static int init_once(void) {
 
     VkPhysicalDeviceMapMemoryPlacedPropertiesEXT pmp = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAP_MEMORY_PLACED_PROPERTIES_EXT};
     VkPhysicalDeviceVulkan13Properties p13 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_PROPERTIES, .pNext = placed ? &pmp : NULL};
-    VkPhysicalDeviceVulkan11Properties p11 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_PROPERTIES, .pNext = &p13};
+    VkPhysicalDeviceDescriptorIndexingProperties pdi = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_PROPERTIES, .pNext = &p13};
+    VkPhysicalDeviceVulkan11Properties p11 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_PROPERTIES, .pNext = &pdi};
     VkPhysicalDevicePushDescriptorPropertiesKHR ppd = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PUSH_DESCRIPTOR_PROPERTIES_KHR, .pNext = &p11};
     VkPhysicalDeviceMaintenance3Properties pm3 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_3_PROPERTIES, .pNext = V.push_desc ? (void *)&ppd : (void *)&p11};
     VkPhysicalDeviceGraphicsPipelineLibraryPropertiesEXT pgpl = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_PROPERTIES_EXT, .pNext = &pm3};
@@ -302,6 +330,8 @@ static int init_once(void) {
     VLOG("driver: %s (%s), driver ID %d, conformance %u.%u.%u.%u, driver version %#x; %s", pdr.driverName, pdr.driverInfo, pdr.driverID, pdr.conformanceVersion.major,
          pdr.conformanceVersion.minor, pdr.conformanceVersion.subminor, pdr.conformanceVersion.patch, V.props.driverVersion, vka_driver_tag() ? "custom (DM_VK_DRIVER)" : "the system's");
     V.driver_id = (int)pdr.driverID;
+    V.nu_sampled_native = pdi.shaderSampledImageArrayNonUniformIndexingNative;
+    VLOG("descriptor indexing: shaderSampledImageArrayNonUniformIndexing %d, shaderSampledImageArrayNonUniformIndexingNative %d", V.nu_sampled, V.nu_sampled_native);
     if (vka_driver_tag()) {   // adrenotools hands back the system's driver when the custom one does not load (vka_driverpath.h): say so where the player's log shows it
         void vka_driver_lib(const char **dir, const char **name); int vka_driver_mapped(void); const char *dir, *name; vka_driver_lib(&dir, &name);
         int m = vka_driver_mapped();
@@ -329,6 +359,10 @@ static int init_once(void) {
          p11.subgroupSupportedStages & VK_SHADER_STAGE_GEOMETRY_BIT ? "yes" : "NO", p11.subgroupSupportedStages & VK_SHADER_STAGE_FRAGMENT_BIT ? "yes" : "NO", p11.subgroupSupportedStages & VK_SHADER_STAGE_VERTEX_BIT ? "yes" : "NO",
          p11.subgroupSupportedOperations, p11.subgroupQuadOperationsInAllStages ? "yes" : "no", p13.requiredSubgroupSizeStages);
     V.subgroup_stages = p11.subgroupSupportedStages;
+    V.tb_align_u = (uint32_t)p13.uniformTexelBufferOffsetAlignmentBytes; V.tb_single_u = p13.uniformTexelBufferOffsetSingleTexelAlignment != 0;
+    V.tb_align_s = (uint32_t)p13.storageTexelBufferOffsetAlignmentBytes; V.tb_single_s = p13.storageTexelBufferOffsetSingleTexelAlignment != 0;
+    VLOG("texel buffer offsets: uniform %u bytes%s, storage %u bytes%s (minTexelBufferOffsetAlignment %llu)", V.tb_align_u, V.tb_single_u ? " or one texel" : "",
+         V.tb_align_s, V.tb_single_s ? " or one texel" : "", (unsigned long long)V.props.limits.minTexelBufferOffsetAlignment);
     V.cache_ctl = f13.pipelineCreationCacheControl;
     V.subgroup_req_stages = f13.subgroupSizeControl ? p13.requiredSubgroupSizeStages : 0;
     V.subgroup_size = p11.subgroupSize; V.subgroup_min = p13.minSubgroupSize ? p13.minSubgroupSize : p11.subgroupSize; V.subgroup_max = p13.maxSubgroupSize ? p13.maxSubgroupSize : p11.subgroupSize;
@@ -1408,5 +1442,39 @@ void vka_gpu_floor(void) {
     int again = !V.perf_hint && (f >= sent_f + 30 || f < sent_f);
     if (again) sent_f = f;
     floor_set_(s, 0, again);
+}
+// DM_VK_KGSL_PERF=<group>:<countable>[,…] (diagnostic, restart; Android with KGSL): the GPU's performance counters through the kernel's own interface
+// (IOCTL_KGSL_PERFCOUNTER_GET reserves a counter and programs its selector, IOCTL_KGSL_PERFCOUNTER_READ reads it), since KGSL does not let a driver write the
+// selectors from its command stream (Turnip leaves VK_KHR_performance_query off there). Group ids are KGSL's (msm_kgsl.h KGSL_PERFCOUNTER_GROUP_*: 0 CP, 1 RBBM,
+// 2 PC, 3 VFD, 4 HLSQ, 5 VPC, 6 TSE, 7 RAS, 8 UCHE, 9 TP, 10 SP, 11 RB, 25 LRZ), countables the GPU's (Mesa's a7xx_perfcntrs.xml). The counters count the
+// whole GPU, which only this game uses while it runs; each pace line is followed by their increase a frame over its window (vka_perf.c pace_tick)
+struct kg_get { unsigned int groupid, countable, offset, offset_hi, pad; };
+struct kg_rg { unsigned int groupid, countable; unsigned long long value; };
+struct kg_rd { struct kg_rg *reads; unsigned int count, pad[2]; };
+#define KG_PERF_GET _IOWR(0x09, 0x38, struct kg_get)
+#define KG_PERF_READ _IOWR(0x09, 0x3B, struct kg_rd)
+void vka_kgsl_perf(uint64_t frame, double nf) {
+    enum { N = 24 };
+    static int fd = -2, n; static struct kg_rg rg[N]; static unsigned long long last[N];
+    if (fd == -2) {
+        fd = -1; char b[256]; if (!vka_env_str("DM_VK_KGSL_PERF", b, sizeof b)) return;
+        if ((fd = open("/dev/kgsl-3d0", O_RDWR | O_CLOEXEC)) < 0) { VRED("kgsl perf: /dev/kgsl-3d0: %d", errno); return; }
+        for (char *t = strtok(b, ","); t && n < N; t = strtok(NULL, ",")) {
+            unsigned g, c; if (sscanf(t, "%u:%u", &g, &c) != 2) continue;
+            struct kg_get q = {g, c, 0, 0, 0};
+            if (ioctl(fd, KG_PERF_GET, &q) < 0) { VRED("kgsl perf: counter %u:%u not reserved (%d)", g, c, errno); continue; }
+            rg[n].groupid = g; rg[n].countable = c; n++;
+        }
+        VLOG("kgsl perf: %d counters reserved", n);
+    }
+    if (fd < 0 || !n) return;
+    struct kg_rd r = {rg, (unsigned)n, {0, 0}};
+    if (ioctl(fd, KG_PERF_READ, &r) < 0) { VRED_ONCE("kgsl perf: read failed (%d)", errno); return; }
+    char line[1200]; size_t o = 0;
+    for (int i = 0; i < n && o < sizeof line - 40; i++) {
+        if (last[i] && nf > 0) o += (size_t)snprintf(line + o, sizeof line - o, " %u:%u %.0f", rg[i].groupid, rg[i].countable, (double)(rg[i].value - last[i]) / nf);
+        last[i] = rg[i].value;
+    }
+    if (o) VLOG("kgsl perf up to frame %llu, a frame:%s", (unsigned long long)frame, line);
 }
 #endif

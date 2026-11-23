@@ -244,6 +244,9 @@
     <string name="settings_updates">Updates</string>
     <string name="settings_what_s_new">What\'s new</string>
     <string name="settings_while_home_shows_a_game">While Home shows a game being prepared</string>
+    <string name="settings_update_shaders_automatically">Update shaders automatically</string>
+    <string name="settings_auto_shader_update_on">A game whose shaders are out of date updates them in the background</string>
+    <string name="settings_auto_shader_update_off">Off: the game\'s page updates them when you ask</string>
     <string name="settings_xbox_button_label_swap">Xbox button label swap</string>
 
     <!-- The game page, the in-game panel, pickers and sliders -->
@@ -854,6 +857,9 @@
     <string name="home_lossless_dll_missing">" · Lossless.dll missing"</string>
     <string name="home_why">Why?</string>
     <string name="home_shaders_need_one_update">Shaders need one update</string>
+    <string name="home_other_pack_has_shaders">Another pack has the shaders</string>
+    <string name="home_other_pack_has_shaders_message">The pack this card uses has no shaders for this version of the app. Another pack of %1$s has them. Use that pack for this card?</string>
+    <string name="home_use_that_pack">Use that pack</string>
     <string name="home_nup">" (.nup)"</string>
     <string name="game_applies_from_the_next_frame">Applies from the next frame, kept for this game (the same setting as Game settings › Upscaler).</string>
     <string name="game_applies_from_the_next_frame_2">Applies from the next frame, kept for this game (the same setting as Game settings › Screen scaling).</string>
@@ -1491,4 +1497,12 @@
     <string name="settings_build_preview">You\'re running a preview build (v%1$s). Previews may break games. The stable v%2$s replaces it when it\'s out.</string>
     <string name="settings_build_preview_channel">Your channel is %1$s: the app moves you to the stable v%2$s when it ships.</string>
     <string name="settings_build_hotfix">You\'re running a hotfix (v%1$s): a small fix between weekly releases. The next weekly release includes it.</string>
+    <string name="common_picture_size">Picture size</string>
+    <string name="game_lsfg_on_target">On · %1$d fps</string>
+    <string name="game_own_follows_settings">This game follows Settings (%1$s). A change here becomes this game\'s own.</string>
+    <string name="game_own_settings_note">These are this game\'s own settings. Use Settings\' default to follow Settings again.</string>
+    <string name="game_use_settings_default">Use Settings\' default</string>
+    <string name="settings_touch_look">Touch controls look</string>
+    <string name="settings_panel_look">In-game panel look</string>
+    <string name="settings_player_one_away">The chosen controller (not connected)</string>
 </resources>

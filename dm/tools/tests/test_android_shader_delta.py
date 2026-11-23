@@ -285,6 +285,56 @@ class KeyList(unittest.TestCase):
         self.assertEqual(delta.phone_keys(mapk, seen, pairs, build_keys), {self.A, self.D}, 'A with its pixel shader D (E is no shader of the map)')
         with self.assertRaises(ValueError): delta.phone_keys(mapk, 'key\tstage\n', pairs, build_keys)
 
+    def test_version_exclusions_survive_pair_expansion(self):
+        # one-version splits of multi-version profiles (Super Mario Bros. Wonder 1.2.1, Mario Kart 8 Deluxe 4.0.0 and 4.0.1): expanding the pairs over the whole profile adds back
+        # pixel shaders the split lacks; package_keys keeps them out
+        load_pairs, build_keys = borrowed('load_pairs', 'build_keys')
+        cases = (('010015100B514000', 'v327680'), ('0100152000022000', 'v1441792'), ('0100152000022000', 'v1507328'))
+        for title, version in cases:
+            with self.subTest(title=title, version=version):
+                profile = REPO / 'dm/games' / title
+                rows = (profile / 'shader_map.tsv').read_text().splitlines()
+                locations = {c[3]: c[4] for c in (r.split('\t') for r in rows) if c[0].endswith('.bin')}
+                if version == 'v1441792':
+                    absent = {k for k, src in locations.items() if src.startswith('/v1507328/')}
+                else:
+                    optional = (profile / 'shader_optional.tsv').read_text().splitlines()
+                    absent = {r.split('\t')[0] for r in optional if r and not r.startswith('#') and version not in r}
+                game = type('Game', (), {'table': lambda self, t: profile / t})()
+                pairs = load_pairs(game, str(profile / 'shader_map.tsv'))
+                wanted = locations.keys() - absent
+                self.assertTrue(wanted and absent)
+                self.assertTrue(set(build_keys(wanted, locations, pairs)) & absent)
+                self.assertEqual(set(delta.package_keys(wanted, locations, pairs, absent, build_keys)), wanted)
+                self.assertEqual(set(delta.package_keys(set(), locations, pairs, absent, build_keys)), wanted)
+
+    def test_no_absences_build_the_keys_as_before(self):
+        # a full dump (no DMSH_VK_ABSENT_FILE): package_keys is build_keys itself, the same keys in the same order, so the library is the one the tools made before
+        # (vk_android_same.tsv keeps its version)
+        load_pairs, build_keys = borrowed('load_pairs', 'build_keys')
+        for title in ('040074A01BF12000', '0400C3F00006E000', '0100152000022000', '010015100B514000'):
+            with self.subTest(title=title):
+                profile = REPO / 'dm/games' / title
+                rows = (profile / 'shader_map.tsv').read_text().splitlines()
+                locations = {c[3]: c[4] for c in (r.split('\t') for r in rows) if c[0].endswith('.bin')}
+                game = type('Game', (), {'table': lambda self, t: profile / t})()
+                pairs = load_pairs(game, str(profile / 'shader_map.tsv'))
+                for want in (set(locations), set()):
+                    for absent in (set(), None):
+                        self.assertEqual(delta.package_keys(want, locations, pairs, absent, build_keys), build_keys(want, locations, pairs))
+
+    def test_selected_vertex_keeps_required_pixel(self):
+        # a lacking pixel shader does not take its vertex shader's other pixel shader with it
+        build_keys, = borrowed('build_keys')
+        locations = dict.fromkeys(('vertex', 'required', 'optional', 'unrelated'))
+        pairs = {'vertex': {'optional', 'required'}}
+        self.assertEqual(delta.package_keys({'vertex'}, locations, pairs, {'optional'}, build_keys),
+                         ['required', 'vertex'])
+        self.assertEqual(delta.package_keys({'vertex'}, locations, pairs, set(), build_keys),
+                         ['optional', 'required', 'vertex'])
+        with self.assertRaises(ValueError):
+            delta.package_keys({'optional'}, locations, pairs, {'optional'}, build_keys)
+
     def test_selected_profiles(self):
         """Every profile with a selected set: its phone keys are the selection with the pixel shaders its pairs name (Pokopia: 8,161)"""
         for seen in sorted((REPO / 'dm/games').glob('*/' + delta.SELECTED)):
@@ -360,7 +410,9 @@ class Launcher(unittest.TestCase):
         p = self.tmp / 'h/v-222222222222/dmsh_vk.lib'
         write_lib(p, '222222222222', abi='0123456789ab', shaders=[('00000000000000aa', [spirv(10, 1)], b'')])
         L = delta.Library(str(p))
-        self.assertEqual(self.java('header', p), '\t'.join([L.chain, L.version, L.game, L.inputs, L.abi]))
+        want = '\t'.join([L.chain, L.version, L.game, L.inputs, L.abi])
+        L.close()   # Windows refuses to rewrite a file while it is mapped
+        self.assertEqual(self.java('header', p), want)
         write_lib(p, '222222222222', shaders=[])
         self.assertEqual(self.java('header', p).split('\t')[4], '')
         p.write_bytes(b'not a library' * 20)

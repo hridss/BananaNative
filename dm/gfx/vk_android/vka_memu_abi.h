@@ -45,8 +45,8 @@
 #define VKA_MEMU_F_INDEXED 2      // indexed triangles: the vertex and index regions apart, the indices the arena's vertex numbers (VBASE / VW + workgroup x MAXV + v)
 #define VKA_MEMU_F_INTERLEAVED 4  // one slot of VSTRIDE words per mesh workgroup (vertices, then primitives), its base a multiple of the slot: the vertex shader finds it from VertexIndex
 
-#define VKA_MEMU_CTL_COUNTER 0    // control buffer words: the arena words handed out in this submission
-#define VKA_MEMU_CTL_ASKED 1      // the most the counter would have reached (the room asked for)
+#define VKA_MEMU_CTL_COUNTER 0    // control buffer words: the arena words handed out in this batch (cleared before each batch; DM_VK_MESH_EMU_RESET=0: in this submission)
+#define VKA_MEMU_CTL_ASKED 1      // the most the counter would have reached in this submission (the room asked for)
 
 // Set 0 bindings of the converted modules and of the generated vertex shaders: past every stage range the library uses (compute takes range 0, task 1, mesh 0)
 #define VKA_MEMU_ARENA_BINDING 382

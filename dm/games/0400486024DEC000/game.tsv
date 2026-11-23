@@ -36,6 +36,9 @@ mem_alias	0x200000000
 mem_stack	0x10000000
 app_pool	0x240000000
 sys_resource	0x3000000
+# Android, devices of 12 GB or less by default (DM_VK_LOW_RAM=1 on larger dual-screen devices): pools >= 64 MiB placed in 16 MiB parts and texture cache ceiling 1280 MiB; low_ram_app_pool_mb is omitted because main sizes SetHeapSize as TotalMemorySize - 2.80 GiB and requires the 9216 MiB total for its 6.20 GiB heap
+low_ram_place_part_mb	64
+low_ram_img_cache_max_mb	1280
 
 # ---- Language ----
 # The languages the game ships (Mals/ has a message archive for each: JPja USen EUen EUfr USfr EUde EUit EUes USes EUnl USpt EUru KRko CNzh TWzh EUpl; no Thai, no European Portuguese). The host gives the game
@@ -104,6 +107,10 @@ recommend	driver.id=8,driver.version>=0x80320000	driver=system
 # Qualcomm phones"); a player who never chose Resolution gets Performance (Prefs.resolutionChoice takes the recommended preset), an explicit choice stays. Not changed: the Upscaler
 # (Native 48.7 ms, Bilinear no change, so SGSR stays), Max resolution and Texture pool x2 (more work and memory, off), Unlocked frame rate (no fps gain). No Hold 60 fps: fps_steps is not set
 recommend	any	res_preset=performance	vegetation=off
+# Measured on Adreno 740 with Mesa Turnip 27.0.0-devel (driver.id=18; README.md "Profile"): without VK_EXT_mesh_shader, 3D scenes can dip below 20 fps where the
+# 3-vsync frame-step floor slows game time below real time and desyncs audio; Unlocked frame rate steps game logic by elapsed guest clock down to 10 fps, Hold 60 fps
+# avoids multi-vsync display holds, and Speedhack drops covered sky draws (47eb514f6d5e9faf)
+recommend	driver.id=18	hold60=on	skip_layers=on	option.DM_OOT_FPS_UNLOCK=on
 # Advanced › 3D scene (testers): fixed scales, labelled by scale (the launcher adds the size at the Advanced window where it has an output row). Names kept from before the
 # presets: a stored choice keeps working (ResPresets.current maps it to a preset where one matches)
 scene_scale	720p	0.6133	fixed	Fixed 0.6133

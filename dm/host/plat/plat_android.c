@@ -247,6 +247,24 @@ void plat_thread_stack(uint64_t *top, uint64_t *size) {
     *top = (uint64_t)(uintptr_t)lo + n; *size = n;
 }
 
+// The end of the user address space: arm64 Linux gives a process 39 or 48 bits (the kernel's VA_BITS), and Bionic exports no constant for it. The stack and the
+// top-down mmap area sit just under that end, so the smallest power of two above the highest mapping in /proc/self/maps is the limit. Read once
+uint64_t plat_va_limit(void) {
+    static _Atomic uint64_t lim;
+    uint64_t v = atomic_load_explicit(&lim, memory_order_relaxed);
+    if (v) return v;
+    uint64_t top = 0; char line[512];
+    FILE *f = fopen("/proc/self/maps", "re");
+    if (f) {
+        while (fgets(line, sizeof line, f)) { unsigned long long lo, hi; if (sscanf(line, "%llx-%llx", &lo, &hi) == 2 && hi > top) top = hi; }
+        fclose(f);
+    }
+    v = top > (1ull << 39) ? 1ull << 48 : 1ull << 39;   // (nothing read: the smaller one, which every arm64 kernel has)
+    while (v < top && v < (1ull << 52)) v <<= 1;
+    atomic_store_explicit(&lim, v, memory_order_relaxed);
+    return v;
+}
+
 // Suspension without ptrace: a real-time signal stops the thread in its handler, which saves the registers from its ucontext and waits on a futex until the resume. One thread at a time
 // (the dumps stop threads one by one). The handler runs on the thread's signal stack (SA_ONSTACK): Linux has no red zone, and the rewritten guest code parks registers below sp
 static struct { pthread_mutex_t mu; _Atomic int state; _Atomic pid_t tid; plat_regs_t regs; } g_susp = {PTHREAD_MUTEX_INITIALIZER, 0, 0, {{0}}};

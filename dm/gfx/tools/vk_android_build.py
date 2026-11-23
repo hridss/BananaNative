@@ -397,9 +397,23 @@ KIND = {abi.KIND_CBUF: 'CBUF', abi.KIND_C1: 'C1', abi.KIND_DRVCB: 'DRVCB', abi.K
         abi.KIND_TEX: 'TEX', abi.KIND_TBUF: 'TBUF', abi.KIND_IMG: 'IMG', abi.KIND_SAMP: 'SAMP', abi.KIND_SAMP_TEX: 'SAMP_TEX', abi.KIND_SAMP_ID: 'SAMP_ID', abi.KIND_TEX_UBO: 'TEX_UBO',
         abi.KIND_SAMP_UBO: 'SAMP_UBO', abi.KIND_TEX_C2A: 'TEX_C2A', abi.KIND_SAMP_C2A: 'SAMP_C2A', abi.KIND_TEX_POOL: 'TEX_POOL', abi.KIND_SAMP_POOL: 'SAMP_POOL',
         abi.KIND_GMEM_MAP: 'GMEM_MAP', abi.KIND_GMEM_LOG: 'GMEM_LOG', abi.KIND_SHARED_SPILL: 'SHARED_SPILL', abi.KIND_IMG_UBO: 'IMG_UBO', abi.KIND_UNKNOWN: 'UNKNOWN'}
+# A buffer texture whose handle is in the uniform buffer, read as a uniform texel buffer (vk_android_spv.py row_fetch_buffers): a kind of the Android library only
+KIND_TBUF_UBO = getattr(abi, 'KIND_TBUF_UBO', 'tbuf_ubo')
+KIND[KIND_TBUF_UBO] = 'TBUF_UBO'
 KIND_NUM = {k: VK['KIND_' + v] for k, v in KIND.items()}
 SLOT_KINDS = {abi.KIND_CBUF, abi.KIND_SAMP, abi.KIND_SAMP_TEX, abi.KIND_TEX, abi.KIND_IMG, abi.KIND_TBUF, abi.KIND_SBUF, abi.KIND_UBO_PTR, abi.KIND_SBUF_UBO, abi.KIND_TEX_UBO, abi.KIND_SAMP_UBO, abi.KIND_SAMP_ID,
-              abi.KIND_IMG_UBO}
+              abi.KIND_IMG_UBO, KIND_TBUF_UBO}
+
+
+def query_3d_slots(m):
+    """The 2D texture variables (ids) whose handle word the shader also binds as a 3D image or texture (decode_ubo_tex, ubo_img): vk_android_spv.py query_dim3's candidates"""
+    def words(nm):
+        ut, ui = NS['decode_ubo_tex'](nm), ubo_img(nm)
+        return set(ut) if ut else {ui} if ui else set()
+    res = m.resources(); w3 = set()
+    for r in res:
+        if r['dim'] and r['dim']['dim'] == 2: w3 |= words(r['name'])
+    return [r['id'] for r in res if r['dim'] and r['dim']['dim'] == 1 and not r['dim']['array'] and words(r['name']) & w3]
 POOL_SUFFIX = '_cb0_40000000'   # a handle traced to no slot indexes the pools by its IDs (Program.cs QueryTextureArrayLengthFromPool; dmsh_build.py pool_arrays)
 
 
@@ -424,6 +438,57 @@ def ubo_img(nm):
     return (bank - 3, (h & 0x3fff) * 4) if 3 <= bank <= 16 and h >> 28 == 0 else None
 
 
+UBO_TABLE_MIN = 33   # a texture array from a uniform buffer this long or longer is read through the pools (vk_android_spv.py ubo_handle_tables); shorter ones stay descriptor arrays
+
+
+def ubo_table_specs(m):
+    """The texture arrays the shader indexes by a handle's position in one of the game's uniform buffers (Ryujinx's BindlessToArray over c[3..16], <stage>_t<type>_cb<slots>_<handle>,
+    which Program.cs sizes to 8,192 elements: every handle 64 KiB holds) → vk_android_spv.py ubo_handle_tables' specs. The replay walks a descriptor array element by element,
+    one descriptor each and at most 512 a stage (vka_draw.c): Nintendo Switch 2 Welcome Tour's 416 character and prop shaders had every draw skipped (docs/reference/shaders.md,
+    Arrays of 8,192 handles in a uniform buffer). Images and buffer textures stay at 32 elements in the translator and keep their descriptors"""
+    specs = {}
+    for r in m.resources():
+        if r['desc'] not in (spv.VK_COMBINED, spv.VK_SAMPLED_IMAGE) or r['count'] < UBO_TABLE_MIN or not r['dim'] or r['dim']['dim'] == spv.DIM_BUFFER: continue
+        if r['name'].endswith(POOL_SUFFIX): continue
+        sp = ubo_tex_spec(r['name'])
+        if sp: specs[r['id']] = sp
+    return specs
+
+
+def ubo_tex_spec(name):
+    """A uniform-buffer texture's name → its vk_android_spv.py ubo_handle_tables spec, or None"""
+    d = NS['decode_ubo_tex'](name)
+    if not d: return None
+    (slot, off), s = d
+    return {'prefix': name.split('_', 1)[0], 'slot': slot, 'off': off,
+            'samp': ('id', s[1]) if s[0] == 'id' else None if s == (slot, off) else (s[0], s[1])}   # the handle's own high 12 bits, a constant, or one word ORed in
+
+
+def pool_textures(stage, binds, res, m):
+    """A stage with more set-0 bindings than its range (VK STAGE_BINDINGS, 64: the replay keeps a stage's bindings in 64-bit masks) reads enough of its single uniform-buffer
+    textures (TEX_UBO, one element) through the pools to fit, first those whose uniform blocks the shader already reads (no new binding for the handle word), then those placed
+    last: vk_android_spv.py ubo_handle_tables loads the handle word from the uniform block and indexes
+    the texture and sampler pools with its IDs, as for the 8,192-element arrays. Nintendo Switch 2 Welcome Tour's bezel_pbr pixel shaders bind up to 55 such textures beside 8
+    uniform buffers, 2 storage buffers and the driver's, 66 to 69 in all (docs/reference/shaders.md, More set-0 bindings than a stage's range). A shader that fits is left as it is.
+    → (the binding records, classified again when textures moved, the number moved)"""
+    moved, tried = 0, set()
+    while True:
+        over = sum(1 for e in binds if e['kind'] not in (abi.KIND_TEX_POOL, abi.KIND_SAMP_POOL)) - VK['STAGE_BINDINGS']
+        if over <= 0: return binds, moved
+        blocks = {e['reg'] for e in binds if e['kind'] == abi.KIND_CBUF}
+        def new_blocks(e):   # the uniform blocks reading its handle would add (a texture's slot need not be a block the shader reads)
+            sp = ubo_tex_spec(e['name']); s = sp['samp']
+            return len(({sp['slot']} | ({s[0]} if isinstance(s, tuple) and s[0] != 'id' else set())) - blocks)
+        cand = sorted((e for e in binds if e['kind'] == abi.KIND_TEX_UBO and e['count'] <= 1 and e['desc'] in (spv.VK_COMBINED, spv.VK_SAMPLED_IMAGE)
+                       and e['dim'] and e['dim']['dim'] != spv.DIM_BUFFER and e['id'] not in tried and ubo_tex_spec(e['name'])),
+                      key=lambda e: (new_blocks(e), -e['tbind']))[:over]   # those whose blocks the shader has first, then those placed last
+        if not cand: return binds, moved   # (place then refuses the shader)
+        tried |= {e['id'] for e in cand}   # (one ubo_handle_tables leaves as it is, used other than by image instructions, is not tried again)
+        moved += spv.ubo_handle_tables(m, {e['id']: ubo_tex_spec(e['name']) for e in cand})
+        binds = [classify(stage, r, res, m) for r in m.resources()]
+        storage_slots(stage, binds, res)
+
+
 def classify(stage, r, res, m):
     """A descriptor variable → its binding record (dict): the kind and slot from its name (dmsh_build.py reflect's rules, on the SPIR-V names the MSL members come from)"""
     nm, desc = r['name'], r['desc']
@@ -442,7 +507,7 @@ def classify(stage, r, res, m):
     elif texlike and NS['decode_ubo_tex'](nm):
         ut, us = NS['decode_ubo_tex'](nm)
         if desc == spv.VK_SAMPLER: e.update(kind=abi.KIND_SAMP_ID, reg=us[1]) if us[0] == 'id' else e.update(kind=abi.KIND_SAMP_UBO, reg=us[0], off=us[1])
-        elif desc == spv.VK_UNIFORM_TEXEL: e['kind'] = abi.KIND_UNKNOWN   # a bindless buffer texture: not implemented in the replay (as on Metal)
+        elif desc == spv.VK_UNIFORM_TEXEL: e.update(kind=KIND_TBUF_UBO, reg=ut[0], off=ut[1])   # a buffer texture whose handle is in the uniform buffer (row_fetch_buffers)
         else: e.update(kind=abi.KIND_TEX_UBO, reg=ut[0], off=ut[1])
     elif desc in (spv.VK_STORAGE_IMAGE, spv.VK_STORAGE_TEXEL) and (iu := ubo_img(nm)):
         e.update(kind=abi.KIND_IMG_UBO, reg=iu[0], off=iu[1])
@@ -606,11 +671,16 @@ def finish(key, w, job, c1):
     # returns a load of the Function variable its parameter was stored to, not the parameter, and the pass matched none (Pokopia's af8f64d9f5542ef2: 0 calls replaced, 5,224 after)
     spv.scale_identity(m)
     if not hmma: spv.loop_pool_search(m)   # the raw helpers' pool table search one loop of one step (vk_android_spv.py loop_pool_search)
+    spv.query_dim3(m, query_3d_slots(m))   # 2D slots only size-queried, whose handle the shader binds as 3D too: 3D (vk_android_spv.py query_dim3)
+    spv.row_fetch_buffers(m)   # 2D slots read only as rows of 16384 texels: uniform texel buffers, a view of the buffer texture's storage (vk_android_spv.py row_fetch_buffers; after promote_locals, whose SSA it reads)
+    ubo_tables = spv.ubo_handle_tables(m, ubo_table_specs(m))   # texture arrays of 8,192 uniform-buffer handles read through the pools (vk_android_spv.py ubo_handle_tables)
     binds = [classify(stage, r, res, m) for r in m.resources()]
     storage_slots(stage, binds, res)
+    binds, tex_pool = pool_textures(stage, binds, res, m)   # past the stage's binding range: single uniform-buffer textures read through the pools
     try: place(stage, binds, m)
     except ValueError as e: return 'reflection failed', str(e)[:160], None
     if not hmma: spv.cache_raw_loads(m, {e['id'] for e in binds if e['kind'] == abi.KIND_GMEM_MAP})   # the raw load helpers' runs read at once from the pool entry kept last (vk_android_spv.py cache_raw_loads)
+    if stage == 'vs': spv.replay_raw_loads(m, {e['id'] for e in binds if e['kind'] == abi.KIND_GMEM_MAP})   # a straight-line vertex shader's raw loads through kept entries, its body run again on a miss (vk_android_spv.py replay_raw_loads)
     pad = []
     if stage == 'vs':
         want_in = set().union(*[PS_INPUTS.get(p, set()) for p in PAIRS.get(key, ())]) if PAIRS.get(key) else set()
@@ -647,8 +717,9 @@ def finish(key, w, job, c1):
             if not sp: e['kind'] = abi.KIND_UNKNOWN; continue   # (the replay then refuses the shader)
             e['bytes'] = sp['bytes']; shared = sp['workgroup']
     refl = {'key': key, 'stage': stage, 'source': f'{name}#{k}', 'pc_paired': pc_of[key], 'c1': c1.hex(), 'local': job.get('local') or [1, 1, 1], 'shared': shared,
-            'notes': res['notes'], 'vs_pad': pad, 'mesh': res.get('mesh'), 'ps_prim': prim, 'caps_dropped': dropped, 'caps_added': added, 'precise': n_precise, 'hmma_lds': hmma, 'drv_reads': drv_reads(binds, m), 'tf': job.get('tf'), **fa,
+            'notes': res['notes'], 'vs_pad': pad, 'mesh': res.get('mesh'), 'ps_prim': prim, 'caps_dropped': dropped, 'caps_added': added, 'precise': n_precise, 'hmma_lds': hmma, 'ubo_tables': ubo_tables, 'drv_reads': drv_reads(binds, m), 'tf': job.get('tf'), **fa,
             'bindings': [{kk: v for kk, v in e.items() if kk not in ('id', 'tbind', 'index')} for e in binds]}
+    if tex_pool: refl['tex_pool'] = tex_pool   # (only then: the records of a shader that fits stay as they were)
     loose = os.environ.get('DMSH_VK_LOOSE') == '1'
     return 'ok', '', (refl, [(variant, len(data), *pack_module(data), data if loose else None) for variant, data in mods])   # compressed here, in parallel
 
@@ -782,7 +853,12 @@ GATHER_BIAS = 8
 
 
 ANSWERS = {'subgroup_size': VK['SUBGROUP_SIZE'], 'ssbo_align': VK['SSBO_ALIGN'], 'gs_passthrough': False, 'shared_max': VK['SHARED_MAX'], 'gather_bias': GATHER_BIAS}
-keys = NS['build_keys'](want, loc, PAIRS) if want else sorted(loc)
+# both packers pass only absences validated against the split. Workers inherit the same file.
+absent = set()
+if absent_file := os.environ.get('DMSH_VK_ABSENT_FILE'):
+    with open(absent_file, encoding='utf-8') as f:
+        absent = set(f.read().splitlines())
+keys = delta.package_keys(want, loc, PAIRS, absent, NS['build_keys'])
 NJ = int(os.environ.get('J', '8')); BATCH = max(1, int(os.environ.get('DMSH_VK_BATCH', '64')))
 STAGE_OF = {k: loc[k][0][:2] for k in keys}   # the package file's name gives the stage (dmsh_build.py job_for)
 ORDER = [k for k in keys if STAGE_OF[k] != 'vs'] + [k for k in keys if STAGE_OF[k] == 'vs']   # pixel shaders first: their inputs pad their vertex shaders' outputs
@@ -1402,7 +1478,8 @@ kinds = collections.Counter(KIND[b['kind']] + (('+' + KIND[b['skind']]) if b.get
 print('binding kinds: ' + ', '.join(f'{k.lower()} {n}' for k, n in kinds.most_common()))
 mx = collections.defaultdict(int)
 for x in okr: mx[x['stage']] = max(mx[x['stage']], sum(1 for b in x['bindings'] if b['set'] == VK['SET_DRAW']))
-print('most set-0 bindings in one shader: ' + ', '.join(f'{s} {n}' for s, n in sorted(mx.items())) + f' (range {VK["STAGE_BINDINGS"]} a stage)')
+print('most set-0 bindings in one shader: ' + ', '.join(f'{s} {n}' for s, n in sorted(mx.items())) + f' (range {VK["STAGE_BINDINGS"]} a stage)' +
+      f"; uniform-buffer textures read through the pools to fit the range: {sum(x.get('tex_pool') or 0 for x in okr)} in {sum(1 for x in okr if x.get('tex_pool'))} shaders")
 noreg = [x for x in okr if any(b['flags'] & VK['BF_NOSLOT'] for b in x['bindings'])]
 unk = [x for x in okr if any(b['kind'] == abi.KIND_UNKNOWN or b.get('skind') == abi.KIND_UNKNOWN for b in x['bindings'])]
 print(f'shaders with a binding whose slot was not decoded {len(noreg)}, with an unrecognized binding kind {len(unk)}')

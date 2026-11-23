@@ -66,6 +66,7 @@ static VkCommandPool g_ppool; static unsigned g_fi;
 static uint64_t g_refresh_ns, g_last_desired, g_drawable_ns;
 static int g_recreate;
 static struct { uint64_t n; double t; } g_pres[PRING];
+static struct { uint64_t n, ns; } g_filled[PRING];   // when each ticket's frame had every submission handed to the queue (vka_present_fill), for the latency line (timing_poll)
 static VkSurfaceTransformFlagBitsKHR g_pre = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;   // the swapchain's preTransform
 static VkImageView g_sview[MAXIMG];   // the swapchain images as colour attachments (pre-rotation, FSR, the overlay)
 // Device scaling (DM_VK_PRESENT_SCALE=device): a picture scaled up gets a swapchain whose extent is the window's size divided by the picture's scale, so the picture fills
@@ -756,7 +757,7 @@ static void window_take(void) {   // g_pmu held
 }
 
 // ---------- The present queue ----------
-typedef struct { tex_t t; double period; int crop[4], has_crop; uint64_t ticket, fence; vka_img *src; double hold; int fit_w, fit_h; } pq_item;   // src, hold: a generated frame (vka_framegen.c); fit_w, fit_h: the size it is placed by (its game frame's crop), 0 = its own
+typedef struct { tex_t t; double period; int crop[4], has_crop; uint64_t ticket, fence; vka_img *src; double hold; int fit_w, fit_h, first; } pq_item;   // src, hold: a generated frame (vka_framegen.c); fit_w, fit_h: the size it is placed by (its game frame's crop), 0 = its own; first: a game frame's first image
 static pq_item g_pq[PQ];
 static uint64_t g_pq_in, g_pq_read, g_pq_done, g_pq_fill;   // tickets: reserved, taken by the present thread, shown; filled (a ticket is reserved by the game's present, filled when the replay reaches it: vka_worker.c)
 
@@ -766,6 +767,17 @@ static void timing_poll(void) {
     VkPastPresentationTimingGOOGLE pt[16]; uint32_t n = 16;
     if (vk.vkGetPastPresentationTimingGOOGLE(V.dev, g_swap, &n, pt) < 0) return;
     for (uint32_t i = 0; i < n; i++) pres_note(pt[i].presentID, pt[i].actualPresentTime / 1e9);
+    // Every 300 game frames: from the moment a frame's last submission was handed to the queue to its first refresh on screen (the host's share of the input latency)
+    static double lat[300]; static int nl;
+    for (uint32_t i = 0; i < n; i++) {
+        uint64_t id = pt[i].presentID; if (!id || g_filled[id % PRING].n != id || pt[i].actualPresentTime <= g_filled[id % PRING].ns) continue;
+        lat[nl++] = (pt[i].actualPresentTime - g_filled[id % PRING].ns) / 1e6;
+        if (nl == 300) {
+            for (int a = 1; a < nl; a++) for (int b = a; b > 0 && lat[b - 1] > lat[b]; b--) { double x = lat[b]; lat[b] = lat[b - 1]; lat[b - 1] = x; }
+            VLOG("present latency: last submission to screen p50/p90 %.1f/%.1f ms over %d frames (DM_VK_PRESENT_ORDER=%d)", lat[150], lat[270], nl, (int)VKA_ENV("DM_VK_PRESENT_ORDER", 1));
+            nl = 0;
+        }
+    }
 }
 
 // VK_SUBOPTIMAL_KHR: recreate when the window has a new size, or the surface a new rotation that pre-rotation can follow (the phone turned over: ROTATE_90 ↔ ROTATE_270).
@@ -860,6 +872,8 @@ void vka_present_picture_size(int cw, int ch, int *pw, int *ph) {
     if (dev) picture_buf(ew, eh, cw, ch, fr);
     *pw = fr[2]; *ph = fr[3];
 }
+// A frame whose submissions are all on the queue already, with DM_VK_PRESENT_ORDER on (the default): its copy (and frame generation's work) need no wait for it (see present_one)
+static int present_order(uint64_t fence) { return VKA_ENV("DM_VK_PRESENT_ORDER", 1) && fence <= __atomic_load_n(&V.tl_queued, __ATOMIC_ACQUIRE); }
 static int present_one(const pq_item *it) {
     if (!g_surf || vka_hung()) return 0;
     { static int rw = -1; int w = rot_wanted(); if (rw >= 0 && w != rw) { VLOG("DM_VK_PRETRANSFORM=%d: new swapchain", w); g_recreate = 1; } rw = w; }
@@ -888,6 +902,11 @@ static int present_one(const pq_item *it) {
     VkCommandBuffer cb = g_fr[k].cb; vk.vkResetCommandBuffer(cb, 0);
     VkCommandBufferBeginInfo bi = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
     vk.vkBeginCommandBuffer(cb, &bi);
+    // DM_VK_PRESENT_ORDER (live, on; 0 as before): the copy waits for its frame by the queue's order alone (one queue: every submission of the frame is already on it, vka_present_fill),
+    // a barrier making their writes visible, instead of a wait for its timeline value. That wait (on the CPU first, DM_VK_PRESENT_PREWAIT) let the next frame's work
+    // reach the queue ahead of the copy, so each frame waited for the next one's GPU work before it was shown
+    uint64_t fence = it->fence;
+    if (fence && present_order(fence)) { fence = 0; vka_barrier(cb); }
     int cx = 0, cy = 0, cw = im ? (int)im->w : 1, ch = im ? (int)im->h : 1;
     if (it->has_crop && it->crop[2] > 0 && it->crop[3] > 0) { cx = it->crop[0]; cy = it->crop[1]; cw = it->crop[2]; ch = it->crop[3]; }
     int ew = (int)(rot_quarter(g_pre) ? g_ext.height : g_ext.width), eh = (int)(rot_quarter(g_pre) ? g_ext.width : g_ext.height);   // the display, as the user sees it
@@ -958,18 +977,18 @@ static int present_one(const pq_item *it) {
     ovl_draw(cb, k, idx);   // the launcher's overlay over the picture (generated frames too)
     if (!it->src) vka_ctl_shot_record(cb, im, g_pfmt, cx, cy, cw, ch);   // the game's own frames only
     vk.vkEndCommandBuffer(cb);
-    VkSemaphore ws[2] = {g_fr[k].acq, V.tl}; uint64_t wv[2] = {0, it->fence}; VkPipelineStageFlags st[2] = {VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT};   // the image's first barrier is ALL_COMMANDS
+    VkSemaphore ws[2] = {g_fr[k].acq, V.tl}; uint64_t wv[2] = {0, fence}; VkPipelineStageFlags st[2] = {VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT};   // the image's first barrier is ALL_COMMANDS
     VkTimelineSemaphoreSubmitInfo ti = {VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO, .waitSemaphoreValueCount = 2, .pWaitSemaphoreValues = wv, .signalSemaphoreValueCount = 1, .pSignalSemaphoreValues = wv};
-    VkSubmitInfo si = {VK_STRUCTURE_TYPE_SUBMIT_INFO, .pNext = &ti, .waitSemaphoreCount = it->fence ? 2 : 1, .pWaitSemaphores = ws, .pWaitDstStageMask = st,
+    VkSubmitInfo si = {VK_STRUCTURE_TYPE_SUBMIT_INFO, .pNext = &ti, .waitSemaphoreCount = fence ? 2 : 1, .pWaitSemaphores = ws, .pWaitDstStageMask = st,
                        .commandBufferCount = 1, .pCommandBuffers = &cb, .signalSemaphoreCount = 1, .pSignalSemaphores = &g_sdone[idx]};
-    if (!it->fence) ti.waitSemaphoreValueCount = 1;
+    if (!fence) ti.waitSemaphoreValueCount = 1;
     frame_rate(it->period); refresh_poll();
     // The frame done on the GPU before the queue lock is taken: a submission that waits for a timeline value still pending can block inside vkQueueSubmit until it is
     // signalled (Turnip on KGSL emulates timeline semaphores: 25-35 ms a frame with the lock held, so every replay submission behind it waited; Ocarina of Time's note).
     // The copy cannot start before the frame ends anyway; only a value already handed to the queue is waited for here (a later one is handled under the lock below)
     // Test switch DM_VK_PRESENT_PREWAIT=0: no wait here (as before), for A/B runs
-    if (it->fence && !vka_hung() && VKA_ENV("DM_VK_PRESENT_PREWAIT", 1) && it->fence <= __atomic_load_n(&V.tl_queued, __ATOMIC_ACQUIRE)) {
-        VkResult vka_tl_wait(VkSemaphore s, uint64_t v, uint64_t timeout_ns); vka_tl_wait(V.tl, it->fence, vka_hang_ns());   // a timeout: the submission below waits as before, and the hang handling sees it
+    if (fence && !vka_hung() && VKA_ENV("DM_VK_PRESENT_PREWAIT", 1) && fence <= __atomic_load_n(&V.tl_queued, __ATOMIC_ACQUIRE)) {
+        VkResult vka_tl_wait(VkSemaphore s, uint64_t v, uint64_t timeout_ns); vka_tl_wait(V.tl, fence, vka_hang_ns());   // a timeout: the submission below waits as before, and the hang handling sees it
     }
     // No gate pending when the copy goes to the queue (vka_dev.c vka_gate_drain): on Turnip the driver would hold the copy back behind the gated work while Android
     // already shows the image. DM_VK_PRESENT_GATE_WAIT=<ms> (live; 30 on Turnip, 0 = off elsewhere): the longest wait, after which the present goes on as before
@@ -993,7 +1012,7 @@ static int present_one(const pq_item *it) {
     // vka_fence_queued. Mode 1: the next fence (a later submission signals it: the wait-before-signal on one queue); mode 2: a value nothing ever signals (a sure stall, for
     // the hang handling). Not set in the product
     { static int mode = -1, at; if (mode < 0) { const char *e = getenv("DM_VK_TEST_HANG"); mode = 0; if (e && sscanf(e, "%d,%d", &mode, &at) < 1) mode = 0; if (at <= 0) at = 600; }
-      if (mode && it->ticket == (uint64_t)at && it->fence) { wv[1] = mode == 1 ? vka_fence_last() + 1 : V.tl_queued + 1000000000ull;
+      if (mode && it->ticket == (uint64_t)at && fence) { wv[1] = mode == 1 ? vka_fence_last() + 1 : V.tl_queued + 1000000000ull;
           VRED("DM_VK_TEST_HANG=%d: present ticket %llu waits for fence %llu (%llu handed to the queue)", mode, (unsigned long long)it->ticket, (unsigned long long)wv[1], (unsigned long long)V.tl_queued); } }
     void vka_qhold_add(int k, uint64_t ns); uint64_t th0 = now_ns();
     r = vka_hung() ? VK_ERROR_DEVICE_LOST : vk.vkQueueSubmit(V.q, 1, &si, g_fr[k].fence);
@@ -1010,6 +1029,11 @@ static int present_one(const pq_item *it) {
         if (g_refresh_ns && (period > g_refresh_ns * 3 / 2 || g_fg_on)) {   // hold each image for its present period: the panel refreshes faster than the game presents
             uint64_t now = now_ns(); want = g_last_desired ? g_last_desired + period : now;
             if (want < now) want = now;
+            // A game frame's first image at most one hold from now (DM_LSFG_PACE_GAME, live, on), still a refresh after the image before: each time chained on the one before,
+            // a chain running ahead of the clock was never pulled back, and every image of every later frame waited that much longer. (Timing it from when the GPU will have
+            // made the images, learned from the shown times, fed on itself: a late present thread learned a longer delay, 26 images a second or 180 ms on Orbitals)
+            if (g_fg_on && it->first && g_last_desired && want > now + period && VKA_ENV("DM_LSFG_PACE_GAME", 1))
+                want = now + period > g_last_desired + g_refresh_ns ? now + period : g_last_desired + g_refresh_ns;
             g_last_desired = want; want -= g_refresh_ns / 2;
         } else g_last_desired = 0;
         VkPresentTimeGOOGLE pt = {(uint32_t)it->ticket, want};
@@ -1040,11 +1064,15 @@ static void *present_main(void *arg) {
         pq_item it = g_pq[g_pq_read % PQ]; g_pq_read++;
         pthread_mutex_unlock(&g_pmu);
         vka_img *gen[VKA_FG_MAX]; double hold = 0, out_period = 0;   // frame generation: the images shown before this frame, each for hold seconds
-        int ng = g_surf ? vka_fg_frame(it.t.serial, it.has_crop ? it.crop : NULL, it.period, it.fence, (int)it.t.d.format, gen, &hold, &out_period) : 0;
+        // (vka_fg_frame's work starts with a barrier: with DM_VK_PRESENT_ORDER it waits for the frame by the queue's order too, and its submission no longer blocks
+        // the queue lock until the frame ends, which held the replay's next submissions back)
+        double game_t = g_filled[it.ticket % PRING].n == it.ticket ? g_filled[it.ticket % PRING].ns / 1e9 : 0;
+        int ng = g_surf ? vka_fg_frame(it.t.serial, it.has_crop ? it.crop : NULL, it.period, it.fence && present_order(it.fence) ? 0 : it.fence, (int)it.t.d.format, gen, &hold, &out_period, game_t) : 0;
         double game_period = it.period;
         g_fg_on = out_period > 0;
         if (out_period > 0) it.period = out_period;
-        for (int g = 0; g < ng; g++) { pq_item gi = it; gi.src = gen[g]; gi.fit_w = it.has_crop && it.crop[2] > 0 && it.crop[3] > 0 ? it.crop[2] : (int)it.t.d.width; gi.fit_h = it.has_crop && it.crop[2] > 0 && it.crop[3] > 0 ? it.crop[3] : (int)it.t.d.height; gi.has_crop = 0; gi.ticket = 0; gi.fence = 0; gi.hold = hold; vka_fps_note(present_one(&gi), 1); }
+        for (int g = 0; g < ng; g++) { pq_item gi = it; gi.src = gen[g]; gi.fit_w = it.has_crop && it.crop[2] > 0 && it.crop[3] > 0 ? it.crop[2] : (int)it.t.d.width; gi.fit_h = it.has_crop && it.crop[2] > 0 && it.crop[3] > 0 ? it.crop[3] : (int)it.t.d.height; gi.has_crop = 0; gi.ticket = 0; gi.fence = 0; gi.hold = hold; gi.first = !g; vka_fps_note(present_one(&gi), 1); }
+        it.first = !ng;
         it.hold = ng ? hold : game_period;
         int shown = present_one(&it);
         if (shown) dm_guest_frame_tick();
@@ -1084,6 +1112,7 @@ void vka_present_fill(uint64_t tk, const tex_t *t, double period_s, const int cr
     // be queued after this copy, which then waits for it forever (a wait-before-signal on one queue). On the Adreno 840 phone that froze the queue while the first level loaded
     // (fence N+2 never reached at N, android-perf c1ff15fa, three runs), and the compositor waiting on the frame restarted the system server
     it->ticket = tk; it->fence = vka_fence_queued(); it->src = NULL; it->hold = 0; it->fit_w = it->fit_h = 0;
+    g_filled[tk % PRING].n = tk; g_filled[tk % PRING].ns = now_ns();
     uint64_t res = vka_fence_last();
     if (res > it->fence && !vka_worker_on()) { static _Atomic uint64_t n; uint64_t k = atomic_fetch_add(&n, 1) + 1;
         if (k <= 3 || !(k & (k - 1))) VLOG("present ticket %llu came while fence %llu was still being recorded (%llu queued): the present waits for %llu (%llu such presents)",

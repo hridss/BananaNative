@@ -28,11 +28,12 @@ class Placeholder(unittest.TestCase):
             VK_IMAGE_VIEW_TYPE_2D = 1, VK_IMAGE_VIEW_TYPE_3D = 2,
             VK_IMAGE_VIEW_TYPE_CUBE = 3, VK_IMAGE_VIEW_TYPE_1D_ARRAY = 4,
             VK_IMAGE_VIEW_TYPE_2D_ARRAY = 5, VK_IMAGE_VIEW_TYPE_CUBE_ARRAY = 6 };
-        typedef struct { struct { int target, format, width, height, depth, levels, flags; } d;
+        typedef struct { struct { int target, format, width, height, depth, levels, flags; uint16_t gob_order; } d;
             int L; uint64_t serial; } tex_t;
         typedef struct { struct { VkFormat vk; } f; uint32_t layers; } vka_img;
         static int g_cb, made, wrong_format, views;
         static vka_img images[9];
+        static uint16_t vka_gob_order(void) { return 0; }
         static void nvn_tex_layout(const void *d, void *l) { (void)d; (void)l; }
         static uint64_t nvn_new_serial(void) { static uint64_t serial; return ++serial; }
         static vka_img *vka_tex_get(tex_t *t, int cb) {

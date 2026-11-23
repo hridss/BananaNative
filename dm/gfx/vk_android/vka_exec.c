@@ -14,6 +14,7 @@
 #include "vka_qsched.h"
 #include "vka_skipwarn.h"
 #include <math.h>
+#include <sys/prctl.h>
 #include <stdlib.h>
 #include <string.h>
 #include "vka_tstick.h"
@@ -124,6 +125,7 @@ void mtl_set_frame(uint64_t f) {
     g_frame = f; vka_ctl_frame(f);
     { if (atomic_load_explicit(&vka_synclog_n, memory_order_relaxed) > 0) VLOG("sync frame %llu begins at %.2f ms", (unsigned long long)f, (now_ns() % 1000000000000ull) / 1e6); }
     skipwarn_frame(f);
+    { static int last; int v = VKA_ENV("DM_VK_QS_TRACE_DUMP", 0); if (v && v != last) vka_qtrace_dump(0); last = v; }   // diagnostic: the GPU-wait trace now, once per new value
     static uint64_t f0, d0, rp0, b0, ub0, s0, r0, o0, pc0, ch0;
     int on = VKA_ENV("DM_VK_STATS", 1) != 0;
     if (on && f - f0 >= 300) {
@@ -137,6 +139,7 @@ void mtl_set_frame(uint64_t f) {
           vka_rp_bar_stats(pb, sizeof pb, n); if (pb[0]) VLOG("%s", pb);
           vka_gbar_stats(pb, sizeof pb, n); if (pb[0]) VLOG("%s", pb);
           oq_stats(pb, sizeof pb, n); if (pb[0]) VLOG("%s", pb);
+          { void vka_vrs_stats(char *b, size_t n, double frames); vka_vrs_stats(pb, sizeof pb, n); if (pb[0]) VLOG("%s", pb); }
           { void vka_drv_memo_stats(char *b, size_t n); vka_drv_memo_stats(pb, sizeof pb); if (pb[0]) VLOG("%s", pb); }
           vka_memu_stats(pb, sizeof pb); if (pb[0]) VLOG("%s", pb);
           { void vka_memu_stop_stats(char *b, size_t n, double frames); vka_memu_stop_stats(pb, sizeof pb, n); if (pb[0]) VLOG("%s", pb); } }
@@ -519,6 +522,11 @@ static void gpu_slot_done(unsigned slot) {   // the slot's fence is done: its tw
         // A part's GPU time is what a driver's long-command watchdog sees (the kernel ends a submission that runs too long and the device is lost): the longest ones logged
         double pms = pmax * g_ts_ns / 1e6; static double logged = 200;
         if (pms >= logged) { logged = pms * 1.25; VLOG("GPU time: a part ran %.1f ms (part %u of %u of a submission of frame %llu; the longest so far)", pms, imax + 1, np, (unsigned long long)f); }
+        if (np > 1 && VKA_ENV("DM_VK_PARTLOG", 0)) {   // each part's top and bottom from the first part's top: a gap between a bottom and the next top is the GPU waiting for that part
+            char b[600]; size_t o = 0;
+            for (uint32_t i = 0; i < np && o < sizeof b; i++) o += (size_t)snprintf(b + o, sizeof b - o, " %.1f-%.1f", (t[2 * i] - t[0]) * g_ts_ns / 1e6, (t[2 * i + 1] - t[0]) * g_ts_ns / 1e6);
+            VLOG("GPU parts of a submission of frame %llu (ms from its first top):%s; busy %.1f", (unsigned long long)f, b, busy * g_ts_ns / 1e6);
+        }
         uint64_t s0 = (uint64_t)(t[0] * g_ts_ns), s1 = (uint64_t)(t[2 * np - 1] * g_ts_ns);
         atomic_fetch_add(&g_gpu[k].ns, (uint64_t)(busy * g_ts_ns)); atomic_fetch_add(&g_gpu[k].span, s1 - s0);
         if (s0 < atomic_load(&g_gpu[k].t0)) atomic_store(&g_gpu[k].t0, s0);
@@ -587,7 +595,7 @@ void vka_exec_hang_report(uint64_t fence) {
     unsigned k = (g_slot_i - 1) % NSLOT;
     if (g_slot_ts[k]) VRED("GPU hang: the submission being recorded (frame %llu) had handed %u parts to the queue, %u of them seen finished", (unsigned long long)g_slot_frame[k],
                            g_slot_parts[k] - 1, g_part_seen);
-    vka_qtrace_dump();   // the scheduler's and the submissions' last events (vka_worker.c, DM_VK_QS_TRACE)
+    vka_qtrace_dump(1);   // the scheduler's and the submissions' last events (vka_worker.c, DM_VK_QS_TRACE)
     void vka_crumbs_dump(void); vka_crumbs_dump();   // how far the GPU got (DM_VK_CRUMBS)
 }
 
@@ -847,6 +855,7 @@ static inline void chunk_check(void) {
     }
 }
 static uint64_t g_cur_fence;   // the fence of the submission being replayed, reserved before it (vka_worker.c); 0 = reserved at its commit
+uint64_t vka_exec_cur_fence(void) { return g_cur_fence ? g_cur_fence : vka_fence_last() + 1; }   // the fence a snapshot recorded now belongs to
 // Commits without a signal (vka_qsched.h qs_commit: a part cut at a wait, or a submission replayed while a lower fence is parked): their completion effects wait here, in
 // the order they were recorded, and go with the first signal that covers their fence, so they land only after their GPU work
 typedef struct { uint64_t fence; pop *ops; int n; } carry_t;
@@ -900,7 +909,7 @@ static uint64_t sub_commit(uint64_t reserved, int has_sig, uint64_t signal) {
     if (VKA_ENV("DM_VK_PARTLOG", 0) && g_nx) { char zb[400]; vka_rp_zstats(zb, sizeof zb); VLOG("last part of the submission of frame %llu: %llu draws%s", (unsigned long long)g_frame, (unsigned long long)(g_stat_draws - g_chunk_d0), zb); }
     vka_disp_settle(g_cb);   // the submission's last dispatches before the steps below and the next submission's (vka_draw.c "Dispatch order")
     vka_rw_point(g_cb, 'e', 0, 0, 0); vka_rw_commit(fence);   // DM_VK_RANGE_WATCH: the bytes at the submission's end, logged once it is done
-    vka_tex_writeback(g_cb);   // linear textures the GPU wrote, back into their storage for the CPU
+    vka_tex_writeback(g_cb);   // textures the GPU wrote (linear ones, and the rendered mips of block-linear ones), back into their storage for the CPU, before the host barrier
     vka_tex_pfb_commit(g_cb, fence);   // the texture IDs its shaders read through the pool: copied out for the host (the barrier below) and cleared
     VkMemoryBarrier mb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER, .srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT, .dstAccessMask = VK_ACCESS_HOST_READ_BIT | VK_ACCESS_HOST_WRITE_BIT};
     vk.vkCmdPipelineBarrier(g_cb, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
@@ -959,8 +968,9 @@ static int synclog(void) { static int last; int v = VKA_ENV("DM_VK_SYNCLOG", 0);
 int mtl_wait(uint64_t fence, uint64_t timeout_ns) {
     if (timeout_ns && vka_done() < fence && synclog()) {
         double t0 = ms_now(); int r = vka_wait_done(fence, timeout_ns);
-        if (atomic_fetch_sub(&g_synclog, 1) > 0) VLOG("sync wait: frame %llu fence %llu (last reserved %llu, queued %llu, done %s): %.2f-%.2f ms, %.2f ms", (unsigned long long)g_frame, (unsigned long long)fence,
-                                                (unsigned long long)vka_fence_last(), (unsigned long long)vka_fence_queued(), r ? "yes" : "timeout", t0, ms_now(), ms_now() - t0);
+        char tn[20] = "?"; prctl(PR_GET_NAME, tn);   // the waiting thread (a game thread's name: which of them the GPU holds)
+        if (atomic_fetch_sub(&g_synclog, 1) > 0) VLOG("sync wait: frame %llu fence %llu (last reserved %llu, queued %llu, done %s): %.2f-%.2f ms, %.2f ms, thread '%s'", (unsigned long long)g_frame, (unsigned long long)fence,
+                                                (unsigned long long)vka_fence_last(), (unsigned long long)vka_fence_queued(), r ? "yes" : "timeout", t0, ms_now(), ms_now() - t0, tn);
         return r;
     }
     return vka_wait_done(fence, timeout_ns);
@@ -1357,6 +1367,7 @@ static void copy_t2t(const p_copy_t2t *c) {
                && s->samples == d->samples && s->f.bpb == d->f.bpb && s->f.bw == d->f.bw && s->f.bh == d->f.bh) {
         VkImageCopy r = {ss, {c->sr.xoffset, c->sr.yoffset, s3 ? c->sr.zoffset : 0}, ds, {c->dr.xoffset, c->dr.yoffset, d3 ? c->dr.zoffset : 0}, {(uint32_t)c->sr.width, (uint32_t)c->sr.height, s3 ? (uint32_t)nz : 1}};
         vk.vkCmdCopyImage(g_cb, s->img, VK_IMAGE_LAYOUT_GENERAL, d->img, VK_IMAGE_LAYOUT_GENERAL, 1, &r);
+        vka_fgui_t2t(s, d, c->sr.xoffset, c->sr.yoffset, c->dr.xoffset, c->dr.yoffset, c->sr.width, c->sr.height, c->flags, "copy");
     } else {   // a scaled, mirrored or format-changing copy: a blit (filtered with LINEAR_FILTER), or a draw into a depth format that is no blit destination (vka_t2tpath.h)
         VkFormatProperties dp; vk.vkGetPhysicalDeviceFormatProperties(V.pd, d->f.vk, &dp);
         int path = t2t_path(0, s->f.kind, d->f.kind, s->f.bw > 1 || d->f.bw > 1, s->samples > 1 || d->samples > 1, (dp.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_DST_BIT) != 0);
@@ -1373,6 +1384,7 @@ static void copy_t2t(const p_copy_t2t *c) {
         VkFormatProperties fp; vk.vkGetPhysicalDeviceFormatProperties(V.pd, s->f.vk, &fp);
         VkFilter fl = (c->flags & NVN_COPY_FLAGS_LINEAR_FILTER_BIT) && sa == VK_IMAGE_ASPECT_COLOR_BIT && (fp.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
         vk.vkCmdBlitImage(g_cb, s->img, VK_IMAGE_LAYOUT_GENERAL, d->img, VK_IMAGE_LAYOUT_GENERAL, 1, &r, fl);
+        vka_fgui_t2t(s, d, c->sr.xoffset, c->sr.yoffset, c->dr.xoffset, c->dr.yoffset, c->dr.width, c->dr.height, c->flags, fl == VK_FILTER_LINEAR ? "blit linear" : "blit nearest");
     }
     vka_img_written(d); g_stat_ops++;
     vka_barrier(g_cb);
@@ -1427,7 +1439,9 @@ static void dlss_eval(const p_dlss *o) {
         f.c.src = ct; f.c.dst = ot; f.c.sr = (NVNcopyRegion){sx, sy, 0, iw, ih, 1}; f.c.dr = (NVNcopyRegion){dx, dy, 0, ow, oh, 1};
         f.depth = o->tex[DLSS_DEPTH]; f.motion = o->tex[DLSS_MOTION]; memcpy(f.jitter, o->jitter, sizeof f.jitter); memcpy(f.mv, o->mv, sizeof f.mv); f.reset = o->reset;
         vka_img *z = f.depth ? vka_tex_get(f.depth, g_cb) : NULL, *m = f.motion ? vka_tex_get(f.motion, g_cb) : NULL;
-        if (!o->base[DLSS_DEPTH][0] && !o->base[DLSS_DEPTH][1] && !o->base[DLSS_MOTION][0] && !o->base[DLSS_MOTION][1] && vka_dlss_fsr3(g_cb, s, sfmt, d, enc, z, m, &f)) { vka_img_written(d); g_stat_ops++; return; }
+        if (!o->base[DLSS_DEPTH][0] && !o->base[DLSS_DEPTH][1] && !o->base[DLSS_MOTION][0] && !o->base[DLSS_MOTION][1] && vka_dlss_fsr3(g_cb, s, sfmt, d, enc, z, m, &f)) {
+            vka_fgui_dlss(g_cb, m, o->iw, o->ih, o->mv);   // the motion vectors for DM_FG_CUT (vka_fgui.c)
+            vka_img_written(d); g_stat_ops++; return; }
         mode = 2;
     }
     if (mode >= 2 && vka_dlss_run(g_cb, o, mode, s, sl, sfmt, sx, sy, iw, ih, d, dl, enc, dx, dy, ow, oh)) { vka_img_written(d); g_stat_ops++; return; }
@@ -1736,7 +1750,7 @@ int vka_qdx_args(uint64_t ind, VkBuffer *b, VkDeviceSize *o) {
 // so a mesh draw after a barrier between the draws of one pass no longer ends that pass (OoT: about 80 such barriers and 27 split passes a frame on an Adreno 740, Forgejo
 // #249). A draw past a barrier is taken when its task and mesh shaders write no memory and sample no texture (vka_memu_draw.inc memu_hoistable); otherwise the look-ahead
 // stops there. A barrier the replay does not take inside the pass (a draw before it wrote memory, or no pass open) drops the entries past it (vka_memu_bar_met)
-// Why a look-ahead stopped (the replay statistics' "look-ahead stops" part): the record kind, by op; MEMU_STOP_LIMIT the batch's 128 draws, _HOIST a draw past a barrier
+// Why a look-ahead stopped (the replay statistics' "look-ahead stops" part): the record kind, by op; MEMU_STOP_LIMIT the batch's most draws (128, fewer after a batch outgrew the arena: vka_memu_batch_cap), _HOIST a draw past a barrier
 enum { MEMU_BEGIN, MEMU_ADD, MEMU_SETUP, MEMU_TASK, MEMU_DIST, MEMU_MESH, MEMU_END };
 int vka_memu_batch(int phase, const vka_dstate *d, const p_draw *dw, const uint8_t *p, int idx, int bars);
 int vka_memu_on(void); int vka_memu_has(const uint8_t *p); void vka_memu_cur(const uint8_t *p); void vka_memu_bar_met(int kept);
@@ -1790,7 +1804,7 @@ static int memu_walk(const uint8_t *p, int phase) {
         if (!memu_allowed(h.op) || h.size < 8) { stop = memu_stop_kind(h.op); break; }
         if (h.op == OP_DRAW) { p_draw t; const p_draw *d = draw_rec(a, h.size, &t);
             if (d->prim == NVN_PRIM_MESH && !d->mdi_cnt) {
-                if (n == 128) { stop = MEMU_STOP_LIMIT; break; }
+                if (n >= vka_memu_batch_cap()) { stop = MEMU_STOP_LIMIT; break; }
                 if (phase < 0) return 1;
                 if (!vka_memu_batch(phase, &g_memu_st, d, p, n, bars)) { stop = MEMU_STOP_HOIST; break; }
                 n++; } }

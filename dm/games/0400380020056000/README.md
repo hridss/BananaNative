@@ -17,7 +17,7 @@ A Switch 2 game: update v65536 over the base game, SDK 21.4.4 built for the Swit
 
 - Built from a dump folder (`base/`, `updates/65536/`). The display version `v65536` is a placeholder: no control data gave a better one.
 - Update RomFS: 46,354 files, 13 GB.
-- Shaders: 27,195 in [`shader_map.tsv`](shader_map.tsv), from `Shader/*.Nin_Ounce_NVN2.bfsha.zs`, `Sample.Nin_Ounce_NVN2.release.sarc.zs` and `Lib/agl/*`. A full build takes about 34 minutes from scratch, 13 with the Metal cache. 22,147 pipeline pairs prebuild with none failing, in about 200 s.
+- Shaders: 27,190 in [`shader_map.tsv`](shader_map.tsv) since 2026-11-19 (27,195 in upstream's map, 27,192 after the first BAHS fix below, two fewer with the BAHS record fix: [Found on this game](#found-on-this-game)), from `Shader/*.Nin_Ounce_NVN2.bfsha.zs`, `Sample.Nin_Ounce_NVN2.release.sarc.zs` and `Lib/agl/*`. A full build takes about 34 minutes from scratch, 13 with the Metal cache. 22,147 pipeline pairs prebuild with none failing, in about 200 s.
 
 ## Shaders
 
@@ -78,6 +78,8 @@ The work folder's `run/drive.sh <name> <secs> "<sec> <control line>"…` boots i
 - The shader tables needed splitting again ([A control section's words read as a BAHS entry](../../../docs/reference/shaders.md#a-control-sections-words-read-as-a-bahs-entry)); resolved in this tree: the split of update 65536 with the fix gives 27,192 shaders, the upstream map less exactly the three agl keys `68bbe98b3bfd9876`, `18be578dfdaaffa0` and `7a4936fccf82094e` (renumbered rows, no other key, stage or source changed). `shader_pairs.tsv` and `pso_pairs.tsv` came out byte for byte; `shader_facts.tsv` loses the false compute key's row and gains the mesh shader `800215a0f8d0c44d`'s (this tree's mesh facts).
 
 ## Found on this game
+
+- [A control section's words read as a BAHS entry](../../../docs/reference/shaders.md#a-control-sections-words-read-as-a-bahs-entry): payload outside the binary record slots (upstream PR #2943). Two vertex keys of `Lib/agl/agl_resource.Nin_Ounce_NVN2.debug.sarc.zs` lie in a record's payload and pair a control section with the vertex code at the start of the code region: `22fff9012db5acaa` (`agl_common.sharcb#BAHS@0x27ea4`) and `16d1e80284e796bd` (`agl_technique_pfx.sharcb#BAHS@0x10eda4`, the same false entry as Wonder's add-on). The fixed split drops both, and a profile that listed them would stop every pack with "the dump's shaders lack ...". Checked on 2026-11-19 by running the reader before and after the fix on every BAHS file of update 65536's RomFS (22 files, read in place from an `.nx`): 7,128 keys before, 7,126 after, only these two lost, and the variation pairs unchanged. The map is the same less those rows (renumbered); the facts and pairs never named them. `vk_delta.tsv` still has their rows; with the profile inputs moved (`061982ba7482` → `1a287167d853`) it is of other inputs and the libraries need a rebuild (current: not built or run).
 
 - [Shared fonts depend on the phone's fonts (one Roboto for six types)](../../../docs/reference/services.md#shared-fonts-depend-on-the-phones-fonts-one-roboto-for-six-types): issue #223; the APK's Noto Sans is now `standard.ttf`, per-type order in the host. Phone check open.
 - [Graphics scale changes while the game runs (message 300)](../../../docs/reference/services.md#graphics-scale-changes-while-the-game-runs-message-300): its notification handler re-reads the scale on message 300 ([Android](#android)); phone check open.

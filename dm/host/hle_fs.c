@@ -540,7 +540,23 @@ static int set_guest_name(const char *hp, const char *path) {
     if (!plat_removexattr(hp, FS_GUEST_NAME) || errno == PLAT_ENOATTR) return 0;
     return -1;
 }
+// The last game file opens with their results, printed with a crash report (dm_fs_recent_dump): a game that fails to load a file and then crashes on the empty result leaves no other
+// trace by default, because "not found" is not logged without DM_FS=1. One line a slot, filled without a lock (a torn line at a crash is acceptable).
+#define FS_RING 16
+static struct { uint64_t t; char s[160]; } g_fsring[FS_RING];
+static _Atomic unsigned g_fsring_n;
+static void fs_note(const char *path, const char *what, long long v) {
+    unsigned i = atomic_fetch_add(&g_fsring_n, 1) % FS_RING;
+    g_fsring[i].t = now_ns() - g_t0_ns;
+    snprintf(g_fsring[i].s, sizeof g_fsring[i].s, "%s %s %lld", what, path ? path : "(null)", v);
+}
+void dm_fs_recent_dump(FILE *f) {   // oldest first; a line that was never written is skipped
+    unsigned n = atomic_load(&g_fsring_n);
+    fprintf(f, "[dm] last file opens (oldest first; ok = size in bytes, image entries are sizes of the entry, nf = not found, err = errno):\n");
+    for (unsigned k = n > FS_RING ? n - FS_RING : 0; k < n; k++) { unsigned i = k % FS_RING; if (g_fsring[i].s[0]) fprintf(f, "[dm]   [%.2fs] %s\n", g_fsring[i].t / 1e9, g_fsring[i].s); }
+}
 static Result err_res(const char *op, const char *path) {
+    if (!strcmp(op, "open")) fs_note(path, errno == ENOENT || errno == ENOTDIR ? "nf" : "err", errno);
     if (errno == ENOENT || errno == ENOTDIR) { if (g_flag.fs) LOG("fs %s not found: %s", op, path); return RES_PATH_NOT_FOUND; }   // Logged under DM_FS=1 (the game often probes with "not found", not logged by default)
     if (errno == EEXIST) return RES_PATH_EXISTS;
     LOG("fs %s %s failed errno=%d", op, path, errno); return RES_FAIL;
@@ -1117,18 +1133,18 @@ HLE_FORCE("_ZN2nn2fs8OpenFileEPNS0_10FileHandleEPKci", "fsp-srv → open(2)", Re
     { int lf = labels_open(path, mode); if (lf >= 0) { g_fmode[lf] = (uint8_t)mode; *out = FH_OUT(lf); return RES_OK; } }
     if (img_path(path, &mi, &k)) {
         if (k < 0) return err_res("open", path);
-        if (!g_mnt[mi].img->e[k].type) return RES_PATH_NOT_FOUND;
+        if (!g_mnt[mi].img->e[k].type) { fs_note(path, "nf", 0); return RES_PATH_NOT_FOUND; }
         if (mode & (MODE_WRITE | MODE_APPEND)) { LOG("fs write to a read-only mount: %s", path); return RES_FAIL; }
         img_ent *ent = &g_mnt[mi].img->e[k];   // a damaged file is named once, at its first open
         if ((ent->flags & IMG_ENT_DAMAGED) && !(__atomic_fetch_or(&ent->flags, IMG_ENT_REPORTED, __ATOMIC_RELAXED) & IMG_ENT_REPORTED))
             LOG("[RED] fs %s is marked damaged in its image (it failed a hash check when the image was made); its bytes may be wrong", path);
-        if ((k = img_serve(&g_mnt[mi], k, path)) < 0) return RES_PATH_NOT_FOUND;
+        if ((k = img_serve(&g_mnt[mi], k, path)) < 0) { fs_note(path, "nf", 0); return RES_PATH_NOT_FOUND; }
         ent = &g_mnt[mi].img->e[k];
         if (ent->flags & IMG_ENT_ZSTD) {   // a compressed file of a NUP package: decompressed now, held until CloseFile
             char why[400] = "";
             if (!nup_z_get(g_mnt[mi].img, ent->a, why, sizeof why)) { LOG("[RED] fs %s: cannot decompress it from %s: %s", path, ((nup_aux *)g_mnt[mi].img->aux)->what, why); return RES_FAIL; }
         }
-        *out = FH_OUT(IMG_HANDLE(mi, k));
+        *out = FH_OUT(IMG_HANDLE(mi, k)); fs_note(path, "ok", (long long)g_mnt[mi].img->e[k].b);
         fslog_img_open(mi, k, path);   // DM_FSLOG names image files
         if (g_flag.fs) LOG("fs open [%.2fs] %s mode=%d → image entry %lld", (now_ns() - g_t0_ns) / 1e9, path, mode, (long long)k);
         return RES_OK;
@@ -1148,7 +1164,7 @@ HLE_FORCE("_ZN2nn2fs8OpenFileEPNS0_10FileHandleEPKci", "fsp-srv → open(2)", Re
       atomic_store(&g_ftxn[fd], token); }
     fslog_init();
     if (g_fslog && fd < 4096) { pthread_mutex_lock(&g_fslog_lock); free(g_fdpath[fd]); g_fdpath[fd] = strdup(path); pthread_mutex_unlock(&g_fslog_lock); }
-    fs_stat_note(0, fst0, 0);
+    fs_stat_note(0, fst0, 0); fs_note(path, "ok", (long long)st.st_size);
     if (g_flag.fs) LOG("fs open [%.2fs] %s mode=%d → fd %d", (now_ns() - g_t0_ns) / 1e9, path, mode, fd);
     return RES_OK;
 }

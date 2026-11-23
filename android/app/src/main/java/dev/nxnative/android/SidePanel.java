@@ -175,7 +175,7 @@ final class SidePanel extends FrameLayout {
         if (open) { showMenu(); return; }
         if (menuOpen) return;
         slideIn();
-        menuSelect(isInTouchMode() ? -1 : 0);
+        menuSelect(touchNav() ? -1 : 0);
     }
 
     /** The drawer slides in, the menu built anew (the game's name, its driver, Pause or Resume), no section yet; the menu holds the focus */
@@ -209,7 +209,7 @@ final class SidePanel extends FrameLayout {
         menuScroll.setVisibility(VISIBLE);
         sizes();
         menuSink.requestFocus();
-        menuSelect(isInTouchMode() ? -1 : menuSection.indexOf(tab));
+        menuSelect(touchNav() ? -1 : menuSection.indexOf(tab));
     }
 
     /**
@@ -227,15 +227,17 @@ final class SidePanel extends FrameLayout {
             if (was) { sheet.setAlpha(0f); sheet.animate().alpha(1f).setDuration(150).start(); } else sheet.setAlpha(1f);
         }
         if (!same) {
+            padMade.clear();   // (the old rows go)
             box.removeAllViews();
             build();
+            if (padNav && isInTouchMode()) padRows(box);
             look();
             scroll.scrollTo(0, 0);
         }
         sizes();
         menuSel = -1;   // a controller works in the section now; the menu marks which one shows
         paintMenu();
-        if (!isInTouchMode()) post(() -> { if (open) focusFirst(); });
+        if (!touchNav()) post(() -> { if (open) focusFirst(); });
         removeCallbacks(tick);
         refresh();
     }
@@ -406,6 +408,7 @@ final class SidePanel extends FrameLayout {
     boolean padKey(KeyEvent e) {
         int k = e.getKeyCode();
         if (k == KeyEvent.KEYCODE_BACK) return false;   // the activity's Back (back())
+        padUse();
         boolean press = e.getAction() == KeyEvent.ACTION_DOWN && e.getRepeatCount() == 0, up = e.getAction() == KeyEvent.ACTION_UP;
         int dir = PadPanel.ofKey(k);
         if (dir != PadPanel.NONE) { if (press) press(dir); else if (up) release(dir); return true; }
@@ -419,7 +422,7 @@ final class SidePanel extends FrameLayout {
             }
             return true;
         }
-        boolean lost = findFocus() == null || isInTouchMode() || !inside(findFocus());
+        boolean lost = findFocus() == null || touchNav() || !inside(findFocus());
         if (adjusting != null) {   // a slider being adjusted: confirm keeps its value, back puts the one it had back; L / R keep it and switch sections
             if (k == back) { adjustEnd(true); return true; }
             if (k == confirm || k == KeyEvent.KEYCODE_DPAD_CENTER || k == KeyEvent.KEYCODE_ENTER) { adjustEnd(false); return true; }
@@ -434,6 +437,7 @@ final class SidePanel extends FrameLayout {
     /** A controller's sticks and hat while the panel is open: the hat or the left stick as a direction (PadPanel.stick), held like a D-pad key. The game gets none */
     boolean padMotion(MotionEvent e) {
         if (e.getAction() != MotionEvent.ACTION_MOVE) return true;
+        padUse();
         int d = PadPanel.stick(e.getAxisValue(MotionEvent.AXIS_HAT_X), e.getAxisValue(MotionEvent.AXIS_HAT_Y), stickHeld);
         if (d == PadPanel.NONE) d = PadPanel.stick(e.getAxisValue(MotionEvent.AXIS_X), e.getAxisValue(MotionEvent.AXIS_Y), stickHeld);
         if (d != stickHeld) {
@@ -470,7 +474,7 @@ final class SidePanel extends FrameLayout {
             return;
         }
         View f = findFocus();
-        if (f == null || isInTouchMode() || !inside(f)) { adjusting = null; ensureFocus(); return; }   // (the menu's sink still has it when a section was picked by touch)
+        if (f == null || touchNav() || !inside(f)) { adjusting = null; ensureFocus(); return; }   // (the menu's sink still has it when a section was picked by touch)
         if (adjusting != null) {
             if (f != adjusting) { adjusting = null; frame(f); }
             else {
@@ -484,7 +488,7 @@ final class SidePanel extends FrameLayout {
         int fd = dir == PadPanel.UP ? View.FOCUS_UP : dir == PadPanel.DOWN ? View.FOCUS_DOWN : dir == PadPanel.LEFT ? View.FOCUS_LEFT : View.FOCUS_RIGHT;
         View n = f.focusSearch(fd);
         if (n != null && (fd == View.FOCUS_LEFT || fd == View.FOCUS_RIGHT) && !sameLine(f, n)) return;   // left / right stay in the line: from a slider or a lone row Android's search went off to another row
-        if (n != null && inside(n)) n.requestFocus();
+        if (n != null && inside(n)) focusOn(n);
         else if (fd == View.FOCUS_UP || fd == View.FOCUS_DOWN) scroll.smoothScrollBy(0, (fd == View.FOCUS_UP ? -1 : 1) * scroll.getHeight() / 3);   // the notes past the last row
     }
 
@@ -528,13 +532,39 @@ final class SidePanel extends FrameLayout {
     private void ensureFocus() {
         if (!open) { if (menuOpen && menuSel < 0) menuSelect(0); return; }
         View f = findFocus();
-        if (f != null && !isInTouchMode() && inside(f)) return;
+        if (f != null && !touchNav() && inside(f)) return;
         View r = firstRow();
         if (r != null) r.requestFocusFromTouch();
     }
     private void focusFirst() {
         View f = firstRow();
-        if (f != null) f.requestFocus();
+        if (f != null) focusOn(f);
+    }
+    private void focusOn(View v) { v.requestFocus(); }
+
+    // A controller is in use in the panel (padNav, touchNav): set by its keys and its sticks and hat (padUse), cleared by a touch. Android's touch mode alone does
+    // not say it: only keys end touch mode, and stick or hat motion (the left stick; the AYN Thor's controller's D-pad hat) leaves the window in it, where
+    // requestFocusFromTouch cannot end it either (Android 13: the window manager refuses the change). The panel took every such move for a touch user's and
+    // put the focus back on the section's first row, and a row that is not focusable in touch mode refused the focus. So while a controller is in use, the
+    // section's focusable rows are made focusable in touch mode too (padRows), and a touch puts them back before it reaches them, so a tap still clicks at once
+    private boolean padNav;
+    private final java.util.ArrayList<View> padMade = new java.util.ArrayList<>();
+    private boolean touchNav() { return isInTouchMode() && !padNav; }
+    private void padUse() {
+        padNav = true;
+        if (isInTouchMode()) padRows(box);   // (each time: a section adds rows as its choices change; one already made is passed over)
+    }
+    private void padRows(View v) {
+        if (v.isFocusable() && !v.isFocusableInTouchMode()) { v.setFocusableInTouchMode(true); padMade.add(v); }
+        if (v instanceof android.view.ViewGroup) { android.view.ViewGroup g = (android.view.ViewGroup) v; for (int i = 0; i < g.getChildCount(); i++) padRows(g.getChildAt(i)); }
+    }
+    private void padRowsOff() {
+        for (View v : padMade) v.setFocusableInTouchMode(false);
+        padMade.clear();
+    }
+    @Override public boolean dispatchTouchEvent(MotionEvent e) {
+        if (e.getActionMasked() == MotionEvent.ACTION_DOWN && padNav) { padNav = false; padRowsOff(); }
+        return super.dispatchTouchEvent(e);
     }
     /** The first row of the section (null: it has none) */
     private View firstRow() {
@@ -546,7 +576,7 @@ final class SidePanel extends FrameLayout {
     private void focusMoved(View old, View now) {
         if (now != adjusting) adjusting = null;
         if (lit != null) { lit.setForeground(null); lit = null; }
-        if (now == null || !inside(now) || isInTouchMode()) return;
+        if (now == null || !inside(now) || touchNav()) return;
         frame(now);
     }
     /** The frame on v: a slider being adjusted gets a stronger fill and a thicker line */
@@ -577,7 +607,7 @@ final class SidePanel extends FrameLayout {
             return true;
         });
         Button no = d.getButton(AlertDialog.BUTTON_NEGATIVE);
-        if (no != null && !isInTouchMode()) no.requestFocus();
+        if (no != null && !touchNav()) focusOn(no);
         return d;
     }
 
@@ -731,7 +761,7 @@ final class SidePanel extends FrameLayout {
             box.addView(DrsSlider.view(act, Prefs.drs(act, game()), drsHead::setText, i -> { Prefs.drs(act, game(), i); Native.drsSet(Prefs.DRS[i][0], Prefs.DRS[i][1]); }));
         }
 
-        lsfgNow = Lsfg.rows(act, box, "", () -> { Lsfg.push(act); refresh(); });
+        lsfgNow = Lsfg.rows(act, box, "", () -> { Lsfg.push(act, game()); refresh(); }, game());   // the running game's own setting from now on (Settings' stays the default of the others)
 
         Profile prof = Profile.of(game());
         if (prof != null) {
@@ -794,7 +824,7 @@ final class SidePanel extends FrameLayout {
         picture();
 
         head(Tx.s(R.string.settings_overlay));
-        Overlay.rows(act, box, null);
+        Overlay.rows(act, box, null, game());   // the running game's own overlay from now on
     }
 
     /** Controls: Player 1, the on-screen controls, rumble, the phone's Motion sensitivity and the Button mapping shortcut */
@@ -857,9 +887,9 @@ final class SidePanel extends FrameLayout {
         head(Tx.s(R.string.game_shaders));
         layerNow = note(((GameActivity) act).layerLine());
         note(Tx.s(R.string.game_shaders_the_game_lacks_are_3));
-        Button lab = row(ID_LABEL, Tx.s(R.string.game_building_shaders_label), Overlay.labelChoices()[Prefs.layerLabel(act)]);   // Off / the count / the words: takes effect at the label's next update
+        Button lab = row(ID_LABEL, Tx.s(R.string.game_building_shaders_label), Overlay.labelChoices()[Prefs.layerLabel(act, game())]);   // Off / the count / the words: takes effect at the label's next update
         lab.setOnClickListener(v -> padDialog(new AlertDialog.Builder(act).setTitle(Tx.s(R.string.game_building_shaders_label))
-                .setSingleChoiceItems(Overlay.labelChoices(), Prefs.layerLabel(act), (d, w) -> { Prefs.layerLabel(act, w); d.dismiss(); restyle(ID_LABEL); })
+                .setSingleChoiceItems(Overlay.labelChoices(), Prefs.layerLabel(act, game()), (d, w) -> { Prefs.layerLabel(act, game(), w); d.dismiss(); restyle(ID_LABEL); })   // the running game's own label from now on
                 .setNegativeButton(Tx.s(R.string.common_cancel), null).show()));
     }
 

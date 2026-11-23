@@ -130,6 +130,56 @@ def scene_args(g):
 # nn::settings::LanguageCode of the console's 18 languages (hle_oe.c dm_lang_code; the launcher's GameLanguage.CODES)
 LANGUAGE_CODES = ('ja', 'en-US', 'en-GB', 'fr', 'fr-CA', 'de', 'it', 'es', 'es-419', 'nl', 'pt', 'pt-BR', 'ru', 'ko', 'zh-Hans', 'zh-Hant', 'pl', 'th')
 
+# The motion-vector frame generator's per-game rows (Android, dm/gfx/vk_android/vka_fgprof.c; dm/games/README.md, the fg_* keys): one value a row.
+# fg_feature rows name the rules the game turns on (bits of DM_GAME_FG_FEATURES); fg_tune <name> <value> rows set a tuning value (DM_GAME_FG_TUNE_<NAME>), each with its range
+FG_FEATURES = ('uiflow', 'uigate', 'static', 'staticz', 'bothfar', 'dither', 'cut', 'uipick', 'uicons', 'uismall', 'uicap', 'uisplit')
+FG_TUNE = {'ratio': (0.0, 1.0, False), 'tol': (0.0, 255.0, False), 'edge': (1.0, 4.0, False), 'fill': (0, 6, True), 'soft': (0, 1, True), 'uisr': (1, 12, True),
+           'uissupr': (1, 2, True), 'uisinteg': (0, 2, True), 'uispass': (1, 3, True),
+           'uisguard': (0, 2, True), 'cut_res': (0.0, 255.0, False), 'cut_corr': (0.0, 1.0, False), 'cut_mv': (0.0, 4.0, False)}   # (low, high, integer); cut_mv: a fraction of the render width
+
+
+def fg_rows(g):
+    """the fg_* rows as game_profile.h lines (validated): none of them, no lines (the core defaults, vka_fgprof.c)"""
+    rows = [(k, v) for k, v in g.rows if k.startswith('fg_')]
+    known = ('fg_mv', 'fg_ui_pre', 'fg_ui_layer', 'fg_feature', 'fg_tune')
+    for k, v in rows:
+        if k not in known: sys.exit(f'{g.id}: unknown frame generation key {k} (one of {", ".join(known)})')
+    if not rows: return []
+    for k in ('fg_mv', 'fg_ui_pre', 'fg_ui_layer'):
+        if len(g.values(k)) > 1: sys.exit(f'{g.id}: {k}: one row at most')
+    mv = g.get('fg_mv', 'off')
+    if mv not in ('on', 'off'): sys.exit(f'{g.id}: fg_mv must be on or off: {mv}')
+    if mv == 'on' and g.get('dlss_standin', '0') != '1': sys.exit(f'{g.id}: fg_mv on needs dlss_standin 1 (the engine reads the DLSS op\'s depth and motion vectors)')
+    keys = {}
+    for k in ('fg_ui_pre', 'fg_ui_layer'):
+        r = g.values(k)
+        if r and (len(r[0]) != 1 or not re.fullmatch(r'[0-9a-f]{16}', r[0][0])): sys.exit(f'{g.id}: {k} takes one fragment shader key of 16 lowercase hex digits: {r[0]}')
+        keys[k] = r[0][0] if r else ''
+    if bool(keys['fg_ui_pre']) != bool(keys['fg_ui_layer']): sys.exit(f'{g.id}: fg_ui_pre and fg_ui_layer go together (the picture without UI and the UI layer put over it)')
+    feat = 0
+    for r in g.values('fg_feature'):
+        if len(r) != 1 or r[0] not in FG_FEATURES: sys.exit(f'{g.id}: fg_feature takes one of {", ".join(FG_FEATURES)}: {r}')
+        b = 1 << FG_FEATURES.index(r[0])
+        if feat & b: sys.exit(f'{g.id}: fg_feature {r[0]} twice')
+        feat |= b
+    if feat & 3 and not keys['fg_ui_pre']: sys.exit(f'{g.id}: fg_feature uiflow / uigate need the UI layer (fg_ui_pre and fg_ui_layer)')
+    if feat & 2 and not feat & 1: sys.exit(f'{g.id}: fg_feature uigate is a rule of uiflow: add fg_feature uiflow')
+    if feat & 8 and not feat & 4: sys.exit(f'{g.id}: fg_feature staticz is a rule of static: add fg_feature static')
+    for i in (7, 8, 9, 10, 11):
+        if feat & (1 << i) and not feat & 2: sys.exit(f'{g.id}: fg_feature {FG_FEATURES[i]} is a rule of uigate: add fg_feature uigate')
+    L = [f'#define DM_GAME_FG_MV {int(mv == "on")}', f'#define DM_GAME_FG_UI_PRE 0x{keys["fg_ui_pre"] or "0"}ull', f'#define DM_GAME_FG_UI_LAYER 0x{keys["fg_ui_layer"] or "0"}ull',
+         f'#define DM_GAME_FG_FEATURES {feat:#x}']
+    seen = set()
+    for r in g.values('fg_tune'):
+        if len(r) != 2 or r[0] not in FG_TUNE: sys.exit(f'{g.id}: fg_tune takes <name> <value>, the name one of {", ".join(FG_TUNE)}: {r}')
+        if r[0] in seen: sys.exit(f'{g.id}: fg_tune {r[0]} twice')
+        seen.add(r[0]); lo, hi, whole = FG_TUNE[r[0]]
+        ok = re.fullmatch(r'\d+' if whole else r'\d+(\.\d+)?', r[1]) is not None and lo <= float(r[1]) <= hi
+        if r[0] == 'uisinteg' and ok: ok = r[1] in ('0', '2')
+        if not ok: sys.exit(f'{g.id}: fg_tune {r[0]} takes {"a whole number" if whole else "a number"} from {lo:g} to {hi:g}{" (0 or 2)" if r[0] == "uisinteg" else ""}: {r[1]}')
+        L.append(f'#define DM_GAME_FG_TUNE_{r[0].upper()} {r[1]}')   # (the row's text: the host's double is the one strtod reads from it)
+    return L
+
 
 def header(g):
     """the host's game_profile.h: the profile constants the host uses, as macros"""
@@ -146,6 +196,19 @@ def header(g):
     if fh not in ('on', 'off'): sys.exit(f'{g.id}: fps_hold must be on or off: {fh}')
     try: g.cheats()   # the cheat files' names (their build gate): the host does not compile them in, but a wrong name would never load
     except ValueError as e: sys.exit(str(e))
+    uls = g.get('ue_lod_scale', '0')   # Unreal's r.StaticMeshLODDistanceScale, raised to this (hle_uecvar.c; DM_UE_LOD_SCALE overrides): 0 = the game's own
+    try: uls_f = float(uls)
+    except ValueError: uls_f = -1
+    if not 0 <= uls_f <= 16: sys.exit(f"{g.id}: ue_lod_scale must be a scale in [0, 16] (0 = the game's own): {uls}")
+    # ue_set rows: <Unreal console variable> <value> [<environment variable>]: the host holds the variable at the value (hle_uecvar.c dm_ue_set_tick), a row with an environment
+    # variable only while it is 1 (the launcher's Game options toggle of an option row). The rewriter must find the name (dm/tools/ue_cvar.py NAMES, or REFS: registered by reference,
+    # its fixup the global itself); a value with a decimal point is a float, else an int
+    sys.path.insert(0, str(HERE.parent / 'tools')); import ue_cvar
+    ues = []
+    for r in g.values('ue_set'):
+        if not (len(r) in (2, 3) and r[0] in ue_cvar.NAMES + ue_cvar.REFS and re.fullmatch(r'-?\d+(\.\d+)?', r[1]) and (len(r) == 2 or re.fullmatch(r'[A-Z_][A-Z0-9_]*', r[2]))):
+            sys.exit(f'{g.id}: ue_set takes <a variable of dm/tools/ue_cvar.py NAMES or REFS> <an int, or a float with a decimal point> [<environment variable>]: {r}')
+        ues.append((r[0], r[1], r[2] if len(r) == 3 else '', int(r[0] in ue_cvar.REFS)))
     utp = g.get('ue_texture_pool', '0')   # Unreal's r.Streaming.PoolSize in MB, raised to this on the Mac (hle_uecvar.c; DM_UE_TEXTURE_POOL overrides, and turns it on for iOS): 0 = the game's own pool
     if not utp.isdigit(): sys.exit(f"{g.id}: ue_texture_pool must be megabytes (0 = the game's own pool): {utp}")
     ufc = g.get('ue_fps_cvar', 't.MaxFPS')   # the Unreal console variable the host writes fps_target into (hle_fpslock.c; found by name by the rewriter, ue_cvar.py NAMES): a game's own frame limit its settings apply to t.MaxFPS
@@ -202,9 +265,13 @@ def header(g):
     if evw not in ('on', 'off'): sys.exit(f'{g.id}: event_wait must be on or off: {evw}')
     oqs = g.get('occlusion_split_pass', 'off')
     if oqs not in ('on', 'off'): sys.exit(f'{g.id}: occlusion_split_pass must be on or off: {oqs}')
+    nut = g.get('nonuniform_texture_arrays', 'off')   # Android: dynamically indexed texture arrays read NonUniform (vka_shader.c nonuniform_arrays; DM_VK_NONUNIFORM overrides): on / off
+    if nut not in ('on', 'off'): sys.exit(f'{g.id}: nonuniform_texture_arrays must be on or off: {nut}')
     av1 = g.get('av1_decoder', 'hardware')   # Android: AV1 movies on the phone's hardware decoder (MediaCodec, the default) or dav1d frame-parallel (hle_movie_av1.c mav1_send)
     if av1 not in ('hardware', 'dav1d'): sys.exit(f'{g.id}: av1_decoder must be hardware or dav1d: {av1}')
     # Android, devices of 12 GB or less (MemTotal up to 12 GiB; vka_lowram.h): defaults the Vulkan replay takes there only, for a profile that sets them. 0 = not set
+    pcp = g.get('place_coalesce_pct', '')   # Android: the share of vm.max_map_count from which contiguous placed segments are joined (vka_mem.c coalesce_pressure; DM_VK_COALESCE_PCT overrides): unset = the host's 40
+    if pcp and not (pcp.isdigit() and int(pcp) <= 100): sys.exit(f'{g.id}: place_coalesce_pct must be a percentage from 0 (joined always) to 100: {pcp}')
     lpp = g.get('low_ram_place_part_mb', '0')   # memory pools of at least this many MiB placed by parts (vka_mem.c part_min; the default elsewhere 1024, DM_VK_PLACE_PART_MB overrides)
     if not lpp.isdigit() or int(lpp) and not 16 <= int(lpp) <= 65536: sys.exit(f'{g.id}: low_ram_place_part_mb must be 0 (not set) or 16 to 65536 MiB: {lpp}')
     lic = g.get('low_ram_img_cache_max_mb', '0')   # a ceiling on the texture cache's measured limit, MiB (vka_tex.c img_limit_update; DM_VK_IMG_LIMIT_MB replaces both)
@@ -218,6 +285,12 @@ def header(g):
     if mml not in ('on', 'off'): sys.exit(f'{g.id}: mem_map_limit must be on or off: {mml}')
     gts = g.get('gpu_timestamps', 'submission')   # counter timestamps (nvn_mtl.m rep_ticks): submission = one time per submission, segment = the GPU start / end of the segment holding the report
     if gts not in ('submission', 'segment'): sys.exit(f'{g.id}: gpu_timestamps must be submission or segment: {gts}')
+    # vrs_passes: the passes a coarser fragment shading rate may take (vka_draw.c vrs_pass; DM_VK_VRS_PASSES overrides): shapes as the GPU profile prints them, ',' between
+    vrsp = ','.join(x.strip() for x in g.get('vrs_passes', '').split(',') if x.strip())
+    if any(not re.fullmatch(r'(c[0-7]:\d+ )*(c[0-7]:\d+|d:\d+)', w) for w in vrsp.split(',') if vrsp) or len(vrsp) > 200:
+        sys.exit(f'{g.id}: vrs_passes takes pass shapes as the GPU profile prints them ("c0:97 d:130"), "," between them: {vrsp}')
+    tenv = ' '.join(g.get('turnip_env', '').split())   # Turnip's own variables for this game (vka_driver.c turnip_env; the environment's win): NAME=value ...
+    if any(not re.fullmatch(r'(TU|FD|IR3|MESA)_[A-Z0-9_]+=[A-Za-z0-9_,.:+=-]+', w) for w in tenv.split()) or len(tenv) > 200: sys.exit(f'{g.id}: turnip_env takes NAME=value words of Mesa variables (TU_, FD_, IR3_, MESA_), 200 characters at most: {tenv}')
     rsub = ' '.join(g.get('romfs_substitute', '').split())   # damaged RomFS files (a .zs that is not a zstd stream) served as another image file (hle_fs.c img_serve; DM_ROMFS_SUBST overrides): <path>=<substitute path> ...
     if any(w.count('=') != 1 or w.startswith(('=', '/')) or w.endswith('=') or '=/' in w for w in rsub.split()): sys.exit(f'{g.id}: romfs_substitute takes <path>=<substitute path> pairs, RomFS paths without a leading /: {rsub}')
     dbr = g.get('draw_barriers', 'full')   # how draw passes are ordered (nvn_mtl.m barrier_game): full = each waits for all earlier GPU work, game = by the game's own barriers, so vertex work overlaps the previous pass's fragments
@@ -404,6 +477,7 @@ def header(g):
         if len(r) != 1 or not re.fullmatch(r'[0-9a-f]{16}', r[0]): sys.exit(f'{g.id}: subgroup_one_lane takes one shader key of 16 lowercase hex digits: {r}')
         sol.append(f'0x{r[0]}ull')
     if len(sol) > 16: sys.exit(f'{g.id}: subgroup_one_lane: at most 16 keys')
+    fgl = fg_rows(g)   # the motion-vector frame generator's rows (vka_fgprof.c), Android
     api = g.get('device_api', '55.15')   # the NVN API major.minor version nvnDeviceGetInteger reports (hle_nvn.c)
     if not re.fullmatch(r'\d+\.\d+', api): sys.exit(f'{g.id}: device_api must be major.minor: {api}')
     src = f'dm/games/{g.id}' if g.dir.parent == HERE else str(g.dir)
@@ -435,7 +509,9 @@ def header(g):
          f'#define DM_GAME_FPS_HOLD {int(fh == "on")}',
          f'#define DM_GAME_FPS_LIMIT {int(fl)}',
          f'#define DM_GAME_UE_TEXTURE_POOL {int(utp)}',
+         f'#define DM_GAME_UE_LOD_SCALE {uls_f!r}f',
          f'#define DM_GAME_UE_FPS_CVAR {q(ufc)}',
+         *([f'#define DM_GAME_UE_SET {{' + ', '.join(f'{{{q(n)}, {q(v)}, {q(e)}, {ref}}}' for n, v, e, ref in ues) + '}'] if ues else []),
          f'#define DM_GAME_PRESENT_SNAP {int(ps == "on")}',
          f'#define DM_GAME_PSO_MTL4 {int(p4 == "on")}',
          f'#define DM_GAME_ENC_THREAD {int(et == "on")}',
@@ -454,13 +530,17 @@ def header(g):
          f'#define DM_GAME_TEX_SOFT {int(tsf == "on")}',
          f'#define DM_GAME_RAM_SAVER_SOFT {int(rss == "on")}',
          f'#define DM_GAME_OCCLUSION_SPLIT_PASS {int(oqs == "on")}',
+         f'#define DM_GAME_NONUNIFORM_TEXTURE_ARRAYS {int(nut == "on")}',
          f'#define DM_GAME_EVENT_WAIT {int(evw == "on")}',
          f'#define DM_GAME_GPU_TS_SEGMENT {int(gts == "segment")}',
          f'#define DM_GAME_DRAW_BARRIERS_GAME {int(dbr == "game")}',
          f'#define DM_GAME_VCONV_RANGE {int(vcr == "on")}',
          f'#define DM_GAME_AV1_DAV1D {int(av1 == "dav1d")}',
+         f'#define DM_GAME_PLACE_COALESCE_PCT {int(pcp) if pcp else -1}',
          f'#define DM_GAME_LOW_RAM_PLACE_PART_MB {int(lpp)}', f'#define DM_GAME_LOW_RAM_IMG_CACHE_MAX_MB {int(lic)}', f'#define DM_GAME_LOW_RAM_APP_POOL_MB {int(lap)}',
          f'#define DM_GAME_ROMFS_SUBST {q(rsub)}',
+         f'#define DM_GAME_TURNIP_ENV {q(tenv)}',
+         f'#define DM_GAME_VRS_PASSES {q(vrsp)}',
          f'#define DM_GAME_WINDOW_FN {{{", ".join(wfn) or "{\"\", 0, 0, 0, 0}"}}}', f'#define DM_GAME_NWINDOW_FN {len(wfn)}',
          '#define DM_GAME_SHAPE_TABLE {' + (', '.join(shp) or '{"", "", {0}}') + '}', f'#define DM_GAME_NSHAPE_TABLE {len(shp)}',
          '#define DM_GAME_SUBGROUP_ONE_LANE {' + (', '.join(sol) or '0') + '}', f'#define DM_GAME_NSUBGROUP_ONE_LANE {len(sol)}',
@@ -475,6 +555,7 @@ def header(g):
          '#define DM_GAME_RENDER_QUALITY {' + ', '.join(map(str, rq)) + '}', f'#define DM_GAME_RENDER_DEFAULT_OUT {q(aw or "1920x1080")}',
          '#define DM_GAME_RT_POOL {' + (', '.join(rtp) or '{"", "", 0, 0, 0, 0, {0}, {0}, {0}, 0}') + '}', f'#define DM_GAME_NRT_POOL {len(rtp)}',
          '#define DM_GAME_RES_LEVELS {' + (', '.join(rlv) or '{"", 0, 0, 0, {{0, 0}}}') + '}', f'#define DM_GAME_NRES_LEVELS {len(rlv)}',
+         *fgl,
          *([f'#define DM_GAME_NVN_API_MAJOR {api.split(".")[0]}', f'#define DM_GAME_NVN_API_MINOR {api.split(".")[1]}'] if g.get('device_api', '') else []),   # without the key: by the SDK version (hle_nvn.c nvn_api)
          '']
     return '\n'.join(L)

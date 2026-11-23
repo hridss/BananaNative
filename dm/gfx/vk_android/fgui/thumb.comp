@@ -1,0 +1,20 @@
+// SPDX-License-Identifier: MIT
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+layout(local_size_x = 8, local_size_y = 8) in;
+// One workgroup per thumb pixel: the box luma (0.2126 R + 0.7152 G + 0.0722 B on the 8-bit values) of its W/240 x H/135 picture pixels, of A and of C
+shared float sa[64], sc[64];
+void main() {
+    uvec2 t = gl_WorkGroupID.xy, l = gl_LocalInvocationID.xy; uint li = gl_LocalInvocationIndex;
+    uint bw = pc.W / TW, bh = pc.H / TH;
+    float a = 0.0, c = 0.0; vec3 k = vec3(0.2126, 0.7152, 0.0722) * 255.0;
+    for (uint y = l.y; y < bh; y += 8u) for (uint x = l.x; x < bw; x += 8u) {
+        ivec2 p = ivec2(t.x * bw + x, t.y * bh + y);
+        a += dot(imageLoad(imgA, p).rgb, k); c += dot(imageLoad(imgC, p).rgb, k);
+    }
+    sa[li] = a; sc[li] = c;
+    barrier();
+    for (uint s = 32u; s > 0u; s >>= 1) { if (li < s) { sa[li] += sa[li + s]; sc[li] += sc[li + s]; } barrier(); }
+    if (li == 0u) { float n = float(bw * bh); th[t.y * TW + t.x] = sa[0] / n; th[TW * TH + t.y * TW + t.x] = sc[0] / n; }
+}

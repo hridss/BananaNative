@@ -82,11 +82,15 @@ final class Ondevice {
      * with no question, once per app process (a failed job, or one paused by anything but the player, is resumed once). The game card then shows it, and Play stays on
      * when that library is playable (Pack.playableLibrary); otherwise Play waits for it as before. When the game plays meanwhile only a small delta starts by itself
      * (Pack.deltaAutomatic, ShaderLibs.autoDelta): a larger one is an offer on the game's page, like an update with no manifest. Only the card's own pack is updated (card = true): never the pack Folders.packFor would pick
-     * (a game added with another pack, e.g. the play app's beside the dump), never a whole job, never a job for another pack folder
+     * (a game added with another pack, e.g. the play app's beside the dump), never a whole job, never a job for another pack folder. Nothing starts, not even the quick
+     * check, when Settings › System › Update shaders automatically is off (Prefs.autoShaderUpdate): the card says "Ready · update", the game's page updates them
      */
-    static void autoUpdate(MainActivity a, File dump, File packDir, String titleId) {
+    static void autoUpdate(MainActivity a, File dump, File packDir, String titleId) { autoUpdate(a, dump, packDir, titleId, isDump(dump)); }
+    /** isDump: whether dump is a dump Prepare can start from (isDump), worked out by the caller off the main thread (a .nup is opened to say: Home's check) */
+    static void autoUpdate(MainActivity a, File dump, File packDir, String titleId, boolean isDump) {
+        if (!Prefs.autoShaderUpdate(a)) return;
         if (panel == null || panel.a != a || panel.alive()) return;
-        if (sampledKeep(a, dump, packDir, titleId)) return;   // the quick check first (below): the older library may stand as this version's; a difference goes on to the update as before
+        if (sampledKeep(a, dump, packDir, titleId, isDump)) return;   // the quick check first (below): the older library may stand as this version's; a difference goes on to the update as before
         if (!Pack.deltaAutomatic(packDir, titleId) || !autoTried.add(dump.getPath())) return;
         // the update is optional when the layer builds what the older library lacks (Pack.shaderUpdateOptional): the game's page offers it, nothing starts by itself
         if (Pack.shaderUpdateOptional(packDir, titleId, Prefs.layerEnv(a, titleId))) return;
@@ -171,9 +175,10 @@ final class Ondevice {
      * runs, only while the phone is calm and not in the app's first seconds; Play never waits for it. → true while the pack's check runs or waits (the other update waits for its
      * verdict), false when there is none to make (done, skipped, or given up)
      */
-    static boolean sampledKeep(Context c, File dump, File packDir, String titleId) {
+    static boolean sampledKeep(Context c, File dump, File packDir, String titleId) { return sampledKeep(c, dump, packDir, titleId, isDump(dump)); }
+    static boolean sampledKeep(Context c, File dump, File packDir, String titleId, boolean isDump) {
         Profile p = Profile.of(titleId);
-        if (p == null || !isDump(dump)) return false;
+        if (p == null || !isDump) return false;
         if (new File(packDir, "shaders/" + ShaderLibs.KNOWN_DIR + BuildConfig.NX_DMSH_VK_CHAIN).isDirectory())   // a known-transition move a crash left half done: finished, or put back
             android.util.Log.i("nxnative", "sampled keep: known transition: " + (ShaderLibs.knownRecover(packDir, BuildConfig.NX_DMSH_VK_CHAIN, System.currentTimeMillis()) ? "a move left by a stop is finished" : ShaderLibs.knownWhy));
         File old = Pack.sampledKeepCandidate(packDir, titleId, Prefs.layerEnv(c, titleId));

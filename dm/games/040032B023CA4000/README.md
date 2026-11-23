@@ -4,11 +4,13 @@ A Switch 2 game: the Deluxe Edition, update v327680 (1.1.2.0-178968 on the title
 
 **Plays on the Mac** (M6, 16 GB, macOS 27.2, 2026-11-14), two players, in a window: the first-start language, gamma and terms screens, the title, Play Local with both players joined, the character select, the opening anime (Bink) and the first area of the story, both characters walking, at the game's own 30 fps with no red line beyond one known one. The same route also plays in an iPhone's address space on the Mac (`DM_ALIAS_SIZE=0x118000000`, 2026-11-14). Not run on an iPhone or iPad.
 
+**Status on Android:** plays in split screen on an AYN Thor (2026-11-22, Turnip, with the host and translator changes of PRs #601-#606 and the buffer-texture translator change: [Android](#android)); in bring-up since 2026-11-14, ported from upstream's Mac profile; first runs on an AYN Thor Max (Snapdragon 8 Gen 2, Adreno 740, 16 GB, Android 13). The rewriter's Unreal and SDK rules apply to its modules as on the Mac (the FMallocBinned3 cut, the engine region, the SDK 21.4 node area). Its shaders need the game's own Oodle to be read: see [Shaders](#shaders).
+
 ## What it needs
 
 | Setting | Where | Why |
 |---|---|---|
-| `mem_reserve 0x140000000`, `mem_alias 0x118000000`, `mem_stack 0x10000000`, `app_pool 0x240000000` | [`game.tsv`](game.tsv) | Engage's 5 GB block for an iPhone (the Mac reserves 64 GB): see [Memory](#memory). The Switch 2's 9 GB pool |
+| `mem_reserve 0x550000000`, `mem_alias 0x400000000`, `mem_stack 0x10000000`, `app_pool 0x240000000` | [`game.tsv`](game.tsv) | Android: the 16 GB alias region of the other Switch 2 profiles, address space only (upstream's profile has Engage's 5 GB block for an iPhone): see [Memory](#memory). The Switch 2's 9 GB pool |
 | `sys_resource 0x1400000` | `game.tsv` | the NPDM declares 20 MB, so virtual address memory is on |
 | `depth_mode zero` | `game.tsv` | the game sets near = 0 (`nvnDeviceSetDepthMode`), so pipeline bases made offline use `main0_z` |
 | `pad_layout full` | `game.tsv` | a 3D field, both sticks in use |
@@ -26,8 +28,8 @@ Orbitals cannot be played alone: Play Local waits for a second player to join, a
 
 ## Shaders
 
-- 23,432 unique in [`shader_map.tsv`](shader_map.tsv) (3,556 vertex, 16,459 pixel, 3,415 compute, 2 geometry) from the container's two IoStore shader libraries (global 4,515, game 36,480 shaders), split in 57 s: Unreal Engine 5.6 IoStore shader libraries for the Switch 2. All build: a full Mac build took 19 minutes on the M6 the first time, 6 minutes on chain `73b94575300e` with the Metal compile cache warm.
-- Resolved: 5 global compute shaders (`3ea35c5a0f1ea749`, `45389d82b79dbf0c`, `50c768e8620cf18e`, `868f60d0648f0110`, `c2f9e9baad57e2d0`) stopped at `Ampere instruction 394 … is not implemented`: Unreal's ShaderPrint counter, an image atomic whose handle is in a register (Ampere forms with a handle in a register).
+- 23,432 unique in [`shader_map.tsv`](shader_map.tsv) (3,556 vertex, 16,459 pixel, 3,415 compute, 2 geometry) from the container's two IoStore shader libraries (global 4,515, game 36,480 shaders), split in 57 s: [Unreal Engine 5.6 IoStore shader libraries for the Switch 2](../../../docs/reference/shaders.md#unreal-engine-56-iostore-shader-libraries-for-the-switch-2). All build: a full Mac build took 19 minutes on the M6 the first time, 6 minutes on chain `73b94575300e` with the Metal compile cache warm.
+- Open on Android (resolved upstream by nxnative 4032a11e, not ported yet): 5 global compute shaders (`3ea35c5a0f1ea749`, `45389d82b79dbf0c`, `50c768e8620cf18e`, `868f60d0648f0110`, `c2f9e9baad57e2d0`) stopped at `Ampere instruction 394 … is not implemented`: Unreal's ShaderPrint counter, an image atomic whose handle is in a register.
 
 ## Frame rate
 
@@ -54,6 +56,16 @@ From a save past the first-start screens: at about 40 s the title, `A`; 22 s lat
 
 On a first start the language, gamma and terms screens come before the title: `A` (title), `Down` three times and `A` (Apply), `A` (gamma), `A` (terms).
 
+## Android
+
+AYN Thor Max (Snapdragon 8 Gen 2, Adreno 740, 16 GB, Android 13), the Deluxe NUP, the test app (2026-11-14):
+
+- **Current (2026-11-22, Turnip Mesa main, Docked 1080p, split-screen gameplay with both cameras turning):** the title, Play Local with two players, the character select, the opening and the first area play with the lighting, walls and textures right. The game drops its own resolution floor to 5 % in split screen; with the profile's options (Game options: resolution floor 67 %, temporal upscaling, lighter shading, simpler characters) about 24-25 fps, GPU 38-39 ms a frame; the floor at 50 % about 27 fps. The profile renders in system memory on Turnip (`turnip_env`), joins placed segments always (`place_coalesce_pct 0`), starts in handheld mode (`op_mode handheld`) and recommends Turnip over Qualcomm's drivers before 512.800 (`recommend`). The frame is bound by its geometry (about 7 M primitives a frame, the shader launch block busy almost all of it); 30 fps in split screen needs resolution or geometry cuts.
+
+- **Shaders:** the two IoStore libraries are Oodle-compressed, decoded with the game's own Oodle on the phone (`DM_OODLE_JOB`, one job of 2,748 container blocks, none failed; the shader groups themselves are not compressed again): [Unreal Engine 5.6 IoStore shader libraries for the Switch 2](../../../docs/reference/shaders.md#unreal-engine-56-iostore-shader-libraries-for-the-switch-2). The split gives upstream's 23,432 keys exactly. The Android library: 22,173 translate, 1,046 fail in the translator (mostly `SUATOM handle in bank N`, which upstream's translator takes since its 9507c221), 213 in spirv-val (`ID … has not been defined` 189, an explicit layout on Workgroup memory 24).
+- **Driver (current): Turnip, not the stock driver.** On Qualcomm's 512.676 every run crashed within 25 to 75 s, each time elsewhere: the host's completion-effect arrays and the game's own objects (an RHI command list's memory stack, an upload allocation) overwritten with values of other live blocks. Not the shared heap (the same with the Unreal heap in address space of its own), not a write after the game's free (a poisoned quarantine saw none), not the host's double free or a race on its arrays (both checked). Run under `malloc_debug` `free_track`, the process stopped at once on a read of freed memory inside the driver: `libadreno_app_profiles.so` `ApplyApplicationProfile` under `vkCreateInstance`. With Turnip T30 (PurpleVK 26.3.0) the game ran 8 minutes, through the first-start screens, the title, the main menu, Play Local with both players (the second through `DM_CTL` `P2 A`) and the character select, at 30 fps (frame time p50 33.3 ms, p95 about 36 ms), GPU p50 10.6 ms against about 25 ms on the stock driver, the app at 1.4 to 1.9 GB. The profile's `recommend` row picks Turnip on Qualcomm's drivers before 512.800.
+- **Open:** the device was lost (GPU hang, `VK_EXT_device_fault` absent) in a submission of 86 draws at the load after the character select (frame 14,467), on Turnip. The title's 3D background is black; the menus draw.
+
 ## Found on this game
 
 - Unreal Engine 5.6 IoStore shader libraries for the Switch 2: the split stopped at `shader 0 is not an LSLG record`.
@@ -61,11 +73,16 @@ On a first start the language, gamma and terms screens come before the title: `A
 - Ampere forms with a handle in a register: 5 compute shaders stopped at `Ampere instruction 394`.
 - A frame the Mac dropped stays queued in the frame history: after both players readied up, the load stopped presenting, and Unreal aborted with `GameThread timed out waiting for …`.
 - [A second controller on a player the game does not read](../../../docs/reference/services.md#a-second-controller-on-a-player-the-game-does-not-read): on Android an Xbox controller paired during play ended up on player 3, which this two-player game never reads, and Play Local's controller applet was canceled at every try.
+- [Depth and stencil as two planes in a pass that samples its depth target (Android)](../../../docs/reference/rendering.md#depth-and-stencil-as-two-planes-in-a-pass-that-samples-its-depth-target-android): its lights' stencil masks no longer end the lighting pass, about 225 → 103 passes a frame.
 - [The controller applet as a join screen](../../../docs/reference/services.md#the-controller-applet-as-a-join-screen): Play Local's controller screen (two players) shows on Android, where the second player joins by L + R.
 - [Float storage images bound to integer textures on the Vulkan replay](../../../docs/reference/shaders.md#float-storage-images-bound-to-integer-textures-on-the-vulkan-replay): on Android the GPU timed out about 20 s into the first area; Niagara's draw-argument compute `742f0130cd7af9e4` read particle counts through a float image over an R32_UINT texel buffer and wrote instance counts of about 924 million.
 - [A draw skipped for a background pipeline left a kept texture empty](../../../docs/reference/rendering.md#a-draw-skipped-for-a-background-pipeline-left-a-kept-texture-empty-android): on Android, the colour grading table's one draw skipped on a first start; the main menu's backgrounds stayed black.
+- [A vertex-heavy depth prepass in GMEM on Turnip (Android)](../../../docs/reference/rendering.md#a-vertex-heavy-depth-prepass-in-gmem-on-turnip-android): 8.7 ms a 600-draw prepass part in GMEM, 5.4 in sysmem; the profile's `turnip_env`.
+- [Joining contiguous placed segments holds frames at the same spots](../../../docs/reference/memory.md#joining-contiguous-placed-segments-holds-frames-at-the-same-spots-android): the other way round here: without the joins (upstream's gate, ported on 2026-11-15) the game's pools remade on the same storage were given back and placed again, about 1.3 placements a frame, 16.5-17.5 fps against 17.7-18.1; the profile's `place_coalesce_pct 0`.
 
 ## Open
+- [A present copy that waited for its frame's timeline value came after the next frame's work (Android)](../../../docs/reference/frame-rate.md#a-present-copy-that-waited-for-its-frames-timeline-value-came-after-the-next-frames-work-android): from the last submission to the screen p50 96-102 ms, 50-54 after.
+- [Frame generation's pacing fed on its own present backlog (Android)](../../../docs/reference/frame-rate.md#frame-generations-pacing-fed-on-its-own-present-backlog-android): with frame generation the latency grew from 83 to 163 ms and the game fell from 19 to 15 fps within a minute; 55-57 ms and steady after.
 
 - 60 fps, later chapters (and the engine region's room on an iPhone there: [Memory](#memory)), online play (Gameshare, Play Online), the sound (Wwise opens with no red line; not listened to).
 - An IPA (none built yet) and an iPhone or iPad run.

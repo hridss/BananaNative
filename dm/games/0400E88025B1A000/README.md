@@ -16,7 +16,7 @@ A Switch 2 game: update v131072, SDK 21.4.4 built for the Switch 2 (`Ounce`), NV
 | `zip_store .zip` | `game.tsv` | the archive's members are LZ4-compressed already |
 | `shader_groups /data.zip=shader` | `game.tsv` | every shader is a member of the archive |
 
-There is no game-specific patch, and only v131072's build row: the base game, v0, has not been run.
+There is no game-specific patch, and only v131072's build row. Base v0 (main build ID `898024ffa42c059518eb38196f1ee0f635ecdf89`) was run in upstream nxnative on the Mac (PR #3162): its startup needed the streamplay HID feature getter (see below). It has not been run on Android.
 
 ## Files
 
@@ -64,6 +64,7 @@ The GPU is already past its budget at 768x432, so the higher choices cost frame 
 
 ## Found on this game
 
+- [GameShare HID feature query opens the service](../../../docs/reference/services.md#gameshare-hid-feature-query-opens-the-service): base v0 aborted at startup on the Mac (upstream nxnative); the host now answers `GetSupportedHidFeatureSet`.
 - [Shared fonts depend on the phone's fonts (one Roboto for six types)](../../../docs/reference/services.md#shared-fonts-depend-on-the-phones-fonts-one-roboto-for-six-types): issue #223; the APK's Noto Sans is now `standard.ttf`, per-type order in the host. Phone check open.
 - SDK 21 socket initialization and overloads, and socket poll with nothing to wait on.
 - SDK 21's `OutputStream` on a virtual output device, and SDK 21's hardware Opus decoder manager (`InitializeHardwareOpusDecoderManager`, etc. in `hle_codec.c`).
@@ -76,6 +77,7 @@ The GPU is already past its budget at 768x432, so the higher choices cost frame 
 - The 3D scene from the engine's own settings as game arguments (`DM_GAME_ARGS_ADD`, profile `scene_arg`): [Scene resolution from the engine's own settings](../../../docs/reference/frame-rate.md#scene-resolution-from-the-engines-own-settings-passed-as-game-arguments-android).
 - [The DLSS stand-in ignored sRGB textures](../../../docs/reference/rendering.md#the-dlss-stand-in-ignored-srgb-textures-android): too bright with the Upscaler on FSR. DLSS flags 0x4a (LDR colour, auto exposure), colour image RGBA8 (VkFormat 37, which an sRGB texture also has); fixed by the textures' sRGB, pending the phone check of the new `DLSS stand-in: colour NVN format` line (open until it names the formats).
 - `shader_split.py`: VZIP preamble and LZ4-chained zip members, `viper_shader` single-stage NVN2 program wrapper.
+- [Compute shaders missing in a run's first frames, and a black picture for the run (Linux)](../../../docs/reference/shaders.md#compute-shaders-missing-in-a-runs-first-frames-and-a-black-picture-for-the-run-linux): open; on Linux a Quick Prepare builds the starter list first.
 
 ## Open
 

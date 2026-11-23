@@ -332,6 +332,171 @@ OpFunctionEnd
 '''
 
 
+# A compute shader as the translator writes a 1D integer fetch of a 2D slot: (x & 0x3FFF, x >> 14) through Ryujinx's render-scale helper, then OpImageFetch with Lod 0.
+# "rows" is read only so (row_fetch_buffers makes it a texel buffer); "sized" is also size-queried (left as it is)
+ROWS_CS = '''OpCapability Shader
+OpCapability ImageQuery
+OpMemoryModel Logical GLSL450
+OpEntryPoint GLCompute %main "main"
+OpExecutionMode %main LocalSize 1 1 1
+OpName %rows "rows"
+OpName %sized "sized"
+OpName %x "x"
+OpName %i1 "i1"
+OpName %s1 "s1"
+OpName %xa "xa"
+OpName %twice "twice"
+OpName %texel0 "texel0"
+OpName %s4 "s4"
+OpDecorate %rows DescriptorSet 0
+OpDecorate %rows Binding 1
+OpDecorate %sized DescriptorSet 0
+OpDecorate %sized Binding 2
+OpDecorate %twice DescriptorSet 0
+OpDecorate %twice Binding 4
+OpDecorate %texel0 DescriptorSet 0
+OpDecorate %texel0 Binding 5
+OpDecorate %out DescriptorSet 0
+OpDecorate %out Binding 3
+OpDecorate %ob Block
+OpMemberDecorate %ob 0 Offset 0
+%void = OpTypeVoid
+%fn = OpTypeFunction %void
+%int = OpTypeInt 32 1
+%uint = OpTypeInt 32 0
+%float = OpTypeFloat 32
+%v2int = OpTypeVector %int 2
+%v4float = OpTypeVector %float 4
+%img = OpTypeImage %float 2D 0 0 0 1 Unknown
+%simg = OpTypeSampledImage %img
+%pimg = OpTypePointer UniformConstant %simg
+%ob = OpTypeStruct %v4float
+%pob = OpTypePointer StorageBuffer %ob
+%pv4 = OpTypePointer StorageBuffer %v4float
+%sfn = OpTypeFunction %int %int %int
+%pfi = OpTypePointer Function %int
+%c16383 = OpConstant %int 16383
+%c14 = OpConstant %int 14
+%c0 = OpConstant %int 0
+%c1 = OpConstant %int 1
+%c70000 = OpConstant %int 70000
+%rows = OpVariable %pimg UniformConstant
+%sized = OpVariable %pimg UniformConstant
+%twice = OpVariable %pimg UniformConstant
+%texel0 = OpVariable %pimg UniformConstant
+%out = OpVariable %pob StorageBuffer
+%scale = OpFunction %int None %sfn
+%a = OpFunctionParameter %int
+%b = OpFunctionParameter %int
+%sl = OpLabel
+OpReturnValue %a
+OpFunctionEnd
+%main = OpFunction %void None %fn
+%l = OpLabel
+%lv = OpVariable %pfi Function
+%x = OpCopyObject %int %c70000
+%xu = OpBitcast %uint %x
+%xa = OpBitcast %int %xu
+%xb = OpBitcast %int %xu
+%lo = OpBitwiseAnd %int %xa %c16383
+%hi = OpShiftRightLogical %int %xb %c14
+%hu = OpBitcast %uint %hi
+%hs = OpBitcast %int %hu
+%cx = OpFunctionCall %int %scale %lo %c0
+%cy = OpFunctionCall %int %scale %hs %c0
+%co = OpCompositeConstruct %v2int %cx %cy
+%s1 = OpLoad %simg %rows
+%i1 = OpImage %img %s1
+%f1 = OpImageFetch %v4float %i1 %co Lod %c0
+%s2 = OpLoad %simg %sized
+%i2 = OpImage %img %s2
+%q = OpImageQuerySizeLod %v2int %i2 %c0
+%f2 = OpImageFetch %v4float %i2 %co Lod %c0
+%ya = OpIAdd %int %c70000 %c0
+%yb = OpIAdd %int %c70000 %c0
+%l2 = OpBitwiseAnd %int %ya %c16383
+OpStore %lv %l2
+%l2r = OpLoad %int %lv
+%h2 = OpShiftRightLogical %int %yb %c14
+%cx2 = OpFunctionCall %int %scale %l2r %c0
+%cy2 = OpFunctionCall %int %scale %h2 %c0
+%co2 = OpCompositeConstruct %v2int %cx2 %cy2
+%s3 = OpLoad %simg %twice
+%i3 = OpImage %img %s3
+%f3 = OpImageFetch %v4float %i3 %co2 Lod %c0
+%k0 = OpFunctionCall %int %scale %c0 %c0
+%k1 = OpFunctionCall %int %scale %c1 %c0
+%kc0 = OpCompositeConstruct %v2int %k0 %k0
+%kc1 = OpCompositeConstruct %v2int %k1 %k0
+%s4 = OpLoad %simg %rows
+%i4 = OpImage %img %s4
+%f4 = OpImageFetch %v4float %i4 %kc0 Lod %c0
+%f5 = OpImageFetch %v4float %i4 %kc1 Lod %c0
+%s6 = OpLoad %simg %texel0
+%i6 = OpImage %img %s6
+%f6 = OpImageFetch %v4float %i6 %kc0 Lod %c0
+%sa = OpFAdd %v4float %f1 %f3
+%sb = OpFAdd %v4float %sa %f4
+%sc = OpFAdd %v4float %sb %f5
+%sum = OpFAdd %v4float %sc %f6
+%po = OpAccessChain %pv4 %out %c0
+OpStore %po %sum
+OpReturn
+OpFunctionEnd
+'''
+
+
+QUERY_CS = '''OpCapability Shader
+OpCapability ImageQuery
+OpMemoryModel Logical GLSL450
+OpEntryPoint GLCompute %main "main"
+OpExecutionMode %main LocalSize 1 1 1
+OpName %sz "sz"
+OpName %smp "smp"
+OpDecorate %sz DescriptorSet 0
+OpDecorate %sz Binding 1
+OpDecorate %smp DescriptorSet 0
+OpDecorate %smp Binding 2
+OpDecorate %out DescriptorSet 0
+OpDecorate %out Binding 3
+OpDecorate %ob Block
+OpMemberDecorate %ob 0 Offset 0
+%void = OpTypeVoid
+%fn = OpTypeFunction %void
+%int = OpTypeInt 32 1
+%float = OpTypeFloat 32
+%v2int = OpTypeVector %int 2
+%v4float = OpTypeVector %float 4
+%img = OpTypeImage %float 2D 0 0 0 1 Unknown
+%simg = OpTypeSampledImage %img
+%pimg = OpTypePointer UniformConstant %simg
+%ob = OpTypeStruct %int
+%pob = OpTypePointer StorageBuffer %ob
+%pi = OpTypePointer StorageBuffer %int
+%c0 = OpConstant %int 0
+%sz = OpVariable %pimg UniformConstant
+%smp = OpVariable %pimg UniformConstant
+%out = OpVariable %pob StorageBuffer
+%main = OpFunction %void None %fn
+%l = OpLabel
+%s1 = OpLoad %simg %sz
+%i1 = OpImage %img %s1
+%q1 = OpImageQuerySizeLod %v2int %i1 %c0
+%h = OpCompositeExtract %int %q1 1
+%s2 = OpLoad %simg %smp
+%i2 = OpImage %img %s2
+%q2 = OpImageQuerySizeLod %v2int %i2 %c0
+%w = OpCompositeExtract %int %q2 0
+%cv = OpCompositeConstruct %v2int %w %h
+%f = OpImageFetch %v4float %i2 %cv Lod %c0
+%po = OpAccessChain %pi %out %c0
+%sum = OpIAdd %int %h %w
+OpStore %po %sum
+OpReturn
+OpFunctionEnd
+'''
+
+
 @unittest.skipUnless(shutil.which('spirv-as') and shutil.which('spirv-val'), 'SPIRV-Tools not installed')
 class Rewrites(unittest.TestCase):
     def module(self, text):
@@ -346,6 +511,40 @@ class Rewrites(unittest.TestCase):
             r = subprocess.run(['spirv-val', '--target-env', 'vulkan1.3', str(p)], capture_output=True, text=True)
             self.assertEqual(r.returncode, 0, r.stderr)
             return subprocess.run(['spirv-dis', str(p)], capture_output=True, text=True).stdout if shutil.which('spirv-dis') else ''
+
+    def test_row_fetch_buffers(self):
+        """A slot read only as rows of 16384 texels (each half from its own bitcast of x, as Orbitals' f2a89c6cbf046098 has) becomes a uniform texel buffer read at x
+        with no OpImage left (the runtime retyper follows a load straight to its reads); one whose halves come from two loads of x, the low one through a local
+        (f1b3c237bfd5b871), read at hi << 14 | lo; one whose x the translator folded to a constant, beside row reads, read at that element; one read only at a constant texel, or also
+        size-queried, stays a 2D slot"""
+        # after scale_identity (which runs first) the helper's calls are copies of their coordinate: the same two slots are rewritten (none were in the v0.3.50 merge)
+        self.assertEqual(spv.row_fetch_buffers(self.module(re.sub(r'OpFunctionCall %int %scale (%\w+) %c0', r'OpCopyObject %int \1', ROWS_CS))), 2)
+        m = self.module(ROWS_CS)
+        self.assertEqual(spv.row_fetch_buffers(m), 2)
+        r = {e['name']: e for e in m.resources()}
+        self.assertEqual((r['rows']['desc'], r['rows']['dim']['dim']), (spv.VK_UNIFORM_TEXEL, spv.DIM_BUFFER))
+        self.assertEqual((r['twice']['desc'], r['twice']['dim']['dim']), (spv.VK_UNIFORM_TEXEL, spv.DIM_BUFFER))
+        self.assertEqual((r['texel0']['desc'], r['texel0']['dim']['dim']), (spv.VK_COMBINED, 1))   # read only at a constant texel: may be a 2D texture
+        self.assertEqual((r['sized']['desc'], r['sized']['dim']['dim']), (spv.VK_COMBINED, 1))
+        text = self.valid(m)
+        if text:
+            self.assertIn('SampledBuffer', text)
+            self.assertIn('OpImageFetch %v4float %s1 %xa', text)   # x itself, from the load, no Lod
+            self.assertNotIn('%i1', text)
+            self.assertIn('OpImageFetch %v4float %s4 %int_0', text)   # rows' folded constant reads: elements 0 and 1
+            self.assertIn('OpImageFetch %v4float %s4 %int_1', text)
+            self.assertRegex(text, r'(%\w+) = OpShiftLeftLogical %int %\w+ %int_14\n +(%\w+) = OpBitwiseOr %int %\w+ \1\n +%\w+ = OpImageFetch %v4float %\w+ \2\n')   # twice: hi << 14 | lo
+
+    def test_query_dim3(self):
+        """A 2D slot read only by size queries whose x and y are used becomes 3D when the build names it (its handle bound as 3D elsewhere in the shader, Orbitals'
+        cea444eb38c3c1db); one also fetched stays 2D"""
+        m = self.module(QUERY_CS)
+        ids = {r['name']: r['id'] for r in m.resources()}
+        self.assertEqual(spv.query_dim3(m, [ids['sz'], ids['smp']]), 1)
+        r = {e['name']: e for e in m.resources()}
+        self.assertEqual((r['sz']['dim']['dim'], r['smp']['dim']['dim']), (2, 1))
+        text = self.valid(m)
+        if text: self.assertIn('OpImageQuerySizeLod %v3int', text)
 
     def test_vertex_rewrites(self):
         m = self.module(VS)

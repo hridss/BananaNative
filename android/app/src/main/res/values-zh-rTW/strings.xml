@@ -228,6 +228,9 @@
     <string name="settings_updates">更新</string>
     <string name="settings_what_s_new">新內容</string>
     <string name="settings_while_home_shows_a_game">在首頁顯示正在準備的遊戲時</string>
+    <string name="settings_update_shaders_automatically">自動更新著色器</string>
+    <string name="settings_auto_shader_update_on">著色器過時的遊戲會在背景更新</string>
+    <string name="settings_auto_shader_update_off">關閉：需要時在遊戲頁面中更新</string>
     <string name="settings_xbox_button_label_swap">Xbox 按鍵標籤互換</string>
     <string name="game_1_player">1 名玩家</string>
     <string name="game_3d_scene">3D 場景</string>
@@ -798,6 +801,9 @@
     <string name="home_lossless_dll_missing">" · 缺少 Lossless.dll"</string>
     <string name="home_why">為什麼？</string>
     <string name="home_shaders_need_one_update">著色器需要更新一次</string>
+    <string name="home_other_pack_has_shaders">另一個遊戲包有著色器</string>
+    <string name="home_other_pack_has_shaders_message">此卡片使用的遊戲包沒有適用於此版本應用程式的著色器。%1$s 的另一個遊戲包有。為此卡片使用那個遊戲包？</string>
+    <string name="home_use_that_pack">使用那個遊戲包</string>
     <string name="home_nup">" (.nup)"</string>
     <string name="game_applies_from_the_next_frame">從下一影格起生效，並為此遊戲保留（與遊戲設定 › 放大器相同的設定）。</string>
     <string name="game_applies_from_the_next_frame_2">從下一影格起生效，並為此遊戲保留（與遊戲設定 › 螢幕縮放相同的設定）。</string>
@@ -1400,4 +1406,12 @@
     <string name="settings_build_preview">你正在使用預覽版（v%1$s）。預覽版可能導致遊戲出問題。穩定版 v%2$s 發佈後會取代它。</string>
     <string name="settings_build_preview_channel">你的更新頻道是%1$s：穩定版 v%2$s 發佈後，應用程式會將你切換到該版本。</string>
     <string name="settings_build_hotfix">你正在使用熱修復版（v%1$s）：兩次每週版本之間的小修復。下一個每週版本已包含它。</string>
+    <string name="common_picture_size">畫面大小</string>
+    <string name="game_lsfg_on_target">開 · %1$d fps</string>
+    <string name="game_own_follows_settings">此遊戲沿用設定（%1$s）。在此變更後會成為此遊戲自己的設定。</string>
+    <string name="game_own_settings_note">這是此遊戲自己的設定。使用設定預設值即可重新沿用設定。</string>
+    <string name="game_use_settings_default">使用設定預設值</string>
+    <string name="settings_touch_look">螢幕控制外觀</string>
+    <string name="settings_panel_look">遊戲內面板外觀</string>
+    <string name="settings_player_one_away">所選控制器（未連線）</string>
 </resources>

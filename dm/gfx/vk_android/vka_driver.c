@@ -18,6 +18,12 @@
 #include <string.h>
 #include <unistd.h>
 #include "vka_driverpath.h"
+#if __has_include("game_profile.h")
+#include "game_profile.h"
+#endif
+#ifndef DM_GAME_TURNIP_ENV
+#define DM_GAME_TURNIP_ENV ""
+#endif
 
 #define ADRENOTOOLS_DRIVER_CUSTOM 1   // dm/third_party/libadrenotools/include/adrenotools/priv.h
 typedef void *(*open_libvulkan_fn)(int dlopen_mode, int feature_flags, const char *tmp_lib_dir, const char *hook_lib_dir, const char *custom_driver_dir,
@@ -96,7 +102,21 @@ static void ubwc_hint(void) {
     setenv("FD_DEV_FEATURES", v >= 700 ? "enable_tp_ubwc_flag_hint=1" : "enable_tp_ubwc_flag_hint=0", 0);
     snprintf(g_ubwc_note, sizeof g_ubwc_note, "Turnip on an Adreno 740 (%s), system driver V@%04d: FD_DEV_FEATURES=%s (DM_VK_TU_UBWC_HINT)", m, v, getenv("FD_DEV_FEATURES"));
 }
-void vka_driver_notes(void) { if (g_ubwc_note[0]) { VLOG("%s", g_ubwc_note); g_ubwc_note[0] = 0; } }   // at device creation, once the log is open
+// The game profile's turnip_env (dm/games/README.md): Turnip's own variables for this game, NAME=value words set before the driver reads them at its first device;
+// a name the environment sets (env.txt, the game's lines) keeps the environment's value
+static char g_tenv_note[300];
+static void turnip_env(void) {
+    char w[256]; snprintf(w, sizeof w, "%s", DM_GAME_TURNIP_ENV); size_t o = 0;
+    for (char *sv, *t = strtok_r(w, " ", &sv); t; t = strtok_r(NULL, " ", &sv)) {
+        char *eq = strchr(t, '='); if (!eq) continue; *eq = 0;
+        int kept = getenv(t) != NULL; if (!kept) setenv(t, eq + 1, 0);
+        if (o < sizeof g_tenv_note) o += (size_t)snprintf(g_tenv_note + o, sizeof g_tenv_note - o, "%s%s=%s%s", o ? ", " : "Turnip, the game profile's turnip_env: ", t, getenv(t), kept ? " (the environment's, kept)" : "");
+    }
+}
+void vka_driver_notes(void) {   // at device creation, once the log is open
+    if (g_ubwc_note[0]) { VLOG("%s", g_ubwc_note); g_ubwc_note[0] = 0; }
+    if (g_tenv_note[0]) { VLOG("%s", g_tenv_note); g_tenv_note[0] = 0; }
+}
 
 static void *driver_open(void) {
     const char *drv = getenv("DM_VK_DRIVER");
@@ -121,7 +141,9 @@ static void *driver_open(void) {
         if (!dladdr((void *)vka_driver_open, &di) || !di.dli_fname || !(sl = strrchr(di.dli_fname, '/'))) { VRED("DM_VK_DRIVER: cannot tell where libnxhost.so is: the system driver is used"); return NULL; }
         snprintf(hook, sizeof hook, "%.*s/", (int)(sl - di.dli_fname), di.dli_fname);
     }
-    if (!strncmp(name, "vulkan.ad0", 10)) ubwc_hint();   // Turnip (Mesa's Adreno driver): before the driver reads FD_DEV_FEATURES at its first device
+    // Mesa's variables, before Turnip reads them at its first device: set for any custom driver, since only Mesa reads them and a Turnip build's library can have any
+    // name (PurpleVK's T30 is vulkan.purple.so, which the old check for "vulkan.ad0" missed)
+    ubwc_hint(); turnip_env();
     void *at = dlopen("libnxadreno.so", RTLD_NOW | RTLD_LOCAL);
     open_libvulkan_fn open_vk = at ? (open_libvulkan_fn)dlsym(at, "adrenotools_open_libvulkan") : NULL;
     if (!open_vk) { VRED("DM_VK_DRIVER: libnxadreno.so not loaded (%s): the system driver is used", dlerror()); return NULL; }

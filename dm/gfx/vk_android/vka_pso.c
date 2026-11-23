@@ -314,11 +314,12 @@ void vka_pso_save(int force) {
     if (force != 1) {
         if (__atomic_load_n(&g_made, __ATOMIC_RELAXED) == g_saved_at) return;
         int s = force == 2 ? VKA_ENV("DM_VK_PCACHE_SAVE_SLOW_S", 3) : VKA_ENV("DM_VK_PCACHE_SAVE_S", 20); if (s < 1) s = 1;
-        if (t - g_save_ns < (uint64_t)s * 1000000000ull) return;
-        g_save_ns = t;
+        // (claimed with a compare-and-swap: the prewarm threads call this too while the boot hold runs, several at once)
+        uint64_t last = __atomic_load_n(&g_save_ns, __ATOMIC_RELAXED);
+        if (t - last < (uint64_t)s * 1000000000ull || !__atomic_compare_exchange_n(&g_save_ns, &last, t, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) return;
         if (g_sv_up) { pthread_mutex_lock(&g_sv_mu); g_sv_want = 1; pthread_cond_signal(&g_sv_cv); pthread_mutex_unlock(&g_sv_mu); return; }
     }
-    g_save_ns = t;
+    __atomic_store_n(&g_save_ns, t, __ATOMIC_RELAXED);
     pthread_mutex_lock(&g_save_mu); save_now(); pthread_mutex_unlock(&g_save_mu);
 }
 void vka_gpl_line(char *out, size_t n);
@@ -457,6 +458,7 @@ static int pstate_fill(pstate *P, vka_shader *const sh[VKA_NSTAGE], const vka_la
         if (!mesh || (base[i] != VK_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY && base[i] != VK_DYNAMIC_STATE_PRIMITIVE_RESTART_ENABLE)) P->dyn[nd++] = base[i];
     if (!k->vin_static && !mesh) P->dyn[nd++] = VK_DYNAMIC_STATE_VERTEX_INPUT_EXT;
     if (V.depth_bounds) P->dyn[nd++] = VK_DYNAMIC_STATE_DEPTH_BOUNDS;   // NVN's SetDepthBounds, set at the draw (vka_draw.c); the pipeline's own (0, 1) otherwise
+    if (V.vrs) P->dyn[nd++] = VK_DYNAMIC_STATE_FRAGMENT_SHADING_RATE_KHR;   // DM_VK_VRS: each pass sets it (vka_draw.c vrs_pass)
     P->dy = (VkPipelineDynamicStateCreateInfo){VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO, .dynamicStateCount = nd, .pDynamicStates = P->dyn};
     for (int i = 0; i < k->ncolor; i++) P->cf[i] = (VkFormat)k->cfmt[i];
     P->ri = (VkPipelineRenderingCreateInfo){VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO, .colorAttachmentCount = k->ncolor, .pColorAttachmentFormats = P->cf,
@@ -600,6 +602,50 @@ void vka_pso_builds_log(void) {
     }
     if (!n) VLOG("  being made now: no pipeline");
 }
+// DM_VK_PSO_STATS=1 (restart, diagnostic): every whole pipeline is made with the driver's statistics captured (VK_KHR_pipeline_executable_properties) and logs one
+// `pso stats` line a stage: the shaders' keys, then each statistic the driver reports (Turnip: instructions, nops, registers, max waves, sync stalls...); with
+// DM_VK_PSO_ISA=<dir> (files the app can write) each stage's internal representations (Turnip: NIR and the ir3 disassembly) go to <dir>/<vertex>_<fragment>_<stage>.txt.
+// Read with the pipeline cache off (DM_VK_PCACHE=0) and the libraries off (DM_VK_GPL=0): a cached or linked pipeline has no statistics
+static void pso_stats(VkPipeline p, vka_shader *const sh[VKA_NSTAGE], int mesh) {
+    static PFN_vkGetPipelineExecutablePropertiesKHR gp; static PFN_vkGetPipelineExecutableStatisticsKHR gs; static PFN_vkGetPipelineExecutableInternalRepresentationsKHR gi;
+    if (!gp) { gp = (PFN_vkGetPipelineExecutablePropertiesKHR)vk.vkGetDeviceProcAddr(V.dev, "vkGetPipelineExecutablePropertiesKHR");
+               gs = (PFN_vkGetPipelineExecutableStatisticsKHR)vk.vkGetDeviceProcAddr(V.dev, "vkGetPipelineExecutableStatisticsKHR");
+               gi = (PFN_vkGetPipelineExecutableInternalRepresentationsKHR)vk.vkGetDeviceProcAddr(V.dev, "vkGetPipelineExecutableInternalRepresentationsKHR"); }
+    if (!gp || !gs) return;
+    const vka_shader *pre = mesh ? sh[7] : sh[0];
+    unsigned long long vk_ = pre ? (unsigned long long)pre->key : 0, fk = sh[1] ? (unsigned long long)sh[1]->key : 0;
+    VkPipelineInfoKHR pi = {VK_STRUCTURE_TYPE_PIPELINE_INFO_KHR, .pipeline = p};
+    VkPipelineExecutablePropertiesKHR ep[8]; uint32_t ne = 8;
+    for (uint32_t i = 0; i < 8; i++) ep[i] = (VkPipelineExecutablePropertiesKHR){VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_PROPERTIES_KHR};
+    if (gp(V.dev, &pi, &ne, ep) < 0) return;
+    char isa_dir[256]; int isa = vka_env_str("DM_VK_PSO_ISA", isa_dir, sizeof isa_dir) && isa_dir[0] && strcmp(isa_dir, "1");
+    for (uint32_t e = 0; e < ne; e++) {
+        VkPipelineExecutableInfoKHR ei = {VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_INFO_KHR, .pipeline = p, .executableIndex = e};
+        VkPipelineExecutableStatisticKHR st[48]; uint32_t ns = 48;
+        for (uint32_t i = 0; i < 48; i++) st[i] = (VkPipelineExecutableStatisticKHR){VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_STATISTIC_KHR};
+        char line[1600]; size_t o = (size_t)snprintf(line, sizeof line, "pso stats %016llx/%016llx %s:", vk_, fk, ep[e].name);
+        if (gs(V.dev, &ei, &ns, st) >= 0)
+            for (uint32_t i = 0; i < ns && o < sizeof line; i++) {
+                const VkPipelineExecutableStatisticKHR *s = &st[i];
+                if (s->format == VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_FLOAT64_KHR) o += (size_t)snprintf(line + o, sizeof line - o, " %s=%g;", s->name, s->value.f64);
+                else if (s->format == VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_BOOL32_KHR) o += (size_t)snprintf(line + o, sizeof line - o, " %s=%u;", s->name, s->value.b32);
+                else o += (size_t)snprintf(line + o, sizeof line - o, " %s=%llu;", s->name, (unsigned long long)s->value.u64);
+            }
+        VLOG("%s", line);
+        if (isa && gi) {   // the representations: sizes first, then the text
+            VkPipelineExecutableInternalRepresentationKHR ir[4]; uint32_t nr = 4;
+            for (uint32_t i = 0; i < 4; i++) ir[i] = (VkPipelineExecutableInternalRepresentationKHR){VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_INTERNAL_REPRESENTATION_KHR};
+            if (gi(V.dev, &ei, &nr, ir) < 0) continue;
+            for (uint32_t i = 0; i < nr; i++) ir[i].pData = ir[i].dataSize ? malloc(ir[i].dataSize) : NULL;
+            if (gi(V.dev, &ei, &nr, ir) >= 0) {
+                char path[400]; snprintf(path, sizeof path, "%s/%016llx_%016llx_%u.txt", isa_dir, vk_, fk, e);
+                FILE *f = fopen(path, "w");
+                if (f) { for (uint32_t i = 0; i < nr; i++) if (ir[i].pData) fprintf(f, "==== %s: %s\n%.*s\n", ir[i].name, ir[i].description, (int)ir[i].dataSize, (const char *)ir[i].pData); fclose(f); }
+            }
+            for (uint32_t i = 0; i < nr; i++) free(ir[i].pData);
+        }
+    }
+}
 // The whole pipeline (optimized), with creation feedback (core in 1.3) for the line of a slow one: whether the pipeline cache had it and each stage's share. how: NULL = on the
 // frame path (counted as the frame's), else where it was made (" in the background", " (prewarm)")
 static VkPipeline full_pipeline(pstate *P, vka_shader *const sh[VKA_NSTAGE], const char *how) {
@@ -611,8 +657,12 @@ static VkPipeline full_pipeline(pstate *P, vka_shader *const sh[VKA_NSTAGE], con
     VkPipeline p = VK_NULL_HANDLE;
     const vka_shader *pre0 = P->mesh ? sh[7] : sh[0];
     int bslot = build_begin("whole graphics pipeline", pre0 ? pre0->key : 0, sh[1] ? sh[1]->key : 0);
+    VkPipelineCreateFlags flags0 = P->ci.flags;
+    if (V.pexec) P->ci.flags |= VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR | VK_PIPELINE_CREATE_CAPTURE_INTERNAL_REPRESENTATIONS_BIT_KHR;
     VkResult r = vk.vkCreateGraphicsPipelines(V.dev, g_pc, 1, &P->ci, NULL, &p);
+    P->ci.flags = flags0;
     build_end(bslot);
+    if (!r && V.pexec) pso_stats(p, sh, P->mesh);
     P->ci.pNext = fbi.pNext;
     uint64_t dns = now_ns() - t0; double ms_ = dns / 1e6;
     pthread_mutex_lock(&g_mu);
@@ -638,12 +688,15 @@ static VkPipeline full_pipeline(pstate *P, vka_shader *const sh[VKA_NSTAGE], con
     else if (ms_ > 50) {
         static _Atomic int n;
         if (atomic_fetch_add(&n, 1) < 200) {
+            // The whole pipeline's hit flag is the driver's: Turnip sets it when any stage was found in the cache and marks no stage (cached), so a slow pipeline with it
+            // compiled at least one stage, which the stage times show (Ocarina of Time, 2026-11-22: "hit; vertex 5 ms, fragment 470 ms" was a fragment shader compiled);
+            // the line says "hit for some stages" for it, not "hit"
             char st[160]; size_t o = 0; st[0] = 0;
             for (uint32_t i = 0; i < P->ns && o < sizeof st; i++)
                 o += (size_t)snprintf(st + o, sizeof st - o, "%s%s %.0f ms%s", i ? ", " : "", stage_name(P->ss[i].stage), (fb_st[i].flags & VK_PIPELINE_CREATION_FEEDBACK_VALID_BIT) ? fb_st[i].duration / 1e6 : -1.0,
                                       (fb_st[i].flags & VK_PIPELINE_CREATION_FEEDBACK_APPLICATION_PIPELINE_CACHE_HIT_BIT) ? " (cached)" : "");
             VLOG("graphics pipeline (%s %016llx fragment %016llx) took %.0f ms%s (pipeline cache %s; %s)", P->mesh ? "mesh" : "vertex", pre ? (unsigned long long)pre->key : 0ull, sh[1] ? (unsigned long long)sh[1]->key : 0ull, ms_, how ? how : "",
-                 !(fb_all.flags & VK_PIPELINE_CREATION_FEEDBACK_VALID_BIT) ? "?" : (fb_all.flags & VK_PIPELINE_CREATION_FEEDBACK_APPLICATION_PIPELINE_CACHE_HIT_BIT) ? "hit" : "miss", st[0] ? st : "no stage times");
+                 !(fb_all.flags & VK_PIPELINE_CREATION_FEEDBACK_VALID_BIT) ? "?" : (fb_all.flags & VK_PIPELINE_CREATION_FEEDBACK_APPLICATION_PIPELINE_CACHE_HIT_BIT) ? "hit for some stages" : "miss", st[0] ? st : "no stage times");
         }
     }
     return p;
@@ -726,7 +779,10 @@ static int dyn_part(VkDynamicState d) {
 }
 static void dyn_of(const pstate *P, int part, VkDynamicState *out, VkPipelineDynamicStateCreateInfo *dy) {
     uint32_t n = 0;
-    for (uint32_t i = 0; i < P->dy.dynamicStateCount; i++) { int d = dyn_part(P->dyn[i]); if (d == part || (part == L_PREFS && (d == L_PRE || d == L_FS))) out[n++] = P->dyn[i]; }
+    for (uint32_t i = 0; i < P->dy.dynamicStateCount; i++) {
+        int d = dyn_part(P->dyn[i]), both = P->dyn[i] == VK_DYNAMIC_STATE_FRAGMENT_SHADING_RATE_KHR;   // (the shading rate is state of both the pre-rasterization and the fragment shader parts)
+        if (d == part || (both && part == L_PRE) || (part == L_PREFS && (d == L_PRE || d == L_FS))) out[n++] = P->dyn[i];
+    }
     *dy = (VkPipelineDynamicStateCreateInfo){VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO, .dynamicStateCount = n, .pDynamicStates = out};
 }
 // One try of the probe: the library made (and destroyed), its result
@@ -888,7 +944,17 @@ static pthread_mutex_t g_gate_mu = PTHREAD_MUTEX_INITIALIZER; static pthread_con
 static vkpg_state g_gate; static _Atomic int g_gate_slots = 1, g_gate_slots_logged, g_gate_maps = -1, g_gate_mx; static _Atomic uint64_t g_gate_spec_held; static _Atomic uint64_t g_gate_t, g_gate_frame_wait_ns, g_gate_spec_wait_ns;
 // DM_VK_PSO_SLOTS's default: 1 on Turnip (driverID), 4 elsewhere (vka_psogate.h vkpg_cap_default)
 // RAM saver Strong (DM_VK_RAM_SAVER=2) keeps it at 1 everywhere: each compile in the driver holds tens to hundreds of MiB while it runs
-static int gate_cap(void) { return VKA_ENV("DM_VK_PSO_SLOTS", VKA_ENV("DM_VK_RAM_SAVER", 0) >= 2 ? 1 : vkpg_cap_default(V.driver_id == VK_DRIVER_ID_MESA_TURNIP)); }
+// During the boot hold (g_prep, prep_wait below) the cap is DM_VK_PREPARE_SLOTS (4) if that is more, except on Turnip: its one-at-a-time cap stays unless
+// DM_VK_PREPARE_SLOTS is set, since concurrent compiles lost the device there (docs/reference/rendering.md "Concurrent background pipeline compiles lose the device
+// on Turnip"; Mario Kart World) and no run yet shows that a hold, where the game submits nothing, avoids it. vkpg_slots still gives fewer while MemAvailable or the
+// memory maps' headroom are short, and a known long compile still runs alone
+static _Atomic int g_prep;
+static int prep_raises(void) { return VKA_ENV("DM_VK_RAM_SAVER", 0) < 2 && (V.driver_id != VK_DRIVER_ID_MESA_TURNIP || getenv("DM_VK_PREPARE_SLOTS")); }
+static int gate_cap(void) {
+    int strong = VKA_ENV("DM_VK_RAM_SAVER", 0) >= 2, cap = VKA_ENV("DM_VK_PSO_SLOTS", strong ? 1 : vkpg_cap_default(V.driver_id == VK_DRIVER_ID_MESA_TURNIP));
+    if (atomic_load_explicit(&g_prep, memory_order_relaxed) && prep_raises()) { int p = VKA_ENV("DM_VK_PREPARE_SLOTS", VKPG_CAP); if (p > cap) cap = p; }
+    return cap;
+}
 static int gate_slots(void) {
     uint64_t t = now_ns(), last = atomic_load(&g_gate_t);
     if ((!last || t - last >= 500000000ull) && atomic_compare_exchange_strong(&g_gate_t, &last, t)) {
@@ -898,7 +964,7 @@ static int gate_slots(void) {
         atomic_store(&g_gate_maps, maps); atomic_store(&g_gate_mx, mx);
         if ((n != was || !last) && atomic_fetch_add(&g_gate_slots_logged, 1) < 32)
             VLOG("background pipeline compiles: %d at once (was %d): MemAvailable %llu MiB, memory maps %d of %d (DM_VK_PSO_SLOTS at most %d%s)", n, was, (unsigned long long)av, maps, mx,
-                 cap, getenv("DM_VK_PSO_SLOTS") ? "" : VKA_ENV("DM_VK_RAM_SAVER", 0) >= 2 ? ", 1 by default with RAM saver Strong" : V.driver_id == VK_DRIVER_ID_MESA_TURNIP ? ", 1 on Turnip by default" : "");
+                 cap, atomic_load(&g_prep) && prep_raises() ? ", DM_VK_PREPARE_SLOTS while the boot hold runs" : getenv("DM_VK_PSO_SLOTS") ? "" : VKA_ENV("DM_VK_RAM_SAVER", 0) >= 2 ? ", 1 by default with RAM saver Strong" : V.driver_id == VK_DRIVER_ID_MESA_TURNIP ? ", 1 on Turnip by default, also in the boot hold" : "");
     }
     return atomic_load(&g_gate_slots);
 }
@@ -1185,6 +1251,63 @@ static int pw_memu_rec(const pwrec *r) {
     for (int s = 0; s < (r->kind == VKA_PW_CS ? 1 : 5); s++) if (r->key[s] && vka_shader_memu_key(r->key[s])) return 1;
     return 0;
 }
+// ---------- The boot hold (DM_VK_PREPARE) ----------
+// DM_VK_PREPARE (restart; default 1; 0 off): the prewarm list (the device's keys and the profile's seed) is made before the game goes on. pw_start turns the hold on
+// when it starts the prewarm threads, at the first pipeline the game needs (its first logo, before any 3D frame); the frame path's next pipeline call waits in
+// prep_wait (the replay thread holds no pipeline lock there, and the game waits for its frame) until the last prewarm thread is done, the player skips
+// (nxhost_pso_prepare_skip), or DM_VK_PREPARE_MAX_S (90, was 300; 0 none) passes. Meanwhile the gate admits DM_VK_PREPARE_SLOTS compiles at once, Turnip its own cap (gate_cap). With the
+// pipeline cache warm a key costs milliseconds and the hold is over in a second or two; the launcher shows its screen only from DM_VK_PREPARE_SHOW_MS (1000) into the
+// hold (nxhost_pso_prepare_status). Without the hold the keys were made beside the game: on Turnip, one compile at a time, a cold Donkey Kong Bananza reached its
+// level about 50 s in with most of its 1,875 keys still to make, and the level's first frame made 85 pipelines on the frame path (3.3-5.0 s)
+static _Atomic uint32_t g_pw_seen;   // records the prewarm threads have taken (the hold's progress)
+static pthread_mutex_t g_prep_mu = PTHREAD_MUTEX_INITIALIZER; static pthread_cond_t g_prep_cv = PTHREAD_COND_INITIALIZER;
+static uint64_t g_prep_t0;
+static uint32_t prep_total(void) { uint32_t mx = (uint32_t)VKA_ENV("DM_VK_PREWARM_MAX", 8192); return g_pw_load_n < mx ? g_pw_load_n : mx; }
+// The guest clock stands still while the hold runs (hle_os.c reason 3, the host's prepare step; upstream nxnative 8d888054f): the game's frame waits in the replay, but its
+// other threads go on, and one that bounds its wait for the render thread by the frame's budget (nn::os::GetSystemTick) skipped hundreds of frames over a long prepare
+// and moved on to tearing down what frame 1 still drew (Vanillaware's frame loop: 13 Sentinels: Aegis Rim, a SIGSEGV on the Mac). Guest reads of the clock wait until the
+// hold ends. Weak: the unit tests that link this file have no guest clock
+void guest_clock_freeze_for(int reason, int on) __attribute__((weak));
+static void prep_clock(int on) { if (guest_clock_freeze_for && VKA_ENV("DM_VK_PREPARE_CLOCK", 1)) guest_clock_freeze_for(3, on); }
+static void prep_end(const char *why) {
+    pthread_mutex_lock(&g_prep_mu);
+    int was = atomic_exchange(&g_prep, 0);
+    pthread_cond_broadcast(&g_prep_cv);
+    pthread_mutex_unlock(&g_prep_mu);
+    if (!was) return;
+    prep_clock(0);
+    atomic_store(&g_gate_t, 0);   // the slots read again at the next compile: gate_cap's own from now on
+    VLOG("prepare: the game goes on (%s) after %.1f s: %u of %u pipeline keys taken, %u made, %u already in the pipeline cache, %u dropped; the prewarm threads go on with what is left",
+         why, (now_ns() - g_prep_t0) / 1e9, (unsigned)atomic_load(&g_pw_seen), prep_total(), (unsigned)atomic_load(&g_pw_made), (unsigned)atomic_load(&g_pw_had), (unsigned)atomic_load(&g_pw_bad));
+}
+// The frame path's pipeline calls (vka_gfx_pipeline, vka_cs_pipeline*): wait while the hold runs. The prewarm threads make their keys through gfx_obtain and cs_obtain,
+// never through these, so they are not held
+static void prep_wait(void) {
+    if (!atomic_load_explicit(&g_prep, memory_order_acquire)) return;
+    uint64_t lim = (uint64_t)VKA_ENV("DM_VK_PREPARE_MAX_S", 90) * 1000000000ull;
+    pthread_mutex_lock(&g_prep_mu);
+    while (atomic_load(&g_prep)) {
+        if (lim && now_ns() - g_prep_t0 >= lim) { pthread_mutex_unlock(&g_prep_mu); prep_end("DM_VK_PREPARE_MAX_S passed"); return; }
+        struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts); ts.tv_sec++;
+        pthread_cond_timedwait(&g_prep_cv, &g_prep_mu, &ts);
+    }
+    pthread_mutex_unlock(&g_prep_mu);
+}
+// For the launcher (Native.prepareStatus, PrepareScreen): "<taken> <total> <seconds left or -1>" while the hold runs and has run DM_VK_PREPARE_SHOW_MS, else ""
+__attribute__((visibility("default"))) void nxhost_pso_prepare_status(char *buf, size_t n) {
+    if (!n) return;
+    buf[0] = 0;
+    if (!atomic_load(&g_prep)) return;
+    double s = (now_ns() - g_prep_t0) / 1e9;
+    if (s * 1000.0 < VKA_ENV("DM_VK_PREPARE_SHOW_MS", 1000)) return;
+    uint32_t tot = prep_total(), done = atomic_load(&g_pw_seen);
+    if (done > tot) done = tot;
+    int eta = done >= 16 && done < tot ? (int)(s * (tot - done) / done + 0.5) : -1;   // (from the rate so far; the slow kinds come first, so it falls faster than it counts)
+    { double lim = VKA_ENV("DM_VK_PREPARE_MAX_S", 90); if (lim > 0 && (eta < 0 || s + eta > lim)) eta = (int)(lim - s + 0.5) > 0 ? (int)(lim - s + 0.5) : 0; }   // (the hold ends at DM_VK_PREPARE_MAX_S whatever is left: never promise more than that)
+    snprintf(buf, n, "%u %u %d", (unsigned)done, (unsigned)tot, eta);
+}
+__attribute__((visibility("default"))) void nxhost_pso_prepare_skip(void) { prep_end("the player skipped the rest"); }
+
 static void *pw_main(void *a) {
     (void)a; pthread_setname_np(pthread_self(), "vk-prewarm"); vka_fp_host("vk-prewarm");
     setpriority(PRIO_PROCESS, 0, 10);   // this thread (Linux: per-thread nice), under the game's threads
@@ -1212,6 +1335,7 @@ static void *pw_main(void *a) {
         uint32_t i = me == 0 ? atomic_fetch_add(&g_pw_next_mesh, 1) : nm;   // the mesh thread: the next mesh record while there is one
         if (i >= nm) { uint32_t q = atomic_fetch_add(&g_pw_next, 1); i = nm + q; }
         if (!offs || i >= n || i >= max) break;
+        atomic_fetch_add(&g_pw_seen, 1);
         pwrec r; memcpy(&r, g_pw_load + offs[i], sizeof r);
         const uint8_t *kb = g_pw_load + offs[i] + sizeof r;
         vka_shader *sh[VKA_NSTAGE]; memset(sh, 0, sizeof sh); int bad = !vka_pw_rec_ok(&r, kb);
@@ -1251,7 +1375,7 @@ static void *pw_main(void *a) {
             atomic_fetch_add(&g_pw_heavywait_ns, gate_hold(tok, key));
             spec_begin(key);
         }
-        int made = 0;
+        int made = 0, other = 0;   // other: a key of a device with the other vertex input, dropped here (counted once, as dropped, not also as already there)
         if (bad) { atomic_fetch_add(&g_pw_bad, 1); pw_mark_bad(offs[i]); }
         else if (r.kind == VKA_PW_CS) {   // (with its retype masks: the module its dispatches use)
             uint64_t m[2] = {0, 0}; if (r.klen == VKA_PW_CS_MASKS) memcpy(m, kb, sizeof m);
@@ -1259,7 +1383,7 @@ static void *pw_main(void *a) {
         }
         else {
             vka_gkey k; memset(&k, 0, sizeof k); memcpy(&k, kb, r.klen < sizeof k ? r.klen : sizeof k);
-            if (k.vin_static != (uint32_t)!V.vin_dyn) { atomic_fetch_add(&g_pw_bad, 1); }   // a list from a device with the other vertex input (not this one's keys)
+            if (k.vin_static != (uint32_t)!V.vin_dyn) { atomic_fetch_add(&g_pw_bad, 1); other = 1; }   // a list from a device with the other vertex input (not this one's keys)
             else {
                 gkey_full fk; memset(&fk, 0, sizeof fk); memcpy(fk.sh, sh, sizeof fk.sh); fk.layout = lay.layout; fk.k = k;
                 size_t len = k.vin_static ? sizeof fk : offsetof(gkey_full, k.va);
@@ -1268,16 +1392,22 @@ static void *pw_main(void *a) {
         }
         if (!bad) spec_end(key);
         gate_leave(tok);
-        if (made) atomic_fetch_add(&g_pw_made, 1); else if (!bad) atomic_fetch_add(&g_pw_had, 1);
+        if (made) atomic_fetch_add(&g_pw_made, 1); else if (!bad && !other) atomic_fetch_add(&g_pw_had, 1);
+        // Saves come from the replay thread's submissions (vka_pso_save), and the boot hold keeps the game from submitting: a run stopped or killed in the hold kept
+        // none of its compiles, and the next run made them again (Ocarina of Time on Turnip, 2026-11-22: runs stopped at 90 s and 200 s of a 204 s hold saved nothing).
+        // While the hold runs, the prewarm threads ask for the save themselves, due on the same DM_VK_PCACHE_SAVE_S schedule, on the saver thread
+        if (made && atomic_load(&g_prep)) vka_pso_save(0);
         setpriority(PRIO_PROCESS, 0, 10);   // back under the game's threads if a waiting frame path raised it (busy_wait)
     }
     free(offs);
-    if (atomic_fetch_add(&g_pw_done, 1) + 1 == (uint32_t)g_pw_threads)
+    if (atomic_fetch_add(&g_pw_done, 1) + 1 == (uint32_t)g_pw_threads) {
+        prep_end("every key taken");
         VLOG("prewarm: %u of %u pipeline keys in %.1f s on %d threads: %u made, %u already there, %u dropped (shaders no longer in the library, another device's keys); the frame path waited %.0f ms for them; "
              "threads waited %.1f s for memory (DM_VK_PREWARM_MEM_MB), %.1f s for a long compile (DM_VK_PREWARM_HEAVY_MS); %u left out (a compile that did not finish before)",
              (unsigned)(atomic_load(&g_pw_made) + atomic_load(&g_pw_had) + atomic_load(&g_pw_bad)), n, (now_ns() - g_pw_t0) / 1e9, g_pw_threads, (unsigned)atomic_load(&g_pw_made),
              (unsigned)atomic_load(&g_pw_had), (unsigned)atomic_load(&g_pw_bad), atomic_load(&g_pw_wait_ns) / 1e6, atomic_load(&g_pw_memwait_ns) / 1e9,
              atomic_load(&g_pw_heavywait_ns) / 1e9, (unsigned)atomic_load(&g_pw_unf));
+    }
     return NULL;
 }
 // DM_VK_PREWARM threads (default 4, at most 4; 2 before 2026-11-08). With the pipeline cache warm a key costs a few milliseconds (297 in 0.1 s on 2 threads); with it
@@ -1290,9 +1420,19 @@ static void pw_start(void) {
     if (nt <= 0 || !g_pw_load_n) { if (g_pw_load_n) VLOG("prewarm: off (%s): %u keys not made ahead", getenv("DM_VK_PREWARM") ? "DM_VK_PREWARM=0" : "default on Qualcomm's driver before 512.800; DM_VK_PREWARM=4 on", g_pw_load_n); return; }
     if (nt > 4) nt = 4;
     heavy_load();   // the shaders earlier runs found long on this driver (build_end)
-    g_pw_t0 = now_ns(); g_pw_threads = 0;
-    for (int i = 0; i < nt; i++) { pthread_t th; if (!vka_compiler_thread(&th, pw_main, NULL)) { pthread_detach(th); g_pw_threads++; } }
-    VLOG("prewarm: %u pipeline keys of earlier runs made ahead on %d background threads (DM_VK_PREWARM=0 off)", g_pw_load_n, g_pw_threads);
+    g_pw_t0 = now_ns();
+    // The boot hold (prep_wait) starts with the threads, so their first compiles already have its slots. g_pw_threads is the count before any thread runs: a thread
+    // that finished its share while later ones were still being made counted itself the last (the done line early, and with the hold, the hold over too soon)
+    if (VKA_ENV("DM_VK_PREPARE", 1)) { g_prep_t0 = now_ns(); atomic_store(&g_prep, 1); atomic_store(&g_gate_t, 0); prep_clock(1); }
+    g_pw_threads = nt;
+    int made = 0;
+    for (int i = 0; i < nt; i++) { pthread_t th; if (!vka_compiler_thread(&th, pw_main, NULL)) { pthread_detach(th); made++; } }
+    if (made < nt) {   // (a thread not made: the count the others compare with comes down; if that leaves the last one done already, the hold ends here)
+        uint32_t done = atomic_load(&g_pw_done); g_pw_threads = made;
+        if (!made || done >= (uint32_t)made) prep_end("no prewarm thread left to wait for");
+    }
+    VLOG("prewarm: %u pipeline keys of earlier runs made ahead on %d background threads (DM_VK_PREWARM=0 off)%s", g_pw_load_n, g_pw_threads,
+         atomic_load(&g_prep) ? "; the game waits until they are done (the boot hold, DM_VK_PREPARE=0 off)" : "");
 }
 
 // ---------- Graphics pipelines: the lookup ----------
@@ -1511,6 +1651,7 @@ static inline VkPipeline gval_use(gval *g) {
 }
 VkPipeline vka_gfx_pipeline(vka_shader *const sh[VKA_NSTAGE], const vka_layout *lay, const vka_gkey *k) {
     static gkey_full fk, last; static gval *last_g;
+    prep_wait();   // (the boot hold: one atomic load when it is not running)
     // With vertex input dynamic state the key's static vertex input (va, vb: two thirds of it) stays zero: only what comes before it is hashed and compared with the
     // previous draw's key (draws in a row often share their pipeline). The entry's pipeline is read at each draw: the optimized one replaces a linked one in place
     size_t len = k->vin_static ? sizeof fk : offsetof(gkey_full, k.va);
@@ -1686,7 +1827,7 @@ static void cs_build(gval *g, vka_shader *cs, const vka_layout *lay, VkShaderMod
       if (!prewarm && !over) pw_note_cs(cs, umask, smask);   // (one not made stays out of the prewarm list)
       if (!prewarm && !r && ms_ > 1000) vka_pso_save(2); }
 }
-VkPipeline vka_cs_pipeline(vka_shader *cs, const vka_layout *lay) { int made; return cs_obtain(cs, lay, 0, &made, 0, 0, 0); }
-VkPipeline vka_cs_pipeline_frame(vka_shader *cs, const vka_layout *lay) { int made; return cs_obtain(cs, lay, 0, &made, 0, 0, 1); }
-VkPipeline vka_cs_pipeline_img(vka_shader *cs, const vka_layout *lay, uint64_t umask, uint64_t smask) { int made; return cs_obtain(cs, lay, 0, &made, umask, smask, 1); }
+VkPipeline vka_cs_pipeline(vka_shader *cs, const vka_layout *lay) { int made; prep_wait(); return cs_obtain(cs, lay, 0, &made, 0, 0, 0); }
+VkPipeline vka_cs_pipeline_frame(vka_shader *cs, const vka_layout *lay) { int made; prep_wait(); return cs_obtain(cs, lay, 0, &made, 0, 0, 1); }
+VkPipeline vka_cs_pipeline_img(vka_shader *cs, const vka_layout *lay, uint64_t umask, uint64_t smask) { int made; prep_wait(); return cs_obtain(cs, lay, 0, &made, umask, smask, 1); }
 #endif

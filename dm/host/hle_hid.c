@@ -208,7 +208,7 @@ void hid_keys_init(void) {
 //   "key[+key][~hold]" presses as a DM_KEYS step does (hold 0.15 s by default), "shot <path>" saves the next presented frame as a PNG (dm_gfx_shot_at), "passdump <n>" dumps the
 //   render passes of the next n frames as DM_NVN_PASSDUMP does (to stderr, the run's log), "texdump <path with %d>" saves the colour targets of the next frame as DM_NVN_TEXDUMP does,
 //   "env KEY=VALUE" sets a switch read at the time of use (DM_NVN_SNAPRAW for the next texdump), "cvarf <main offset> <value>" sets an Unreal float console variable
-//   (hle_fpslock.c dm_ctl_cvar_f32; "cvari" an int one), "peek <address> <count>" logs that many floats of guest memory, "memdump <address> <bytes> <path>" saves guest memory
+//   (hle_fpslock.c dm_ctl_cvar_f32; "cvari" an int one), "peek <address> <count>" logs that many floats of guest memory, "poke <address | main+offset> <value>" writes one 32-bit word there (a float when the value has a point, else an integer; hle_fpslock.c dm_ctl_poke), "memdump <address> <bytes> <path>" saves guest memory
 //   to a file (a buffer texture's storage, which the pass dump's tbuf lines print, holds what the GPU wrote: buffer textures are views of the pool), "texlist <NVN target>" logs the
 //   registered textures of that target (2 = 3D) with storage address and block-linear layout (nvn_mtl.m dm_gfx_texlist), "texraw <serial> <path>"
 //   saves a host texture's level 0 raw, every slice (a cube's six faces) (nvn_mtl.m dm_gfx_texraw), "drag <x0> <y0> <x1> <y1> [seconds=0.3]" moves one finger in a straight line between the two normalized picture
@@ -251,6 +251,7 @@ static void *ctl_main(void *arg) {
                 if (!strncmp(line, "shot ", 5)) { dm_gfx_shot_at(1, line + 5); LOG("DM_CTL: screenshot of the next frame → %s", line + 5); continue; }
                 if (!strncmp(line, "texlist ", 8)) { void dm_gfx_texlist(int target); dm_gfx_texlist(atoi(line + 8)); continue; }
                 if (!strncmp(line, "texraw ", 7)) { void dm_gfx_texraw(uint64_t serial, const char *path); char *e2; uint64_t s = strtoull(line + 7, &e2, 10); while (*e2 == ' ') e2++; dm_gfx_texraw(s, e2); continue; }
+                if (!strncmp(line, "poke ", 5)) { void dm_ctl_poke(const char *where, const char *value); char w[40] = "", v[40] = ""; if (sscanf(line + 5, "%39s %39s", w, v) == 2) dm_ctl_poke(w, v); continue; }
                 if (!strncmp(line, "peek ", 5)) { void dm_ctl_peek(uint64_t a, int n); char *e2; uint64_t a = strtoull(line + 5, &e2, 16); dm_ctl_peek(a, (int)strtol(e2, NULL, 0)); continue; }
                 if (!strncmp(line, "memdump ", 8)) { void dm_ctl_memdump(uint64_t a, uint64_t n, const char *path); char *e2, *e3; uint64_t a = strtoull(line + 8, &e2, 16), n = strtoull(e2, &e3, 0);
                                                      while (*e3 == ' ') e3++; dm_ctl_memdump(a, n, e3); continue; }
@@ -1115,9 +1116,16 @@ HLE_FORCE("_ZN2nn3hid22GetSixAxisSensorStatesEPNS0_18SixAxisSensorStateEiRKNS0_1
 // Vibration handles: byte 0 = SDK style index (FullKey 3, Handheld 4, JoyDual 5, JoyLeft 6, JoyRight 7: 3 + the style's bit number), byte 1 = npad id, byte 2 = device
 // (the left or right motor of a pad, the Joy-Con of a pair; a single Joy-Con's own side). See libnx hid.c _hidGetVibrationDeviceHandles. Only the styles this host connects are exposed.
 // The players a vibration handle names, before its haptics output is asked about: the handle bytes are checked and the npad's style decides the rest. A game asks whether
-// a channel is mounted once, often at boot: on the console the controller is there then, while a Bluetooth pad here may connect seconds later, so mounted and
-// GetVibrationDeviceInfo answer from this (Echoes of Wisdom cached "not mounted" at boot and never sent rumble, upstream nxnative PR #2859); sends keep only the
-// players that have a routed output (vib_targets)
+// a channel is mounted once, often at boot: on the console the controller is there then, while a Bluetooth pad here may connect seconds later, so mounted answers
+// from this (Echoes of Wisdom cached "not mounted" at boot and never sent rumble, upstream nxnative PR #2859); sends keep only the players that have a routed output
+// (vib_targets). GetVibrationDeviceInfo describes the handle's own device (vib_handle_channel), connected or not
+// The channel a handle names from its bytes alone: an npad ID, device 0 or 1, a style this host knows; a single Joy-Con's one device is its own side
+static int vib_handle_channel(uint32_t h, int *motor) {
+    unsigned type = h & 0xff, id = h >> 8 & 0xff, dev = h >> 16 & 0xff;
+    if (h >> 24 || !id_bit(id) || dev > 1 || type < 3 || type > 7 || (type >= 6 && dev != (type == 7))) return 0;
+    if (motor) *motor = (int)dev;
+    return 1;
+}
 // motor: the pad's motor the handle drives (0 left, 1 right). A FullKey handle a game got before its controller was shown in another style still reaches it, as a pair's Joy-Cons
 // or the shown side of a single Joy-Con: games keep the handles they got first (Super Mario Odyssey keeps sending to its FullKey ones after a pair connects)
 static uint32_t vib_valid(uint32_t h, int *motor) {
@@ -1160,15 +1168,24 @@ static void vib_send(const uint32_t *handles, const dm_vibration *values, int n)
 HLE_FORCE("_ZN2nn3hid20IsVibrationPermittedEv", "vibration permission: enabled and an output available", unsigned, h_hid_VibPermit, void) { return dm_haptics_available() != 0; }
 // Games can cache handles once at startup, before GameController routes the pad's haptics (Unicorn Overlord kept an empty answer and sent every value to handle 0).
 // On Horizon handles are computed from npad id and style (libnx _hidGetVibrationDeviceHandles); vib_send checks for an output at each send.
-HLE_FORCE("_ZN2nn3hid25GetVibrationDeviceHandlesEPNS0_21VibrationDeviceHandleEiRKjNS_4util10BitFlagSetILi32ENS0_12NpadStyleTagEEE", "vibration devices of the connected controller",
+// The SDK computes them from the requested npad ID and style, whatever is connected and whether rumble is on (a console whose vibration setting is off hands them out too;
+// IsVibrationPermitted answers false): Trails into Reverie caches them for all eight full-key npads at boot, before most have a controller. Mounting and sending resolve a
+// handle against the controller and output of that moment (vib_valid, vib_targets). A caller passing a mask of styles gets the connected style in that mask (upstream
+// nxnative dc75d1fc8)
+HLE_FORCE("_ZN2nn3hid25GetVibrationDeviceHandlesEPNS0_21VibrationDeviceHandleEiRKjNS_4util10BitFlagSetILi32ENS0_12NpadStyleTagEEE", "vibration handles for an npad ID and style",
           int, h_hid_VibHandles, uint32_t *h, int n, const uint32_t *id, uint32_t style) {
-    if (!h || !id || n <= 0 || !(style & style_of(*id)) || !dm_haptics_enabled()) {
-        if (getenv("DM_RUMBLE_LOG") && id) LOG("rumble: game asked for vibration handles of npad %u style %#x: none (connected style %#x, rumble %s)", *id, style, style_of(*id), dm_haptics_enabled() ? "on" : "off");
+    uint32_t st = style;
+    if (id && (style & (style - 1))) st &= style_of(*id);
+    const uint32_t supported = STYLE_FULLKEY | STYLE_HANDHELD | STYLE_JOYDUAL | STYLE_JOYLEFT | STYLE_JOYRIGHT;
+    if (!h || !id || n <= 0 || !id_bit(*id) || !(st & supported)) {
+        if (getenv("DM_RUMBLE_LOG") && id) LOG("rumble: game asked for vibration handles of npad %u style %#x: none (connected style %#x)", *id, style, style_of(*id));
         return 0;
     }
-    uint32_t st = style_of(*id), base = (*id << 8) | (3u + (uint32_t)__builtin_ctz(st));
-    int single = single_joy(st), count = single ? 1 : n < 2 ? n : 2;
-    for (int i = 0; i < count; i++) h[i] = base | (uint32_t)(single ? st == STYLE_JOYRIGHT : i) << 16;
+    uint32_t type = st & STYLE_JOYDUAL ? 5u : st & STYLE_JOYLEFT ? 6u : st & STYLE_JOYRIGHT ? 7u : st & STYLE_HANDHELD ? 4u : 3u;
+    uint32_t base = (*id << 8) | type;
+    if (type == 7) base |= 1u << 16;   // a right Joy-Con's one device is its right side
+    int count = type >= 6 || n == 1 ? 1 : 2;
+    for (int i = 0; i < count; i++) h[i] = base | (uint32_t)i << 16;
     if (getenv("DM_RUMBLE_LOG")) LOG("rumble: game asked for vibration handles of npad %u style %#x: %d, first %#x", *id, style, count, h[0]);
     return count;
 }
@@ -1303,7 +1320,9 @@ HLE_FORCE("_ZN2nn3hid34ResetSixAxisSensorFusionParametersERKNS0_19SixAxisSensorH
 HLE_FORCE("_ZN2nn3hid41IsFirmwareUpdateAvailableForSixAxisSensorERKNS0_19SixAxisSensorHandleE", "six-axis sensor firmware update: none", unsigned, h_hid_SixFw, const uint32_t *h) { (void)h; return 0; }
 // GetActual returns the sanitized guest value accepted by the host, before output-device adaptation.
 HLE_FORCE("_ZN2nn3hid22GetVibrationDeviceInfoEPNS0_19VibrationDeviceInfoERKNS0_21VibrationDeviceHandleE", "vibration: linear resonant actuator, left or right", void, h_hid_VibInfo, uint32_t *info, const uint32_t *h) {
-    int m = 0, on = h && vib_valid(*h, &m) != 0; info[0] = on ? 1 : 0; info[1] = on ? 1 + m : 0;
+    int m = 0, valid = h && vib_handle_channel(*h, &m);   // the handle's own device, mounted or not yet (upstream nxnative dc75d1fc8)
+    info[0] = valid ? 1 : 0; info[1] = valid ? 1 + m : 0;
+    if (getenv("DM_RUMBLE_LOG")) { static _Atomic unsigned n; if (atomic_fetch_add(&n, 1) < 8) LOG("rumble: GetVibrationDeviceInfo %#x -> type %u, position %u", h ? *h : 0, info[0], info[1]); }
 }
 // The SDK's own call reaches the hid service (a null read in hid::detail::IsVibrationDeviceMounted; Super Mario Odyssey asks for each handle of a controller).
 // On Horizon a device is mounted when the npad's connected controller has that style and an actuator on that side: here, when the handle names a channel of the npad's controller (vib_valid), routed or not

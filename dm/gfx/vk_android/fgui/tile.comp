@@ -1,0 +1,41 @@
+// SPDX-License-Identifier: MIT
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+layout(local_size_x = 16, local_size_y = 16) in;
+// One workgroup per 15x15 tile of the thumbnails (16x9 tiles): residual, moments of C and warp(A), and mean |mv|
+shared float sh[9][256];
+float tA(vec2 p) {   // bilinear fetch of A's thumbnail at p (thumb pixel centres at +0.5)
+    vec2 q = p - 0.5; ivec2 i = ivec2(floor(q)); vec2 f = q - vec2(i);
+    ivec2 i1 = min(i + 1, ivec2(int(TW) - 1, int(TH) - 1)); i = max(i, ivec2(0));
+    float a = th[i.y * int(TW) + i.x], b = th[i.y * int(TW) + i1.x], c = th[i1.y * int(TW) + i.x], d = th[i1.y * int(TW) + i1.x];
+    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+void main() {
+    uint li = gl_LocalInvocationIndex; uvec2 l = gl_LocalInvocationID.xy, tile = gl_WorkGroupID.xy;
+    float v[9] = float[9](0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+    if (l.x < TS && l.y < TS) {
+        uvec2 t = tile * TS + l;
+        float c = th[TW * TH + t.y * TW + t.x];
+        vec2 m = vec2(0.0); float mr = 0.0;
+        if ((pc.flags & 1u) != 0u) {
+            vec2 cen = (vec2(t) + 0.5) * vec2(float(pc.W) / float(TW), float(pc.H) / float(TH));   // picture pixels
+            ivec2 r = clamp(ivec2(floor(cen * vec2(float(pc.iw) / float(pc.W), float(pc.ih) / float(pc.H)))), ivec2(0), ivec2(int(pc.iw) - 1, int(pc.ih) - 1));
+            vec2 raw = imageLoad(mvimg, r).xy;
+            if (any(isnan(raw)) || any(isinf(raw))) raw = vec2(0.0);
+            vec2 rp = raw * vec2(pc.mvx, pc.mvy);   // render pixels
+            mr = length(rp);
+            m = rp * vec2(float(pc.W) / float(pc.iw), float(pc.H) / float(pc.ih)) / vec2(float(pc.W) / float(TW), float(pc.H) / float(TH));   // thumb pixels
+        }
+        vec2 p = vec2(t) + 0.5 + m;   // where this pixel was in A (motion is current -> previous)
+        v[7] = mr; v[8] = 1.0;
+        if (p.x >= 0.5 && p.y >= 0.5 && p.x <= float(TW) - 0.5 && p.y <= float(TH) - 0.5) {
+            float a = tA(p);
+            v[0] = 1.0; v[1] = abs(c - a); v[2] = c; v[3] = a; v[4] = c * c; v[5] = a * a; v[6] = c * a;
+        }
+    }
+    for (int k = 0; k < 9; k++) sh[k][li] = v[k];
+    barrier();
+    for (uint s = 128u; s > 0u; s >>= 1) { if (li < s) for (int k = 0; k < 9; k++) sh[k][li] += sh[k][li + s]; barrier(); }
+    if (li == 0u) { uint b = (tile.y * NTX + tile.x) * 9u; for (int k = 0; k < 9; k++) tl[b + uint(k)] = sh[k][0]; }
+}

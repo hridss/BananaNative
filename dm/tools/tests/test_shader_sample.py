@@ -402,7 +402,7 @@ class Wiring(unittest.TestCase):
         self.assertIn('sampled-keep.json', host); self.assertIn('g_kept && (LY || layer_root())', host)
         svc = self.text('android/app/src/ondevice/java/dev/nxnative/android/LayerService.java')
         self.assertIn('dm/gfx/tools/shader_sample.py', svc); self.assertIn('"--kept"', svc); self.assertIn('"--verify"', svc)
-        self.assertIn('sampledKeep(a, dump, packDir, titleId)', self.text('android/app/src/ondevice/java/dev/nxnative/android/Ondevice.java'))
+        self.assertIn('sampledKeep(a, dump, packDir, titleId, isDump)', self.text('android/app/src/ondevice/java/dev/nxnative/android/Ondevice.java'))
         self.assertIn('layer.keep(runKept', self.text('android/app/src/main/java/dev/nxnative/android/GameActivity.java'))
         self.assertIn('ShaderLibs.kept(lib)', self.text('android/app/src/main/java/dev/nxnative/android/LayerGuard.java'))
         self.assertIn('DM_SHADER_SAMPLE\t', self.text('docs/env_switches.tsv'))

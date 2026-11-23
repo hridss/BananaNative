@@ -55,8 +55,8 @@ int nxhost_framegen_status(char *buf, int n) {
 }
 
 #ifndef NX_LSFG
-int vka_fg_frame(uint64_t serial, const int *crop, double period, uint64_t fence, int format, vka_img **gen, double *hold, double *out_period) {
-    (void)serial; (void)crop; (void)period; (void)fence; (void)format; (void)gen;
+int vka_fg_frame(uint64_t serial, const int *crop, double period, uint64_t fence, int format, vka_img **gen, double *hold, double *out_period, double game_t) {
+    (void)serial; (void)crop; (void)period; (void)fence; (void)format; (void)gen; (void)game_t;
     settings_init(); *hold = 0; *out_period = 0;
     if (atomic_load(&g_on) > 0) { atomic_store(&g_state, -1); reason("%s", "not in this build (built without NX_LSFG)"); vka_fps_fg(-1, 1); }
     return 0;
@@ -76,6 +76,7 @@ static struct {
     VkBuffer probe_buf; VkDeviceMemory probe_mem; uint8_t *probe_map, *probe_last; VkDeviceSize probe_stride; VkExtent2D probe_ext; uint64_t probe_last_count; uint32_t still;
     size_t fit_held, fit_pending; double fit_since; int fit_set;   // the refresh cap's held verdict (cap_hold)
     int auto_flow, af_user, af_dir; double af_since, fg_ms, fg_at;   // the flow the GPU time allows (autoflow), the GPU time's average and when it was last measured
+    int in_pre[2], in_mv[2];           // each chain input holds the picture without UI / its frame had DLSS motion vectors (vka_fgui.c)
 } F;
 
 static double mono_s(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec + t.tv_nsec / 1e9; }
@@ -122,6 +123,7 @@ static void teardown(void) {
         F.out[i] = NULL;
     }
     lsfg_pacer_reset(&F.pacer); F.count = 0; F.warm_streak = 0; F.out_period = 0; F.longer_since = 0;
+    memset(F.in_pre, 0, sizeof F.in_pre); memset(F.in_mv, 0, sizeof F.in_mv); vka_fgui_post_reset();
     if (F.probe_buf) vk.vkDestroyBuffer(V.dev, F.probe_buf, NULL);
     if (F.probe_mem) vk.vkFreeMemory(V.dev, F.probe_mem, NULL);
     free(F.probe_last);
@@ -172,7 +174,7 @@ static vka_img *out_new(VkExtent2D e, int i, VkImageView *view) {
     if (!im) return NULL;
     im->serial = 0xF6000000ull + (uint64_t)i; im->refs = 1; im->inited = 1; im->gpu_owned = 1;
     im->f = (vka_fmt){VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_R8G8B8A8_UNORM, 0, 0, 4, 1, 1};
-    im->d.target = NVN_TEXTURE_TARGET_2D; im->d.width = e.width; im->d.height = e.height;
+    im->d.target = NVN_TEXTURE_TARGET_2D; im->d.width = e.width; im->d.height = e.height; im->d.gob_order = vka_gob_order();
     im->usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     im->aspect = VK_IMAGE_ASPECT_COLOR_BIT; im->w = e.width; im->h = e.height; im->depth = im->layers = im->levels = im->samples = 1;
     VkImageCreateInfo ci = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO, .imageType = VK_IMAGE_TYPE_2D, .format = im->f.vk, .extent = {e.width, e.height, 1}, .mipLevels = 1, .arrayLayers = 1,
@@ -324,7 +326,7 @@ static void fg_dump(unsigned k, uint64_t count, size_t ng) {
     if (mem) vk.vkFreeMemory(V.dev, mem, NULL);
 }
 
-int vka_fg_frame(uint64_t serial, const int *crop, double period, uint64_t fence, int format, vka_img **gen, double *hold, double *out_period) {
+int vka_fg_frame(uint64_t serial, const int *crop, double period, uint64_t fence, int format, vka_img **gen, double *hold, double *out_period, double game_t) {
     settings_init();
     *hold = 0; *out_period = 0;
     // After a GPU hang (vka_dev.c) nothing more goes to the queue, as in the present: the fence of a submission behind the hang is never signalled, and the wait for it
@@ -352,6 +354,7 @@ int vka_fg_frame(uint64_t serial, const int *crop, double period, uint64_t fence
     *out_period = F.out_period;
     vka_img *im = vka_tex_acquire(serial);
     if (!im) return 0;
+    vka_fgui_note_present(serial);   // DM_FG_UI_T2T_LOG
     int cx = 0, cy = 0, cw = (int)im->w, ch = (int)im->h;
     if (crop && crop[2] > 0 && crop[3] > 0) { cx = crop[0]; cy = crop[1]; cw = crop[2]; ch = crop[3]; }
     VkFormatProperties fp = {0}; vk.vkGetPhysicalDeviceFormatProperties(V.pd, im->f.vk, &fp);
@@ -412,7 +415,9 @@ int vka_fg_frame(uint64_t serial, const int *crop, double period, uint64_t fence
     }
     F.pacer.decoupled = &nxhost_fps_decoupled && nxhost_fps_decoupled();   // the game's speed follows its measured rate (hle_fpslock.c sead_rate), not only held by the limiter
     F.pacer.min_base = (float)VKA_ENV("DM_LSFG_MIN_FPS", 30);   // its floor (live)
-    lsfg_plan plan = lsfg_pacer_plan(&F.pacer, F.gens, mult, target, mono_s());
+    // The game frame's interval from the game's side (DM_LSFG_PACE_GAME, live, on): measured here, on the present thread, a present backlog lengthened it, the holds with
+    // it, and the backlog kept itself up (Orbitals at 20 fps: the latency grew from 70 to 160 ms and the game fell from 19 to 15 fps within a minute)
+    lsfg_plan plan = lsfg_pacer_plan(&F.pacer, F.gens, mult, target, game_t > 0 && VKA_ENV("DM_LSFG_PACE_GAME", 1) ? game_t : mono_s());
     uint64_t count = F.count++;
     int warm = plan.warm && count + 1 >= 2;
     F.warm_streak = warm ? F.warm_streak + 1 : 0;
@@ -457,6 +462,7 @@ int vka_fg_frame(uint64_t serial, const int *crop, double period, uint64_t fence
     for (VkResult w; !vka_hung() && (w = vk.vkWaitForFences(V.dev, 1, &F.fr[k].fence, VK_TRUE, 100000000ull)) == VK_TIMEOUT;) {}   // bounded, as present_one's
     if (vka_hung()) { vka_tex_drop(im); return 0; }
     gputime_take(k); probe_poll();
+    vka_fgui_post_done(k);   // the slot's cut decision (DM_FG_CUT_LOG)
     if (F.fr[k].held) { vka_tex_drop(F.fr[k].held); F.fr[k].held = NULL; }
     vk.vkResetFences(V.dev, 1, &F.fr[k].fence);
     VkCommandBuffer cb = F.fr[k].cb; vk.vkResetCommandBuffer(cb, 0);
@@ -467,18 +473,29 @@ int vka_fg_frame(uint64_t serial, const int *crop, double period, uint64_t fence
     if (timed) T.reset(cb, T.qp, 2 * k, 2);
     vka_barrier(cb);   // the replay's writes to the window texture, and the presents still reading the outputs (earlier submissions)
     if (timed) T.write(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, T.qp, 2 * k);
-    if (wv) {   // the same rectangle as the blit (1:1, no flip), without the read in the image's format
+    // DM_FG_UI=layer: the chain reads this frame's picture without UI (vka_fgui.c), when its frame has one of the chain's size
+    vka_fgui_frame u; int ugot = vka_fgui_take(serial, &u);
+    VkImage in_c = lsfg_chain_input(F.chain, count);   // the input this frame is copied into
+    int use_pre = ugot && u.has_ui && vka_fgui_layer() && u.w == e.width && u.h == e.height && !cx && !cy, cutg = vka_fgui_cut();
+    if (use_pre) {
+        VkImageCopy c = {{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {0, 0, 0}, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {0, 0, 0}, {(uint32_t)cw, (uint32_t)ch, 1}};
+        vk.vkCmdCopyImage(cb, u.pre, VK_IMAGE_LAYOUT_GENERAL, in_c, VK_IMAGE_LAYOUT_GENERAL, 1, &c);
+    } else if (wv) {   // the same rectangle as the blit (1:1, no flip), without the read in the image's format
         VkImageCopy c = {{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {cx, cy, 0}, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {0, 0, 0}, {(uint32_t)cw, (uint32_t)ch, 1}};
-        vk.vkCmdCopyImage(cb, im->img, VK_IMAGE_LAYOUT_GENERAL, lsfg_chain_input(F.chain, count), VK_IMAGE_LAYOUT_GENERAL, 1, &c);
+        vk.vkCmdCopyImage(cb, im->img, VK_IMAGE_LAYOUT_GENERAL, in_c, VK_IMAGE_LAYOUT_GENERAL, 1, &c);
     } else {
         VkImageBlit b = {{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {{cx, cy, 0}, {cx + cw, cy + ch, 1}}, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {{0, 0, 0}, {(int32_t)e.width, (int32_t)e.height, 1}}};
-        vk.vkCmdBlitImage(cb, im->img, VK_IMAGE_LAYOUT_GENERAL, lsfg_chain_input(F.chain, count), VK_IMAGE_LAYOUT_GENERAL, 1, &b, fit ? VK_FILTER_LINEAR : VK_FILTER_NEAREST);
+        vk.vkCmdBlitImage(cb, im->img, VK_IMAGE_LAYOUT_GENERAL, in_c, VK_IMAGE_LAYOUT_GENERAL, 1, &b, fit ? VK_FILTER_LINEAR : VK_FILTER_NEAREST);
     }
+    int pa = (int)((count + 1) & 1), pc_ = (int)(count & 1), force = count >= 1 && F.in_pre[pa] != use_pre, dch = count >= 1 && F.in_mv[pa] != u.has_mv;
+    F.in_pre[pc_] = use_pre; F.in_mv[pc_] = u.has_mv;
     if (warm) lsfg_chain_shared(F.chain, cb, count);
     if (ng) lsfg_chain_generate(F.chain, cb, count, ng, in_order);
     if (timed) T.write(cb, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, T.qp, 2 * k + 1);
     F.fr[k].timed = timed; F.fr[k].serial = in_order; F.fr[k].ng = ng; F.fr[k].flow = F.flow; F.fr[k].cgen = F.cgen;
     vka_barrier(cb);   // the outputs for the presents after this
+    // C's UI layer over the generated frames, and frame C again across a scene cut (DM_FG_CUT=repeat) or a change between pre-UI and post-UI input. Off: nothing recorded
+    if (ng && (use_pre || cutg || force)) vka_fgui_post(cb, k, lsfg_chain_input(F.chain, count + 1), lsfg_chain_input(F.chain, count), F.out_view, ng, e.width, e.height, &u, use_pre, force, dch, count);
     if (warm && F.probe_buf) {   // the still-picture check's probe, behind the barrier above (the shared passes wrote it)
         VkExtent2D pe; VkImage pimg = lsfg_chain_probe(F.chain, &pe);
         VkBufferImageCopy pc = {(VkDeviceSize)k * F.probe_stride, 0, 0, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {0, 0, 0}, {pe.width, pe.height, 1}};

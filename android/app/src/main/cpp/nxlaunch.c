@@ -639,3 +639,14 @@ JNIEXPORT jstring JNICALL Java_dev_nxnative_android_Native_skipStatus(JNIEnv *en
     if (nxhost_skip_status) nxhost_skip_status(buf, sizeof buf);
     return (*env)->NewStringUTF(env, buf);
 }
+// The compiling-shaders screen (PrepareScreen): "<taken> <total> <seconds left or -1>" while the host's boot hold runs (DM_VK_PREPARE), else ""; skip ends the hold
+#pragma weak nxhost_pso_prepare_status
+#pragma weak nxhost_pso_prepare_skip
+void nxhost_pso_prepare_status(char *buf, size_t n);   // vka_pso.c
+void nxhost_pso_prepare_skip(void);
+JNIEXPORT jstring JNICALL Java_dev_nxnative_android_Native_prepareStatus(JNIEnv *env, jclass cls) {
+    (void)cls; char buf[64] = "";
+    if (nxhost_pso_prepare_status) nxhost_pso_prepare_status(buf, sizeof buf);
+    return (*env)->NewStringUTF(env, buf);
+}
+JNIEXPORT void JNICALL Java_dev_nxnative_android_Native_prepareSkip(JNIEnv *env, jclass cls) { (void)env; (void)cls; if (nxhost_pso_prepare_skip) nxhost_pso_prepare_skip(); }

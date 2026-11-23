@@ -1,0 +1,24 @@
+// SPDX-License-Identifier: MIT
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+layout(local_size_x = 16, local_size_y = 16) in;
+// The generated frame as shown: frame C's picture instead when a cut was found (repeat), then frame C's UI layer over it
+// as the game's composite does. Measured on the pre-UI / layer snapshots against the presented picture (99.98 % of pixels within 1): the layer's alpha is what
+// shows through, linear out = L.rgb + base.rgb * L.a, in sRGB (an sRGB target's blend).
+vec3 dec(vec3 c) { return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c)); }
+vec3 enc(vec3 l) { l = clamp(l, 0.0, 1.0); return mix(l * 12.92, 1.055 * pow(l, vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), l)); }
+shared uint cutw;
+void main() {
+    if (gl_LocalInvocationIndex == 0u) cutw = ((pc.flags & 32u) != 0u || ((pc.flags & 4u) != 0u && rs[0] > 0.5)) ? 1u : 0u;   // 32: repeat forced (the input changed between pre-UI and post-UI)
+    barrier();
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy); if (p.x >= int(pc.W) || p.y >= int(pc.H)) return;
+    bool cut = cutw != 0u;
+    if (!cut && (pc.flags & 8u) == 0u) return;   // (nothing to change)
+    vec4 b = cut ? imageLoad(imgC, p) : imageLoad(gen, p);
+    if ((pc.flags & 8u) != 0u) {
+        vec4 L = imageLoad(layer, p);
+        b = vec4(enc(dec(L.rgb) + dec(b.rgb) * L.a), 1.0);
+    }
+    imageStore(gen, p, b);
+}

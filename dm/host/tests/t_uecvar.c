@@ -1,5 +1,5 @@
 // Unreal console variables named in main's fixups (dm_ue_cvar: the rewriter's ue_cvar.py finds them; dm/tools/tests/test_ue_cvar.py tests the search) and the texture pool raise
-// (dm_ue_cvar_tick): the values the host raises, keeps and leaves, and a main without the variable
+// (dm_ue_cvar_tick): the values the host raises, keeps and leaves, and a main without the variable; the dynamic resolution floor (dm_ue_dynres_tick)
 #include "../hle_uecvar.c"
 #include <assert.h>
 #include <sys/mman.h>
@@ -35,12 +35,76 @@ static void check(int which) {
     munmap(base, SIZE);
 }
 
+// The dynamic resolution's floor (dm_ue_dynres_tick, DM_UE_DYNRES_MIN): set, set again when the game writes its own, left alone unset
+static void check_dynres(int set) {
+    uint8_t *base = mmap(NULL, SIZE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0); assert(base != MAP_FAILED);
+    g_nmod = 1; strcpy(g_mod[0].name, "main"); g_mod[0].base = base; g_mod[0].size = SIZE;
+    uint64_t obj = 0x20400; cvar("r.DynamicRes.MinScreenPercentage", obj);
+    float vals[2] = {83.3f, 83.3f};
+    *(uintptr_t *)(base + obj + 0x10) = (uintptr_t)vals;
+    if (!set) { unsetenv("DM_UE_DYNRES_MIN"); dm_ue_dynres_tick(); assert(vals[0] == 83.3f && writes == 0); return; }
+    setenv("DM_UE_DYNRES_MIN", "50", 1);
+    dm_ue_dynres_tick(); assert(vals[0] == 50 && vals[1] == 50 && writes == 2);
+    dm_ue_dynres_tick(); assert(writes == 2);                            // already set
+    vals[1] = 83.3f; dm_ue_dynres_tick(); assert(vals[1] == 50 && writes == 3);   // the game set its own again
+    vals[0] = 5; dm_ue_dynres_tick(); assert(vals[0] == 5 && writes == 3);        // a lower floor the game sets stays
+    munmap(base, SIZE);
+}
+
+// The static meshes' LOD distance scale (dm_ue_lod_tick, DM_UE_LOD_SCALE over the profile's ue_lod_scale): raised, raised again when the game writes its own, a coarser one
+// the game sets kept, left alone at 0
+static void check_lod(int set) {
+    uint8_t *base = mmap(NULL, SIZE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0); assert(base != MAP_FAILED);
+    g_nmod = 1; strcpy(g_mod[0].name, "main"); g_mod[0].base = base; g_mod[0].size = SIZE;
+    uint64_t obj = 0x20800; cvar("r.StaticMeshLODDistanceScale", obj);
+    float vals[2] = {1, 1};
+    *(uintptr_t *)(base + obj + 0x10) = (uintptr_t)vals;
+    if (!set) { setenv("DM_UE_LOD_SCALE", "0", 1); dm_ue_lod_tick(); assert(vals[0] == 1 && writes == 0); return; }
+    setenv("DM_UE_LOD_SCALE", "2", 1);
+    dm_ue_lod_tick(); assert(vals[0] == 2 && vals[1] == 2 && writes == 2);
+    dm_ue_lod_tick(); assert(writes == 2);                               // already set
+    vals[1] = 1; dm_ue_lod_tick(); assert(vals[1] == 2 && writes == 3);   // the game set its own again
+    vals[0] = 3; dm_ue_lod_tick(); assert(vals[0] == 3 && writes == 3);   // a coarser scale the game sets stays
+    munmap(base, SIZE);
+}
+
+// ue_set rows (ue_set_apply; dm_ue_set_tick reads the switches on every present and passes each variable's last row on): a global registered by reference held at an int while its
+// switch is 1, and given the game's value back once it is off; both copies of an object's float held, a later row on the same variable winning while it is on and the earlier one
+// taking over after it, then the game's own value back; a variable the rewriter did not find left alone
+static void check_ue_set(int set) {
+    uint8_t *base = mmap(NULL, SIZE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0); assert(base != MAP_FAILED);
+    g_nmod = 1; strcpy(g_mod[0].name, "main"); g_mod[0].base = base; g_mod[0].size = SIZE;
+    uint64_t glob = 0x20c00, obj = 0x20d00; cvar("r.TranslucentLightingVolume", glob); cvar("r.StaticMeshLODDistanceScale", obj);
+    int32_t *v = (int32_t *)(base + glob); *v = 1;
+    float vals[2] = {1, 1}; *(uintptr_t *)(base + obj + 0x10) = (uintptr_t)vals;
+    const ue_set_row off = {"r.TranslucentLightingVolume", "0", "DM_UE_TRANSLUCENT_VOLUME_OFF", 1}, lod = {"r.StaticMeshLODDistanceScale", "3.0", "", 0},
+                     lod4 = {"r.StaticMeshLODDistanceScale", "4.0", "DM_UE_COARSER_MESHES", 0}, gone = {"r.LightMaxDrawDistanceScale", "0.5", "", 1};
+    ue_set_st so = {0}, sl = {0}, sg = {0};
+    assert(ue_set_on(&lod));                                              // a row without a switch: always on
+    if (!set) { unsetenv("DM_UE_TRANSLUCENT_VOLUME_OFF"); assert(!ue_set_on(&off)); ue_set_apply(&off, NULL, &so); assert(*v == 1 && writes == 0 && !so.state); return; }
+    setenv("DM_UE_TRANSLUCENT_VOLUME_OFF", "1", 1); assert(ue_set_on(&off));
+    ue_set_apply(&off, &off, &so); assert(*v == 0 && writes == 1);
+    ue_set_apply(&off, &off, &so); assert(writes == 1);                   // already held
+    *v = 1; ue_set_apply(&off, &off, &so); assert(*v == 0 && writes == 2); // the game set it again
+    setenv("DM_UE_TRANSLUCENT_VOLUME_OFF", "0", 1); assert(!ue_set_on(&off));
+    ue_set_apply(&off, NULL, &so); assert(*v == 1 && writes == 3);        // switched off in game: the game's value back
+    ue_set_apply(&off, NULL, &so); assert(*v == 1 && writes == 3);        // then left alone
+    ue_set_apply(&lod, &lod, &sl); assert(vals[0] == 3 && vals[1] == 3 && writes == 5);
+    vals[1] = 1; ue_set_apply(&lod, &lod, &sl); assert(vals[1] == 3 && writes == 6);
+    ue_set_apply(&lod, &lod4, &sl); assert(vals[0] == 4 && vals[1] == 4 && writes == 8);   // the later row switched on wins
+    ue_set_apply(&lod, &lod, &sl); assert(vals[0] == 3 && vals[1] == 3 && writes == 10);   // and off: the earlier row again
+    vals[0] = 2; ue_set_apply(&lod, &lod, &sl); assert(vals[0] == 3 && writes == 11);    // the game sets its own value over the hold (a device profile after the start)
+    ue_set_apply(&lod, NULL, &sl); assert(vals[0] == 2 && vals[1] == 1 && writes == 13);   // none on: the value the game last set, else the one before the first hold
+    ue_set_apply(&gone, &gone, &sg); assert(sg.state < 0 && writes == 13); // not named in main's fixups
+    munmap(base, SIZE);
+}
+
 int main(void) {
     // Each process starts the one-time lookup with fresh state
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < 9; i++) {
         pid_t p = fork(); assert(p >= 0);
-        if (!p) { check(i); _exit(0); }
+        if (!p) { if (i < 3) check(i); else if (i < 5) check_dynres(i == 4); else if (i < 7) check_lod(i == 6); else check_ue_set(i == 8); _exit(0); }
         int status; assert(waitpid(p, &status, 0) == p); assert(WIFEXITED(status) && WEXITSTATUS(status) == 0);
     }
-    puts("Unreal console variables: named by the rewriter, the texture pool raised, kept and left as set, a missing variable left alone");
+    puts("Unreal console variables: named by the rewriter, the texture pool raised, kept and left as set, a missing variable left alone, the dynamic resolution floor set and kept, the LOD distance scale raised and kept, ue_set rows held and released live (a global by reference, both copies of an object, by their switch)");
 }

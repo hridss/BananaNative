@@ -72,6 +72,7 @@ int main(void) {
     for (int i = 0; i < 65536; i += 64) pool_a[i] = (uint8_t)i;
     game_pool = (pool_t){MAGIC('P', 'O', 'O', 'L'), 0x8, pool_a, 65536, NULL, 0};
     game_tex = (tex_t){.magic = MAGIC('T', 'E', 'X', 0), .mem = pool_a + 0x2000, .pool = &game_pool, .off = 0x2000, .serial = 77}; game_tex.L.size = 0x1000;
+    game_tex.d.pkg_layout = 0x404; game_tex.d.gob_order = 1;
     game_prog = (prog_t){.magic = MAGIC('P', 'R', 'O', 'G'), .nstage = 2, .serial = 5};
     game_dpool = (dpool_t){&game_pool, 0x8000, 256};
     seg s0 = {{0}, 0}, s1 = {{0}, 0}, s2 = {{0}, 0}; segs_by_addr[0] = &s0; segs_by_addr[1] = &s1; segs_by_addr[2] = &s2;
@@ -115,7 +116,16 @@ int main(void) {
     CHECK(!host_ptrs, "no host pointer left in the encoded records");
 
     cap_writer w; CHECK(cap_open(&w, path), "open for writing");
-    const char *lay = cap_layout(); cap_put(&w, CAP_LAYT, 0, lay, strlen(lay), 0);
+    const char *lay = cap_layout();
+    const char *origin_layout = strstr(lay, "p_viewports 392");
+    CHECK(origin_layout && cap_layout_matches(lay, (size_t)(origin_layout - lay)), "captures before the viewport-origin extension remain readable");
+    const char *gob_layout = strstr(lay, "nvn_texdesc 40");
+    CHECK(gob_layout && cap_layout_matches(lay, (size_t)(gob_layout - lay)), "captures before the texture-order extension remain readable");
+    nvn_texdesc legacy_desc = {0}; uint32_t legacy_pkg = 0x1000;
+    memcpy((uint8_t *)&legacy_desc + offsetof(nvn_texdesc, pkg_layout), &legacy_pkg, sizeof legacy_pkg);
+    CHECK(legacy_desc.pkg_layout == legacy_pkg && legacy_desc.gob_order == 0, "old descriptors retain packaged layout and X1 replay order");
+    CHECK(cap_layout_matches(lay, strlen(lay)) && !cap_layout_matches(lay, strlen(lay) - 1), "accept the current layout, reject a truncated extension");
+    cap_put(&w, CAP_LAYT, 0, lay, strlen(lay), 0);
     for (int r = 0; r < nregs; r++) { uint8_t b[sizeof(cap_regn) + 65536]; cap_regn h = {(uint32_t)r, r == 2, regs[r].lo, regs[r].size};
         memcpy(b, &h, sizeof h); memcpy(b + sizeof h, (const void *)(uintptr_t)regs[r].lo, (size_t)regs[r].size); cap_put(&w, CAP_REGN, 1, b, sizeof h + regs[r].size, 1); }
     for (int i = 0; i < 3; i++) { uint8_t b[8 + 4096]; uint32_t hd[2] = {(uint32_t)i, (uint32_t)all[i]->n}; memcpy(b, hd, 8); memcpy(b + 8, enc_bytes[i], all[i]->n); cap_put(&w, CAP_SEGM, 1, b, 8 + all[i]->n, 1); }
@@ -149,6 +159,7 @@ int main(void) {
     CHECK(rt->n == 2 && rt->color[1] == &new_tex, "a texture object pointer → the rebuilt object");
     CHECK((const uint8_t *)rt->color[0] > segbuf[0] && (const uint8_t *)rt->color[0] < segbuf[0] + seglen[0], "a snapshot inside the record → the same place in the copy");
     CHECK(rt->color[0]->mem == new_base[0] + 0x2000 && rt->color[0]->pool == &new_pool && rt->color[0]->serial == 78, "the snapshot's storage relocated");
+    CHECK(rt->color[0]->d.pkg_layout == 0x404 && rt->color[0]->d.gob_order == 1, "the snapshot retains packaged dimensions and its captured GOB order");
     CHECK(rt->depth->mem == new_base[0] + 0x4000 && rt->depth->serial == 79, "the depth snapshot relocated");
     CHECK(AT(0, bp, p_bind_program).prog == &new_prog && AT(0, bp, p_bind_program).stages == 3, "program pointer");
     CHECK(AT(0, sp, p_set_pool).pool == &new_dp, "descriptor pool pointer");

@@ -56,7 +56,7 @@ Which games recommend what is on each game's page in [Games](Games).
 | System | **GPU driver** | [GPU drivers](GPU-Drivers) |
 | | **Time of day** | [Settings: Game](Settings-Game#time-of-day) |
 | | **Advanced** | every switch with a search box: [Settings: Advanced](Settings-Advanced) |
-| | **Users** (the round button with your letter at the top right of Home: **Player ID**, **Choose a picture**, **Use an icon instead**), **Folders**, **Storage**, **Keep the screen on while preparing** | [Saves and storage](Saves-and-Storage), [First start and Prepare](First-Start-and-Prepare) |
+| | **Users** (the round button with your letter at the top right of Home: **Player ID**, **Choose a picture**, **Use an icon instead**), **Folders**, **Storage**, **Keep the screen on while preparing**, **Update shaders automatically** | [Saves and storage](Saves-and-Storage), [First start and Prepare](First-Start-and-Prepare), [Updates](Updates) |
 | Help | **Readiness check**, **Graphics self-test**, **Share log**, **Tester settings** | [Troubleshooting](Troubleshooting) |
 | About | build tag, the games this build includes | the list tells you whether your game is in this app |
 

@@ -243,6 +243,15 @@ static int nvn_cap_enabled(void) {
     if (f) CLOG("capturing frame %d into %s", f, g_cap_path); else CLOG("capturing the first frame after %.1f s into %s", s, g_cap_path);
     return 1;
 }
+// "framecapture <path>" (DM_CTL, vka_ctl.c): the next frame into path, as DM_NVN_CAPTURE=@<now>:1:<path> would, for something that shows for a second at a time no
+// script can aim at (Orbitals' smoke particles turning into squares in its opening scene). One capture a run: 0 when one was asked already
+int vka_capture_arm(const char *path) {
+    nvn_cap_enabled();
+    if (g_cap_frame > 0 || g_cap_at_s > 0 || g_cap_done || !path || !*path) return 0;
+    strlcpy(g_cap_path, path, sizeof g_cap_path); g_cap_at_s = 1e-9;   // (the path first: the present thread reads it once this is set)
+    CLOG("capturing the next frame into %s (DM_CTL framecapture)", g_cap_path);
+    return 1;
+}
 static uint64_t cap_hash_block(const uint8_t *p, size_t n) {
     uint64_t h = 0x9E3779B97F4A7C15ull ^ n, v; size_t i = 0;
     for (; i + 8 <= n; i += 8) { memcpy(&v, p + i, 8); h = (h ^ v) * 0xff51afd7ed558ccdull; h ^= h >> 32; }

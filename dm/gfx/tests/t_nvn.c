@@ -26,6 +26,60 @@ static int g_fail, g_n;
 #define P(name) ((NVNT_##name)proc(#name))
 static PFNNVNDEVICEGETPROCADDRESSPROC gpa; static NVNdevice dev;
 static void *proc(const char *n) { void *p = (void *)gpa(&dev, n); if (!p) { printf("address lookup failed %s\n", n); exit(1); } return p; }
+extern int dm_test_sdk_ounce;   // the strong SDK-target test hook in t_host_stubs.c
+static void texture_gob_orders(void) {
+    static uint8_t storage[4 * 65536] __attribute__((aligned(16384)));
+    uint8_t linear[16 * 8 * 4], back[sizeof linear];
+    NVNcopyRegion all = {0, 0, 0, 16, 8, 1}, pixel = {4, 0, 0, 1, 1, 1};
+    const uint8_t marker[4] = {0xa1, 0xb2, 0xc3, 0xd4};
+    for (int ounce = 0; ounce < 2; ounce++) {
+        dm_test_sdk_ounce = ounce;
+        NVNdevice owner[2], later; NVNdeviceBuilder db;
+        P(nvnDeviceBuilderSetDefaults)(&db);
+        for (int mode = 0; mode < 2; mode++) {
+            P(nvnDeviceBuilderSetFlags)(&db, mode ? 0x10000 : 0);
+            P(nvnDeviceInitialize)(&owner[mode], &db);
+        }
+        NVNmemoryPool pool; NVNmemoryPoolBuilder pb;
+        P(nvnMemoryPoolBuilderSetDefaults)(&pb); P(nvnMemoryPoolBuilderSetStorage)(&pb, storage, sizeof storage);
+        P(nvnMemoryPoolInitialize)(&pool, &pb);
+        NVNtexture tex[4] = {0};
+        for (int mode = 0; mode < 2; mode++) for (int image = 0; image < 2; image++) {
+            int k = mode * 2 + image, order = ounce && !mode;
+            NVNtextureBuilder b = {0};
+            P(nvnTextureBuilderSetDefaults)(&b); P(nvnTextureBuilderSetDevice)(&b, &owner[mode]);
+            P(nvnTextureBuilderSetSize2D)(&b, 16, 8); P(nvnTextureBuilderSetFormat)(&b, NVN_FORMAT_RGBA8);
+            P(nvnTextureBuilderSetFlags)(&b, image ? NVN_TEXTURE_FLAGS_IMAGE : 0);
+            P(nvnTextureBuilderSetStorage)(&b, &pool, k * 65536);
+            P(nvnTextureInitialize)(&tex[k], &b);
+            EXPECT("texture order comes from its own SDK/device flags", order, nvn_gob_order(&((tex_t *)&tex[k])->d));
+            EXPECT("capturing order leaves guest texture flags unchanged", image ? NVN_TEXTURE_FLAGS_IMAGE : 0, P(nvnTextureGetFlags)(&tex[k]));
+            for (size_t i = 0; i < sizeof linear; i++) linear[i] = (uint8_t)(i * 17u + i / 23u);
+            P(nvnTextureWriteTexels)(&tex[k], NULL, &all, linear);
+            size_t at = (size_t)k * 65536 + (order ? 64 : 32);   // byte x16, y0, at independently calculated GOB addresses
+            EXPECT("whole WriteTexels uses the captured GOB order", linear[16], storage[at]);
+            P(nvnTextureWriteTexels)(&tex[k], NULL, &pixel, marker); memcpy(linear + 16, marker, sizeof marker);
+            EXPECT("partial WriteTexels uses the captured GOB order", marker[0], storage[at]);
+            P(nvnTextureReadTexels)(&tex[k], NULL, &all, back);
+            EXPECT("ReadTexels agrees after whole and partial writes", 0, memcmp(linear, back, sizeof linear));
+        }
+        P(nvnDeviceBuilderSetFlags)(&db, 0);
+        P(nvnDeviceInitialize)(&later, &db);
+        NVNtexture copied = tex[2];
+        EXPECT("a later device does not change a texture's captured order", 0, nvn_gob_order(&((tex_t *)&copied)->d));
+        for (int k = 0; k < 4; k++) P(nvnTextureFinalize)(&tex[k]);
+        NVNtextureBuilder unbound = {0};
+        P(nvnTextureBuilderSetDefaults)(&unbound);
+        P(nvnTextureInitialize)(&tex[0], &unbound);
+        EXPECT("a builder with no device retains the SDK default order", ounce, nvn_gob_order(&((tex_t *)&tex[0])->d));
+        P(nvnTextureFinalize)(&tex[0]);
+        P(nvnMemoryPoolFinalize)(&pool);
+        for (int k = 0; k < 2; k++) P(nvnDeviceFinalize)(&owner[k]);
+        P(nvnDeviceFinalize)(&later);
+    }
+    dm_test_sdk_ounce = 0;
+    NVNdeviceBuilder db; P(nvnDeviceBuilderSetDefaults)(&db); P(nvnDeviceInitialize)(&dev, &db);
+}
 // CRC-16 with the reflected polynomial 0xA001, from 0: the hash Super Mario Odyssey's sampler cache takes of a sampler's bytes 8 on (main+0x96e400)
 static uint16_t crc16_a001(const uint8_t *p, size_t n) {
     uint16_t c = 0;
@@ -188,8 +242,13 @@ int main(void) {
       EXPECT("native 60 cap: period ns",16666666,present_period(&w));
       EXPECT("native 60 cap: display-link target",60,nvn_game_fps());
       setenv("DM_FPS_TARGET","0",1);g_present_cap=-1;w.interval=2;
-      EXPECT("no cap preserves display pacing",1,present_itv(&w));nvn_present_config(60,0);
+      EXPECT("no cap preserves display pacing",1,present_itv(&w));
+      EXPECT("display mode: the game reads back the interval the window presents at",1,window_interval(&w));
+      setenv("DM_FPS_TARGET","30",1);g_present_cap=-1;
+      EXPECT("display mode under a 30 cap: the game reads back 2",2,window_interval(&w));
+      setenv("DM_FPS_TARGET","0",1);g_present_cap=-1;nvn_present_config(60,0);
       EXPECT("no cap preserves game pacing",2,present_itv(&w));
+      EXPECT("game mode: the game reads back the interval it set",2,window_interval(&w));
       _Alignas(8) uint8_t state[64]={0};float cap=60;memcpy(state,&cap,4);dm_fps_state=state;
       EXPECT("stub state takes precedence over env",60,fps_present_cap());
       *(uint32_t *)(state+4)=1;
@@ -209,6 +268,23 @@ int main(void) {
       EXPECT("a frame step page needs no limiter",60,fps_present_cap());
       dm_fps_state=NULL;unsetenv("DM_FPS_TARGET");g_present_cap=-1;g_engine_stub=1;nvn_present_config(0,0);
     }
+    // Display mode with no engine limiter (Red Dead Redemption: interval 2 set once, steps by time): the cap is the present interval alone
+    { win_t w={.interval=2};nvn_present_config(60,1);dm_fps_state=NULL;g_engine_stub=0;
+      setenv("DM_FPS_TARGET","60",1);g_present_cap=-1;
+      EXPECT("display mode, no limiter: the 60 cap is applied",60,fps_present_cap());
+      EXPECT("display mode, no limiter: one vsync a frame",1,present_itv(&w));
+      EXPECT("display mode, no limiter: the game reads back 1",1,window_interval(&w));
+      setenv("DM_FPS_TARGET","30",1);g_present_cap=-1;
+      EXPECT("display mode, no limiter: the 30 cap is applied",30,fps_present_cap());
+      EXPECT("display mode, no limiter: two vsyncs a frame",2,present_itv(&w));
+      setenv("DM_FPS_TARGET","20",1);g_present_cap=-1;
+      EXPECT("display mode, no limiter: the 20 cap is applied, three vsyncs a frame",3,present_itv(&w));
+      setenv("DM_FPS_TARGET","0",1);g_present_cap=-1;
+      EXPECT("display mode, no limiter, no cap: one frame per tick",1,present_itv(&w));
+      nvn_present_config(-1,0);setenv("DM_PRESENT_INTERVAL","display",1);setenv("DM_FPS_TARGET","30",1);g_present_cap=-1;
+      EXPECT("the cap asked for before the window's first interval: display mode from the environment",30,fps_present_cap());
+      unsetenv("DM_PRESENT_INTERVAL");unsetenv("DM_FPS_TARGET");g_present_cap=-1;g_engine_stub=1;nvn_present_config(0,0);
+    }
     crash_install();   // the same SIGSEGV / SIGBUS handling as production (the page-fault hook is dispatched from within it)
     // 1. Bootstrap address lookup: bootstrap gets GetProcAddress, then uses it to get all the names
     PFNNVNBOOTSTRAPLOADERPROC boot = (PFNNVNBOOTSTRAPLOADERPROC)h_nvnBootstrapLoader;
@@ -222,6 +298,7 @@ int main(void) {
     NVNdeviceBuilder db; P(nvnDeviceBuilderSetDefaults)(&db); P(nvnDeviceBuilderSetFlags)(&db, 0);
     EXPECT("DeviceInitialize succeeds", 1, P(nvnDeviceInitialize)(&dev, &db));
     native_defaults(); builder_queries(); pool_access();
+    texture_gob_orders();
     int v; P(nvnDeviceGetInteger)(&dev, NVN_DEVICE_INFO_UNIFORM_BUFFER_ALIGNMENT, &v);
     EXPECT("uniform buffer alignment (256 measured on X1)", 256, v);
     P(nvnDeviceGetInteger)(&dev, NVN_DEVICE_INFO_TEXTURE_DESCRIPTOR_SIZE, &v); EXPECT("texture descriptor size (32)", 32, v);
@@ -801,7 +878,16 @@ int main(void) {
     NVNtexture *missing_first[2] = {NULL, &sc[1]};
     P(nvnWindowBuilderSetTextures)(&wb, 2, missing_first);
     EXPECT("WindowInitialize with null first texture", 1, P(nvnWindowInitialize)(&win, &wb));
+    // NVN2's acquire timeout (no prototype in nvn.h): the builder's default (UINT64_MAX), a value set on the builder reaches the window, the window's own setter
+    uint64_t (*at_bget)(const NVNwindowBuilder *) = (uint64_t (*)(const NVNwindowBuilder *))proc("nvnWindowBuilderGetAcquireTimeout");
+    void (*at_bset)(NVNwindowBuilder *, uint64_t) = (void (*)(NVNwindowBuilder *, uint64_t))proc("nvnWindowBuilderSetAcquireTimeout");
+    uint64_t (*at_wget)(const NVNwindow *) = (uint64_t (*)(const NVNwindow *))proc("nvnWindowGetAcquireTimeout");
+    void (*at_wset)(NVNwindow *, uint64_t) = (void (*)(NVNwindow *, uint64_t))proc("nvnWindowSetAcquireTimeout");
+    EXPECT("acquire timeout: the builder's default is no limit", 1, at_bget(&wb) == UINT64_MAX);
+    at_bset(&wb, 16666667); EXPECT("acquire timeout: the builder keeps it", 1, at_bget(&wb) == 16666667);
     P(nvnWindowBuilderSetTextures)(&wb, 2, scp); EXPECT("WindowInitialize succeeds", 1, P(nvnWindowInitialize)(&win, &wb));
+    EXPECT("acquire timeout: the window takes the builder's", 1, at_wget(&win) == 16666667);
+    at_wset(&win, UINT64_MAX); EXPECT("acquire timeout: the window's own setter", 1, at_wget(&win) == UINT64_MAX);
     int idx[4];
     for (int f = 0; f < 4; f++) {
         P(nvnWindowAcquireTexture)(&win, &s2, &idx[f]);
@@ -898,6 +984,8 @@ int main(void) {
         EXPECT("ordinary packaged pitch remains unpadded",0x102000,P(nvnTextureBuilderGetStorageSize)(&b));
         P(nvnTextureBuilderSetPackagedTextureLayout)(&b,NULL);
         EXPECT("clearing packaged layout clears width too",0,((tex_builder_t*)&b)->d.pkg_layout);
+        layout.layout[0]=0xff; layout.layout[1]=0xff; P(nvnTextureBuilderSetPackagedTextureLayout)(&b,&layout);
+        EXPECT("all packaged H/D/W bits plus presence fit in 16 bits",0x1000,((tex_builder_t*)&b)->d.pkg_layout);
     }
 
     // 6c. Write-protected dirty pages: after a packaged texture is uploaded its pool pages are read-only; game write → page fault → mark dirty → re-upload on next use; a direct host read() write needs prepare first

@@ -229,6 +229,9 @@
     <string name="settings_updates">Güncellemeler</string>
     <string name="settings_what_s_new">Yenilikler</string>
     <string name="settings_while_home_shows_a_game">Ana ekranda bir oyun hazırlanırken</string>
+    <string name="settings_update_shaders_automatically">Gölgelendiricileri otomatik güncelle</string>
+    <string name="settings_auto_shader_update_on">Gölgelendiricileri güncel olmayan bir oyun bunları arka planda günceller</string>
+    <string name="settings_auto_shader_update_off">Kapalı: oyunun sayfası istediğinizde bunları günceller</string>
     <string name="settings_xbox_button_label_swap">Xbox düğme etiketi değişimi</string>
     <string name="game_1_player">1 oyuncu</string>
     <string name="game_3d_scene">3B sahne</string>
@@ -803,6 +806,9 @@
     <string name="home_lossless_dll_missing">" · Lossless.dll eksik"</string>
     <string name="home_why">Neden?</string>
     <string name="home_shaders_need_one_update">Gölgelendiricilerin bir güncellemeye ihtiyacı var</string>
+    <string name="home_other_pack_has_shaders">Başka bir pakette gölgelendiriciler var</string>
+    <string name="home_other_pack_has_shaders_message">Bu kartın kullandığı pakette uygulamanın bu sürümü için gölgelendirici yok. %1$s için başka bir pakette var. Bu kart için o paket kullanılsın mı?</string>
+    <string name="home_use_that_pack">O paketi kullan</string>
     <string name="home_nup">" (.nup)"</string>
     <string name="game_applies_from_the_next_frame">Bir sonraki kareden itibaren uygulanır, bu oyun için saklanır (Oyun ayarları › Yükseltici ile aynı ayar).</string>
     <string name="game_applies_from_the_next_frame_2">Bir sonraki kareden itibaren uygulanır, bu oyun için saklanır (Oyun ayarları › Ekran ölçekleme ile aynı ayar).</string>
@@ -1408,4 +1414,12 @@
     <string name="settings_build_preview">Bir önizleme sürümü (v%1$s) kullanıyorsun. Önizlemeler oyunları bozabilir. Kararlı v%2$s çıktığında bunun yerini alır.</string>
     <string name="settings_build_preview_channel">Kanalın %1$s: kararlı v%2$s çıktığında uygulama seni ona geçirir.</string>
     <string name="settings_build_hotfix">Bir hızlı düzeltme sürümü (v%1$s) kullanıyorsun: haftalık sürümler arasında küçük bir düzeltme. Sonraki haftalık sürüm onu içerir.</string>
+    <string name="common_picture_size">Görüntü boyutu</string>
+    <string name="game_lsfg_on_target">Açık · %1$d fps</string>
+    <string name="game_own_follows_settings">Bu oyun Ayarlar\'ı izliyor (%1$s). Burada yapılan bir değişiklik bu oyuna özel olur.</string>
+    <string name="game_own_settings_note">Bunlar bu oyunun kendi ayarları. Ayarlar\'a yeniden uymak için Ayarlar varsayılanını kullanın.</string>
+    <string name="game_use_settings_default">Ayarlar varsayılanını kullan</string>
+    <string name="settings_touch_look">Ekran kontrollerinin görünümü</string>
+    <string name="settings_panel_look">Oyun içi panelin görünümü</string>
+    <string name="settings_player_one_away">Seçilen kumanda (bağlı değil)</string>
 </resources>

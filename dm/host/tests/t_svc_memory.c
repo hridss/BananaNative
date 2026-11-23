@@ -51,7 +51,7 @@ module_t *module_of(const void *p) {
     for (int i = 0; i < g_nmod; ++i) {
         uintptr_t b = (uintptr_t)g_mod[i].base;
         if (a >= b && a - b < g_mod[i].size) return &g_mod[i];
-        if (g_mod[i].patch_off < 0 && a >= b + g_mod[i].patch_off && a < b) return &g_mod[i];
+        if (g_mod[i].patch_off < 0 && a >= b + g_mod[i].patch_off && a < b + g_mod[i].patch_off + g_mod[i].patch_len) return &g_mod[i];
     }
     return NULL;
 }
@@ -186,6 +186,45 @@ static void alias_lifecycle(void) {
     assert(pages(1, alias + g_alias_cap - P, 2 * P) == BAD);
 }
 
+// Device-shared memory (an NVN memory pool's storage, hle_nvn.c) is not given back: UnmapPhysicalMemory or a shrinking SetHeapSize over any page of it fails with InvalidCurrentMemory and
+// leaves every page and byte as it was, as on Horizon; once the pool is gone (each registration removed) both work again (PR #1616, Monster Jam Steel Titans 2)
+static void device_shared_refused(void) {
+    assert(!pages(1, alias, 16 * P));
+    memset((void *)alias, 0x6d, 16 * P);
+    int64_t mapped = g_alias_mapped;
+    dm_device_share((void *)(alias + 4 * P), 4 * P, 1); dm_device_share((void *)(alias + 4 * P), 4 * P, 1);   // two pools over the same storage
+    assert(pages(0, alias + 7 * P, 2 * P) == BAD && pages(0, alias, 16 * P) == BAD && pages(0, alias + 4 * P, 4 * P) == BAD);
+    assert(g_alias_mapped == mapped);
+    for (size_t i = 0; i < 16 * P; ++i) assert(((uint8_t *)alias)[i] == 0x6d);
+    assert(!pages(0, alias + 12 * P, 4 * P) && !pages(0, alias, 2 * P));   // beside it: given back
+    assert(!pages(1, alias + 2 * P, 2 * P) && !pages(1, alias + 8 * P, 2 * P));   // touching it on either side: still allowed
+    dm_device_share((void *)(alias + 4 * P), 4 * P, 0);
+    assert(pages(0, alias + 4 * P, P) == BAD);   // the other pool still holds it
+    dm_device_share((void *)(alias + 4 * P), 4 * P, 0);
+    assert(!pages(0, alias, 16 * P) && !g_alias_mapped);
+    assert(!resize(4 * 1024 * 1024));
+    dm_device_share((void *)(heap + 3 * 1024 * 1024), P, 1);
+    assert(resize(2 * 1024 * 1024) == BAD && g_heap_cur == 4 * 1024 * 1024);
+    dm_device_share((void *)(heap + 3 * 1024 * 1024), P, 0);
+    dm_device_share((void *)(heap + 1024 * 1024), P, 1);
+    assert(!resize(2 * 1024 * 1024) && g_heap_cur == 2 * 1024 * 1024);   // below the new end: left alone
+    assert(resize(0) == BAD);
+    dm_device_share((void *)(heap + 1024 * 1024), P, 0);
+    assert(!resize(0));
+    // UnmapMemory over device-shared memory is refused too, and leaves the mapping, its bytes and the source as they were (upstream nxnative 6c50d74e5)
+    assert(!pages(1, alias, 4 * P));
+    memset((void *)alias, 0x5a, 4 * P);
+    assert(!map(stack + P, alias + P, 2 * P));
+    memset((void *)(stack + P), 0x5b, 2 * P);
+    dm_device_share((void *)(stack + 2 * P), P, 1);
+    assert(unmap(stack + P, alias + P, 2 * P) == BAD);
+    for (size_t i = 0; i < 2 * P; ++i) assert(((uint8_t *)(stack + P))[i] == 0x5b);
+    dm_device_share((void *)(stack + 2 * P), P, 0);
+    assert(!unmap(stack + P, alias + P, 2 * P));
+    for (size_t i = 0; i < 2 * P; ++i) assert(((uint8_t *)(alias + P))[i] == 0x5b);
+    assert(!pages(0, alias, 4 * P));
+}
+
 static void ownership(void) {
     assert(!pages(1, alias, 16 * P));
     memset((void *)alias, 0x34, 16 * P);
@@ -205,7 +244,6 @@ static void ownership(void) {
     assert(!pages(1, alias + 15 * P, 2 * P));
     expect(alias + P, alias + P, 2 * P, 5, 1, 0);
     assert(*(uint8_t *)(alias + P) == 0x34);
-    expect(UINTPTR_MAX, UINTPTR_MAX - P + 1, P, 0, 0, 0);
     assert(call(2, alias + P, P, 3) == BAD && call(3, alias + P, P, 0) == BAD);
     assert(unmap(stack + P, alias + P, P) == BAD);
     assert(unmap(stack + P, alias + 4 * P, 2 * P) == BAD);
@@ -269,6 +307,7 @@ static void module_back_patch(void) {
     assert(!mprotect(b + 0x10000, 0x4000, PROT_READ));
     assert(!mprotect(b + 0x20000, 0x8000, PROT_READ));
     expect((uintptr_t)b - 0x8000, (uintptr_t)b - 0x8000, 0x4000, 4, 0, 5);
+    expect((uintptr_t)b - 0x4000, (uintptr_t)b - 0x4000, 0x4000, 0, 0, 0);
     expect((uintptr_t)b + 0x4000, (uintptr_t)b + 0x4000, 0xc000, 4, 0, 3);
     expect((uintptr_t)b + 0x14000, (uintptr_t)b + 0x14000, 0xc000, 4, 0, 3);
     expect((uintptr_t)b + 0x20000, (uintptr_t)b + 0x20000, 0x8000, 4, 0, 5);
@@ -278,6 +317,38 @@ static void module_back_patch(void) {
     assert(!map(stack, (uintptr_t)b + 0x14000, P));
     assert(!unmap(stack, (uintptr_t)b + 0x14000, P));
     g_nmod = 0; memset(g_mod, 0, sizeof test_modules); assert(!munmap(a, 0x30000));
+}
+
+// The SDK's module parser starts at zero and advances to each returned block's end.
+static void process_memory_walk(void) {
+    const uintptr_t nso = 0x10000, nro = 0x30000;
+    g_mod[0] = (module_t){.base = (uint8_t *)nro, .size = 3 * P, .ro_off = P, .data_off = 2 * P, .nro = 1};
+    g_mod[1] = (module_t){.base = (uint8_t *)nso, .size = 3 * P, .ro_off = P, .data_off = 2 * P, .loaded = 1};
+    g_nmod = 2;
+    expect(0, 0, nso, 0, 0, 0);
+    expect(nso, nso, P, 3, 0, 5);
+    expect(nso + P, nso + P, P, 3, 0, 1);
+    assert(query(nro).state == 0);
+    g_mod[0].loaded = 1;
+    expect(nro - 1, nso + 3 * P, nro - (nso + 3 * P), 0, 0, 0);
+    expect(nro, nro, P, 3, 0, 5);
+
+    uintptr_t cursor = 0;
+    unsigned code_blocks = 0;
+    for (unsigned i = 0; i < 20; ++i) {
+        memory_info m = query(cursor);
+        code_blocks += m.state == 3;
+        uintptr_t next = m.base + m.size;
+        if (!next) {
+            assert(m.state == 0x10 && m.perm == 0 && code_blocks == 4);
+            expect(UINTPTR_MAX, m.base, m.size, 0x10, 0, 0);
+            g_nmod = 0; memset(g_mod, 0, sizeof test_modules);
+            return;
+        }
+        assert(next > cursor);
+        cursor = next;
+    }
+    assert(!"whole-process QueryMemory walk did not terminate");
 }
 
 // Apple has no pthread_barrier. The gate makes races deterministic at entry,
@@ -573,8 +644,8 @@ int main(int argc, char **argv) {
     for (unsigned i = 0; i < 8; ++i) assert(!pthread_create(&threads[i], NULL, init_worker, &addresses[i]));
     for (unsigned i = 0; i < 8; ++i) { assert(!pthread_join(threads[i], NULL)); assert(addresses[i] == addresses[0]); }
     alias = addresses[0]; stack = info(I_StackAddr); heap = info(I_HeapAddr);
-    lazy_commit(); alias_lifecycle(); ownership(); unmap_gives_pages_back(); module_sources(); module_back_patch(); failures(); release_fallback(); concurrency(); fragmented_queries();
-    guest_helper(); read_mapped_race();
+    lazy_commit(); alias_lifecycle(); device_shared_refused(); ownership(); unmap_gives_pages_back(); module_sources(); module_back_patch(); failures(); release_fallback(); concurrency(); fragmented_queries();
+    guest_helper(); process_memory_walk(); read_mapped_race();
     if (!DM_GAME_MEM_MAP_LIMIT) metadata_limit();
     else reported_lower();
 #ifdef TEST_REAL_DIRTY

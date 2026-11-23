@@ -23,10 +23,7 @@ files and their add-ons, the replay's selftest (`--vk-selftest`).
 
 Missing: H.264 / AAC (no AMediaCodec: `linux/shim/shim_media.c` is a stub; Mario Kart World's intros and cutscenes play
 without it), motion sensors (SDL3 can read a pad's own gyro, but the Odin 2 Pro's built-in pad exposes none on this image), host
-unit tests run on Linux, and the run-time shader layer's builds ("shaders are built while you play", `android/SHADERS.md`): the host
-writes the layer's requests (`DM_VK_LAYER`), but on Android the app runs `dm/gfx/tools/shader_layer.py` for them while the game
-plays, and nothing on Linux does that yet. So a game prepared on Linux gets the whole shader set, as before 0.3.40 (a pack made
-without shaders draws nothing for the shaders it lacks).
+unit tests run on Linux.
 
 ## How it works
 
@@ -188,8 +185,9 @@ the two versions are a row of `dm/gfx/vk_android/vka_known_transitions.tsv` (an 
 nothing visible; [android/SHADERS.md](../android/SHADERS.md), "Known transitions"). The AppImage carries that table, and
 the launcher then shows the pack as **Ready to play** ("Shaders: version …, kept for …"). It reads the library's header
 for that: the version, the game and the ABI. Nothing in the pack is changed (the APK moves the library to the new
-version; the launcher does not), so an older AppImage still plays it too. **Prepare again** makes the new version's
-library.
+version; the launcher does not), so an older AppImage still plays it too. Until a Prepare has downloaded the new
+version's pack tools, the shaders such a library lacks are not built while playing (AppRun needs tools of the same
+chain); **Prepare again** makes the new version's library.
 
 ### What the script does
 
@@ -206,11 +204,13 @@ build. fontTools (for `nintendo_ext.ttf`) is an exact version, a wheel, not hash
 
 Opened with no argument from a desktop (a double-click, no terminal), it shows the game window (`launcher.py`, PyQt6 from
 the system): one card per game found (a pack, a `.nup` named `[<title ID>]`, or both) with what it needs next and the buttons
-that apply: **Prepare** (makes the pack from the `.nup`, see below), **Play**, and **Options**, the options of that one game
-(`<title ID>.env`). **Settings** holds the options of every game (`settings.env`). Both are lists of choices over the same
+that apply: **Prepare** (makes the pack from the `.nup`, see below; it asks **Quick**, the code and the starter shaders in a few
+minutes with the rest built while playing, or **Everything**, every shader first), **Play**, **Add to Steam**, and **Options**, the
+options of that one game (`<title ID>.env`). A quick pack's card says how many shaders were built while playing and offers **Build
+all shaders** (Everything) and **Prepare again (Quick)**. **Settings** holds the options of every game (`settings.env`). Both are lists of choices over the same
 keys as `settings.env` (picture, frame rate cap, dynamic resolution and 3D resolution where the game's profile has them
 (`drs_ctl`, `scene_arg`: Star Fox's arguments go to the host as `DM_GAME_ARGS_ADD`), frame
-generation, overlay, window, RAM saver, CPU policy, Gamescope's layer); saving edits the file in place and keeps its other
+generation, overlay, window, RAM saver, shaders while playing, CPU policy, Gamescope's layer); saving edits the file in place and keeps its other
 lines; **Edit the file...** opens it. Without PyQt6, or with `NX_ZENITY=1`, it shows a picker (zenity) instead: the prepared packs
 found under `~/Games` and removable media (`pack.tsv`, 5 levels down) and those added with **Add a pack folder...**
 (`~/.config/banananative/games.list`), and **Settings**, which opens `settings.env`. A game whose `.nup` is not found
@@ -224,6 +224,27 @@ none is given, keeps saves, caches and logs in `~/.local/share/banananative/<tit
 Its defaults: handheld mode at graphics scale 2, the RAM saver, a fixed texture cache limit of 2300 MiB on a system
 with no swap and 12 GB or less, texture cache evictions on a 3 ms budget a frame, and Gamescope's Vulkan layer off
 (`NX_GAMESCOPE_WSI=1` keeps it).
+
+Shaders while playing (as on Android since 0.3.40, `android/SHADERS.md` "Shaders the library lacks"): **Prepare** asks **Quick** (the
+game code only, a few minutes: `linux-pack.sh … --no-shaders`) or **Everything** (every shader first, 10-40 minutes). The host writes
+a request for every shader its pack lacks into `~/.local/share/banananative/<title ID>/temp/shader_layer/req` (`DM_VK_LAYER`) and
+maps the layer library a build makes there; `layer_watch.py`, started by AppRun beside the host, runs `dm/gfx/tools/shader_layer.py`
+on them while the game runs (one worker, nice 19, idle I/O class) and ends with the game (a batch in hand is stopped; its results
+carry to the next build). A Quick Prepare also builds the game's starter list (`dm/games/<id>/shader_first.tsv`, `shader_seed.py` from the game file,
+then `shader_layer.py`) before the game is ready: a game's first frames can need shaders whose work is skipped while they are
+missing (Star Fox from the desktop, before this: five compute shaders missing in the first 30 s, then a black picture with sound for
+the whole run). A pack with no library that has no starter shaders yet (one made elsewhere) gets them at its first start. Until a shader is built, what uses it is not drawn: things pop in
+during the first minutes, and a little at each new place. Guards: a batch starts only with 500 MiB available (`NX_LAYER_MIN_MB`),
+a running one stops below 250 (`NX_LAYER_STOP_MB`), the folder stays under 2 GiB (`NX_LAYER_MAX_MB`) and the disk keeps 1 GiB
+free; one build at a time per game. It needs pack tools of this AppImage's shader version (Prepare downloads them once; after an update, the earlier AppImage's
+tools serve while the shader version is the same). `NX_LAYER=0` (Settings ›
+Shaders while playing) turns it off. The game window says how many shaders were built and offers **Build all shaders** (Prepare
+with every shader) and **Prepare again (Quick)**. Measured on the Odin 2 (Mario Kart World 1.8.0, 2026-11-17, headless attract mode, 6 min after a Quick Prepare of 76 s): the starter list's
+1,359 shaders seeded in 35 s, 2,013 shaders built in 15 batches while the game ran (none failed), the builder at most 189 MB, MemAvailable
+never under 1.36 GiB; the scene was drawn from the first seconds and ran at its usual rate. Another such run (2026-11-21, after a Quick Prepare of
+2 min 48 s that built the 1,359 starters first): 465 more shaders in 22 batches in 6 minutes, MemAvailable down to 373 MiB (no batch starts
+under 500). Mario Tennis Fever's starter list takes
+about 4 minutes (its shaders are in a 7.6 GB archive in the game file).
 
 Memory: every game run writes a memory trace beside its log (`<log>.mem`, one line a second: free memory, the game's
 memory and GPU memory, reads back from storage). A memory guard stops the game, and says why, when free memory (MemAvailable)

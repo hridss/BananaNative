@@ -32,6 +32,91 @@ int vka_gp_active;                      // marks are taken (read by vka_barrier)
 static int g_split;                     // DM_VK_GPUPROF_SPLIT of the profiled frame
 int vka_gp_split(void) { return vka_gp_active ? g_split : 0; }
 static gp_what g_w;                     // what the open step recorded so far
+// DM_VK_GPUPROF_PSTATS=1 (live, with DM_VK_GPUPROF): each draw call of the profiled frame inside a pipeline statistics query (input-assembly primitives, vertex shader
+// invocations, primitives into and out of clipping, fragment shader invocations), so the report can say where primitives go: one into clipping and not out is trivially
+// rejected (wholly outside the view volume). "gpu prof pstats" lines: the frame's totals, then the shader pairs and the passes that lose the most primitives that way.
+// Each query waits for the command encoder (vka_enc_sync), so the profiled frame gets slower still
+enum { PSN = 8192, PSV = 5 };
+static VkQueryPool g_ps; static int g_ps_ok = -1, g_ps_on, g_psn;
+static struct { uint64_t vs, fs, pass; uint32_t w, h; uint64_t ib; uint32_t cnt; int32_t bv; float vx; } g_psd[PSN];
+static PFN_vkCmdBeginQuery g_qb; static PFN_vkCmdEndQuery g_qe;
+static int ps_init(void) {
+    if (g_ps_ok >= 0) return g_ps_ok;
+    g_ps_ok = 0;
+    PFN_vkCreateQueryPool create = (PFN_vkCreateQueryPool)vk.vkGetDeviceProcAddr(V.dev, "vkCreateQueryPool");
+    g_qb = (PFN_vkCmdBeginQuery)vk.vkGetDeviceProcAddr(V.dev, "vkCmdBeginQuery"); g_qe = (PFN_vkCmdEndQuery)vk.vkGetDeviceProcAddr(V.dev, "vkCmdEndQuery");
+    VkQueryPoolCreateInfo ci = {VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO, .queryType = VK_QUERY_TYPE_PIPELINE_STATISTICS, .queryCount = PSN,
+        .pipelineStatistics = VK_QUERY_PIPELINE_STATISTIC_INPUT_ASSEMBLY_PRIMITIVES_BIT | VK_QUERY_PIPELINE_STATISTIC_VERTEX_SHADER_INVOCATIONS_BIT |
+                              VK_QUERY_PIPELINE_STATISTIC_CLIPPING_INVOCATIONS_BIT | VK_QUERY_PIPELINE_STATISTIC_CLIPPING_PRIMITIVES_BIT | VK_QUERY_PIPELINE_STATISTIC_FRAGMENT_SHADER_INVOCATIONS_BIT};
+    if (!create || !g_qb || !g_qe || create(V.dev, &ci, NULL, &g_ps)) { VRED("gpu prof pstats: no pipeline statistics query pool (the device's pipelineStatisticsQuery?)"); return 0; }
+    g_ps_ok = 1; return 1;
+}
+int vka_gp_draw_begin(VkCommandBuffer cb, uint64_t vs, uint64_t fs, uint32_t w, uint32_t h, uint64_t ib, uint32_t cnt, int32_t bv, float vx) {
+    if (!vka_gp_active || !g_ps_on || cb != g_cb || g_psn >= PSN) return -1;
+    extern uint64_t vka_n_rp;
+    vka_enc_sync(); g_qb(cb, g_ps, (uint32_t)g_psn, 0);
+    g_psd[g_psn].vs = vs; g_psd[g_psn].fs = fs; g_psd[g_psn].pass = vka_n_rp; g_psd[g_psn].w = w; g_psd[g_psn].h = h; g_psd[g_psn].ib = ib; g_psd[g_psn].cnt = cnt; g_psd[g_psn].bv = bv; g_psd[g_psn].vx = vx;
+    return g_psn++;
+}
+void vka_gp_draw_end(VkCommandBuffer cb, int q) { if (q >= 0) { vka_enc_sync(); g_qe(cb, g_ps, (uint32_t)q); } }
+typedef struct { uint64_t a, b; uint32_t n, w, h; uint64_t v[PSV]; } ps_agg;
+static int64_t ps_rej(const ps_agg *g) { return (int64_t)g->v[2] - (int64_t)g->v[3]; }
+static int ps_by_rej(const void *x, const void *y) { int64_t a = ps_rej(x), b = ps_rej(y); return b > a ? 1 : b < a ? -1 : 0; }
+static void ps_report(void) {
+    if (!g_ps_on || !g_psn) return;
+    static uint64_t r[PSN][PSV];
+    if (g_get(V.dev, g_ps, 0, (uint32_t)g_psn, sizeof r, r, PSV * 8, VK_QUERY_RESULT_64_BIT)) { VLOG("gpu prof pstats: results not ready"); return; }
+    uint64_t t[PSV] = {0}; for (int i = 0; i < g_psn; i++) for (int v = 0; v < PSV; v++) t[v] += r[i][v];
+    VLOG("gpu prof pstats: frame %llu, %d draws: %llu input primitives, %llu vertex shader invocations, %llu primitives into clipping, %llu out (%.1f %% rejected there), %llu fragment shader invocations",
+         (unsigned long long)g_frame, g_psn, (unsigned long long)t[0], (unsigned long long)t[1], (unsigned long long)t[2], (unsigned long long)t[3], t[2] ? 100.0 * ((double)t[2] - (double)t[3]) / (double)t[2] : 0.0, (unsigned long long)t[4]);
+    {   // draws wholly outside the view volume (no primitive out of clipping) against those partly in it: object culling missed the first, the second straddle the view
+        uint64_t nw = 0, pw = 0, np = 0, pp = 0, nh = 0, ph = 0;
+        for (int i = 0; i < g_psn; i++) { uint64_t in = r[i][2], out = r[i][3]; if (!in) continue;
+            if (!out) { nw++; pw += in; } else if (out * 2 < in) { nh++; ph += in; } else { np++; pp += in; } }
+        VLOG("gpu prof pstats: draws wholly outside the view %llu (%llu primitives), more than half outside %llu (%llu), at least half inside %llu (%llu)",
+             (unsigned long long)nw, (unsigned long long)pw, (unsigned long long)nh, (unsigned long long)ph, (unsigned long long)np, (unsigned long long)pp);
+    }
+    {   // the wholly-outside draws by shader pair and pass, and their place in the frame (draw index, pass, viewport)
+        enum { NW = 64 }; struct { uint64_t vs, fs; uint32_t n; uint64_t prims; uint64_t pmin, pmax; } w[NW]; int nwk = 0;
+        for (int i = 0; i < g_psn; i++) { if (!r[i][2] || r[i][3]) continue;
+            int j = 0; while (j < nwk && !(w[j].vs == g_psd[i].vs && w[j].fs == g_psd[i].fs)) j++;
+            if (j == nwk) { if (nwk == NW) continue; w[j].vs = g_psd[i].vs; w[j].fs = g_psd[i].fs; w[j].n = 0; w[j].prims = 0; w[j].pmin = UINT64_MAX; w[j].pmax = 0; nwk++; }
+            w[j].n++; w[j].prims += r[i][2]; if (g_psd[i].pass < w[j].pmin) w[j].pmin = g_psd[i].pass; if (g_psd[i].pass > w[j].pmax) w[j].pmax = g_psd[i].pass; }
+        for (int x = 0; x < nwk; x++) for (int y = x + 1; y < nwk; y++) if (w[y].prims > w[x].prims) { typeof(w[0]) t = w[x]; w[x] = w[y]; w[y] = t; }
+        for (int x = 0; x < nwk && x < 12; x++) VLOG("gpu prof pstats:  wholly outside: v %016llx/%016llx %u draws, %llu primitives, passes %llu-%llu", (unsigned long long)w[x].vs,
+                                                     (unsigned long long)w[x].fs, w[x].n, (unsigned long long)w[x].prims, (unsigned long long)w[x].pmin, (unsigned long long)w[x].pmax);
+        {   // split screen: is a wholly-outside draw the same mesh (index buffer, count, base vertex) as a draw of the frame at another viewport x that is visible?
+            uint64_t same_vis = 0, same_out = 0, alone = 0, p_vis = 0;
+            for (int i = 0; i < g_psn; i++) { if (!r[i][2] || r[i][3]) continue;
+                int found = 0;
+                for (int k = 0; k < g_psn && found < 2; k++) if (k != i && g_psd[k].ib == g_psd[i].ib && g_psd[k].cnt == g_psd[i].cnt && g_psd[k].bv == g_psd[i].bv && g_psd[k].vx != g_psd[i].vx)
+                    found = r[k][3] ? 2 : 1;
+                if (found == 2) { same_vis++; p_vis += r[i][2]; } else if (found == 1) same_out++; else alone++; }
+            VLOG("gpu prof pstats: wholly-outside draws whose mesh is drawn visible at the other view's viewport %llu (%llu primitives), drawn there but outside too %llu, in one view only %llu",
+                 (unsigned long long)same_vis, (unsigned long long)p_vis, (unsigned long long)same_out, (unsigned long long)alone);
+        }
+        if (VKA_ENV("DM_VK_GPUPROF_PSTATS", 0) >= 2)   // =2: each wholly-outside draw's index in the profiled frame's draws, for DM_VK_RT_LOG's lines
+            for (int i = 0, k = 0; i < g_psn && k < 200; i++) if (r[i][2] && !r[i][3]) { k++; VLOG("gpu prof pstats:   outside draw %d: pass %llu, v %016llx/%016llx, %llu primitives",
+                                                                                           i, (unsigned long long)g_psd[i].pass, (unsigned long long)g_psd[i].vs, (unsigned long long)g_psd[i].fs, (unsigned long long)r[i][2]); }
+    }
+    enum { NA = 1024 }; static ps_agg agg[2][NA]; int na[2] = {0, 0};   // [0] by shader pair, [1] by pass
+    for (int i = 0; i < g_psn; i++) for (int m = 0; m < 2; m++) {
+        uint64_t a = m ? g_psd[i].pass : g_psd[i].vs, b = m ? 0 : g_psd[i].fs; int j = 0;
+        while (j < na[m] && !(agg[m][j].a == a && agg[m][j].b == b)) j++;
+        if (j == na[m]) { if (na[m] == NA) continue; memset(&agg[m][j], 0, sizeof agg[m][j]); agg[m][j].a = a; agg[m][j].b = b; agg[m][j].w = g_psd[i].w; agg[m][j].h = g_psd[i].h; na[m]++; }
+        agg[m][j].n++; for (int v = 0; v < PSV; v++) agg[m][j].v[v] += r[i][v];
+    }
+    for (int m = 0; m < 2; m++) {
+        qsort(agg[m], (size_t)na[m], sizeof agg[m][0], ps_by_rej);
+        for (int x = 0; x < na[m] && x < 16; x++) {
+            const ps_agg *g = &agg[m][x]; double rej = g->v[2] ? 100.0 * (double)ps_rej(g) / (double)g->v[2] : 0;
+            if (m) VLOG("gpu prof pstats:  pass %llu (viewport %ux%u), %u draws: %llu primitives, %llu into clipping, %llu out (%.1f %% rejected), %llu vertex invocations, %llu fragment",
+                        (unsigned long long)g->a, g->w, g->h, g->n, (unsigned long long)g->v[0], (unsigned long long)g->v[2], (unsigned long long)g->v[3], rej, (unsigned long long)g->v[1], (unsigned long long)g->v[4]);
+            else VLOG("gpu prof pstats:  v %016llx/%016llx (viewport %ux%u), %u draws: %llu primitives, %llu into clipping, %llu out (%.1f %% rejected), %llu vertex invocations, %llu fragment",
+                      (unsigned long long)g->a, (unsigned long long)g->b, g->w, g->h, g->n, (unsigned long long)g->v[0], (unsigned long long)g->v[2], (unsigned long long)g->v[3], rej, (unsigned long long)g->v[1], (unsigned long long)g->v[4]);
+        }
+    }
+}
 void vka_gp_note(char k, uint64_t key, uint64_t pkey, uint64_t work) {
     if (!vka_gp_active) return;
     if (k == 'm') g_w.nm++; else if (k == 'c') g_w.nc++; else g_w.nv++;
@@ -132,6 +217,7 @@ static void report(void) {
     char line[1200]; size_t ln = 0; line[0] = 0;
     for (int j = 0; j < nsite && ln < sizeof line; j++) ln += (size_t)snprintf(line + ln, sizeof line - ln, " %s:%d %dx %.2fms;", site[j].f, site[j].l, site[j].n, site[j].ms);
     VLOG("gpu prof: by site:%s", line);
+    ps_report();
 }
 // mtl_sub_begin, after the command buffer begins: arms the profile at a new frame, reports a finished one
 void vka_gp_sub_begin(VkCommandBuffer cb, uint64_t frame) {
@@ -145,6 +231,7 @@ void vka_gp_sub_begin(VkCommandBuffer cb, uint64_t frame) {
         g_state = 1; g_frame = g_last_frame = frame; g_n = 0; vka_gp_active = 1; g_pass_new = 0; memset(&g_w, 0, sizeof g_w);
         g_split = VKA_ENV("DM_VK_GPUPROF_SPLIT", 0); if (g_split < 0) g_split = 0;
         g_reset(cb, g_qp, 0, NQ);
+        g_psn = 0; g_ps_on = VKA_ENV("DM_VK_GPUPROF_PSTATS", 0) && ps_init(); if (g_ps_on) g_reset(cb, g_ps, 0, PSN);
     }
     if (g_state == 1) { g_cb = cb; mark(cb, 1, "submission", 0); }
 }

@@ -228,6 +228,9 @@
     <string name="settings_updates">업데이트</string>
     <string name="settings_what_s_new">새로운 기능</string>
     <string name="settings_while_home_shows_a_game">홈에 준비 중인 게임이 표시되는 동안</string>
+    <string name="settings_update_shaders_automatically">셰이더 자동 업데이트</string>
+    <string name="settings_auto_shader_update_on">셰이더가 오래된 게임은 백그라운드에서 업데이트합니다</string>
+    <string name="settings_auto_shader_update_off">끄기: 요청하면 게임 페이지에서 업데이트합니다</string>
     <string name="settings_xbox_button_label_swap">Xbox 버튼 라벨 바꾸기</string>
     <string name="game_1_player">1인 플레이</string>
     <string name="game_3d_scene">3D 장면</string>
@@ -798,6 +801,9 @@
     <string name="home_lossless_dll_missing">" · Lossless.dll 없음"</string>
     <string name="home_why">왜 그런가요?</string>
     <string name="home_shaders_need_one_update">셰이더 업데이트 1회 필요</string>
+    <string name="home_other_pack_has_shaders">다른 팩에 셰이더가 있음</string>
+    <string name="home_other_pack_has_shaders_message">이 카드가 사용하는 팩에는 이 앱 버전의 셰이더가 없습니다. %1$s의 다른 팩에 셰이더가 있습니다. 이 카드에 그 팩을 사용할까요?</string>
+    <string name="home_use_that_pack">그 팩 사용</string>
     <string name="home_nup">" (.nup)"</string>
     <string name="game_applies_from_the_next_frame">다음 프레임부터 적용되며 이 게임에 유지돼요(게임 설정 › 업스케일러와 같은 설정).</string>
     <string name="game_applies_from_the_next_frame_2">다음 프레임부터 적용되며 이 게임에 유지돼요(게임 설정 › 화면 확대 방식과 같은 설정이에요).</string>
@@ -1400,4 +1406,12 @@
     <string name="settings_build_preview">미리보기 빌드(v%1$s)를 사용 중입니다. 미리보기는 게임을 망가뜨릴 수 있습니다. 안정판 v%2$s가 나오면 대체됩니다.</string>
     <string name="settings_build_preview_channel">현재 채널은 %1$s입니다. 안정판 v%2$s가 나오면 앱이 그 버전으로 옮겨 줍니다.</string>
     <string name="settings_build_hotfix">핫픽스(v%1$s)를 사용 중입니다. 주간 릴리스 사이의 작은 수정입니다. 다음 주간 릴리스에 포함됩니다.</string>
+    <string name="common_picture_size">화면 크기</string>
+    <string name="game_lsfg_on_target">켬 · %1$d fps</string>
+    <string name="game_own_follows_settings">이 게임은 설정(%1$s)을 따릅니다. 여기서 바꾸면 이 게임만의 설정이 됩니다.</string>
+    <string name="game_own_settings_note">이 게임만의 설정입니다. 설정 기본값을 누르면 다시 설정을 따릅니다.</string>
+    <string name="game_use_settings_default">설정 기본값 사용</string>
+    <string name="settings_touch_look">화면 컨트롤 모양</string>
+    <string name="settings_panel_look">게임 내 패널 모양</string>
+    <string name="settings_player_one_away">선택한 컨트롤러(연결 안 됨)</string>
 </resources>

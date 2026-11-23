@@ -228,6 +228,9 @@
     <string name="settings_updates">更新</string>
     <string name="settings_what_s_new">新内容</string>
     <string name="settings_while_home_shows_a_game">在主页显示正在准备的游戏时</string>
+    <string name="settings_update_shaders_automatically">自动更新着色器</string>
+    <string name="settings_auto_shader_update_on">着色器过时的游戏会在后台更新</string>
+    <string name="settings_auto_shader_update_off">关闭：按需在游戏页面中更新</string>
     <string name="settings_xbox_button_label_swap">Xbox 按键标签互换</string>
     <string name="game_1_player">1 名玩家</string>
     <string name="game_3d_scene">3D 场景</string>
@@ -798,6 +801,9 @@
     <string name="home_lossless_dll_missing">" · 缺少 Lossless.dll"</string>
     <string name="home_why">为什么？</string>
     <string name="home_shaders_need_one_update">着色器需要更新一次</string>
+    <string name="home_other_pack_has_shaders">另一个游戏包有着色器</string>
+    <string name="home_other_pack_has_shaders_message">此卡片使用的游戏包没有适用于此版本应用的着色器。%1$s 的另一个游戏包有。为此卡片使用那个游戏包？</string>
+    <string name="home_use_that_pack">使用那个游戏包</string>
     <string name="home_nup">" (.nup)"</string>
     <string name="game_applies_from_the_next_frame">从下一帧起生效，并为此游戏保留（与游戏设置 › 放大器相同的设置）。</string>
     <string name="game_applies_from_the_next_frame_2">从下一帧起生效，并为此游戏保留（与游戏设置 › 屏幕缩放相同的设置）。</string>
@@ -1400,4 +1406,12 @@
     <string name="settings_build_preview">你正在使用预览版（v%1$s）。预览版可能导致游戏出问题。稳定版 v%2$s 发布后会替换它。</string>
     <string name="settings_build_preview_channel">你的更新渠道是%1$s：稳定版 v%2$s 发布后，应用会将你切换到该版本。</string>
     <string name="settings_build_hotfix">你正在使用热修复版（v%1$s）：两次每周版本之间的小修复。下一个每周版本已包含它。</string>
+    <string name="common_picture_size">画面大小</string>
+    <string name="game_lsfg_on_target">开 · %1$d fps</string>
+    <string name="game_own_follows_settings">此游戏沿用设置（%1$s）。在此更改后将成为此游戏自己的设置。</string>
+    <string name="game_own_settings_note">这是此游戏自己的设置。使用设置默认值即可重新沿用设置。</string>
+    <string name="game_use_settings_default">使用设置默认值</string>
+    <string name="settings_touch_look">屏幕控制外观</string>
+    <string name="settings_panel_look">游戏内面板外观</string>
+    <string name="settings_player_one_away">所选手柄（未连接）</string>
 </resources>

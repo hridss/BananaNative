@@ -230,6 +230,9 @@
     <string name="settings_updates">Actualizaciones</string>
     <string name="settings_what_s_new">Novedades</string>
     <string name="settings_while_home_shows_a_game">Mientras Inicio muestra un juego en preparación</string>
+    <string name="settings_update_shaders_automatically">Actualizar los shaders automáticamente</string>
+    <string name="settings_auto_shader_update_on">Un juego con shaders desactualizados los actualiza en segundo plano</string>
+    <string name="settings_auto_shader_update_off">Desactivado: la página del juego los actualiza cuando lo pidas</string>
     <string name="settings_xbox_button_label_swap">Intercambio de etiquetas de botones Xbox</string>
     <string name="game_1_player">1 jugador</string>
     <string name="game_3d_scene">Escena 3D</string>
@@ -808,6 +811,9 @@
     <string name="home_lossless_dll_missing">" · falta Lossless.dll"</string>
     <string name="home_why">¿Por qué?</string>
     <string name="home_shaders_need_one_update">Los shaders necesitan una actualización</string>
+    <string name="home_other_pack_has_shaders">Otro paquete tiene los shaders</string>
+    <string name="home_other_pack_has_shaders_message">El paquete que usa esta tarjeta no tiene shaders para esta versión de la app. Otro paquete de %1$s sí los tiene. ¿Usar ese paquete para esta tarjeta?</string>
+    <string name="home_use_that_pack">Usar ese paquete</string>
     <string name="home_nup">" (.nup)"</string>
     <string name="game_applies_from_the_next_frame">Se aplica desde el siguiente fotograma y se guarda para este juego (el mismo ajuste que Ajustes del juego › Escalador).</string>
     <string name="game_applies_from_the_next_frame_2">Se aplica desde el siguiente fotograma y se guarda para este juego (el mismo ajuste que Ajustes del juego › Escalado de pantalla).</string>
@@ -1416,4 +1422,12 @@
     <string name="settings_build_preview">Estás usando una versión de vista previa (v%1$s). Las vistas previas pueden romper juegos. La versión estable v%2$s la reemplaza cuando salga.</string>
     <string name="settings_build_preview_channel">Tu canal es %1$s: la app te pasa a la versión estable v%2$s cuando salga.</string>
     <string name="settings_build_hotfix">Estás usando una corrección urgente (v%1$s): un arreglo pequeño entre versiones semanales. La próxima versión semanal la incluye.</string>
+    <string name="common_picture_size">Tamaño de la imagen</string>
+    <string name="game_lsfg_on_target">Activado · %1$d fps</string>
+    <string name="game_own_follows_settings">Este juego sigue los Ajustes (%1$s). Un cambio aquí será propio de este juego.</string>
+    <string name="game_own_settings_note">Estos son los ajustes propios de este juego. Usa «Valor de Ajustes» para volver a seguir los Ajustes.</string>
+    <string name="game_use_settings_default">Valor de Ajustes</string>
+    <string name="settings_touch_look">Aspecto de los controles en pantalla</string>
+    <string name="settings_panel_look">Aspecto del panel del juego</string>
+    <string name="settings_player_one_away">El mando elegido (no conectado)</string>
 </resources>

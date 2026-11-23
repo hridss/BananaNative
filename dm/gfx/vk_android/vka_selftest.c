@@ -83,7 +83,7 @@ int nxhost_vk_selftest(ANativeWindow *w, int frames) {
     // The window texture, at the pool's start
     tex_t t; memset(&t, 0, sizeof t);
     t.magic = MAGIC('T', 'E', 'X', 0); t.d.target = NVN_TEXTURE_TARGET_2D; t.d.format = NVN_FORMAT_RGBA8; t.d.flags = NVN_TEXTURE_FLAGS_DISPLAY | NVN_TEXTURE_FLAGS_COMPRESSIBLE;
-    t.d.width = 1280; t.d.height = 720; t.d.depth = 1; t.d.levels = 1;
+    t.d.width = 1280; t.d.height = 720; t.d.depth = 1; t.d.levels = 1; t.d.gob_order = vka_gob_order();
     nvn_tex_layout(&t.d, &t.L); t.mem = base; t.serial = nvn_new_serial(); mtl_tex_init(&t);
     uint8_t *rb = base + (32u << 20); volatile uint32_t *ev = (volatile uint32_t *)(base + (48u << 20));
 
@@ -93,7 +93,7 @@ int nxhost_vk_selftest(ANativeWindow *w, int frames) {
     for (int y = 0; y < 64; y++) for (int x = 0; x < 64; x++) { uint32_t v = ((x >> 3) + (y >> 3)) & 1 ? 0x00000000u : 0xffffffffu; memcpy(texmem + 4 * (64 * y + x), &v, 4); }
     tex_t ct; memset(&ct, 0, sizeof ct);
     ct.magic = MAGIC('T', 'E', 'X', 0); ct.d.target = NVN_TEXTURE_TARGET_2D; ct.d.format = NVN_FORMAT_RGBA8; ct.d.flags = NVN_TEXTURE_FLAGS_LINEAR; ct.d.stride = 256;
-    ct.d.width = 64; ct.d.height = 64; ct.d.depth = 1; ct.d.levels = 1;
+    ct.d.width = 64; ct.d.height = 64; ct.d.depth = 1; ct.d.levels = 1; ct.d.gob_order = vka_gob_order();
     nvn_tex_layout(&ct.d, &ct.L); ct.mem = texmem; ct.serial = nvn_new_serial(); mtl_tex_init(&ct);
     mtl_tex_cpu_written(&ct); mtl_reg_tex(300, &ct, NULL);
     samp_par sp; memset(&sp, 0, sizeof sp); sp.minf = NVN_MIN_FILTER_NEAREST; sp.magf = NVN_MAG_FILTER_NEAREST; sp.ws = sp.wt = sp.wr = NVN_WRAP_MODE_REPEAT; sp.lod_max = 1000; sp.aniso = 1;

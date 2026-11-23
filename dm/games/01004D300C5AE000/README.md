@@ -71,3 +71,5 @@ No code of the game is cut, and no run-time key is set. The game asks for presen
 - [A host lock held across a same-core handoff](../../../docs/reference/threads.md#a-host-lock-held-across-a-same-core-handoff).
 - [Write faults made writable page by page split GPU memory past vm.max_map_count](../../../docs/reference/memory.md#write-faults-made-writable-page-by-page-split-gpu-memory-past-vmmax_map_count-android).
 - [Joining contiguous placed segments holds frames at the same spots](../../../docs/reference/memory.md#joining-contiguous-placed-segments-holds-frames-at-the-same-spots-android).
+- [Joins for textures grow one segment until a join is refused](../../../docs/reference/memory.md#joins-for-textures-grow-one-segment-until-a-join-is-refused-android).
+- [Buffer addresses through 64-bit integers on a driver without shaderInt64](../../../docs/reference/shaders.md#buffer-addresses-through-64-bit-integers-on-a-driver-without-shaderint64-android).

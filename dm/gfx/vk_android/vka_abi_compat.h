@@ -14,12 +14,15 @@
 
 // The host ABI the rows were checked against: when DMSH_VK_ABI moves, the table is not used (vka_abi_compat_of) until its rows are checked again against the new
 // headers and this line is raised (the unit test t_android_shlib fails meanwhile)
-#define VKA_ABI_COMPAT_FOR "4fbeb79f5ab7"
+#define VKA_ABI_COMPAT_FOR "2059ca1e9d54"
 // The rows' ABIs, space-separated, in the table's order: what the launcher reads (build.gradle NX_DMSH_VK_ABI_COMPAT, ShaderLibs.playable)
-#define DMSH_VK_ABI_COMPAT "228b73bd10f6 674db0a4ff79"
+#define DMSH_VK_ABI_COMPAT "4fbeb79f5ab7 228b73bd10f6 674db0a4ff79"
 
 typedef struct { const char *abi; unsigned differs; } vka_abi_compat_row;
 static const vka_abi_compat_row vka_abi_compat[] = {
+    // Before the buffer textures read through 2D slots (vk_android_spv.py row_fetch_buffers; Vulkan chains up to 19662e4c4a25): the headers differ only in the kind added
+    // (dmsh_abi_vk.h DMSH_VK_KIND_TBUF_UBO), which no library of that ABI holds; every other convention is this host's
+    {"4fbeb79f5ab7", 0},
     // Before the image handles in uniform buffers (2026-11-13; Vulkan chains up to 65883461079b): the headers differ only in the kind added (dmsh_abi_vk.h
     // DMSH_VK_KIND_IMG_UBO, dmsh_abi.h DMSH_KIND_IMG_UBO), which no library of that ABI holds; every other convention is this host's
     {"228b73bd10f6", 0},

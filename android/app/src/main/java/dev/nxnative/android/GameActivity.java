@@ -134,7 +134,7 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
         tag = overlayText(Gravity.TOP | Gravity.START, 1f);
         tag.setText(Prefs.buildTag(this));
         tag.setTypeface(Typeface.DEFAULT_BOLD);
-        tag.setVisibility(overlayOn() && Prefs.overlayItem(this, "tag") ? View.VISIBLE : View.GONE);
+        tag.setVisibility(overlayOn() && Prefs.overlayItem(this, "tag", titleId()) ? View.VISIBLE : View.GONE);
         root.addView(tag, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.TOP | Gravity.START));
         // The log block may grow at most up to the tag's bottom edge (its top margin), so a long log never runs under the tag
         tag.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> {
@@ -260,14 +260,14 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
         v.requestLayout();
     }
 
-    private boolean overlayOn() { return !clean && (overlayEnv != null ? overlayEnv : Prefs.overlay(this)); }
+    private boolean overlayOn() { return !clean && (overlayEnv != null ? overlayEnv : Prefs.overlay(this, titleId())); }
 
     private boolean logOverlayVisible() {
-        return !clean && (!drawing || failed || TouchControls.showLog(this));
+        return !clean && (!drawing || failed || TouchControls.showLog(this, titleId()));
     }
 
     /** The overlay shows the log's tail (Show startup log, the touch controls' log switch, or a failure); otherwise, until the first frame, one "starting" line */
-    private boolean fullLog() { return failed || Prefs.startupLog(this) || TouchControls.showLog(this); }
+    private boolean fullLog() { return failed || Prefs.startupLog(this) || TouchControls.showLog(this, titleId()); }
     /** The game's name for the "starting" line */
     private String bootName = "";
 
@@ -277,7 +277,7 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
         clean = hidden;
         Prefs.clean(this, hidden);
         if (fps != null) fps.setVisibility(hidden || !overlayOn() ? View.GONE : View.VISIBLE);
-        if (tag != null) tag.setVisibility(hidden || !overlayOn() || !Prefs.overlayItem(this, "tag") ? View.GONE : View.VISIBLE);
+        if (tag != null) tag.setVisibility(hidden || !overlayOn() || !Prefs.overlayItem(this, "tag", titleId()) ? View.GONE : View.VISIBLE);
         if (overlay != null) overlay.setVisibility(logOverlayVisible() ? View.VISIBLE : View.GONE);
         if (controls != null) controls.setClean(hidden);
         updateHandle(controls == null || controls.normalVisible());
@@ -321,6 +321,114 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
     private void skipStart() {
         ui.removeCallbacks(skipRun);
         if (!skipShown) ui.postDelayed(skipRun, 30000);
+    }
+
+    /**
+     * The compiling-shaders screen (PrepareScreen): the host holds the game at its first pipeline while it makes the pipelines of earlier runs and of the game's profile
+     * (vka_pso.c, DM_VK_PREPARE), and answers Native.prepareStatus() while that hold runs past a second. Polled every 300 ms over the run's first 3 minutes until it shows,
+     * then until the hold ends; it covers the picture (the game draws nothing meanwhile), a ring and the count, the time left, and Skip, which ends the hold. Once per run
+     */
+    private static boolean prepareDone;
+    private FrameLayout prepareView;
+    private ProgressRing prepareRing;
+    private TextView prepareCount, prepareLeft;
+    private static long prepareT0;   // (the run's: a recreated screen keeps counting from the start)
+    private final Runnable prepareRun = this::prepareTick;
+    private void prepareTick() {
+        if (prepareDone || rootView == null) return;
+        int[] st = PrepareScreen.parse(Native.prepareStatus());
+        if (st != null) {
+            if (prepareView == null) prepareShow();
+            prepareRing.set(PrepareScreen.fraction(st));
+            prepareCount.setText(PrepareScreen.count(st));
+            prepareLeft.setText(PrepareScreen.left(st));
+        } else if (prepareView != null) { prepareGone(); return; }
+        else if (android.os.SystemClock.elapsedRealtime() - prepareT0 > 180000) { prepareDone = true; return; }   // no hold came: nothing to make, or a host without it
+        ui.postDelayed(prepareRun, 300);
+    }
+    private void prepareStart() {
+        ui.removeCallbacks(prepareRun);
+        if (prepareDone) return;
+        if (prepareT0 == 0) prepareT0 = android.os.SystemClock.elapsedRealtime();
+        ui.post(prepareRun);
+    }
+    private void prepareGone() {
+        prepareDone = true;
+        ui.removeCallbacks(prepareRun);
+        FrameLayout v = prepareView; prepareView = null;
+        if (v != null) v.animate().alpha(0).setDuration(400).withEndAction(() -> rootView.removeView(v)).start();
+    }
+    private void prepareShow() {
+        Native.note("compiling shaders: the screen shown (" + Native.prepareStatus() + ")");
+        float dp = getResources().getDisplayMetrics().density;
+        FrameLayout scrim = new FrameLayout(this);
+        scrim.setBackgroundColor(0xF0101010);
+        scrim.setClickable(true);   // it takes the touches the game would get (the game is held anyway)
+        android.widget.LinearLayout col = new android.widget.LinearLayout(this);
+        col.setOrientation(android.widget.LinearLayout.VERTICAL);
+        col.setGravity(Gravity.CENTER_HORIZONTAL);
+        TextView title = new TextView(this);
+        title.setText(PrepareScreen.title());
+        title.setTextColor(Color.WHITE);
+        title.setTextSize(22);
+        title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        title.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+        title.setGravity(Gravity.CENTER);
+        android.widget.LinearLayout.LayoutParams tlp = new android.widget.LinearLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT);
+        tlp.gravity = Gravity.CENTER_HORIZONTAL;   // (the column's own gravity left it at the left edge of the widest line)
+        col.addView(title, tlp);
+        prepareRing = new ProgressRing(this, Ui.col(this, R.color.bn_banana), true);
+        int rs = Math.round(112 * dp);
+        android.widget.LinearLayout.LayoutParams rlp = new android.widget.LinearLayout.LayoutParams(rs, rs);
+        rlp.topMargin = Math.round(20 * dp); rlp.bottomMargin = Math.round(16 * dp); rlp.gravity = Gravity.CENTER_HORIZONTAL;
+        col.addView(prepareRing, rlp);
+        prepareCount = new TextView(this);
+        prepareCount.setTextColor(Color.WHITE);
+        prepareCount.setTextSize(15);
+        prepareCount.setGravity(Gravity.CENTER);
+        col.addView(prepareCount);
+        prepareLeft = new TextView(this);
+        prepareLeft.setTextColor(0xB3FFFFFF);
+        prepareLeft.setTextSize(13);
+        prepareLeft.setGravity(Gravity.CENTER);
+        col.addView(prepareLeft);
+        TextView note = new TextView(this);
+        note.setText(PrepareScreen.note());
+        note.setTextColor(0x99FFFFFF);
+        note.setTextSize(12);
+        note.setGravity(Gravity.CENTER);
+        note.setMaxWidth(Math.round(420 * dp));
+        android.widget.LinearLayout.LayoutParams nlp = new android.widget.LinearLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT);
+        nlp.topMargin = Math.round(18 * dp);
+        col.addView(note, nlp);
+        TextView skip = new TextView(this);
+        skip.setText(PrepareScreen.skip());
+        skip.setTextColor(Color.WHITE);
+        skip.setTextSize(14);
+        int p = Math.round(10 * dp);
+        skip.setPadding(3 * p, p, 3 * p, p);
+        android.graphics.drawable.GradientDrawable sb = new android.graphics.drawable.GradientDrawable();
+        sb.setColor(0x22FFFFFF);
+        sb.setStroke(Math.round(dp), 0x66FFFFFF);
+        sb.setCornerRadius(20 * dp);
+        skip.setBackground(sb);
+        skip.setOnClickListener(v -> { Native.note("compiling shaders: skipped by the player"); Native.prepareSkip(); prepareGone(); });
+        android.widget.LinearLayout.LayoutParams slp = new android.widget.LinearLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT);
+        slp.topMargin = Math.round(24 * dp); slp.gravity = Gravity.CENTER_HORIZONTAL;
+        col.addView(skip, slp);
+        TextView skipNote = new TextView(this);
+        skipNote.setText(PrepareScreen.skipNote());
+        skipNote.setTextColor(0x80FFFFFF);
+        skipNote.setTextSize(11);
+        skipNote.setGravity(Gravity.CENTER);
+        android.widget.LinearLayout.LayoutParams klp = new android.widget.LinearLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT);
+        klp.topMargin = Math.round(6 * dp);
+        col.addView(skipNote, klp);
+        scrim.addView(col, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
+        scrim.setAlpha(0f);
+        rootView.addView(scrim, panel != null ? rootView.indexOfChild(panel) : rootView.getChildCount(), new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+        scrim.animate().alpha(1f).setDuration(250).start();
+        prepareView = scrim;
     }
     /**
      * The shader layer (LayerWatch): shaders the game asked for and its prepared library lacks are built while it runs; "Building shaders (N)" is shown small and see-through at the very top middle
@@ -401,7 +509,7 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
     private void fpsTick() {
         if (stopped || paused) { ui.postDelayed(this::fpsTick, 2000); return; }   // nothing to show: no readings (thermal, battery, the host's counters) while suspended
         boolean on = overlayOn();
-        CharSequence t = on ? stats.tick() : null, g = on && Prefs.overlayItem(this, "tag") ? tag.getText() : null;
+        CharSequence t = on ? stats.tick() : null, g = on && Prefs.overlayItem(this, "tag", titleId()) ? tag.getText() : null;
         boolean host = tagBlock.host(g) & fpsBlock.host(t);   // both every time: a block that is off empties its corner
         fps.setVisibility(!host && t != null ? View.VISIBLE : View.GONE);
         tag.setVisibility(!host && g != null ? View.VISIBLE : View.GONE);
@@ -550,7 +658,7 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
         }
         if (prof != null && prof.vegetationDetail && !Prefs.fullVegetation(this, id)) env.add("DM_VK_VEGETATION=0");
         if (prof != null) env.addAll(prof.optionsEnv(optEnv -> Prefs.gameOption(this, id, optEnv)));
-        Lsfg.env(this, env);   // frame generation: the user's Lossless.dll and the settings
+        Lsfg.env(this, env, titleId());   // frame generation: the user's Lossless.dll and the game's settings (its own, else Settings')
         GameUpscaler.env(this, id, env);   // the Upscaler (Game settings, the in-game panel): the game's own upscaler and the present's scaling
         if (Prefs.drsGame(id)) { int[] drs = Prefs.DRS[Prefs.drs(this, id)]; env.add("DM_DRS=" + drs[0] + "," + drs[1]); }   // dynamic resolution range (Prefs.DRS)
         int cap = Prefs.fpsCap(this, id);   // the game's own frame rate cap (its in-game panel, its Game settings), else the main screen's (unset: the profile's fps_target)
@@ -876,6 +984,7 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
                     + ": window " + Prefs.startWindow(this, id) + ", scene " + (sceneName.isEmpty() ? "the game's own palette" : sceneName);
             pinStart();   // Use fast cores (Game settings, Settings)
             skipStart();
+            prepareStart();   // the compiling-shaders screen (PrepareScreen)
             layerStart();
             // DM_TEST_CRASH (a test crash, ExitWatch): the test app only
             if (!testApp() && user.removeIf(kv -> kv.startsWith("DM_TEST_CRASH="))) unknownNotes.add("[nxlaunch] DM_TEST_CRASH not taken: the test app only");
@@ -935,8 +1044,8 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
                 android.widget.Toast.makeText(this, Tx.s(R.string.game_environment_lines, msg), android.widget.Toast.LENGTH_LONG).show();
             }
             if (testSave != null) Native.note("[nxlaunch] test app: DM_SAVE from env-" + id + ".txt: " + testSave);
-            Native.note("frame generation: " + (Lsfg.on(this) ? "on" : "off") + "; " + Lsfg.note);
-            if (Prefs.ramSaverLevel(this, id) == 2) Native.note("RAM saver: Strong (DM_VK_RAM_SAVER=2); frame generation " + (Lsfg.on(this) ? "on" : "off"));
+            Native.note("frame generation: " + (Lsfg.on(this, titleId()) ? "on" : "off") + (Lsfg.own(this, titleId()) ? " (this game's own setting)" : " (Settings' default)") + "; " + Lsfg.note);
+            if (Prefs.ramSaverLevel(this, id) == 2) Native.note("RAM saver: Strong (DM_VK_RAM_SAVER=2); frame generation " + (Lsfg.on(this, titleId()) ? "on" : "off"));
             Native.note(gpuNote + " (picked in the launcher; a DM_VK_DRIVER line in env.txt wins, the host's [vk] driver line says which ran)");
             Native.note(Recommend.logLine(Prefs.recStates(this, id)));   // each recommended setting with its value and source (yours / recommended / default); env.txt lines come later and win
             if (resNote != null) Native.note(resNote);
@@ -1054,6 +1163,7 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
         ui.postDelayed(this::fpsTick, 500);
         pinStart();
         skipStart();
+        prepareStart();   // the compiling-shaders screen (PrepareScreen)
         layerStart();
     }
 
@@ -1252,7 +1362,7 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
 
     // ---- The host's side of the Activity: input devices, audio focus and route, motion, lifecycle ----
     private void hostSetup() {
-        if (lsfgFollow == null) lsfgFollow = Lsfg.follow(this, ui);   // the screen's refresh set higher or lower while the game runs: frame generation's choices follow
+        if (lsfgFollow == null) lsfgFollow = Lsfg.follow(this, ui, titleId());   // the screen's refresh set higher or lower while the game runs: frame generation's choices follow
         inputManager = (InputManager) getSystemService(Context.INPUT_SERVICE);
         inputManager.registerInputDeviceListener(this, ui);
         padMotion = new PadMotion();
@@ -1459,7 +1569,7 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
     }
 
     /** Gamepads and joysticks only: a keyboard with arrow keys (SOURCE_DPAD) gets a player from its first pad key, if it ever sends one (PadOrder.active) */
-    private static boolean gamepadLike(InputDevice d) {
+    static boolean gamepadLike(InputDevice d) {   // (Settings › Player 1 lists the same devices)
         return d != null && !d.isVirtual() && (d.supportsSource(InputDevice.SOURCE_GAMEPAD) || d.supportsSource(InputDevice.SOURCE_JOYSTICK));
     }
     /** What PadOrder ranks a device by: external, gamepad buttons with a stick, a vendor ID; never its name */

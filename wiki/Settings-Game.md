@@ -70,6 +70,18 @@ Ocarina of Time and Fire Emblem: Fortune's Weave have a **Cheats** switch (Exper
 ### Time of day
 - **What it does:** for a game whose day and night cycle follows its clock (Pokopia), **Pick a date and time…** gives the game that time at its next start, or **The phone's clock** (default). The phone's own clock is never changed. It is one setting for the app, in Settings > System as well as on the game's page.
 
+### Picture size
+- **What it does:** how large the game's picture is on the screen. A game can have its own value, or follow the default in Settings.
+- **Default:** the Settings value.
+
+### In-game panel look
+- **What it does:** how the side panel looks while you play (see [Side panel](Side-Panel-In-Game)). A game can have its own value, or follow the default in Settings.
+- **Default:** the Settings value.
+
+### Touch controls look
+- **What it does:** how the on-screen controls look. A game can have its own value, or follow the default in Settings.
+- **Default:** the Settings value.
+
 ## Controls on this tab
 
 Rumble, Button mapping, Motion sensitivity and Xbox button labels are described in [Settings: Controls](Settings-Controls).

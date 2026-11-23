@@ -1,6 +1,7 @@
 # One row for each row of docs/env_switches.tsv (dm/tools/advanced_switches.py writes and checks it; the columns are described there). The launcher shows the
 # friendly and advanced rows in Settings > Advanced and on each game's page; developer rows are behind "Show developer options"; internal rows are never shown.
 name	tier	area	label	try_if	type	choices	default	scope	warn	owner	profile_key	games	fixes	reason	live
+DMSH_VK_ABSENT_FILE	developer	Diagnostics			text			both							
 DMSH_VK_BATCH	developer	Packing			text			both							
 DMSH_VK_DELTA_FROM	developer	Diagnostics			text			both							
 DMSH_VK_KEEP	developer	Packing			text			both							
@@ -69,6 +70,19 @@ DM_ENV_FILE_KEYS	internal	Input			text			both						Mac or iOS only
 DM_ENV_LAUNCH_KEYS	internal	Input			text			both						Mac or iOS only	
 DM_FASTBOOT	developer	Game			text			both							
 DM_FD_LOG	developer	Diagnostics			text			both							
+DM_FG_CUT	developer	Performance			text			both			fg_feature				
+DM_FG_CUT_CORR	developer	Performance			text			both			fg_tune				
+DM_FG_CUT_DLSS	developer	Performance			text			both							
+DM_FG_CUT_LOG	developer	Diagnostics			text			both							
+DM_FG_CUT_MV	developer	Performance			text			both			fg_tune				
+DM_FG_CUT_RES	developer	Performance			text			both			fg_tune				
+DM_FG_ENGINE	developer	Performance			text			both							
+DM_FG_MENU	developer	Performance			text			both							
+DM_FG_UI	developer	Performance			text			both							
+DM_FG_UI_COMP	developer	Performance			text			both			fg_ui_layer				
+DM_FG_UI_PRE	developer	Performance			text			both			fg_ui_pre				
+DM_FG_UI_SNAP	developer	Diagnostics			text			both							
+DM_FG_UI_T2T_LOG	developer	Diagnostics			text			both							
 DM_FIXED_TIME	developer	Game			text			both							
 DM_FONT_DIR	developer	Diagnostics			text			both							
 DM_FORCE_STRICT	developer	Diagnostics			text			both							
@@ -137,6 +151,7 @@ DM_LSFG_FLOW	developer	Performance			text			both
 DM_LSFG_GPUTIME	developer	Diagnostics			text			both							
 DM_LSFG_MIN_FPS	advanced	Performance	Frame generation floor	generated frames look bad when the game runs slowly (raise it); 0 always generates	number	0..120 fps|0,30,45,60	30 fps	game							
 DM_LSFG_MULT	developer	Performance			text			both							
+DM_LSFG_PACE_GAME	developer	Diagnostics			text			both							
 DM_LSFG_PCACHE	developer	Diagnostics			text			both							
 DM_LSFG_QUALITY	developer	Performance			text			both							
 DM_LSFG_SCHED	developer	Diagnostics			text			both							
@@ -468,9 +483,19 @@ DM_TOUCH_HAPTICS	developer	Input			text			both
 DM_TOUCH_LOG	developer	Diagnostics			text			both							
 DM_TZ	developer	Game			text			both							
 DM_UDC_SELFTEST	developer	Diagnostics			text			both							
+DM_UE_COARSER_MESHES	developer	Game			text			both							
+DM_UE_DYNRES_MIN	developer	Game			text			both							
 DM_UE_FREE_CHECK	developer	Diagnostics			text			both							
+DM_UE_LIGHT_DISTANCE	developer	Game			text			both							
+DM_UE_LOD_SCALE	developer	Game			text			both							
+DM_UE_RES_FLOOR_50	developer	Game			text			both							
+DM_UE_RES_FLOOR_67	developer	Game			text			both							
+DM_UE_RES_FLOOR_83	developer	Game			text			both							
 DM_UE_SHADERS	developer	Diagnostics			text			both							
+DM_UE_SKEL_LOD	developer	Game			text			both							
+DM_UE_TAAU	developer	Game			text			both							
 DM_UE_TEXTURE_POOL	internal	Memory			text			both						Mac or iOS only	
+DM_UE_TRANSLUCENT_VOLUME_OFF	developer	Game			text			both							
 DM_USER	developer	Game			text			both							
 DM_USERS	developer	Game			text			both							
 DM_VK_ADPF	developer	Graphics			text			both							
@@ -529,6 +554,7 @@ DM_VK_EVENT_PARK_MS	developer	Diagnostics			text			both
 DM_VK_EVENT_WAIT	developer	Graphics			text			both							
 DM_VK_FD_ALIAS	developer	Graphics			text			both							
 DM_VK_FG	developer	Graphics			text			both							
+DM_VK_FG_GPUTIME	developer	Diagnostics			text			both							
 DM_VK_FG_OWNFMT	developer	Diagnostics			text			both							
 DM_VK_FG_REFRESH_CAP	developer	Graphics			text			both							
 DM_VK_FOUT_COMPS	developer	Graphics			text			both							
@@ -553,6 +579,7 @@ DM_VK_GPL_GIVEUP	developer	Graphics			text			both
 DM_VK_GPL_PROBE	developer	Diagnostics			text			both							
 DM_VK_GPUPROF	developer	Diagnostics			text			both							
 DM_VK_GPUPROF_LIST	developer	Diagnostics			text			both							
+DM_VK_GPUPROF_PSTATS	developer	Diagnostics			text			both							
 DM_VK_GPUPROF_SPLIT	developer	Diagnostics			text			both							
 DM_VK_GPU_FLOOR	developer	Graphics			text			both							
 DM_VK_GPU_FLOOR_ADPF	developer	Graphics			text			both							
@@ -601,6 +628,7 @@ DM_VK_IND_PEEK_LINES	developer	Diagnostics			text			both
 DM_VK_INSTANCE	advanced	Performance	Instanced draws		toggle			game		Game settings > Instanced draws					
 DM_VK_INSTANCE_FAST	developer	Diagnostics			text			both							
 DM_VK_KGSL_FILTER	developer	Graphics			text			both							
+DM_VK_KGSL_PERF	developer	Diagnostics			text			both							
 DM_VK_LAYER	advanced	Graphics	Shaders while playing		toggle			game		Game settings > Shaders while playing					
 DM_VK_LAYER_DIR	internal	Graphics			text			both						set by the launcher	
 DM_VK_LAYER_DROP	developer	Graphics			text			both							
@@ -624,7 +652,9 @@ DM_VK_MEM_LOCK_WHOLE	developer	Diagnostics			text			both
 DM_VK_MESH	developer	Graphics			text		On; off with Qualcomm's driver, where mesh draws go through compute	both							
 DM_VK_MESH_EMU	developer	Graphics			text			both							
 DM_VK_MESH_EMU_BAR	developer	Graphics			text			both							
+DM_VK_MESH_EMU_BATCH	developer	Graphics			text			both							
 DM_VK_MESH_EMU_MB	developer	Graphics			text			both							
+DM_VK_MESH_EMU_RESET	developer	Graphics			text			both							
 DM_VK_MESH_IND	developer	Graphics			text			both							
 DM_VK_MESH_LOG	developer	Diagnostics			text			both							
 DM_VK_MESH_PREPASS_DEPTH	developer	Graphics			text			both							
@@ -643,6 +673,8 @@ DM_VK_NANSCAN_STEP	developer	Diagnostics			text			both
 DM_VK_NDSR	developer	Graphics			text			both							
 DM_VK_NDSR_INPUT	developer	Graphics			text			both							
 DM_VK_NDSR_SHARP	developer	Graphics			text			both							
+DM_VK_NONUNIFORM	developer	Graphics			text		The game profile's nonuniform_texture_arrays, on a device with the feature	both			nonuniform_texture_arrays				
+DM_VK_NU_SPV_DIR	internal	Diagnostics			text			both						test harness	
 DM_VK_OBJCOUNT	developer	Diagnostics			text			both							
 DM_VK_OCCLUSION	developer	Graphics			text			both							
 DM_VK_ONE_LANE	developer	Graphics			text		The game profile's one-lane shaders with Qualcomm's driver, none with others	both							
@@ -674,8 +706,14 @@ DM_VK_POOL_FB	developer	Memory			text			both
 DM_VK_POOL_FB_EARLY	developer	Diagnostics			text			both							
 DM_VK_POOL_SLOT_BIND	developer	Diagnostics			text			both							
 DM_VK_PREFAULT	developer	Diagnostics			text			both							
+DM_VK_PREPARE	developer	Graphics			text		1: the game waits at its start until the pipelines of earlier runs are made	both							
+DM_VK_PREPARE_CLOCK	developer	Packing			text			both							
+DM_VK_PREPARE_MAX_S	developer	Graphics			text		90 s	both							
+DM_VK_PREPARE_SHOW_MS	developer	Graphics			text		1000 ms	both							
+DM_VK_PREPARE_SLOTS	developer	Graphics			text		4 compiles at once while the game waits (Turnip: its own 1 unless set)	both							
 DM_VK_PRESENT_GATE_WAIT	developer	Performance			text		30 ms with Turnip, 0 (off) with other drivers	both							
 DM_VK_PRESENT_NEAREST	developer	Performance			text			both							
+DM_VK_PRESENT_ORDER	developer	Diagnostics			text			both							
 DM_VK_PRESENT_OWNFMT	developer	Diagnostics			text			both							
 DM_VK_PRESENT_PREWAIT	developer	Diagnostics			text			both							
 DM_VK_PRESENT_SCALE	developer	Performance			text			both							
@@ -693,11 +731,14 @@ DM_VK_PROF	developer	Diagnostics			text			both
 DM_VK_PRUNE_MS	developer	Graphics			text			both							
 DM_VK_PSO_ASYNC	advanced	Performance	Background pipelines		toggle			game		Game settings > Background pipelines					
 DM_VK_PSO_FAIR_MS	developer	Performance			text			both							
+DM_VK_PSO_ISA	developer	Diagnostics			text			both							
 DM_VK_PSO_ORDER	developer	Performance			text			both							
 DM_VK_PSO_SLOTS	developer	Performance			text		1 with Turnip, 4 with other drivers	both							
+DM_VK_PSO_STATS	developer	Diagnostics			text			both							
 DM_VK_PUSH_DEDUP	developer	Graphics			text			both							
 DM_VK_PUSH_DELTA	developer	Diagnostics			text			both							
 DM_VK_QS_TRACE	developer	Diagnostics			text			both							
+DM_VK_QS_TRACE_DUMP	developer	Diagnostics			text			both							
 DM_VK_QUAD_IND	developer	Graphics			text			both							
 DM_VK_RAM_SAVER	developer	Memory			text			both							
 DM_VK_RANGE_WATCH	developer	Diagnostics			text			both							
@@ -765,6 +806,7 @@ DM_VK_TEX_STATS_DRAWS	developer	Diagnostics			text			both
 DM_VK_TEX_STATS_LINES	developer	Diagnostics			text			both							
 DM_VK_TEX_STATS_TABLE	developer	Diagnostics			text			both							
 DM_VK_TEX_TRACK	developer	Diagnostics			text			both							
+DM_VK_TILED_WB	developer	Diagnostics			text			both							
 DM_VK_TL_HOST	developer	Graphics			text			both							
 DM_VK_TL_POLL	developer	Diagnostics			text			both							
 DM_VK_TSCAL	developer	Diagnostics			text			both							
@@ -788,6 +830,10 @@ DM_VK_VEGETATION	advanced	Graphics	Full vegetation		toggle			game		Game settings
 DM_VK_VIEW_LEARN	developer	Graphics			text			both							
 DM_VK_VIN_DYN	developer	Graphics			text		On where the device has it; off with Qualcomm's driver before 512.800	both							
 DM_VK_VIN_SKIP	developer	Graphics			text			both							
+DM_VK_VRS	developer	Graphics			text			both							
+DM_VK_VRS_COARSE	developer	Graphics			text			both							
+DM_VK_VRS_PASSES	developer	Graphics			text			both							
+DM_VK_VRS_RATE	developer	Graphics			text			both							
 DM_VK_WB_FOLLOW	developer	Graphics			text			both							
 DM_VK_WORKER	developer	Graphics			text			both							
 DM_VK_WORKER_FRAMES	developer	Memory			text			both							
@@ -801,6 +847,7 @@ DM_VK_ZLOG_MIN	developer	Diagnostics			text			both
 DM_VK_ZSHARE	developer	Graphics			text			both							
 DM_VK_ZSHARE_MAX_MB	developer	Graphics			text		No limit with Turnip, 32 MiB with other drivers	both							
 DM_VK_ZSHARE_MB	developer	Graphics			text			both							
+DM_VK_ZS_SPLIT	developer	Packing			text			both							
 DM_VSYNC_HZ	developer	Game			text			both							
 DM_WATCH	developer	Diagnostics			text			both							
 DM_WATCH_SAMPLE	internal	Diagnostics			text			both						Mac or iOS only	

@@ -271,6 +271,7 @@ static void on_crash(int sig, siginfo_t *si, void *uc_) {
         fputc('\n', stderr);
     }
     dm_backtrace(PLAT_UC_FP(uc));
+    dm_fs_recent_dump(stderr);
     // Stack scan: when the frame chain is broken (a return address was overwritten, pc = lr lands on garbage) the backtrace prints nothing; scan 512 words up from sp and list everything that resolves to a module / host symbol (nearest callers first)
     {   uint64_t sp = PLAT_UC_SP(uc);   // The frame just popped (when a return address was overwritten, the bad value and the leftovers of whatever overwrote it sit below sp)
         fprintf(stderr, "[dm] fp=%#llx  0x100 bytes below sp:", (unsigned long long)PLAT_UC_FP(uc));

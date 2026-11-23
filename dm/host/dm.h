@@ -49,12 +49,13 @@ typedef struct {
     char name[16];
     uint8_t *base;             // Start address of the image (including the patch area) in the host address space
     size_t size;
+    size_t guest_size;         // Horizon module span through MOD0's page-aligned bss end, excluding rewriter pages
     uint64_t text_end, ro_off, data_off, key_page_off, key_page_size;   // From the rewriter fixups header
     uint64_t ue_malloc_vt;     // Unreal's FMallocBinned3 vtable, found by the rewriter (patch_nso.py, ue_malloc.py; hle_uemalloc.c); 0 = none
     unsigned ue_malloc_slot;   // the slot of its name getter, which names the slot layout
     uint64_t fps_target_ptr;   // a target frame rate the game steps by, an int32 at [main + fps_target_ptr] + fps_target_field (patch_nso.py, fps_target.py; hle_fpslock.c); 0 = none
     uint32_t fps_target_field;
-    struct { char name[32]; uint64_t off; } ue_cvar[8];   // Unreal console variables found by their registered names (patch_nso.py, ue_cvar.py; UE_CVAR:<name>): each one's TAutoConsoleVariable
+    struct { char name[48]; uint64_t off; } ue_cvar[16];   // Unreal console variables found by their registered names (patch_nso.py, ue_cvar.py; UE_CVAR:<name>): each one's TAutoConsoleVariable
     int n_ue_cvar;
     uint64_t monolith_interval; // Monolith's native frame interval, an int32 at main + this (monolith_fps.py; hle_fpslock.c); 0 = not found
     int native_fps_blocked;    // a required timing correction did not match (the fixups table's NATIVE_FPS_BLOCKED): this main keeps its own engine frame limits
@@ -105,6 +106,7 @@ int nro_refused(const uint8_t sha256[32]);      // an NRO the pack refused (an o
 void nro_load(module_t *m);     // relocate an NRO against the loaded modules and bind the earlier modules' imports it defines (the caller runs its init)
 void nro_unload(module_t *m);   // take an NRO out of the lookups and bind the imports that pointed into it again
 int svc_nro_deactivate(module_t *m);   // mark inactive under the memory map lock, refusing while a stack borrows its data
+void dm_device_share(const void *p, uint64_t size, int share);   // guest memory a device maps (share 1) or no longer maps (0): Horizon's DeviceShared attribute, which refuses unmapping it (hle_svc.c)
 void *module_sym(module_t *m, const char *name);
 int dm_sdk_major(void);   // SDK major version from the sdk module's version string (loader.c); 0 = unknown
 int dm_sdk_ounce(void);   // 1 when the sdk module was built for the Switch 2 (its spec string "spec: Ounce", loader.c)
@@ -112,6 +114,7 @@ int dm_sdk_nvn2_item(unsigned item, int *out);   // a constant NVN2's own nvnDev
 #define DM_SDK_OLD(major) ((major) > 0 && (major) <= 10)   // SDK 10 and older: NVN API 53, the shared-font address points at the TTF itself
 int dm_game_imports(const char *prefix);   // main or an NRO imports a symbol whose name starts with prefix (loader.c)
 void *guest_sym(const char *name);
+void *guest_module_sym(uintptr_t base, const char *name);
 module_t *module_of(const void *p);
 // Gate dispatch: rewritten svc / timer reads come in through the common entry, ret_addr = the return point of that gate block, regs points to the saved x0..x30
 uint64_t gate_dispatch(uint64_t ret_addr, uint64_t *regs);
@@ -139,6 +142,7 @@ enum { OBS_UE_MALLOC = 21,                                       // Unreal's FMa
 void gate_obs_set(int id, void (*fn)(uint64_t *regs, int param));
 int gate_obs_present(int id);
 uint64_t now_ns(void);
+void dm_fs_recent_dump(FILE *f);   // the last 16 game file opens and their results, for a crash report (hle_fs.c)
 void dm_fs_time(uint64_t *open_ns, uint64_t *read_ns, uint64_t *read_bytes);   // cumulative host time in open / pread for the game, all threads (hle_fs.c)
 int dm_guest_wait_take(uint64_t *total_ns, uint64_t *max_ns, uint64_t *sleep_ns, uint64_t *native_ns, char *what, size_t n);   // this thread's guest waits since its last call: in all, the longest (and what ended it), SleepThread's sleeps, native HLE waits; 0 = not a guest thread (hle_thread.c)
 uint64_t guest_ns(void);              // Guest clock (hle_os.c; does not advance while frozen, guest_clock_freeze)
@@ -146,8 +150,8 @@ uint64_t guest_ticks(void);           // The guest's system counter on that cloc
 int dm_detclock_enabled(void);
 void dm_guest_clock_advanced(void);
 void guest_clock_freeze(int on);
-void guest_clock_freeze_for(int reason, int on);   // Freeze by reason (1 background, 2 system keyboard); see hle_os.c
-void guest_clock_read_wait(void);     // A guest read of the system counter: waits while the app is in the background (hle_os.c)
+void guest_clock_freeze_for(int reason, int on);   // Freeze by reason (0 tick hold, 1 background, 2 system keyboard, 3 NVN prepare, 4 NVN archive init); see hle_os.c
+void guest_clock_read_wait(void);     // A guest read of the system counter: waits while the app is in the background or the host prepares (reasons 1, 3, 4; hle_os.c)
 void dm_guest_suspend(int on);         // The application suspended as Horizon suspends it (hle_os.c): guest threads stop at their next SVC, spin gate or sleep (dm_guest_suspend_wait)
 void dm_guest_suspend_wait(void);      // where a guest thread stops while suspended (not inside host work)
 int dm_guest_suspended(void);

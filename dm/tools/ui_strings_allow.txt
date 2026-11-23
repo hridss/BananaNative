@@ -281,3 +281,8 @@ main/java/dev/nxnative/android/PackUi.java	# the game and the profile inputs thi
 ondevice/java/dev/nxnative/android/Ondevice.java	 moved in, no check
 ondevice/java/dev/nxnative/android/Ondevice.java	; the sampled check decides)
 main/java/dev/nxnative/android/SelftestActivity.java	DM_VK_DRIVER=
+# Preview build: contributor strings (PRs 581, 583) still to move into strings.xml; the first is a log line
+main/java/dev/nxnative/android/Folders.java	 has no shader library of this app; the player took 
+main/java/dev/nxnative/android/GameActivity.java	 (this game's own setting)
+main/java/dev/nxnative/android/MainActivity.java	Pack now: 
+main/java/dev/nxnative/android/MainActivity.java	\nOther pack: 

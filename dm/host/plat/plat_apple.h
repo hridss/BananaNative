@@ -9,6 +9,7 @@
 #include <mach-o/ldsyms.h>
 #include <mach/mach.h>
 #include <mach/mach_time.h>
+#include <mach/vm_param.h>
 #include <malloc/malloc.h>
 #include <pthread/qos.h>
 #include <sys/clonefile.h>
@@ -121,6 +122,7 @@ static inline int plat_thread_get_regs(plat_thread_t t, plat_regs_t *r) {
 }
 static inline void plat_thread_resume(plat_thread_t t) { thread_resume((thread_act_t)t); }
 static inline void plat_thread_stack(uint64_t *top, uint64_t *size) { *top = (uint64_t)pthread_get_stackaddr_np(pthread_self()); *size = pthread_get_stacksize_np(pthread_self()); }
+static inline uint64_t plat_va_limit(void) { return MACH_VM_MAX_ADDRESS; }
 static inline int plat_thread_run_state(plat_thread_t t) {
     thread_basic_info_data_t bi; mach_msg_type_number_t c = THREAD_BASIC_INFO_COUNT;
     return thread_info((thread_act_t)t, THREAD_BASIC_INFO, (thread_info_t)&bi, &c) == KERN_SUCCESS ? bi.run_state : -1;
