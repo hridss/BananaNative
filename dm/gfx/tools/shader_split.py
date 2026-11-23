@@ -2783,6 +2783,9 @@ def slct_shaders(d, base, label):
 def monolith_shaders(d, label, out):
     """Scan decoded archive entries and their XBC1 streams without relying on
     extensions: model streams and map data embed HCPS alongside other assets."""
+    # An NDSR pack (the upscaler's networks): Xenoblade Chronicles 2's Switch 2 Edition keeps /monolib/shader/ndsr.pck as an XBC1 member of bf2.ard, whose decoded
+    # payload comes back here; without this its 9 shaders the title screen draws with were left out (Xenoblade DE's Switch 2 Edition ships the same pack loose)
+    if d[:4] == b'NDSR': out.extend(ndsr_shaders(d, label)); return
     pos = 0; compressed = []
     # Separate literal scans use Python's fast substring search. Alternation's
     # character-set search is costly across the archive's decoded texture data.
@@ -3104,7 +3107,7 @@ def scan_blob(d, label, out, depth=0, left=None):
         if left is None: left = [NEST * sum(len(member) for _, member in members)] * 2   # as with Yaz0, count decoded bytes, not compressed bytes
         for nm, member in members: scan_blob(member, label + nm, out, depth + 1, left)
         return
-    if d[:4] in (b'HCPS', b'xbc1', b'DRSM') or d[:8] == b'cmp\0zlib':
+    if d[:4] in (b'HCPS', b'xbc1', b'DRSM', b'DMPA') or d[:8] == b'cmp\0zlib':
         monolith_shaders(d, label, out)
         return
     if d[:8] == PACX4:   # LZ4 chunks: as with Yaz0, the budget counts decoded bytes
@@ -3583,8 +3586,11 @@ def scan_whole(path, rel, head, found, trees):   # scan_file_in for a file no ar
     if head[4:5] == b'\x78' and path.endswith('.gz') and (z := gust_gz(d)) is not None: d = z   # Gust's chunked zlib (gust_gz)
     # Monolith also ships these containers loose, without an ARH/ARD archive
     # (Xenoblade DE). The generic prefilter below otherwise drops even HCPS.
-    # DRSM model streams contain several embedded XBC1 resources.
-    if d[:4] in (b'HCPS', b'xbc1', b'DRSM') or d[:8] == b'cmp\0zlib':
+    # DRSM model streams contain several embedded XBC1 resources; DMPA model
+    # packages (.wimdo) keep plain HCPS programs beside the model (18 of
+    # Xenoblade DE's, the only copy of 14 shaders its Switch 2 Edition's
+    # prologue draws with).
+    if d[:4] in (b'HCPS', b'xbc1', b'DRSM', b'DMPA') or d[:8] == b'cmp\0zlib':
         scan_blob(d, '/' + rel, found)
         return rel, uniq_keys(found), var_pairs(found), trees
     if d[:4] == b'RYHP' or d[8:12] == GFX_MAGIC:
