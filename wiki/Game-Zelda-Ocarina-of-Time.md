@@ -37,7 +37,7 @@ Tap **Recommended** at the top of the game's page. On Qualcomm phones it selects
 | Max resolution | Keeps the 3D scene at full size: sharper, more GPU work. Best with Quality. Switches on Texture pool x2. | If you have headroom. | More memory and GPU work. | Off |
 | Texture pool x2 | Twice the game's starting graphics memory. Max resolution needs it. | With Max resolution. | More memory. | Off |
 | Unlocked frame rate | Game logic follows real time, so speed holds when fps changes. Does not raise fps. | If the game runs slow when fps drops. | Not a speedup. | Off |
-| Keep cave walls (Qualcomm) | Fixes walls and rocks that vanish on Death Mountain Trail with Qualcomm's driver. | If you see holes. | Costs GPU time on some phones. | Off |
+| Keep cave walls (Qualcomm) | Fixes walls, rocks and trees that vanish with Qualcomm's driver (Death Mountain Trail, the Deku Tree, Hyrule Field). | If you see holes or scenery blinking out. | About 2 fps in the field and the village on an Odin 3 (it closes the depth pass at every 4th occlusion report, not at each). | Off |
 | Frame rate cap (in-game panel) | 60 or 30. | 30 is steadier and cooler. | Measured in Link's house on Qualcomm's driver: 30.0 fps, frame time 33.3 ms, phone 51 to 62-64 degrees C over a run, where uncapped it ran 37-38 fps. | 60 |
 | Aspect ratio | 21:9, 4:3, 10:9, 1:1 and Screen shape. | For a wide or square screen. | The 3D view fills the picture. The HUD, menus and movies stay in the middle 16:9; some pages (the journal's tapestry pictures) show extra edge content at 1:1. | 16:9 |
 | Cheats | Rupees 999, ammunition and items 99, Gold Skulltula tokens 100, infinite health and magic (experimental). | If you want them. | Not phone-checked yet in the notes. See [Cheats](Cheats). | Off |
@@ -50,7 +50,7 @@ The distance sliders (and Fog at the cut) are independent: each changes only its
 
 ## Known issues
 
-- **Cave walls and rocks can vanish** on Death Mountain Trail on Qualcomm's driver. Turn on **Keep cave walls**.
+- **Cave walls, rocks and trees can vanish** on Qualcomm's driver (Death Mountain Trail, the Deku Tree, Hyrule Field). Turn on **Keep cave walls**.
 - **Castle Town** on Turnip is slow on its first visits (open in the notes).
 - **Frame rate** in Kokiri Forest on Qualcomm's driver is about 26-30 fps; on Turnip V39 Patched the same spot ran 18 fps (GPU 53 ms) in the same test. The notes call the game GPU-bound.
 - Other Qualcomm drivers: on 891.11 and 891.14 versions 16-49 % of draws were skipped in one test (foliage compute).

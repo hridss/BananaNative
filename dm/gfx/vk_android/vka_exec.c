@@ -256,6 +256,14 @@ static int oq_report(uint64_t ad, uint32_t t) {   // OP_REPORT_COUNTER(SAMPLES_P
     // Store and reload the attachments through vka_rp_end. The reported count and its completion fence still use the regular query path.
     int split = g_oq_open && vka_rp_depth(NULL, NULL) &&
                 VKA_ENV("DM_VK_OQ_SPLIT_PASS", DM_GAME_OCCLUSION_SPLIT_PASS && V.driver_id == VK_DRIVER_ID_QUALCOMM_PROPRIETARY);
+    // Each split stores and reloads the pass's attachments, which a tiler pays for in full: Hyrule Field reports about 1,600 times a frame.
+    // The profile's occlusion_split_every (DM_VK_OQ_SPLIT_EVERY overrides, live) closes the pass at only every n-th report that would split;
+    // Ocarina of Time on an Adreno 830 keeps its geometry at 4 (README, cave geometry). The count runs across passes, as measured.
+    static uint32_t s_oq_since_split;
+    if (split) {
+        int every = VKA_ENV("DM_VK_OQ_SPLIT_EVERY", DM_GAME_OCCLUSION_SPLIT_EVERY);
+        if (every > 1 && ++s_oq_since_split < (uint32_t)every) split = 0; else s_oq_since_split = 0;
+    }
     oq_close(); vka_draw_run_break();   // (draws after it begin a new query; an instanced run is not extended across the report, even with no query open)
     post((pop){5, (uint32_t)g_oq_fresh, g_oq_lost, t, ad, g_oq_seg0, g_oq_head});
     g_oq_seg0 = g_oq_head; g_oq_fresh = 0; g_oq_lost = 0;

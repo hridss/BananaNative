@@ -647,6 +647,7 @@ DM_VK_OBJCOUNT	developer	Diagnostics			text			both
 DM_VK_OCCLUSION	developer	Graphics			text			both							
 DM_VK_ONE_LANE	developer	Graphics			text		The game profile's one-lane shaders with Qualcomm's driver, none with others	both							
 DM_VK_ONE_LANE_BASE	developer	Graphics			text			both							
+DM_VK_OQ_SPLIT_EVERY	developer	Diagnostics			text			both							
 DM_VK_OQ_SPLIT_PASS	developer	Diagnostics			text		1 with Qualcomm's driver when the game profile asks for it, 0 otherwise	both							
 DM_VK_OVERLAY	developer	Graphics			text			both							
 DM_VK_PACE_LOG	developer	Diagnostics			text			both							

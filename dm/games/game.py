@@ -202,6 +202,8 @@ def header(g):
     if evw not in ('on', 'off'): sys.exit(f'{g.id}: event_wait must be on or off: {evw}')
     oqs = g.get('occlusion_split_pass', 'off')
     if oqs not in ('on', 'off'): sys.exit(f'{g.id}: occlusion_split_pass must be on or off: {oqs}')
+    oqe = g.get('occlusion_split_every', '1')   # Android, with occlusion_split_pass: close the depth pass at every n-th such report (vka_exec.c oq_report; DM_VK_OQ_SPLIT_EVERY overrides)
+    if not oqe.isdigit() or not 1 <= int(oqe) <= 64: sys.exit(f'{g.id}: occlusion_split_every must be a whole number from 1 to 64: {oqe}')
     av1 = g.get('av1_decoder', 'hardware')   # Android: AV1 movies on the phone's hardware decoder (MediaCodec, the default) or dav1d frame-parallel (hle_movie_av1.c mav1_send)
     if av1 not in ('hardware', 'dav1d'): sys.exit(f'{g.id}: av1_decoder must be hardware or dav1d: {av1}')
     # Android, devices of 12 GB or less (MemTotal up to 12 GiB; vka_lowram.h): defaults the Vulkan replay takes there only, for a profile that sets them. 0 = not set
@@ -454,6 +456,7 @@ def header(g):
          f'#define DM_GAME_TEX_SOFT {int(tsf == "on")}',
          f'#define DM_GAME_RAM_SAVER_SOFT {int(rss == "on")}',
          f'#define DM_GAME_OCCLUSION_SPLIT_PASS {int(oqs == "on")}',
+         f'#define DM_GAME_OCCLUSION_SPLIT_EVERY {int(oqe)}',
          f'#define DM_GAME_EVENT_WAIT {int(evw == "on")}',
          f'#define DM_GAME_GPU_TS_SEGMENT {int(gts == "segment")}',
          f'#define DM_GAME_DRAW_BARRIERS_GAME {int(dbr == "game")}',

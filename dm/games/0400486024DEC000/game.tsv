@@ -122,6 +122,10 @@ render_cond	on
 # Qualcomm Vulkan: keep consecutive counted depth queries in separate render passes. Off by default since 2026-11-13: on an Adreno 840
 # (Qualcomm 0x8034a02c) it cost 88 ms instead of 36-38 ms of GPU time a frame (5 fps instead of 25); opt in with DM_VK_OQ_SPLIT_PASS=1 (README, cave geometry).
 occlusion_split_pass	off
+# With the split on (Keep cave walls), close the pass only at every 4th such report. Measured 2026-11-23 on an AYN Odin 3 (Adreno 830,
+# Qualcomm 0x80320048): every 4th kept the Deku Tree, Kokiri village and Hyrule Field geometry intact in play (8th: mild flicker, 16th: strong)
+# and cut the field's render passes from about 1,565 to 573 a frame (12.5 -> 18.2 fps; 20.1 with no split). README, cave geometry.
+occlusion_split_every	4
 pool_skip_retired	on
 tex_release	2
 gpu_timestamps	segment
@@ -207,4 +211,4 @@ mesh_vegetation_cut	839241636fce850a	4c7d6be5a7717c8d
 option	DM_OOT_MAX_RESOLUTION	Max resolution	Keeps the 3D scene at full size: sharper, more GPU work. Best with Resolution › Quality	restart	implies=DM_OOT_TEXTURE_POOL_X2	needs=OOT_PATCHES
 option	DM_OOT_TEXTURE_POOL_X2	Texture pool ×2	Twice the game's starting graphics memory. Max resolution needs it	restart	needs=OOT_PATCHES
 option	DM_OOT_FPS_UNLOCK	Unlocked frame rate	Game logic follows real time, so speed holds when fps changes. Does not raise fps	restart	needs=OOT_PATCHES
-option	DM_VK_OQ_SPLIT_PASS	Keep cave walls (Qualcomm)	Fixes walls and rocks that vanish on Death Mountain Trail with Qualcomm's driver. Cheap in the cave, but about 7 fps slower in the castle: switch it on in the in-game panel there and off elsewhere. No effect on Turnip	live
+option	DM_VK_OQ_SPLIT_PASS	Keep cave walls (Qualcomm)	Fixes walls, rocks and trees that vanish (Death Mountain Trail, the Deku Tree, Hyrule Field) with Qualcomm's driver. Costs about 2 fps in the field and the village. No effect on Turnip	live
