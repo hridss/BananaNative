@@ -1332,25 +1332,32 @@ def fin(key):
     return result
 with cf.ThreadPoolExecutor(NJ) as ex:   # two phases: paired vertex shaders read their pixel shaders' MSL (vs_pad), so they go last
     res = list(ex.map(fin, [k for k in keys if k not in PAIRS])) + list(ex.map(fin, [k for k in keys if k in PAIRS]))
-# Passthrough geometry as mesh shaders (dmsh_mesh.py): <vertex key>_<geometry key>_m3 for each pair in the profile's geo_mesh.tsv whose two libraries exist; the host
-# draws a lean triangle-list geometry draw with it when its pair has one, and through the compute path otherwise (nvn_geometry.inc geo_mesh_draw)
+# Passthrough geometry as mesh shaders (dmsh_mesh.py): <vertex key>_<geometry key>_m3 for each pair dmsh_chain.mesh_pairs names (the split's geo_pairs.tsv, every vertex / geometry
+# pair of a shader variation; the pipeline record's G rows; and the profile's geo_mesh.tsv) whose vertex library and lean kernel exist (a geometry shader that is not a lean
+# passthrough has no _bl3 and is skipped); the host draws a lean triangle-list geometry draw with it when its pair has one, and through the compute path otherwise
+# (nvn_geometry.inc geo_mesh_draw)
 MESH_STATS = collections.Counter()
+def mesh_failed(pair, what, why):
+    # a pair the game drew (G row) or the profile names (geo_mesh.tsv) is a red line; a variation pair no one has drawn (geo_pairs.tsv only) is counted, as the host still draws it the compute way
+    if pair in _mesh_asked: MESH_STATS[what] += 1; print(f'[RED] mesh {pair[0]} {pair[1]}: {why}', flush=True)
+    else: MESH_STATS[f'variation pairs {what}'] += 1
 def mesh_finish(pair):
     vk, gk = pair
     srcs = [os.path.join(out, n) for n in (vk + '_b.metal', gk + '_bl3.metal', gk + '_bl3.json')]
     libs = [os.path.join(out, f'{vk}_{gk}_m3.metallib')] + ([os.path.join(IOSOUT, f'{vk}_{gk}_m3.metallib')] if IOSOUT else [])
-    if not all(os.path.exists(p) for p in srcs): MESH_STATS['missing a library'] += 1; return
+    if not (os.path.exists(srcs[1]) and os.path.exists(srcs[2])): MESH_STATS['no lean geometry kernel'] += 1; return   # not a lean passthrough (or not built in this build)
+    if not os.path.exists(srcs[0]): MESH_STATS['missing a library'] += 1; return
     try: msl = dmsh_mesh.compose(open(srcs[0]).read(), open(srcs[1]).read(), json.load(open(srcs[2]))['geometry']['capture_reads'])
-    except ValueError as e: MESH_STATS['not composed'] += 1; print(f'[RED] mesh {vk} {gk}: {e}', flush=True); return
+    except ValueError as e: mesh_failed(pair, 'not composed', str(e)); return
     path = os.path.join(w, f'{vk}_{gk}_m3.metal'); open(path, 'w').write(msl)
     try:
         if 'mac' in TARGETS: MTL.compile('mac', path, libs[0])
         if IOSOUT: MTL.compile('ios', path, libs[1])
         MESH_STATS['built'] += 1
-    except subprocess.CalledProcessError as e: MESH_STATS['failed to compile'] += 1; print(f'[RED] mesh {vk} {gk}: does not compile ({str(e)[:120]})', flush=True)
-_mesh = GAME.table('geo_mesh.tsv')
-if _mesh.exists():
-    with cf.ThreadPoolExecutor(NJ) as ex: list(ex.map(mesh_finish, [tuple(ln.split()[:2]) for ln in _mesh.read_text().splitlines() if ln.strip() and not ln.startswith('#')]))
+    except subprocess.CalledProcessError as e: mesh_failed(pair, 'failed to compile', f'does not compile ({str(e)[:120]})')
+_mesh = sorted(dmsh_chain.mesh_pairs(GAME, dm_dir)); _mesh_asked = dmsh_chain.asked_mesh_pairs(GAME)
+if _mesh:
+    with cf.ThreadPoolExecutor(NJ) as ex: list(ex.map(mesh_finish, _mesh))
 shutil.rmtree(w, ignore_errors=True)
 st = collections.Counter(r[1] for r in res)
 print(f'shaders {len(res)}: ok {st["ok"]}, ' + ', '.join(f'{k} {v}' for k, v in st.items() if k != 'ok'))

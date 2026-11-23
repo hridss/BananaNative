@@ -383,6 +383,23 @@ class MeshPassthrough(unittest.TestCase):
                 r = subprocess.run(['xcrun', '-sdk', 'macosx', 'metal', '-c', '-fmodules-cache-path=' + d + '/modules', str(Path(d, 'm.metal')), '-o', str(Path(d, 'm.air'))], capture_output=True, text=True)
                 self.assertEqual(r.returncode, 0, r.stderr[-2000:])
 
+    # A helper under an include guard, as upstream's translator rewrite writes into every shader (dmsh_rewrite.UWORD there; this tree writes none yet)
+    UWORD = ('#ifndef DM_UWORD\n#define DM_UWORD\ntemplate <typename T> static inline uint dm_uword(T v, uint i) { return as_type<uint4>(v)[i]; }\n'
+             '#endif\n')
+
+    def test_both_parts_keep_a_guarded_helper(self):   # the guarded helper in the vertex shader and in the kernel: each namespace gets its own copy
+        add = lambda s, extra='': s.replace('using namespace metal;', 'using namespace metal;\n' + self.UWORD + extra, 1)
+        lean, reads = dmsh_geometry.lean(LEAN_KERNEL, 134)
+        probe = 'static inline uint dm_probe(const constant uint4& v) { return dm_uword(v, 1); }\n'   # a call from the kernel's part
+        src = dmsh_mesh.compose(add(MESH_VS), add(MESH_HEAD, probe) + '\n' + lean, reads)
+        self.assertLess(src.index('#undef DM_UWORD'), src.index('namespace dm_g {'))
+        self.assertEqual(src.count('uint dm_uword('), 2)
+        if shutil.which('xcrun') and sys.platform == 'darwin':
+            with tempfile.TemporaryDirectory() as d:
+                Path(d, 'm.metal').write_text(src)
+                r = subprocess.run(['xcrun', '-sdk', 'macosx', 'metal', '-c', '-fmodules-cache-path=' + d + '/modules', str(Path(d, 'm.metal')), '-o', str(Path(d, 'm.air'))], capture_output=True, text=True)
+                self.assertEqual(r.returncode, 0, r.stderr[-2000:])
+
     def test_large_vertices_take_fewer_triangles(self):
         # Donkey Kong Bananza's vertex output: 24 float4 and the point size, 388 bytes; 32 triangles (37,248 bytes) exceed Metal's 32 KB
         self.assertEqual(dmsh_mesh.out_bytes('struct main0_out\n{\n' + ''.join(f'    float4 m_{i} [[user(locn{i})]];\n' for i in range(23)) +

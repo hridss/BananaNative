@@ -593,7 +593,7 @@ The iPhone settings list can require a verified rewrite capability (`fixups:<NAM
 
 Each game has a profile in `dm/games/<id>/`:
 - `game.tsv` holds the title ID, known builds, code modules, RomFS marker, memory split, app name and bundle ID;
-- the shader tables: `shader_map.tsv`, `shader_facts.tsv`, `shader_pairs.tsv`, `pso_pairs.tsv` (pairs used by vertex output padding and the pipeline prebuild), `pso_manifest.tsv`, and `c1_full.tsv` / `cb_extent.tsv`, which each checkout's full shader build makes (not committed);
+- the shader tables: `shader_map.tsv`, `shader_facts.tsv`, `shader_pairs.tsv`, `pso_pairs.tsv` (pairs used by vertex output padding and the pipeline prebuild), `geo_pairs.tsv` (vertex / geometry pairs that get mesh libraries), `pso_manifest.tsv`, and `c1_full.tsv` / `cb_extent.tsv`, which each checkout's full shader build makes (not committed);
 - `patches.py` (when there are any): the rewriter's patches of the game's own builds;
 - `readiness.tsv` (Android games): what the game needs of a phone (memory, Vulkan features and limits, sparse textures), each row `required` or `degraded`, which the Android launcher's readiness check compares with what the phone's driver reports before the game starts ([the rows](../dm/games/README.md#readiness-rows), [the check](../android/README.md#readiness-check)). A table of its own, not `game.tsv` rows (a pack's rewrite key hashes only `game.tsv`'s `build` rows).
 

@@ -12,6 +12,7 @@
 #       (checking the tools against dmsh_chain.lock, and rewriting it, is tool_lock.py's: the checks decide no output, so they are outside V and the shaders' cache keys)
 # Environment: XLATE_DEBUG / XLATE_REDUCED (same meaning as in dmsh_build.py, default 1 / 1; non-default options yield a different V, which the host will not load)
 import os, sys, ast, hashlib
+from pathlib import Path
 DM_ROOT = os.environ.get('DM_ROOT') or os.path.expanduser('~/dm-work')   # Workspace root (game files, build outputs and run artifacts are all under it)
 HERE = os.path.dirname(os.path.abspath(__file__)); GFX = os.path.dirname(HERE); HOME = os.path.expanduser('~')
 FILES = ['tools/dmsh_chain.py', 'tools/dmsh_build.py', 'tools/dmsh_atomic.py', 'tools/dmsh_fetch.py', 'tools/dmsh_vin.py', 'tools/dmsh_pull.py', 'tools/dmsh_pull.metal', 'tools/dmsh_alpha.py', 'tools/dmsh_logic.py', 'tools/dmsh_geometry.py', 'tools/dmsh_mesh.py', 'tools/dmsh_facts.py', 'tools/dmsh_ampere.py', 'nvn/dmsh_abi.h', 'tools/dmsh_abi.py', 'tools/dmsh_xlate/Program.cs', 'tools/dmsh_xlate/dmsh_xlate.csproj', '../ios/tools/ios_metal.py', 'tools/dmsh_chain.lock']
@@ -60,12 +61,42 @@ def load_game():   # the current game profile (DM_GAME), only for what needs one
 def profile_rows(g):   # the profile keys that change how a shader is built (nvn_*, shader_*)
     return ''.join(f'{k}\t{chr(9).join(v)}\n' for k, v in g.rows if k.startswith(('nvn_', 'shader_'))).encode()
 
+def table_pairs(p, kind=None):
+    """{(vertex key, geometry key)} of a pair table: geo_mesh.tsv's or geo_pairs.tsv's rows (kind None), or the G rows of a pipeline record (kind 'G'); a missing table has none"""
+    out = set()
+    if not p.exists(): return out
+    for ln in p.read_text().splitlines():
+        c = ln.split('\t') if kind else ln.split()
+        if kind: c = c[1:] if c[:1] == [kind] else []
+        elif not ln.strip() or ln.startswith('#'): continue
+        if len(c) >= 2 and c[0] and c[1]: out.add((c[0][:16], c[1][:16]))
+    return out
+
+def mesh_pairs(g, package=None):
+    """The vertex / geometry pairs that may get a mesh library (dmsh_mesh.py, Metal only; dmsh_build.py builds one where the geometry shader has a lean passthrough kernel): every pair
+    of a shader variation, which the split writes (geo_pairs.tsv: the profile's, else the split's copy beside the package, as pso_pairs.tsv), and asked_mesh_pairs"""
+    geo = g.table('geo_pairs.tsv')
+    if not geo.exists() and package: geo = Path(package).resolve().with_name('geo_pairs.tsv')
+    return asked_mesh_pairs(g) | table_pairs(geo)
+
+def asked_mesh_pairs(g):
+    """The pairs drawn (G rows of the pipeline record, which upstream's Mac host writes for a lean pair with no mesh library; this tree's host writes none yet) or named by hand
+    (geo_mesh.tsv, for pairs no variation names: NieR:Automata's separate programs): those whose mesh library failing is a red line; a variation pair no one asked for only counts"""
+    return table_pairs(g.table('pso_manifest.tsv'), 'G') | table_pairs(g.table('geo_mesh.tsv'))
+
 def inputs(g):
-    """Digest of a game profile's inputs to its shader library: the shader tables (a missing one counts as such) and the nvn_* / shader_* keys"""
+    """Digest of a game profile's inputs to its shader library: the shader tables (a missing one counts as such) and the nvn_* / shader_* keys. The tables that choose mesh libraries
+    (mesh_pairs) count only when they hold any: the profile's geo_pairs.tsv (profiles do not commit it: the split's copy beside the package is used) and the pipeline record's G rows.
+    So every other profile keeps its digest, and with it its libraries' stamps, its per-shader results and its Android delta manifests (upstream nxnative lists geo_pairs.tsv in
+    INPUT_TABLES, which moves every profile's digest once for a table only the Mac's mesh libraries read)"""
     h = hashlib.sha256()
     for f in INPUT_TABLES:
         p = g.table(f)
         h.update(f'game/{f}'.encode() + b'\0' + (p.read_bytes() if p.exists() else b'missing') + b'\0')
+    geo = g.table('geo_pairs.tsv')
+    if geo.exists(): h.update(b'game/geo_pairs.tsv\0' + geo.read_bytes() + b'\0')
+    rec = table_pairs(g.table('pso_manifest.tsv'), 'G')
+    if rec: h.update(b'game/pso_manifest.tsv G\0' + ''.join(f'{v}\t{k}\n' for v, k in sorted(rec)).encode() + b'\0')
     h.update(profile_rows(g))
     return h.hexdigest()[:12]
 
