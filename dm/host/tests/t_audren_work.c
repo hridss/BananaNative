@@ -25,7 +25,8 @@ static void work_free(void *p) {
 
 enum { SDK_WORK = 0x760000, SERVICE_WORK = 0x61d000 };
 static int opens, starts, joins, closes, fail_open, nested;
-static int event_destroys, event_binds, attaches, event_in_handle;
+static int event_destroys, event_binds, attaches, event_in_handle, expect_game_event;
+static int sdk_updates, sdk_impl_execs, sdk_ars_execs;
 static void *sdk_event, *game_event;
 static void *sdk_work;
 static void *map_key, *map_value;
@@ -47,12 +48,18 @@ static Result sdk_open(void **handle, const uint8_t *param, void *work, size_t s
     return RES_OK;
 }
 static Result sdk_open_ev(void **handle, void *ev, const uint8_t *param, void *work, size_t size) {
-    assert(ev && ev != game_event);   // the SDK's CPU / manual open keeps this object and signals it on every render: the renderer's, never the game's
+    if (expect_game_event) assert(ev == game_event);   // the game's own CPU / manual renderer keeps the game's event, as on Horizon
+    else assert(ev && ev != game_event);   // the SDK's CPU / manual open keeps this object and signals it on every render: the renderer's, never the game's
     sdk_event = ev;
     Result r = nested ? h_ar_Open0(handle, param, work, size) : sdk_open(handle, param, work, size);
     if (!r && event_in_handle) handle[1] = ev;   // SDK 3 to 12 keep the event in the handle (SDK 3 sdk+0x17dffc, SDK 12 sdk+0x4d274); SDK 18 keeps it at *handle[1]
     return r;
 }
+static Result sdk_update(void *sys, void *o, size_t on, void *p, size_t pn, const void *in, size_t inn) {
+    (void)sys; (void)o; (void)on; (void)p; (void)pn; (void)in; (void)inn; sdk_updates++; return RES_OK;
+}
+static Result sdk_impl_exec(void *impl) { (void)impl; sdk_impl_execs++; return RES_OK; }
+static Result sdk_ars_exec(void *sys) { (void)sys; sdk_ars_execs++; return RES_OK; }
 static void sdk_destroy_event(void *ev) { assert(ev == sdk_event); event_destroys++; }
 static uint32_t sdk_readable(const void *ev) { assert(ev == sdk_event && event_binds); return 0x1002; }
 static void sdk_attach(void *ev, uint32_t h, int managed, int clear) {   // the game's object gets the copied read end, managed by the game, auto-clear: what the DSP open attaches
@@ -69,6 +76,9 @@ void *guest_sym(const char *name) {
     if (!strcmp(name, hle_force_h_ar_Open.name)) return sdk_open_ev;
     if (!strcmp(name, hle_force_h_ar_Open0.name)) return sdk_open;
     if (!strcmp(name, hle_force_h_ar_Close.name)) return sdk_close;
+    if (!strcmp(name, hle_force_h_ars_Update.name)) return sdk_update;
+    if (!strcmp(name, hle_force_h_ar_ImplExec.name)) return sdk_impl_exec;
+    if (!strcmp(name, hle_force_h_ars_Exec.name)) return sdk_ars_exec;
     if (!strcmp(name, "_ZN2nn2os18DestroySystemEventEPNS0_15SystemEventTypeE")) return sdk_destroy_event;
     if (!strcmp(name, "_ZN2nn2os30GetReadableHandleOfSystemEventEPKNS0_15SystemEventTypeE")) return sdk_readable;
     if (!strcmp(name, "_ZN2nn2os33AttachReadableHandleToSystemEventEPNS0_15SystemEventTypeEjbNS0_14EventClearModeE")) return sdk_attach;
@@ -226,8 +236,42 @@ int main(void) {
     assert(joins == j + 2 && !g_ar[1].handle[0] && atomic_load(&g_ar[0].open));
     sdk_work = work; join_slot = 0; h_ar_Close(handle[0], handle[1]);
     assert(joins == j + 3 && !g_ar[0].handle[0] && allocations == a && !map_key);
+    // The game's own CPU + manual renderer (device 1, mode 1; nxnative issue #3212): the SDK's work size and the game's parameter, no render thread, the game's event
+    // kept as on Horizon, its updates straight to the SDK without catch-up frames, and its renders to the SDK's originals (no host render, no DeviceSink capture)
+    *(int32_t *)(param + P_DEVICE) = 1; *(int32_t *)(param + P_MODE) = 1;
+    memcpy(saved, param, sizeof param);
+    assert(h_ar_WorkSize(param) == SDK_WORK);
+    s = starts; j = joins; int d = event_destroys, b = event_binds, at = attaches;
+    expect_game_event = 1;
+    assert(!h_ar_Open(handle, event, param, work, SDK_WORK));
+    expect_game_event = 0;
+    assert(handle[0] == work && allocations == a && !map_key && !memcmp(param, saved, sizeof param));
+    assert(starts == s && !g_ar[0].render_tt && g_ar[0].manual && atomic_load(&g_ar[0].open));
+    assert(event_destroys == d && event_binds == b && attaches == at && !rev_find(handle[0]));
+    uint8_t manual_impl[0x1100] = {0};   // impl_sys_off reads an add's 12-bit immediate (at most 0xfff): manual_sys stays inside the object
+    uint8_t *manual_sys = manual_impl + impl_sys_off();
+    for (int i = 0; i < 6; i++) assert(h_ars_Update(manual_sys, NULL, 0, NULL, 0, NULL, 0) == RES_OK);
+    assert(sdk_updates == 6 && g_ar[0].sys == manual_sys && !atomic_load(&g_ar[0].updates) && !atomic_load(&g_ar[0].catchups) && !atomic_load(&g_ar[0].renders));
+    assert(h_ar_ImplExec(manual_impl) == RES_OK && sdk_impl_execs == 1);
+    assert(h_ars_Exec(manual_sys) == RES_OK && sdk_ars_execs == 1);
+    assert(!atomic_load(&g_ar[0].renders) && !g_ar[0].sink_logged);
+    sdk_work = work; h_ar_Close(handle[0], handle[1]);
+    assert(joins == j && !g_ar[0].handle[0] && !g_ar[0].manual && !atomic_load(&g_ar[0].open) && event_destroys == d);
+    // The game's own renderer beside a host-driven one, neither rendered yet: the game's render binds its own slot, never the host's, and both close cleanly
+    assert(!h_ar_Open0(handle, param, work, SDK_WORK));   // slot 0: the game's, no render thread
+    *(int32_t *)(param + P_DEVICE) = 0; *(int32_t *)(param + P_MODE) = 0;
+    assert(!h_ar_Open0(handle2, param, work2, SDK_WORK));   // slot 1: the host's, with its render thread
+    assert(starts == s + 1 && g_ar[0].manual && !g_ar[1].manual && !g_ar[0].sys && !g_ar[1].sys);
+    assert(h_ars_Exec(manual_sys) == RES_OK && sdk_ars_execs == 2);
+    assert(g_ar[0].sys == manual_sys && !g_ar[1].sys);
+    assert(h_ars_Update(manual_sys, NULL, 0, NULL, 0, NULL, 0) == RES_OK && sdk_updates == 7);
+    assert(!atomic_load(&g_ar[0].catchups) && !atomic_load(&g_ar[1].catchups) && !atomic_load(&g_ar[1].renders));
+    sdk_work = work; h_ar_Close(handle[0], handle[1]);
+    assert(joins == j && !g_ar[0].handle[0] && !g_ar[0].manual && g_ar[1].handle[0] == work2 && atomic_load(&g_ar[1].open));
+    sdk_work = work2; join_slot = 1; h_ar_Close(handle2[0], handle2[1]);
+    assert(joins == j + 1 && !g_ar[1].handle[0] && allocations == a && !map_key);
     free(work2);
     free(work);
-    puts("audren work buffer: Horizon sizing fixtures, both opens, nested open, failures, close lifetime and two renderers at once passed");
+    puts("audren work buffer: Horizon sizing fixtures, both opens, nested open, failures, close lifetime, two renderers at once and the game's own CPU / manual renderer passed");
     return 0;
 }
