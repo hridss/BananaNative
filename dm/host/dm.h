@@ -146,8 +146,8 @@ uint64_t guest_ticks(void);           // The guest's system counter on that cloc
 int dm_detclock_enabled(void);
 void dm_guest_clock_advanced(void);
 void guest_clock_freeze(int on);
-void guest_clock_freeze_for(int reason, int on);   // Freeze by reason (1 background, 2 system keyboard); see hle_os.c
-void guest_clock_read_wait(void);     // A guest read of the system counter: waits while the app is in the background (hle_os.c)
+void guest_clock_freeze_for(int reason, int on);   // Freeze by reason (0 tick hold, 1 background, 2 system keyboard, 3 NVN prepare, 4 NVN archive init); see hle_os.c
+void guest_clock_read_wait(void);     // A guest read of the system counter: waits while the app is in the background or the host prepares (reasons 1, 3, 4; hle_os.c)
 void dm_guest_suspend(int on);         // The application suspended as Horizon suspends it (hle_os.c): guest threads stop at their next SVC, spin gate or sleep (dm_guest_suspend_wait)
 void dm_guest_suspend_wait(void);      // where a guest thread stops while suspended (not inside host work)
 int dm_guest_suspended(void);

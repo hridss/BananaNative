@@ -1211,12 +1211,19 @@ static _Atomic uint32_t g_pw_seen;   // records the prewarm threads have taken (
 static pthread_mutex_t g_prep_mu = PTHREAD_MUTEX_INITIALIZER; static pthread_cond_t g_prep_cv = PTHREAD_COND_INITIALIZER;
 static uint64_t g_prep_t0;
 static uint32_t prep_total(void) { uint32_t mx = (uint32_t)VKA_ENV("DM_VK_PREWARM_MAX", 8192); return g_pw_load_n < mx ? g_pw_load_n : mx; }
+// The guest clock stands still while the hold runs (hle_os.c reason 3, the host's prepare step; upstream nxnative 8d888054f): the game's frame waits in the replay, but its
+// other threads go on, and one that bounds its wait for the render thread by the frame's budget (nn::os::GetSystemTick) skipped hundreds of frames over a long prepare
+// and moved on to tearing down what frame 1 still drew (Vanillaware's frame loop: 13 Sentinels: Aegis Rim, a SIGSEGV on the Mac). Guest reads of the clock wait until the
+// hold ends. Weak: the unit tests that link this file have no guest clock
+void guest_clock_freeze_for(int reason, int on) __attribute__((weak));
+static void prep_clock(int on) { if (guest_clock_freeze_for && VKA_ENV("DM_VK_PREPARE_CLOCK", 1)) guest_clock_freeze_for(3, on); }
 static void prep_end(const char *why) {
     pthread_mutex_lock(&g_prep_mu);
     int was = atomic_exchange(&g_prep, 0);
     pthread_cond_broadcast(&g_prep_cv);
     pthread_mutex_unlock(&g_prep_mu);
     if (!was) return;
+    prep_clock(0);
     atomic_store(&g_gate_t, 0);   // the slots read again at the next compile: gate_cap's own from now on
     VLOG("prepare: the game goes on (%s) after %.1f s: %u of %u pipeline keys taken, %u made, %u already in the pipeline cache, %u dropped; the prewarm threads go on with what is left",
          why, (now_ns() - g_prep_t0) / 1e9, (unsigned)atomic_load(&g_pw_seen), prep_total(), (unsigned)atomic_load(&g_pw_made), (unsigned)atomic_load(&g_pw_had), (unsigned)atomic_load(&g_pw_bad));
@@ -1363,7 +1370,7 @@ static void pw_start(void) {
     g_pw_t0 = now_ns();
     // The boot hold (prep_wait) starts with the threads, so their first compiles already have its slots. g_pw_threads is the count before any thread runs: a thread
     // that finished its share while later ones were still being made counted itself the last (the done line early, and with the hold, the hold over too soon)
-    if (VKA_ENV("DM_VK_PREPARE", 1)) { g_prep_t0 = now_ns(); atomic_store(&g_prep, 1); atomic_store(&g_gate_t, 0); }
+    if (VKA_ENV("DM_VK_PREPARE", 1)) { g_prep_t0 = now_ns(); atomic_store(&g_prep, 1); atomic_store(&g_gate_t, 0); prep_clock(1); }
     g_pw_threads = nt;
     int made = 0;
     for (int i = 0; i < nt; i++) { pthread_t th; if (!vka_compiler_thread(&th, pw_main, NULL)) { pthread_detach(th); made++; } }
