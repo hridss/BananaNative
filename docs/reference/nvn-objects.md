@@ -652,6 +652,13 @@ Games read this count as a position in their own command memory and size their h
 - **Fix:** `bind_handles` (`hle_nvn.c`) keeps the low 32 bits of each handle before it moves the IDs to the part of the host's table of the pool the command buffer bound (which may then pass 12 bits).
 - **Found on:** [EA SPORTS FC 27](../../dm/games/0100C49025D3E000/README.md), at the title and in the menus.
 
+### Binds of more than 32 handles
+
+- **Symptom:** `[RED] bind handle count 49` (or another count above 32); the draws that follow sample stale or dummy textures in those slots.
+- **Cause:** a bind record (`p_bind_handles`) holds 32 handles, and `bind_handles` (`hle_nvn.c`) dropped any `nvnCommandBufferBindTextures`, `BindTexturesDeferred`, `BindSeparateTextures`, `BindSeparateSamplers` or `BindImages` call with more. NVN allows a call to bind up to the stage's slot count; Immortals Fenyx Rising binds 49 textures at once. On Android the replay of a deferred bind (`vka_draw.c`, `OP_BIND_TEX` with `defer`) also read the game's handle array as 4-byte words, while `NVNtextureHandle` is 8 bytes (as `bh_fresh` in `nvn_mtl.m` and the capture read it): in a record of more than one handle, handle k was a half of handle k / 2.
+- **Fix:** `bind_handles_ex` splits the call into records of 32 handles (`BIND_REC_MAX`) in slot order, each with its own first slot; a deferred record's `src` points at its own part of the array (`h + k`), so each reads only its own handles at replay. The Android replay reads deferred handles 8 bytes apart and keeps their low 32 bits.
+- **Found on:** Immortals Fenyx Rising (no profile in this repository; [nxnative PR #3126](https://github.com/seedds/nxnative/pull/3126)).
+
 ### Version and capability checks that fail quietly
 
 - **Symptom:** device / subsystem setup returns quietly and the next stage never starts.

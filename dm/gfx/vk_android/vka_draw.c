@@ -114,11 +114,13 @@ int vka_state_op(vka_dstate *d, uint32_t op, const void *a) {
     case OP_BIND_TEX: case OP_BIND_TEX1: { p_bind_handles t1; const p_bind_handles *b = bind_rec(op, a, &t1);
         if (b->n < 0 || b->n > 32) { VRED_ONCE("texture bind record with count %d: overwritten after recording", b->n); break; }
         uint64_t h[32]; memcpy(h, b->h, 8 * (size_t)b->n);
-        if (b->defer && b->src && b->n) {   // BindTexturesDeferred: the handles as memory holds them now (nvn_mtl.m bh_fresh); placed guest memory read directly, else word by word through the fault-safe read
-            uint32_t w[32];
-            if (vka_addr(b->src, 4u * (uint64_t)b->n, NULL, NULL, NULL)) { memcpy(w, (const void *)(uintptr_t)b->src, 4 * (size_t)b->n); for (int k = 0; k < b->n; k++) h[k] = w[k]; }
-            else if (!plat_mem_read(b->src, w, 4 * (size_t)b->n)) for (int k = 0; k < b->n; k++) h[k] = w[k];   // one read for the run (they are in the game's heap; profile p2: 3.4 % in process_vm_readv)
-            else for (int k = 0; k < b->n; k++) if (!plat_mem_read(b->src + 4u * k, &w[k], 4)) h[k] = w[k];   // a run across an unreadable page: word by word
+        if (b->defer && b->src && b->n) {   // BindTexturesDeferred: the handles as memory holds them now (nvn_mtl.m bh_fresh); placed guest memory read directly, else through the fault-safe read
+            // src is the game's NVNtextureHandle array (8 bytes a handle, as bh_fresh and the capture read it), of which the GPU takes the low 32 bits (hle_nvn.c bind_handles_chunk).
+            // This read used to take 4-byte words, so in a record of more than one handle, handle k was a half of handle k / 2 (a bind of more than 32 handles is split into such records)
+            uint64_t w[32];
+            if (vka_addr(b->src, 8u * (uint64_t)b->n, NULL, NULL, NULL)) { memcpy(w, (const void *)(uintptr_t)b->src, 8 * (size_t)b->n); for (int k = 0; k < b->n; k++) h[k] = (uint32_t)w[k]; }
+            else if (!plat_mem_read(b->src, w, 8 * (size_t)b->n)) for (int k = 0; k < b->n; k++) h[k] = (uint32_t)w[k];   // one read for the run (they are in the game's heap; profile p2: 3.4 % in process_vm_readv)
+            else for (int k = 0; k < b->n; k++) { uint32_t lo; if (!plat_mem_read(b->src + 8u * k, &lo, 4)) h[k] = lo; }   // a run across an unreadable page: handle by handle (its low half)
         }
         if (b->stage >= 0 && b->stage < VKA_NSTAGE && b->first >= 0 && b->first + b->n <= VKA_NTEX) { memcpy(&d->b.tex[b->stage][b->first], h, 8 * (size_t)b->n); d->s_tex[b->stage] = vka_stamp(); }
         break; }
