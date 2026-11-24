@@ -8,6 +8,8 @@ plugins {
 // own, libnxhost_<title ID>.so with its libnxlaunch_<title ID>.so (src/main/cpp/CMakeLists.txt): the host has its profile compiled in, as dm/host/Makefile's GAME, so a game
 // runs only in an APK built with its profile. The first is the default (the graphics self-test loads its host)
 def nxGames = (providers.gradleProperty('nxGames').getOrElse('') ?: providers.gradleProperty('nxGame').getOrElse('')).split(',').collect { it.trim() }.findAll { it }.unique()
+// The developer preflight pins CMake to its Python, even after an older configure.
+def nxPython = providers.gradleProperty('nxPython').orElse(providers.environmentVariable('NX_PYTHON')).getOrElse('')
 if (!nxGames) throw new GradleException('nxGames: no game (gradle.properties names every supported one; -PnxGames=<title ID>,... builds fewer)')
 nxGames.each { g ->
     if (!(g ==~ /[0-9A-F]{16}/)) throw new GradleException("nxGames: each game must be a title ID (16 upper-case hex digits), not $g")
@@ -280,6 +282,7 @@ android {
         externalNativeBuild {
             cmake {
                 arguments "-DNX_GAMES=${nxGames.join(',')}", '-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON', "-DNX_LSFG=${nxLsfg ? 'ON' : 'OFF'}"
+                if (nxPython) arguments "-DPython3_EXECUTABLE=${nxPython}"
                 // a host and its shim per game, then the custom GPU drivers' loader and hooks (DM_VK_DRIVER)
                 targets(*(nxGames.collectMany { ["nxhost_$it".toString(), "nxlaunch_$it".toString()] } + ['nxadreno', 'hook_impl', 'main_hook']))
             }

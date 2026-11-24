@@ -6,11 +6,59 @@ Banana Native's target is Android: a change is checked with the unit tests, the 
 
 ## Checking a change for Android
 
+Before the first build or check in a checkout, use the [developer preflight](#developer-preflight-and-completion-based-monitoring). At a change of task scope or before pausing a long investigation, use the [handoff checklist](#handoffs-between-tasks).
+
 1. **Unit tests**: `make -C dm/host/tests GAME=<id> run` for the host; `make -C dm/gfx/tests GAME=<id> run` when the change reaches graphics or the shader chain.
 2. **Python tests**: `python3 -m unittest discover -s dm/tools/tests` (with `DM_GAME=<id>`). They include the launcher's plain-Java parts, checked on the JVM by the `test_android_*.py` and `test_launcher_settings.py` tests (front ends, shader libraries, saves, pack finding, driver zips, the readiness check), and the pack script (`test_pack_android.py`).
 3. **A phone run** ([android/TESTING.md](../../android/TESTING.md)): install and run the test app `dev.nxnative.android`, never the play app `dev.nxnative.android.play` or the release. Never delete or overwrite a save folder: test runs use a copied save ([Saves](../../android/TESTING.md#saves)). About 20 s of roaming play after the level loads is enough ([Fast test runs](../../android/TESTING.md#fast-test-runs)); read the log for new `[RED]` lines, crashes and frame times. Every round includes one run on the system driver and one on a Turnip driver through `DM_VK_DRIVER` ([Custom GPU drivers](../../android/README.md#custom-gpu-drivers)). Force-stop the test app afterwards (`adb shell am force-stop dev.nxnative.android`).
    **Android 12 (API 31/32)**: an APK built with `-PnxMinSdk=31` is the experimental Android 12 build, so a change to the launcher's Java uses no call that exists only from API 33 (`InputStream.readAllBytes` / `readNBytes`: `Streams`; typed `getParcelableExtra`; `RECEIVER_NOT_EXPORTED`; `LocaleManager`; `POST_NOTIFICATIONS`; guard each other one with `Build.VERSION.SDK_INT`). `test_android_api31.py` scans for the usual ones; the full check is `./gradlew -PnxMinSdk=31 -PnxPackEngine=fake lintDebug` in `android/app` with 0 `NewApi` in `build/reports/lint-results-debug.xml`. Native code and the packer stage target API 31.
 4. **The pull request** names the tests that ran, the games and versions played on the phone, the phone and both drivers, measurements before and after where the change is about speed, memory, power or heat, and what was not checked.
+
+## Developer preflight and completion-based monitoring
+
+Run [`scripts/dev_preflight.py`](../../scripts/dev_preflight.py) with the packing environment's Python before the first check or build. It checks the selected task's tools without installing anything. `--run` then executes it with that Python's directory first on `PATH`, explicit `DM_GAME`, and the same interpreter passed to Make or CMake. Choose `--task python`, `host`, `lint` or `apk`; each requires `--game`. Lint uses the existing pins in `.github/requirements/lint.txt` and reports the existing ratchet's failures without updating its baseline.
+
+```sh
+game=0400486024DEC000
+py="/path/to/env/bin/python"
+work="/path/to/dump/${game}-work"
+"$py" scripts/dev_preflight.py --game "$game" --task python
+"$py" scripts/watch_command.py --log "$work/python-check.log" --timeout 600 -- \
+  "$py" scripts/dev_preflight.py --game "$game" --task python --run
+```
+
+Each log must be a new file in an existing folder. Use a new name for another run. The watcher saves stdout and stderr, waits for the command's exit, and prints only its status, elapsed time, log path and a bounded tail. It preserves command failures; timeout is 124, interruption 130. Run it once, let the execution tool wait for completion, and inspect the saved log only on failure or an unresolved question. When a tool's wait limit requires another wait, reuse the same running session rather than issuing separate progress commands. Keep waits within the tool's responsiveness limit.
+
+For an APK, `--task apk --run` builds only the test app with a simulated pack engine; it can play prepared packs but cannot prepare new ones. `--pack-stage <stage>` selects a real engine. Gradle's `-PnxPython=<interpreter>` (or `NX_PYTHON`) supplies `Python3_EXECUTABLE` explicitly, so an old CMake interpreter cache cannot silently select another Python. The preflight checks the SDK, NDK and CMake versions declared by the build. It supports macOS and Linux; host tests require macOS and access to its audio services. A sandbox denial needs the appropriate execution permission, not a source workaround. A passed preflight checks tools, not audio-device access, test results or a complete pack-engine stage.
+
+For a live log stream, choose a specific completion line and known fatal lines:
+
+```sh
+"$py" scripts/watch_command.py --log "$work/stream.log" --timeout 240 \
+  --until 'unique end-of-test marker' --fail 'unique fatal marker' -- \
+  adb logcat -v brief
+```
+
+Clear or restrict a stream to the current run before using it; a historical completion line is not new evidence. Conditions match decoded lines (the producer must flush them); failure wins when both match. `--until` stops the monitored process group at the marker, so use it for observers such as `adb logcat`, not for builds or transfers that still need to finish writing. Without a marker, a successful stream exit is a failure when `--until` was required. Timeout, completion and interruption stop the command and its descendants, including a stalled observer; stopping an observer does not stop the game. Force-stop the test app separately after phone runs. The watcher currently supports POSIX process groups only. Logs remain complete; exceptionally long lines are scanned in bounded chunks with overlap.
+
+## Handoffs between tasks
+
+At a completed milestone before switching from diagnosis to implementation, validation or publication, retain only the state needed for the next decision. If the chat repeatedly rereads the same files or carries several completed investigations, prepare a compact handoff for a fresh chat. Create that chat only when the user requests it. Before pausing, save the handoff with the local work artifacts (game-derived paths and evidence stay in the dump's work folder), not in committed documentation.
+
+Keep the handoff under about 500 words and link evidence instead of copying logs or tool transcripts:
+
+```text
+Objective and completion criterion:
+User decisions/authorization that still apply:
+Checkout, branch, base/HEAD, dirty files, PR URL:
+Established cause and chosen change (evidence file + relevant lines):
+Checks completed (revision, command/environment, result, driver where relevant):
+Open hypotheses and the next discriminating check:
+Running work (execution session/PID, log, deadline, completion condition):
+Files/apps/saves to preserve and cleanup still required:
+```
+
+On resumption, check current git state and running work before repeating a check. Rerun a passing check only after a relevant change, a failure, or unresolved evidence. Discover paths with `rg --files` before opening guessed names. For browser work, retain the result URL and a short observation; extract relevant controls or headings instead of repeatedly returning complete repository pages or diffs. Resolve the publication route and commit identity before the final publication phase. Keep credentials in the platform's normal authentication tools, never in handoff text.
 
 ## 1. Build and run on the Mac (upstream toolchain)
 

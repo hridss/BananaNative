@@ -74,6 +74,8 @@ micromamba create -p <dump drive>\bananative-env -f android\environment.yml
 
 ## Build the APK
 
+For a checked local test build, use the [developer preflight](../docs/agents/06-dev-loop.md#developer-preflight-and-completion-based-monitoring). `-PnxPython=<interpreter>` (or `NX_PYTHON`) pins CMake's Python, including after a previous configure.
+
 ```sh
 android/ondevice/build.sh <work dir>                                   # once (and after a change to dm_pack.c, the translator or the pins): <work dir>/stage
 cd android/app && ./gradlew -PnxPackStage=<work dir>/stage apk         # → android/app/out/nxnative-android.apk
