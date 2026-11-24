@@ -1,6 +1,10 @@
-/* Generated from quad_indirect.comp with glslc --target-env=vulkan1.1 -O and validated with
-   spirv-val --target-env vulkan1.1. Converts NVN DrawArraysIndirect (NVN_DRAW_PRIMITIVE_QUADS)
-   command at w[0..3] into a Vulkan VkDrawIndexedIndirectCommand at w[8..12]. */
+/* Generated from dm/gfx/vk_android/quad_indirect.comp and validated with spirv-val.
+   Converts NVN DrawArraysIndirect (NVN_DRAW_PRIMITIVE_QUADS) command at w[0..3]
+   into a Vulkan VkDrawIndexedIndirectCommand at w[8..12].
+   Rebuild:
+     glslc --target-env=vulkan1.1 -O dm/gfx/vk_android/quad_indirect.comp -o /tmp/quad_indirect.spv
+     spirv-val --target-env vulkan1.1 /tmp/quad_indirect.spv
+     python3 -c 'import struct,sys; w=struct.unpack("<"+"I"*(len(d:=open(sys.argv[1],"rb").read())//4),d); print(f"static const uint32_t quad_indirect_spv[{len(w)}] = {{"); [print("\t"+",".join(f"0x{x:08x}" for x in w[i:i+8])+("," if i+8<len(w) else "")) for i in range(0,len(w),8)]; print("};")' /tmp/quad_indirect.spv */
 #pragma once
 #include <assert.h>
 #include <stddef.h>

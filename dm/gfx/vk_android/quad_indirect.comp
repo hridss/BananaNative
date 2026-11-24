@@ -1,0 +1,27 @@
+#version 450
+// Converts an NVN DrawArraysIndirect command (NVN_DRAW_PRIMITIVE_QUADS) at w[0..3]
+// into a Vulkan VkDrawIndexedIndirectCommand at w[8..12] for the shared quad IBO.
+//
+// Rebuild dm/gfx/vk_android/vka_quad_indirect_spv.h:
+//   glslc --target-env=vulkan1.1 -O dm/gfx/vk_android/quad_indirect.comp -o /tmp/quad_indirect.spv
+//   spirv-val --target-env vulkan1.1 /tmp/quad_indirect.spv
+//   python3 -c 'import struct,sys; w=struct.unpack("<"+"I"*(len(d:=open(sys.argv[1],"rb").read())//4),d); print(f"static const uint32_t quad_indirect_spv[{len(w)}] = {{"); [print("\t"+",".join(f"0x{x:08x}" for x in w[i:i+8])+("," if i+8<len(w) else "")) for i in range(0,len(w),8)]; print("};")' /tmp/quad_indirect.spv
+
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+layout(std430, set = 0, binding = 0) buffer Buf {
+    uint w[];
+};
+
+layout(push_constant) uniform PC {
+    uint max_quads;
+};
+
+void main() {
+    uint quads = min(w[0] >> 2u, max_quads);
+    w[8] = quads * 6u;
+    w[9] = w[1];
+    w[10] = 0u;
+    w[11] = w[2];
+    w[12] = w[3];
+}
