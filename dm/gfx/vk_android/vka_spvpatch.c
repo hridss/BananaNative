@@ -387,8 +387,8 @@ int vka_spv_gs_claim(const uint32_t *w, size_t nw, uint32_t binding, uint32_t **
 
 // vka_spv_fout_retype: float colour outputs drawn into integer targets. On Maxwell / Ampere a colour output is a 32-bit register per component and the target's format decides
 // how its bits are read: a pixel shader the translator types as float (its outputs computed with float instructions, or moved through float registers) still writes the bits
-// it holds into a UINT / SINT target. Vulkan leaves a float output to an integer attachment undefined, and the library's MOD_UINT / MOD_UINT_MIXED variants exist only for
-// shaders whose outputs come from integer bits or constants (vk_android_build.py ps_variants). So for a pipeline where a float output meets an integer attachment, the module's
+// it holds into a UINT / SINT target. Vulkan leaves a float output to an integer attachment undefined, and which outputs meet integer attachments is the pipeline's, not
+// something the shader's code tells (the library's MOD_UINT / MOD_UINT_MIXED guesses are no longer built or taken). So for a pipeline where a float output meets an integer attachment, the module's
 // Output variables at those locations (a float or a float vector) become the unsigned / signed integer type of as many components, each store into one (whole, or a component
 // through an access chain) stores the OpBitcast of its value, and each load of one is bit-cast back. The bits reach the target unchanged, as on the Switch.
 // Mario Kart World's fragment dcb0504c844f1ecc (DrivePassShaderDefault, paired with task-less mesh programs: by their shape ShadingRateWrite) writes its UINT target 0 this way

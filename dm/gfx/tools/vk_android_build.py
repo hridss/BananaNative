@@ -622,10 +622,7 @@ def finish(key, w, job, c1):
         gl = any(d.get(spv.DEC_SPEC_ID) == [VK['SPEC_GL_DEPTH']] for d in m.decos.values())
     alpha = stage == 'ps' and spv.alpha_test(m, VK['SPEC_ALPHA_FUNC'])
     mods = [(VK['MOD_BASE'], m.data())]
-    uint_mask = 0
-    if stage == 'ps':   # the variants of the same module (dmsh_abi_vk.h DMSH_VK_MOD_*)
-        mods_, uint_mask = ps_variants(key, m)
-        mods += mods_
+    if stage == 'ps': mods += ps_variants(key, m)   # the variants of the same module (dmsh_abi_vk.h DMSH_VK_MOD_*)
     if stage == 'cs':   # its subgroup shuffles through workgroup memory, for drivers without an arbitrary-index shuffle instruction (vk_android_spv.py shuffle_lds)
         x = spv.Module(m.data())
         if spv.shuffle_lds(x, VK['SHARED_MAX']): mods.append((VK['MOD_SHUFFLE_LDS'], x.data()))
@@ -638,7 +635,7 @@ def finish(key, w, job, c1):
     if alpha: fa['flags'] |= VK['F_ALPHA_TEST']
     if vcull: fa['flags'] |= VK['F_VIEWPORT_CULL']
     if prim or (stage == 'ms' and (res.get('mesh') or {}).get('primitive_locations')): fa['flags'] |= VK['F_MESH_PRIM']
-    fa['uint_mask'] = uint_mask; fa['variants'] = [v for v, _ in mods]
+    fa['uint_mask'] = 0; fa['variants'] = [v for v, _ in mods]
     name, k = loc[key]
     shared = job.get('shared') or 0
     sp = res.get('shared_spill')   # shared memory moved to a storage buffer (Program.cs): the slice the shader addresses, and what stays in workgroup memory (the HMMA scratch)
@@ -654,22 +651,18 @@ def finish(key, w, job, c1):
 
 
 def ps_variants(key, m):
-    """A pixel shader's extra modules (dmsh_build.py fs_uint / fs_dual on SPIR-V): MOD_UINT when it writes an output from integer bits or only constants (a clear into an
-    integer target), MOD_UINT_MIXED when it also writes float outputs (uint_mask: the integer ones), MOD_DUAL for the profile's dual_want.tsv shaders writing exactly
-    colours 0 and 1. → ([(variant, SPIR-V)], uint_mask)"""
-    out, mask = [], 0
-    fl = {l for l, (_, t) in m.io(spv.SC_OUTPUT).items() if not m.int_type(m.scalar_of(t))}
-    from_int = spv.int_outputs(m) & fl
-    if from_int or spv.const_written_outputs(m):
-        u = spv.Module(m.data())
-        if spv.retype_outputs(u, fl): out.append((VK['MOD_UINT'], u.data()))
-        if from_int and fl - from_int:
-            u = spv.Module(m.data()); done = spv.retype_outputs(u, from_int)
-            if done: out.append((VK['MOD_UINT_MIXED'], u.data())); mask = sum(1 << l for l in done if l < 8)
+    """A pixel shader's extra modules (dmsh_build.py fs_dual on SPIR-V): MOD_DUAL for the profile's dual_want.tsv shaders writing exactly colours 0 and 1. → [(variant, SPIR-V)]
+    No integer colour variants (MOD_UINT, MOD_UINT_MIXED; upstream's main0_u / main0_m): which outputs go to integer targets is the pipeline's, not the shader's. The translator
+    keeps registers in integer locals, so a float colour reaches its output through OpBitcast as an integer one does: in Kirby Star Allies' G-buffer (RGBA16F, RGBA8 sRGB,
+    RGBA8Uint, RG11B10F) every output looked integer, and no MOD_UINT_MIXED was made. Those modules were also a large part of a library (Kirby and the Forgotten Land:
+    51 of 180 MB stored, MOD_UINT 42.9 and MOD_UINT_MIXED 8.3), used only when a pipeline's integer targets matched the guess exactly. The replay retypes the base
+    module's float outputs at exactly the pipeline's UINT / SINT attachments (vka_spvpatch.c vka_spv_fout_retype, VKA_FS_RETYPE), as upstream's main0_u now takes the
+    pipeline's integer target mask as function constants (nxnative c398ff35b)"""
+    out = []
     if key in DUAL_WANT:
         d = spv.Module(m.data())
         if spv.dual_source(d): out.append((VK['MOD_DUAL'], d.data()))
-    return out, mask
+    return out
 
 
 def key_int(k): return int(k, 16)

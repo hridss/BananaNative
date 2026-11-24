@@ -101,8 +101,8 @@
 // Modules of an entry (variant). Entry name "main" in every module. The base module comes first; a pixel shader may have more, which the replay picks by the pipeline's
 // attachments and blend state (android/SHADERS.md "Variants"). An older library has only DMSH_VK_MOD_BASE
 #define DMSH_VK_MOD_BASE 0
-#define DMSH_VK_MOD_UINT 1               // every colour output as the unsigned integer vector of its bits: for a pipeline whose colour attachments are all UINT formats
-#define DMSH_VK_MOD_UINT_MIXED 2         // only the targets of the entry's uint_mask as unsigned integers, the others float: for exactly those UINT attachments
+#define DMSH_VK_MOD_UINT 1               // every colour output as the unsigned integer vector of its bits; no longer built nor taken (the replay retypes by the pipeline: VKA_FS_RETYPE), in older libraries
+#define DMSH_VK_MOD_UINT_MIXED 2         // only the targets of the entry's uint_mask as unsigned integers, the others float; no longer built nor taken, as MOD_UINT
 #define DMSH_VK_MOD_DUAL 3               // output 1 as Location 0 Index 1: for a pipeline blending target 0 with a SRC1 factor (dualSrcBlend); profile table dual_want.tsv
 #define DMSH_VK_MOD_SHUFFLE_LDS 4        // compute: its 32-bit subgroup shuffles through workgroup memory (vk_android_spv.py shuffle_lds), for a driver without an arbitrary-index
                                          // shuffle instruction (Turnip makes each one a loop); its workgroup memory, with the rows this adds, is at most DMSH_VK_SHARED_MAX bytes
@@ -127,7 +127,7 @@
 #define DMSH_VK_F_INTERLOCK 64           // fragment shader interlock (VK_EXT_fragment_shader_interlock)
 #define DMSH_VK_F_HMMA 128               // the HMMA helper dmsh_hmma16816_f16 (agl's upscaler), its calls lowered in the module (vk_android_spv.py hmma_lds)
 #define DMSH_VK_F_NO_FACTS 256           // not in the answer table: queries took defaults
-#define DMSH_VK_F_INT_OUT 512            // a colour output written from integer bits: has a DMSH_VK_MOD_UINT module (and UINT_MIXED when it writes float outputs too)
+#define DMSH_VK_F_INT_OUT 512            // a colour output written through a bit cast of an integer (information only: a float colour is written that way too)
 #define DMSH_VK_F_GL_DEPTH 1024          // has the DMSH_VK_SPEC_GL_DEPTH constant
 #define DMSH_VK_F_ALPHA_TEST 2048        // has the DMSH_VK_SPEC_ALPHA_FUNC constant (every variant of the entry)
 #define DMSH_VK_F_VIEWPORT_CULL 4096     // emulated geometry passthrough that drops a primitive whose NVN viewport mask is 0; the mask's other bits are not routed to viewports
@@ -171,7 +171,7 @@ typedef struct {
     uint16_t fout_types;     // DMSH_VK_TYPE_* per colour target
     uint16_t local[3];       // compute workgroup size
     uint8_t fout_mask;       // colour targets written (output locations)
-    uint8_t uint_mask;       // the DMSH_VK_MOD_UINT_MIXED module's unsigned integer targets (0: no such module; older libraries: always 0)
+    uint8_t uint_mask;       // the DMSH_VK_MOD_UINT_MIXED module's unsigned integer targets: 0 (no such module) since that variant is no longer built
     uint32_t shared;         // compute shared memory bytes (the answer table's)
     uint32_t c1_off;         // the c1 bytes, in the blob: the low 32 bits of their offset (c1_off_hi has the rest)
     uint32_t c1_len;

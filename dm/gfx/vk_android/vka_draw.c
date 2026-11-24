@@ -2597,25 +2597,21 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
     if (d->color.logic_op != NVN_LOGIC_OP_COPY && V.logic_op) { k.logic_en = 1; k.logic_op = (uint8_t)d->color.logic_op; }
     k.gl_depth = !vka_depth_zero();
     const vka_shader *fs = d->rast_discard ? NULL : sh[1];
-    // The pixel shader's module (android/SHADERS.md "Variants"): MOD_UINT when every target it writes is a UINT attachment, MOD_UINT_MIXED when the UINT ones are exactly its
-    // uint_mask, MOD_DUAL when target 0 blends with a SRC1 factor; else the base. The alpha test is the base's specialization constant in every variant
-    uint32_t umask = 0, amask = 0;
-    for (uint32_t i = 0; i < R.ncolor; i++) if (R.cf[i]) { amask |= 1u << i; if (R.ckind[i] == 1) umask |= 1u << i; }
+    // The pixel shader's module (android/SHADERS.md "Variants"): MOD_DUAL when target 0 blends with a SRC1 factor; else the base. The alpha test is the base's specialization
+    // constant in every variant. An older library's integer variants (MOD_UINT, MOD_UINT_MIXED) are not taken: the outputs that go to integer targets are the pipeline's,
+    // retyped below (VKA_FS_RETYPE), and the library guessed them from the shader's code, where a float colour is bit-cast to its output as an integer one is
     int variant = DMSH_VK_MOD_BASE;
     if (fs && !g_fs_sub) {   // (prepass_draw's pixel shader has only its base module, moved inputs; it writes no colour)
-        uint32_t fm = fs->e->fout_mask;
-        if ((umask & fm) && (umask & fm) == (amask & fm) && vka_shlib_module(fs->lib, fs->e, DMSH_VK_MOD_UINT)) variant = DMSH_VK_MOD_UINT;
-        else if ((umask & fm) && fs->e->uint_mask == (umask & fm) && vka_shlib_module(fs->lib, fs->e, DMSH_VK_MOD_UINT_MIXED)) variant = DMSH_VK_MOD_UINT_MIXED;
-        else if ((d->color.blend_en & 1) && V.dual_src && vka_shlib_module(fs->lib, fs->e, DMSH_VK_MOD_DUAL)) {
+        if ((d->color.blend_en & 1) && V.dual_src && vka_shlib_module(fs->lib, fs->e, DMSH_VK_MOD_DUAL)) {
             blend_st b0 = adv_blend(d->blend[0]);
             if (is_src1(b0.src_rgb) || is_src1(b0.dst_rgb) || is_src1(b0.src_a) || is_src1(b0.dst_a)) variant = DMSH_VK_MOD_DUAL;
         }
     }
     if (fs && (fs->e->flags & DMSH_VK_F_ALPHA_TEST) && d->color.alpha_func != NVN_ALPHA_FUNC_ALWAYS) k.alpha_func = (uint8_t)d->color.alpha_func;
-    // No library variant for a float output into an integer attachment (the library has MOD_UINT only for outputs made of integer bits or constants): the base module
-    // with those outputs retyped as the integer vectors of their bits (VKA_FS_RETYPE, vka_spv_fout_retype), which is what the hardware writes. DM_VK_FOUT_RETYPE=0: not written, as before
+    // A float output into an integer attachment: the base module with exactly the outputs at the pipeline's UINT / SINT attachments retyped as the integer vectors of their
+    // bits (VKA_FS_RETYPE, vka_spv_fout_retype), which is what the hardware writes. DM_VK_FOUT_RETYPE=0: not written (test only)
     // Only a module that was rewritten is used (one the rewrite refuses falls back to the base module, whose float outputs those targets then do not take: written = 0 below).
-    // MOD_UINT_MIXED / MOD_DUAL pipelines keep their variant; a float output there into another integer target stays unwritten (open)
+    // MOD_DUAL pipelines keep their variant; a float output there into an integer target stays unwritten (open)
     if (fs && !g_fs_sub && variant == DMSH_VK_MOD_BASE && VKA_ENV("DM_VK_FOUT_RETYPE", 1)) {
         uint32_t fu = 0, fsm = 0;
         for (uint32_t i = 0; i < R.ncolor; i++) if (R.cf[i] && (R.ckind[i] == 1 || R.ckind[i] == 2) && (fs->e->fout_mask >> i & 1) && (fs->e->fout_types >> (2 * i) & 3) == DMSH_VK_TYPE_FLOAT) { if (R.ckind[i] == 1) fu |= 1u << i; else fsm |= 1u << i; }
@@ -2628,7 +2624,7 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
         if (!R.cf[i]) continue;
         uint32_t m = d->chmask.mask >> (4 * i) & 0xf;
         int written = fs && (fs->e->fout_mask >> i & 1);
-        int out_cls = !fs ? 0 : variant == DMSH_VK_MOD_UINT || (variant == DMSH_VK_MOD_UINT_MIXED && (fs->e->uint_mask >> i & 1)) ? DMSH_VK_TYPE_UINT : (int)(fs->e->fout_types >> (2 * i) & 3);
+        int out_cls = !fs ? 0 : (int)(fs->e->fout_types >> (2 * i) & 3);
         int att_cls = R.ckind[i] == 1 ? DMSH_VK_TYPE_UINT : R.ckind[i] == 2 ? DMSH_VK_TYPE_SINT : DMSH_VK_TYPE_FLOAT;
         if (variant == VKA_FS_RETYPE && out_cls == DMSH_VK_TYPE_FLOAT && att_cls != DMSH_VK_TYPE_FLOAT) out_cls = att_cls;   // (retyped in the module: vka_pso.c fout_masks)
         if (written && out_cls != att_cls) {   // Vulkan leaves a class mismatch undefined: the target is not written (SINT attachments have no variant yet)

@@ -181,6 +181,37 @@ static const uint32_t SPV_REMAP_FRAG[] = {
     0x000200f8, 0x00000016, 0x000100fc, 0x000200f8, 0x00000017, 0x0004003d, 0x00000007, 0x0000001c, 0x0000001b, 0x00050041, 0x0000000c, 0x0000001e,
     0x00000009, 0x0000001d, 0x0004003d, 0x00000006, 0x0000001f, 0x0000001e, 0x0005008e, 0x00000007, 0x00000020, 0x0000001c, 0x0000001f, 0x0003003e,
     0x0000001a, 0x00000020, 0x000100fd, 0x00010038};
+// A G-buffer pixel shader as the translator writes one (spirv-as --target-env spv1.3): its registers are integer locals, so all four vec4 colour outputs are stored through
+// OpBitcast, those at locations 0, 1 and 3 the bits of floats and location 2 material bits (Kirby Star Allies' G-buffer: RGBA16F, RGBA8 sRGB, RGBA8Uint, RG11B10F)
+static const uint32_t SPV_GBUF_FRAG[] = {
+    0x07230203, 0x00010300, 0x00070000, 0x0000001c, 0x00000000, 0x00020011, 0x00000001, 0x0003000e, 0x00000000, 0x00000001,
+    0x000a000f, 0x00000004, 0x00000001, 0x6e69616d, 0x00000000, 0x00000002, 0x00000003, 0x00000004, 0x00000005, 0x00000006,
+    0x00030010, 0x00000001, 0x00000007, 0x00040047, 0x00000002, 0x0000001e, 0x00000000, 0x00040047, 0x00000003, 0x0000001e,
+    0x00000000, 0x00040047, 0x00000004, 0x0000001e, 0x00000001, 0x00040047, 0x00000005, 0x0000001e, 0x00000002, 0x00040047,
+    0x00000006, 0x0000001e, 0x00000003, 0x00020013, 0x00000007, 0x00030021, 0x00000008, 0x00000007, 0x00030016, 0x00000009,
+    0x00000020, 0x00040015, 0x0000000a, 0x00000020, 0x00000000, 0x00040017, 0x0000000b, 0x00000009, 0x00000004, 0x00040017,
+    0x0000000c, 0x0000000a, 0x00000004, 0x00040020, 0x0000000d, 0x00000001, 0x0000000b, 0x00040020, 0x0000000e, 0x00000003,
+    0x0000000b, 0x0004003b, 0x0000000d, 0x00000002, 0x00000001, 0x0004003b, 0x0000000e, 0x00000003, 0x00000003, 0x0004003b,
+    0x0000000e, 0x00000004, 0x00000003, 0x0004003b, 0x0000000e, 0x00000005, 0x00000003, 0x0004003b, 0x0000000e, 0x00000006,
+    0x00000003, 0x0004002b, 0x0000000a, 0x0000000f, 0x00000003, 0x0004002b, 0x0000000a, 0x00000010, 0x00000060, 0x0007002c,
+    0x0000000c, 0x00000011, 0x0000000f, 0x00000010, 0x0000000f, 0x00000010, 0x00050036, 0x00000007, 0x00000001, 0x00000000,
+    0x00000008, 0x000200f8, 0x00000012, 0x0004003d, 0x0000000b, 0x00000013, 0x00000002, 0x0004007c, 0x0000000c, 0x00000014,
+    0x00000013, 0x0004007c, 0x0000000b, 0x00000015, 0x00000014, 0x0003003e, 0x00000003, 0x00000015, 0x00050085, 0x0000000b,
+    0x00000016, 0x00000013, 0x00000013, 0x0004007c, 0x0000000c, 0x00000017, 0x00000016, 0x0004007c, 0x0000000b, 0x00000018,
+    0x00000017, 0x0003003e, 0x00000004, 0x00000018, 0x000500c5, 0x0000000c, 0x00000019, 0x00000011, 0x00000014, 0x0004007c,
+    0x0000000b, 0x0000001a, 0x00000019, 0x0003003e, 0x00000005, 0x0000001a, 0x0004007c, 0x0000000b, 0x0000001b, 0x00000017,
+    0x0003003e, 0x00000006, 0x0000001b, 0x000100fd, 0x00010038};
+// 1 when the Output variable at location loc points to an integer (or integer vector) type, 0 a float one, -1 none
+static int out_int(const uint32_t *w, size_t n, uint32_t loc) {
+    uint32_t var = 0, ptr = 0, pt = 0, ct = 0;
+    for (size_t i = 5; i < n && (w[i] >> 16); i += w[i] >> 16) if ((w[i] & 0xffff) == 71 && w[i + 2] == 30 && w[i + 3] == loc) var = w[i + 1];
+    for (size_t i = 5; i < n && (w[i] >> 16); i += w[i] >> 16) if ((w[i] & 0xffff) == 59 && w[i + 2] == var && w[i + 3] == 3) ptr = w[i + 1];
+    for (size_t i = 5; i < n && (w[i] >> 16); i += w[i] >> 16) if ((w[i] & 0xffff) == 32 && w[i + 1] == ptr) pt = w[i + 3];
+    ct = pt;
+    for (size_t i = 5; i < n && (w[i] >> 16); i += w[i] >> 16) if ((w[i] & 0xffff) == 23 && w[i + 1] == pt) ct = w[i + 2];
+    for (size_t i = 5; i < n && (w[i] >> 16); i += w[i] >> 16) if (w[i + 1] == ct) { if ((w[i] & 0xffff) == 21) return 1; if ((w[i] & 0xffff) == 22) return 0; }
+    return -1;
+}
 // Whether a variable is decorated Location loc (*var: the first one), and a global variable's storage class (-1: none)
 static int loc_of(const uint32_t *w, size_t n, uint32_t loc, uint32_t *var) {
     for (size_t i = 5; i < n && (w[i] >> 16); i += w[i] >> 16) if ((w[i] & 0xffff) == 71 && (w[i] >> 16) >= 4 && w[i + 2] == 30 && w[i + 3] == loc) { if (var) *var = w[i + 1]; return 1; }
@@ -225,6 +256,20 @@ int main(void) {
         }
         CHECK(!vka_spv_fout_retype(SPV_TRI_FRAG, fn, 2, 0, &on, err, sizeof err), "a location the module does not write is refused");
         CHECK(!vka_spv_fout_retype(SPV_TRI_FRAG, fn, 1, 1, &on, err, sizeof err), "a location both uint and int is refused");
+    }
+    {   // A G-buffer of float and integer targets: the pipeline's integer attachments decide which outputs are retyped, not how the shader computed them (every output is a
+        // bit cast). Only location 2 for the RGBA8Uint material target, the others stay float; any other set the pipeline has (2 and 3) is made as well
+        size_t gn = sizeof SPV_GBUF_FRAG / 4;
+        static const uint32_t masks[2] = {0x4, 0xc};
+        for (int k = 0; k < 2; k++) {
+            uint32_t *f = vka_spv_fout_retype(SPV_GBUF_FRAG, gn, masks[k], 0, &on, err, sizeof err);
+            CHECK(f, "G-buffer fragment outputs %#x not retyped: %s", masks[k], err);
+            if (!f) continue;
+            for (uint32_t l = 0; l < 4; l++) CHECK(out_int(f, on, l) == (int)(masks[k] >> l & 1), "G-buffer outputs %#x: location %u is %s", masks[k], l, out_int(f, on, l) ? "integer" : "float");
+            if (val) CHECK(validate(f, on, k ? "G-buffer fragment (2, 3)" : "G-buffer fragment (2)"), "valid SPIR-V");
+            free(f);
+        }
+        if (val) CHECK(validate(SPV_GBUF_FRAG, gn, "G-buffer fragment as written"), "valid SPIR-V");
     }
     {   // The components a pixel shader's colour outputs write (vka_spv_fout_comps): the selftest's whole vec4 store, and a module that stores only z and w of location 0
         uint8_t m[8]; size_t fn = sizeof SPV_TRI_FRAG / 4;
