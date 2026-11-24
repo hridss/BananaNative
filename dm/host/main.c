@@ -134,10 +134,11 @@ static void host_preload(int argc, char **argv) {
     LOG("program %d of a multi-program application: %s (%s)", dm_game_cur()->program, DM_GAME_NAME, DM_GAME_ID);
 #endif
 #if PLAT_ANDROID
-    // A game that renders with Vulkan imports the Vulkan entry points from the SDK's NintendoSDK_Vulkan module, which the host does not load: on the Mac the host supplies them
-    // (dm/gfx/vk/hle_vk.m, Vulkan on Metal); Android has no such layer yet (dm/gfx/nvn/android_stub.c stands in), so the first call would run into an unbound import.
-    // Refused here with the reason instead (Super Mario 3D All-Stars' Super Mario 64 and Sunshine: back to the application's first program, which says why)
-    if (dm_game_imports("vkCreateInstance") || dm_game_imports("vkGetInstanceProcAddr")) {
+    // A game that renders with Vulkan imports the Vulkan entry points from the SDK's NintendoSDK_Vulkan module, which the host does not load: a guest Vulkan layer supplies them
+    // (dm/gfx/vk/hle_vk.m on the Mac; on Android the guest-Vulkan backend, which defines dm_guest_vk_available). A host built without one refuses such a game here with the reason,
+    // as its first call would run into an unbound import (Super Mario 3D All-Stars' Super Mario 64 and Sunshine: back to the application's first program, which says why)
+    int dm_guest_vk_available(void) __attribute__((weak));
+    if (!&dm_guest_vk_available && (dm_game_imports("vkCreateInstance") || dm_game_imports("vkGetInstanceProcAddr"))) {
         void dm_program_refuse(const char *why);
         char why[256]; snprintf(why, sizeof why, "%s renders with Vulkan (it imports the Vulkan entry points), which the host on Android does not have yet (guest Vulkan): it cannot run here", DM_GAME_NAME);
         dm_program_refuse(strdup(why));

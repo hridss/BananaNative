@@ -9,7 +9,9 @@ NERD's Hagi layer, as in Super Mario Galaxy ([010099C022B96000](../010099C022B96
 
 ## Status
 
-- **Current (2026-11-24, Android):** packed into the game's pack (`p2/`: `main`, `subsdk0`, `sdk` and the `.nrolz` game as an NRO, no shader library: it has no NVN shaders), and refused at its start: it renders with Vulkan, and the Android host has no guest Vulkan layer ([A game that renders with Vulkan is refused on Android](../../../docs/reference/services.md#a-game-that-renders-with-vulkan-is-refused-on-android)). The launcher program comes back and shows why as a notice (tested 2026-11-24 on the AYN Thor, Qualcomm's driver and Turnip: [the launcher's note](../010049900F546000/README.md#tested-on-the-phone)).
+- **Current (2026-11-24, Android):** packed into the game's pack (`p2/`: `main`, `subsdk0`, `sdk` and the `.nrolz` game as an NRO, no shader library: it has no NVN shaders). A host built without a guest Vulkan layer refuses it at its start ([A game that renders with Vulkan is refused on Android](../../../docs/reference/services.md#a-game-that-renders-with-vulkan-is-refused-on-android)): the launcher program comes back and shows why as a notice (tested 2026-11-24 on the AYN Thor, Qualcomm's driver and Turnip: [the launcher's note](../010049900F546000/README.md#tested-on-the-phone)).
+- **With the guest-Vulkan backend** (its own pull request, branch `guest-vulkan-android`, which also brings the offline HTML session stand-in its boot needs): it plays on the AYN Thor on Qualcomm's driver and on Turnip at 30 fps (frame time 33.4 ms; about 21 fps for the first seconds while Hagi makes its pipelines): the opening movie, the title, the file select, a new file's plane scene, the cutscene at Delfino Airstrip and control there (walking through the goop, swimming), tested 2026-11-24 with this branch and that one merged. What the phone's drivers needed for it is in that pull request's reference entries (scaled vertex formats Qualcomm's driver does not fetch, per-vertex descriptor array indices without `NonUniform`, query ranges past their pool, the frame's origin).
+- **Open, with the backend, on Qualcomm's driver only:** Peach's dress, Mario's cap and the plane are partly see-through at Delfino Airstrip (the sand and the plane's shadow show through them); Turnip draws them opaque. Not dual-source blending, depth bias or transfers inside a render pass; the scene's shadow passes write alpha only and later passes blend with `DST_ALPHA`, so the picture depends on the EFB's alpha channel. Not traced.
 - Upstream nxnative plays it on the Mac, 30 fps: the opening, the file select, a new file's plane scene and control at Delfino Airstrip, through its Vulkan layer on Metal (`dm/gfx/vk/hle_vk.m`).
 
 ## What it needs
@@ -29,7 +31,7 @@ Hagi maps the GameCube's 32-bit address space 1:1 in one 4 GB + 2 MB address reg
 
 ## What Android lacks for it
 
-- **Guest Vulkan** (as [Super Mario 64](../010049900F546001/README.md#what-android-lacks-for-it)). This game's own needs, from upstream's Mac bring-up: occlusion queries that span render passes, logic op pipelines (`VK_LOGIC_OP_INVERT`, about a dozen at boot), two GX geometry shaders (points and lines expanded to quads, not translated upstream either), and its SPIR-V generated at run time, which the phone's driver can take as it is (no offline library needed, unlike the Mac's Metal translation).
+- On this branch alone, a guest Vulkan layer (the guest-Vulkan pull request) and the offline HTML session stand-in (`web::OfflineWebSession::Start` at boot, in the same pull request). Logic op pipelines and the two GX geometry shaders go to the phone's driver as they are there (both drivers report `logicOp` and `geometryShader`); its SPIR-V, generated at run time, is taken as it is, with the fixes the Switch's driver did not need.
 
 ## Controls
 
@@ -41,4 +43,4 @@ A talks and picks a block at the file select, Plus skips scenes; B closes a talk
 
 ## Open
 
-- Guest Vulkan on Android ([What Android lacks for it](#what-android-lacks-for-it)).
+- Without the guest-Vulkan pull request: refused ([What Android lacks for it](#what-android-lacks-for-it)). With it: the see-through characters on Qualcomm's driver ([Status](#status)).

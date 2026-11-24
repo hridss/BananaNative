@@ -5,15 +5,15 @@ Update 1.1.4 (v393216). One game of four programs, packed as one, as on the cart
 | Program | What it is | Android |
 |---|---|---|
 | 0, the launcher (this profile) | the menu and the soundtrack player: sead / agl / gsys with NintendoWare layouts on NVN, SDK 10.8.1, H.264 movies through the SDK's movie library | see [Status](#status) |
-| 1, [Super Mario 64](../010049900F546001/README.md) | Nintendo's N64 layer: the MIPS code recompiled in an NRO, the rest through a JIT plugin under `nn::jit`, on Vulkan | packed; refused at its start (no guest Vulkan on Android yet), back to the launcher |
-| 2, [Super Mario Sunshine](../010049900F546002/README.md) | NERD's Hagi GameCube layer: the PowerPC code recompiled in an LZ4-packed NRO, on Vulkan with shaders generated at run time | packed; refused at its start (no guest Vulkan on Android yet), back to the launcher |
+| 1, [Super Mario 64](../010049900F546001/README.md) | Nintendo's N64 layer: the MIPS code recompiled in an NRO, the rest through a JIT plugin under `nn::jit`, on Vulkan | packed; refused at its start by a host without guest Vulkan, back to the launcher; with the guest-Vulkan backend (separate pull request) it plays at 30 fps on both drivers |
+| 2, [Super Mario Sunshine](../010049900F546002/README.md) | NERD's Hagi GameCube layer: the PowerPC code recompiled in an LZ4-packed NRO, on Vulkan with shaders generated at run time | packed; refused at its start by a host without guest Vulkan, back to the launcher; with the guest-Vulkan backend (separate pull request) it plays at 30 fps on both drivers |
 | 3, Super Mario Galaxy | the Wii game, built for **32-bit ARM** (its NPDM's 64-bit flag clear) | cannot run: the host runs a game's own code on an arm64 CPU. Its tile, artwork and soundtrack stay in the menu. [Super Mario Galaxy](../010099C022B96000/README.md), the later 64-bit release, has its own profile |
 
 The profiles come from upstream nxnative, where the launcher, Super Mario 64 and Sunshine play on the Mac (Super Mario 64 and Sunshine through its Vulkan layer on Metal, `dm/gfx/vk/hle_vk.m`, and Super Mario 64's `nn::jit` plugin through its host's `hle_jit.c`; this tree's Android host has neither).
 
 ## Status
 
-- **Current (2026-11-24, AYN Thor, [Tested on the phone](#tested-on-the-phone)):** the launcher program plays at 60 fps on Qualcomm's driver and on Turnip: the opening movie, the title, the menu with its movies and the soundtrack. Super Mario 64 and Sunshine are refused at their start with the reason, and the launcher program comes back; Galaxy's tile starts the launcher program again.
+- **Current (2026-11-24, AYN Thor, [Tested on the phone](#tested-on-the-phone)):** the launcher program plays at 60 fps on Qualcomm's driver and on Turnip: the opening movie, the title, the menu with its movies and the soundtrack. Super Mario 64 and Sunshine are refused at their start with the reason by this branch's host, and the launcher program comes back (with the guest-Vulkan backend, a separate pull request, both reach gameplay at 30 fps on both drivers: their notes); Galaxy's tile starts the launcher program again.
 
 ## How it is one game
 
@@ -58,5 +58,5 @@ General host changes first needed here; each applies to every game:
 
 ## Open
 
-- Super Mario 64 and Sunshine on Android need a guest Vulkan layer (upstream's is Vulkan on Metal) and, for Super Mario 64, `nn::jit` (code made at run time); see their notes.
+- Super Mario 64 and Sunshine on Android need a guest Vulkan layer and, for Super Mario 64, `nn::jit` (code made at run time): both are in the guest-Vulkan pull request (branch `guest-vulkan-android`), with which they reach gameplay at 30 fps on Qualcomm's driver and on Turnip; see their notes.
 - The offline HTML pages each game's pause menu opens (upstream's `hle_web.c`) are not in this tree: `web::ShowOfflineHtmlPage` stays cut.

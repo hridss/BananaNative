@@ -10,7 +10,8 @@ Nintendo's N64 layer ("EmuAppNX64") on the Japanese Shindou ROM with English tex
 
 ## Status
 
-- **Current (2026-11-24, Android):** packed into the game's pack (`p1/`: `main`, `sdk` and the two NROs the NRRs register, no shader library: it has no NVN shaders), and refused at its start: it renders with Vulkan, and the Android host has no guest Vulkan layer ([A game that renders with Vulkan is refused on Android](../../../docs/reference/services.md#a-game-that-renders-with-vulkan-is-refused-on-android)). The launcher program comes back and shows why as a notice (tested 2026-11-24 on the AYN Thor, Qualcomm's driver and Turnip: [the launcher's note](../010049900F546000/README.md#tested-on-the-phone)).
+- **Current (2026-11-24, Android):** packed into the game's pack (`p1/`: `main`, `sdk` and the two NROs the NRRs register, no shader library: it has no NVN shaders). A host built without a guest Vulkan layer refuses it at its start ([A game that renders with Vulkan is refused on Android](../../../docs/reference/services.md#a-game-that-renders-with-vulkan-is-refused-on-android)): the launcher program comes back and shows why as a notice (tested 2026-11-24 on the AYN Thor, Qualcomm's driver and Turnip: [the launcher's note](../010049900F546000/README.md#tested-on-the-phone)).
+- **With the guest-Vulkan backend** (its own pull request, branch `guest-vulkan-android`, which also brings upstream's `nn::jit` take-over, `hle_jit.c`, to Android): it plays on the AYN Thor on Qualcomm's driver and on Turnip at 30 fps (frame time 33.4 ms): the Mario head, the file select, a new file through Peach's letter and Lakitu to the castle grounds, and walking toward the castle (tested 2026-11-24 with this branch and that one merged). `nn::jit` makes the 14.2 MB of code at boot in 34-122 ms. What the phone's drivers needed for it is in that pull request's reference entries (R4G4 images, which neither driver samples; a barrier the game records into a command buffer it has already ended, which crashed Qualcomm's driver).
 - Upstream nxnative plays it on the Mac (the Mario head, the file select, a new file to the castle grounds, 30 fps), through its Vulkan layer on Metal (`dm/gfx/vk/hle_vk.m`) and its `nn::jit` take-over (`hle_jit.c`), and on iOS from an image of the plugin's output captured on a Mac (`jit_capture.py`).
 
 ## What it needs
@@ -25,8 +26,7 @@ Nintendo's N64 layer ("EmuAppNX64") on the Japanese Shindou ROM with English tex
 
 ## What Android lacks for it
 
-- **Guest Vulkan.** Upstream's layer is 2,969 lines over about 177 `vk*` entry points (47 `vkCmd*`), translating to Metal. On Android it would be a passthrough to the phone's own Vulkan with the Tegra X1 device model, its memory types and the swap chain on the launcher's window. This game's own needs, from upstream's Mac bring-up: `VK_EXT_debug_report`, specialization constants, packed 16-bit and 8-bit formats, image clears, dynamic stencil and line width, frees of descriptor sets whose pool is gone and destroys of swap chain images ignored; one fragment shader declares two samplers it does not bind (`[RED] shader 9da92c000ddbc3c8: set 1 is not bound`).
-- **`nn::jit`.** The plugin's code runs in executable memory made at run time (`MAP_JIT` on the Mac): the host loads `EmuSystemJITPlugin.nro` linked against itself only (`nro_load_alone`) and calls its commands. Android allows writable-then-executable anonymous memory, so the Mac's path (not the iPhone's served image) is the one to port: `hle_jit.c` and `nro_load_alone` from upstream 0b8e0dc1d, with the rewriter's view of code made at run time to check.
+- On this branch alone, a guest Vulkan layer and `nn::jit`: both are in the guest-Vulkan pull request (a passthrough to the phone's own Vulkan with the Tegra X1's identity, its memory types and the swap chain on the launcher's window; `hle_jit.c` with `nro_load_alone`, the code memory one read + write + execute mapping on Android).
 
 ## Controls
 
@@ -38,4 +38,4 @@ A closes text, B jumps, Y attacks; Plus starts at the head, Minus opens the laun
 
 ## Open
 
-- Guest Vulkan and `nn::jit` on Android ([What Android lacks for it](#what-android-lacks-for-it)).
+- Without the guest-Vulkan pull request: refused ([What Android lacks for it](#what-android-lacks-for-it)). With it: a course was not played through on the phone, and the pause page (an offline HTML page) is a stand-in that closes at once.
