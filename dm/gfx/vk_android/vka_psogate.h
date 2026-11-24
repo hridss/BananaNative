@@ -75,4 +75,15 @@ static inline int vkpg_may_enter(const vkpg_state *s, int slots, int frame, int 
     if (!frame && s->spec_heavy_wait > 0) return 0;
     return s->busy < slots;
 }
+
+// The pipeline cache saver's debounce (vka_pso.c vka_pso_save / saver_main): how many nanoseconds remain before a pending save (slow = 1: a compile over 1 s asked for
+// DM_VK_PCACHE_SAVE_SLOW_S, else DM_VK_PCACHE_SAVE_S) may run after the last save at last_ns (0: no save yet, due at once). A save requested during the debounce waits
+// for the remainder on the saver thread instead of being dropped
+static inline uint64_t vkpg_save_wait_ns(uint64_t now_ns, uint64_t last_ns, int slow, int slow_s, int norm_s) {
+    if (!last_ns) return 0;
+    int s = slow ? slow_s : norm_s;
+    if (s < 1) s = 1;
+    uint64_t period = (uint64_t)s * 1000000000ull;
+    return now_ns >= last_ns && now_ns - last_ns < period ? period - (now_ns - last_ns) : 0;
+}
 #endif

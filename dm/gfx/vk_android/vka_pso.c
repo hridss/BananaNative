@@ -164,7 +164,7 @@ static _Atomic uint64_t g_save_ns_total, g_hy_draws, g_pw_wait_ns;
 static void pw_load(void); static void pw_start(void); static int pw_save(void); static void unf_load(void);
 static void *saver_main(void *a);
 static pthread_mutex_t g_save_mu = PTHREAD_MUTEX_INITIALIZER;   // one save at a time (the saver thread, a forced save)
-static pthread_mutex_t g_sv_mu = PTHREAD_MUTEX_INITIALIZER; static pthread_cond_t g_sv_cv = PTHREAD_COND_INITIALIZER; static int g_sv_want, g_sv_up;
+static pthread_mutex_t g_sv_mu = PTHREAD_MUTEX_INITIALIZER; static pthread_cond_t g_sv_cv = PTHREAD_COND_INITIALIZER; static int g_sv_want, g_sv_slow, g_sv_up;
 static void pc_open_once(void) {
     const char *e = getenv("DM_VK_PCACHE"), *t = getenv("DM_TEMP"), *home = getenv("HOME");
     if ((e && !strcmp(e, "0")) || vka_fp_guest()) g_pc_path[0] = 0;
@@ -263,7 +263,7 @@ static void save_now(void) {
     uint64_t t = now_ns();
     uint64_t made = __atomic_load_n(&g_made, __ATOMIC_RELAXED);
     size_t n = 0; void *d = NULL;
-    if (g_pc && g_pc_path[0] && made != g_saved_at) {
+    if (g_pc && g_pc_path[0] && made != __atomic_load_n(&g_saved_at, __ATOMIC_RELAXED)) {
         // The cache grows between the size query and the copy while prewarm and optimizer threads add pipelines: the copy then answers VK_INCOMPLETE with a partial
         // blob. Tried up to 3 times with a quarter more room; only a complete copy (VK_SUCCESS) is written
         VkResult gr = VK_INCOMPLETE;
@@ -276,7 +276,7 @@ static void save_now(void) {
         if (d) {
             char tmp[1100]; snprintf(tmp, sizeof tmp, "%s.tmp", g_pc_path);
             if (pc_write_atomic(g_pc_path, tmp, d, n)) {
-                g_saved_at = made;
+                __atomic_store_n(&g_saved_at, made, __ATOMIC_RELAXED);
                 // Its stamp after it: the shaders it was read with that this library keeps, and those this run made. Written whole or not at all (a stamp that
                 // cannot be written is removed, and the next run starts empty)
                 char sp[1100], st[1200]; snprintf(sp, sizeof sp, "%s.lib", g_pc_path); snprintf(st, sizeof st, "%s.lib.tmp", g_pc_path);
@@ -297,29 +297,51 @@ static void save_now(void) {
 static void *saver_main(void *a) {
     (void)a; pthread_setname_np(pthread_self(), "vk-pcache"); vka_fp_host("vk-pcache");
     for (;;) {
-        pthread_mutex_lock(&g_sv_mu); while (!g_sv_want) pthread_cond_wait(&g_sv_cv, &g_sv_mu); g_sv_want = 0; pthread_mutex_unlock(&g_sv_mu);
-        pthread_mutex_lock(&g_save_mu); save_now(); pthread_mutex_unlock(&g_save_mu);
+        pthread_mutex_lock(&g_sv_mu);
+        for (;;) {
+            while (!g_sv_want) pthread_cond_wait(&g_sv_cv, &g_sv_mu);
+            uint64_t wns = vkpg_save_wait_ns(now_ns(), __atomic_load_n(&g_save_ns, __ATOMIC_RELAXED), g_sv_slow,
+                                             VKA_ENV("DM_VK_PCACHE_SAVE_SLOW_S", 3), VKA_ENV("DM_VK_PCACHE_SAVE_S", 20));
+            if (!wns) break;
+            struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts);
+            uint64_t ns = (uint64_t)ts.tv_nsec + wns;
+            ts.tv_sec += (time_t)(ns / 1000000000ull); ts.tv_nsec = (long)(ns % 1000000000ull);
+            pthread_cond_timedwait(&g_sv_cv, &g_sv_mu, &ts);
+        }
+        g_sv_want = 0; g_sv_slow = 0;
+        __atomic_store_n(&g_save_ns, now_ns(), __ATOMIC_RELAXED);
+        pthread_mutex_unlock(&g_sv_mu);
+        pthread_mutex_lock(&g_save_mu);
+        save_now();
+        __atomic_store_n(&g_save_ns, now_ns(), __ATOMIC_RELAXED);
+        pthread_mutex_unlock(&g_save_mu);
     }
     return NULL;
 }
-// From the replay thread at each submission, and after a pipeline that took over 1 s on the frame path (a cold first 3D frame is one submission of a minute or more of
-// pipelines, and a run stopped in it saved none of them, so every run started cold again: Ocarina of Time, 2026-11-08): a save is due DM_VK_PCACHE_SAVE_S seconds (default
-// 20) after the last one when pipelines were made since; it runs on the saver thread. force 1 (the end of the run, the shader library check): now, on the caller's thread.
-// force 2 (a pipeline that took over 1 s): due DM_VK_PCACHE_SAVE_SLOW_S (default 3) after the last save, on the saver thread. With the 20 s rule a slow one made in the last
-// 20 s of a run was lost when the process was stopped or killed, and the next run made it again on the frame path: Ocarina of Time's compute pipeline 3d0d6d61bb9076e7,
-// 3.1 s in run p-sys1 five seconds after its last save, 2.3 s again in the warm run after it (2026-11-08)
+// From the replay thread at each submission, and after a pipeline that took over 1 s on the frame path or in the background (a cold first 3D frame is one submission of a
+// minute or more of pipelines, and a run stopped in it saved none of them, so every run started cold again: Ocarina of Time, 2026-11-08): a save is due DM_VK_PCACHE_SAVE_S
+// seconds (default 20) after the last one when pipelines were made since; it runs on the saver thread. force 1 (the end of the run, the shader library check): now, on the
+// caller's thread. force 2 (a pipeline that took over 1 s): due DM_VK_PCACHE_SAVE_SLOW_S (default 3) after the last save, on the saver thread; when requested during the
+// debounce window, the saver thread waits for the remainder of the window and then saves instead of dropping the request
 void vka_pso_save(int force) {
     if (!g_pc) return;
     uint64_t t = now_ns();
     if (force != 1) {
-        if (__atomic_load_n(&g_made, __ATOMIC_RELAXED) == g_saved_at) return;
-        int s = force == 2 ? VKA_ENV("DM_VK_PCACHE_SAVE_SLOW_S", 3) : VKA_ENV("DM_VK_PCACHE_SAVE_S", 20); if (s < 1) s = 1;
-        if (t - g_save_ns < (uint64_t)s * 1000000000ull) return;
-        g_save_ns = t;
-        if (g_sv_up) { pthread_mutex_lock(&g_sv_mu); g_sv_want = 1; pthread_cond_signal(&g_sv_cv); pthread_mutex_unlock(&g_sv_mu); return; }
+        if (__atomic_load_n(&g_made, __ATOMIC_RELAXED) == __atomic_load_n(&g_saved_at, __ATOMIC_RELAXED)) return;
+        int slow_s = VKA_ENV("DM_VK_PCACHE_SAVE_SLOW_S", 3), norm_s = VKA_ENV("DM_VK_PCACHE_SAVE_S", 20);
+        uint64_t last = __atomic_load_n(&g_save_ns, __ATOMIC_RELAXED);
+        if (g_sv_up) {
+            if (force != 2 && vkpg_save_wait_ns(t, last, 0, slow_s, norm_s) > 0) return;
+            pthread_mutex_lock(&g_sv_mu);
+            g_sv_want = 1; if (force == 2) g_sv_slow = 1;
+            pthread_cond_signal(&g_sv_cv);
+            pthread_mutex_unlock(&g_sv_mu);
+            return;
+        }
+        if (vkpg_save_wait_ns(t, last, force == 2, slow_s, norm_s) > 0) return;
     }
-    g_save_ns = t;
-    pthread_mutex_lock(&g_save_mu); save_now(); pthread_mutex_unlock(&g_save_mu);
+    __atomic_store_n(&g_save_ns, t, __ATOMIC_RELAXED);
+    pthread_mutex_lock(&g_save_mu); save_now(); __atomic_store_n(&g_save_ns, now_ns(), __ATOMIC_RELAXED); pthread_mutex_unlock(&g_save_mu);
 }
 void vka_gpl_line(char *out, size_t n);
 void vka_pso_async_line(char *out, size_t n);
@@ -328,7 +350,7 @@ void mtl_pso_line(char *out, size_t n) {
     int k = snprintf(out, n, "%llu graphics + %llu compute pipelines (%llu failed, %llu compute (program, layout) pairs not made for shared memory, %llu on the frame path), %llu set layouts, %.0f ms creating", (unsigned long long)g_ngfx, (unsigned long long)g_ncs,
                      (unsigned long long)g_nfail, (unsigned long long)g_ncs_over, (unsigned long long)g_frame_made, (unsigned long long)g_nlayouts, g_create_ms);
     if (V.gpl && k > 0 && (size_t)k + 3 < n) { memcpy(out + k, "; ", 3); vka_gpl_line(out + k + 2, n - (size_t)k - 2); }
-    size_t o = strlen(out); char a[200]; vka_pso_async_line(a, sizeof a);
+    size_t o = strlen(out); char a[1024]; vka_pso_async_line(a, sizeof a);   // (the asynchronous summary is 500-700 characters: 200 cut it off)
     if (a[0] && o + 2 < n) snprintf(out + o, n - o, "; %s", a);
 }
 
@@ -620,7 +642,7 @@ static VkPipeline full_pipeline(pstate *P, vka_shader *const sh[VKA_NSTAGE], con
     g_create_ms += ms_; if (!how) g_create_ns += dns;   // made in the background or by prewarm: not the frame's time
     pthread_mutex_unlock(&g_mu);
     if (r < 0) vka_rp_refused(P->ci.renderPass, r);   // classic render passes: that render pass is given to no later pipeline (VK_NULL_HANDLE with dynamic rendering: nothing)
-    if (!how && !r && ms_ > 1000) vka_pso_save(2);   // a slow one on the frame path: saved within seconds, not at the next submission (see vka_pso_save)
+    if ((!how || strcmp(how, " (prewarm)")) && !r && ms_ > 1000) vka_pso_save(2);   // a slow one on the frame path or in the background: saved within seconds, not at the 20 s periodic save (see vka_pso_save)
     const vka_shader *pre = P->mesh ? sh[7] : sh[0];   // the vertex shader, or a mesh pipeline's mesh shader
     if (r) {   // every stage named: a geometry or tessellation shader in the pipeline is as likely to be the one the driver's compiler refused (DKB's terrain pipeline, 2026-11-07)
         static _Atomic int n;
@@ -1460,6 +1482,8 @@ static gval *gfx_obtain(const gkey_full *fk, uint64_t h, size_t len, vka_shader 
 // A new entry g (busy) made and published. async: a frame-path miss made on a background thread (as_main): linked from parts like the frame path, its time not the frame's
 static void gfx_build(gval *g, size_t len, vka_shader *const sh[VKA_NSTAGE], const vka_layout *lay, const vka_gkey *k, int prewarm, int async, uint64_t t_make) {
     pc_open();
+    int kind = VKA_PW_GFX; vka_shader *s5[5] = {0};
+    if (!prewarm) { pw_slots(sh, s5, &kind); pw_note(kind, s5, k, (uint32_t)(len - offsetof(gkey_full, k))); }   // (noted before full_pipeline's slow-compile save, as cs_build does)
     VkPipeline p = VK_NULL_HANDLE; int linked = 0;
     pstate *P = malloc(sizeof *P);
     if (P && pstate_fill(P, sh, lay, k)) {   // (else logged by vka_shader_module)
@@ -1492,8 +1516,7 @@ static void gfx_build(gval *g, size_t len, vka_shader *const sh[VKA_NSTAGE], con
         if (!p && !linked) p = full_pipeline(P, sh, prewarm ? " (prewarm)" : async ? " in the background (asynchronous)" : NULL);
     }
     free(P);
-    if (!prewarm) { int kind; vka_shader *s5[5]; pw_slots(sh, s5, &kind); pw_note(kind, s5, k, (uint32_t)(len - offsetof(gkey_full, k)));
-                    pw_explain(kind, s5, k, (uint32_t)(len - offsetof(gkey_full, k)), (now_ns() - t_make) / 1e6, linked, async ? " in the background" : " on the frame path"); }
+    if (!prewarm) pw_explain(kind, s5, k, (uint32_t)(len - offsetof(gkey_full, k)), (now_ns() - t_make) / 1e6, linked, async ? " in the background" : " on the frame path");
     pthread_mutex_lock(&g_mu);
     __atomic_store_n(&g->linked, (uint8_t)linked, __ATOMIC_RELEASE); __atomic_store_n(&g->p, p, __ATOMIC_RELEASE); __atomic_store_n(&g->busy, 0, __ATOMIC_RELEASE);
     pthread_cond_broadcast(&g_busy_cv);

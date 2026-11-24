@@ -160,6 +160,12 @@ int main(void) {
     int fifo_last = (NS + NF) * 5;   // every job before the last frame one ran first, one at a time
     CHECK(one < fifo_last / 2, "frame first beats arrival order by more than half (%d against %d)", one, fifo_last);
 
+    // The pipeline cache saver's debounce (vkpg_save_wait_ns)
+    CHECK(vkpg_save_wait_ns(10000000000ull, 0, 0, 3, 20) == 0 && vkpg_save_wait_ns(10000000000ull, 0, 1, 3, 20) == 0, "first save is due at once");
+    CHECK(vkpg_save_wait_ns(11200000000ull, 10000000000ull, 1, 3, 20) == 1800000000ull, "slow compile 1.2 s after a save waits the remaining 1.8 s instead of being dropped");
+    CHECK(vkpg_save_wait_ns(13000000000ull, 10000000000ull, 1, 3, 20) == 0 && vkpg_save_wait_ns(15000000000ull, 10000000000ull, 1, 3, 20) == 0, "due once the 3 s slow-save debounce ends");
+    CHECK(vkpg_save_wait_ns(15000000000ull, 10000000000ull, 0, 3, 20) == 15000000000ull && vkpg_save_wait_ns(30000000000ull, 10000000000ull, 0, 3, 20) == 0, "periodic save still waits the full 20 s");
+
     if (fails) { printf("t_android_psogate: %d failed\n", fails); return 1; }
     printf("t_android_psogate: ok\n");
     return 0;
