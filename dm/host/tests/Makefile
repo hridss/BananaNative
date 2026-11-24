@@ -79,6 +79,7 @@ run: $(B)/t_language $(B)/t_motion $(B)/t_heap_size $(B)/t_touch $(B)/t_gesture 
 	$(B)/t_motion_apple
 	$(B)/t_pad_apple
 	$(B)/t_account
+	TMPDIR="$(abspath $(B))" $(B)/t_album $(QUIET)
 	$(B)/t_motion_pro
 	$(B)/t_motion_pro_mac
 	TMPDIR="$(abspath $(B))" $(B)/t_hid
@@ -136,6 +137,9 @@ run: $(B)/t_language $(B)/t_motion $(B)/t_heap_size $(B)/t_touch $(B)/t_gesture 
 	TMPDIR="$(abspath $(B))" $(B)/t_android_layerreq
 	$(B)/t_server_environment
 run: $(B)/t_nro
+run: $(B)/t_album
+$(B)/t_album: t_album.c ../hle_album.c ../hle.h ../dm.h $(GAME_H) | $(B)
+	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -I.. $(GINC) -o $@ t_album.c -lz
 run: $(B)/t_pack_modules
 run: $(B)/t_game_args
 run: $(B)/t_symbols

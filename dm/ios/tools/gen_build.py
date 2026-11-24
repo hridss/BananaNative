@@ -2,7 +2,7 @@
 # without hand-copying lists: when the Makefile changes, the next iOS build follows automatically.
 #   Gen/src/<flat name>   symlinks to source files (excluding main.c and front_mac.m; main.c is linked separately to Gen/main/main.c and compiled with -Dmain=dm_main)
 #   stdout            xcconfig lines: HEADER_SEARCH_PATHS (-I directories + the directory of every source file, so relative includes resolve as usual),
-#                     OTHER_CFLAGS (-D), frameworks (Cocoa is replaced by what the UIKit side already has, skipped)
+#                     OTHER_CFLAGS (-D), frameworks and -l libraries (Cocoa is replaced by what the UIKit side already has, skipped)
 # Usage: gen_build.py <dm/host dir> <Gen dir>
 import os, shlex, subprocess, sys
 host, gen = os.path.abspath(sys.argv[1]), os.path.abspath(sys.argv[2])
@@ -13,7 +13,7 @@ cmd = subprocess.run(['make', '-s', '-n', '-B', '-C', host, 'dmhost', 'MSL_SDK=i
 # The host's own link command (-o dmhost) first, then the per-file compile commands of the libraries it depends on (libvpx): header paths keep this order, so the host's headers are found first
 lines = [shlex.split(l) for l in cmd.splitlines() if l.lstrip().startswith('clang')]
 lines.sort(key=lambda t: 'dmhost' not in t)
-srcs, incs, defs, fws = [], [], [], []
+srcs, incs, defs, fws, libs = [], [], [], [], []
 for toks in lines:
     i = 0
     while i < len(toks):
@@ -23,6 +23,7 @@ for toks in lines:
             d = os.path.normpath(os.path.join(host, t[2:]))
             if d not in incs: incs.append(d)
         elif t.startswith('-D'): defs.append(t)
+        elif t.startswith('-l') and t not in libs: libs.append(t)   # system libraries (-lz: hle_album.c's PNG writer)
         elif t.endswith(('.c', '.m', '.S')): srcs.append(os.path.normpath(os.path.join(host, t)))
         i += 1
 assert srcs, 'no source files in the compile command'
@@ -41,4 +42,4 @@ for s in srcs:
     os.symlink(s, f'{gen}/src/{flat}')
 print('HEADER_SEARCH_PATHS = $(inherited) ' + ' '.join(f'"{d}"' for d in incs + dirs))
 print('OTHER_CFLAGS = $(inherited) ' + ' '.join(defs))
-print('DM_FRAMEWORKS = ' + ' '.join(f'-framework {f}' for f in fws if f != 'Cocoa'))
+print('DM_FRAMEWORKS = ' + ' '.join([f'-framework {f}' for f in fws if f != 'Cocoa'] + libs))
