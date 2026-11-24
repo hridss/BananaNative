@@ -25,7 +25,6 @@ DM_AUDIO_FEED	developer	Audio			text			both
 DM_AUDIO_MUTE	internal	Audio			text			both						Mac or iOS only	
 DM_AUDIO_STALL_MS	developer	Diagnostics			text			both							
 DM_AUDREN_TRACE	developer	Diagnostics			text			both							
-DM_AUDREN_WAIT	developer	Audio			text			both							
 DM_AV1_DAV1D	developer	Diagnostics			text			both							
 DM_AV1_DAV1D_FP	developer	Game			text			both							
 DM_AV1_MC_FAIL	developer	Diagnostics			text			both							

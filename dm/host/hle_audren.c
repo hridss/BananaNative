@@ -94,18 +94,22 @@ HLE_FORCE("_ZN2nn5audio30GetAudioRendererWorkBufferSizeERKNS0_22AudioRendererPar
 // One renderer's state (nxnative 18b435ac38 / a334797d12). Only the render thread and the updates of this renderer touch it, apart from the one lock over all renderers' rendering
 // (g_render_mu). This was one set of globals: a second renderer got no render thread, its updates rendered catch-up frames into the first one's output queue, about 10% of its frames
 // (Mario & Luigi: Brothership), and its own frames were never rendered otherwise
-enum { CQ = 4, AR_MAX = 4 };   // AR_MAX as g_rev below
+enum { AR_MAX = 4 };   // AR_MAX as g_rev below
 typedef struct { void *ptr; uint64_t cap, size; } gbuf;       // same as the front of hle_audio.c's AudioOutBuffer
 typedef struct {
     void *handle[2];                         // AudioRendererHandle (renderer object, client state); handle[0] NULL: a free slot
+    void *ev;                                // the renderer event the game waits on (g_rev slot, or the game's own object), cleared by each update as Horizon's AudioRenderSystem::Update does; NULL: none to clear
+    int ev_kernel;                           // 1: ev is bound as a service-layer event (hle_bind_system_event, device 0); 0: a local SDK SystemEvent (an explicit CPU renderer in auto mode)
     uint8_t *sys;                            // its AudioRenderSystem, from its first render or update (ar_of_sys)
     _Atomic int open;
     void *render_tt;                         // the render thread (ThreadType from dm_guest_thread_spawn): Close joins it before the SDK tears the renderer down
     int16_t frame[FRAME_MAX * 2]; int frame_n;   // the latest frame (stereo int16)
-    _Atomic uint64_t frames, nonsilent, updates, renders, catchups;
-    uint64_t last_r; int updated;            // the render count at the last update, once there was one
-    int16_t cq[CQ][FRAME_MAX * 2]; int cq_n[CQ]; _Atomic uint32_t cq_head, cq_tail;   // output queue of catch-up frames
-    pthread_mutex_t cq_mu; pthread_cond_t cq_cv;   // the render thread signals each frame it takes off the queue, and each render (catch-up pacing)
+    _Atomic uint64_t frames, nonsilent, updates, renders;
+    uint64_t last_r; int updated;            // for DM_AUDREN_TRACE: the render count at the last update, once there was one
+    // Serializes the render thread's exec() (render, then the SDK's signal of ev) against an update's SDK Update and its clear of ev, as the console's AudioRenderSystem lock does,
+    // so a signal is either before the update (and cleared by it) or from a render of the updated state. Taken with dm_host_mutex_lock: the render thread holds it through the signal,
+    // whose same-core handoff waits for the woken sound thread, which may then wait here in its next update (Metroid Dread, see render_lock)
+    pthread_mutex_t mu;
     int sink_logged;
     uint64_t win_frames, win_nonsilent; int32_t win_peak;   // capture's log window since its last line
     int32_t up_buf[2 * (15 + FRAME_MAX)]; uint32_t up_pos;   // up_3_2's last samples and position
@@ -115,7 +119,6 @@ static ar_t g_ar[AR_MAX];
 static pthread_mutex_t g_ar_mu = PTHREAD_MUTEX_INITIALIZER;   // the slots' handle and sys fields
 static __thread ar_t *t_ar;                  // the renderer this render thread drives
 static int ar_index(const ar_t *a) { return (int)(a - g_ar); }
-static void cq_popped(ar_t *a) { pthread_mutex_lock(&a->cq_mu); pthread_cond_broadcast(&a->cq_cv); pthread_mutex_unlock(&a->cq_mu); }
 // The renderer an AudioRenderSystem belongs to, for the SDK's calls that name only that. A system not seen yet belongs to the one open renderer whose system is not known: the render thread
 // names its system at its first render, right after the open, and a game's first updates can come before that (two updates 0.04 ms apart at start-up, below)
 static ar_t *ar_of_sys(uint8_t *sys) {
@@ -129,9 +132,8 @@ static ar_t *ar_of_sys(uint8_t *sys) {
     pthread_mutex_unlock(&g_ar_mu);
     return found;
 }
-// The render lock (recursive): the render thread holds it from its choice (a queued catch-up frame, or a render of its own) through the render, an update from its catch-up render
-// through queuing it, so the two never cross. The thread used to decide on an empty queue, wait for the catch-up render in progress, and append its own, later, frame first: two 5 ms
-// blocks swapped, a click
+// The render lock (recursive): the render thread holds it through its render and the copy of the frame, so a render of the same renderer by the game itself (an explicit CPU
+// renderer it executes) cannot rewrite the frame in between.
 // One lock over all renderers (nxnative 18b435ac38): the header layout is worked out once from whichever list comes first, by trying each layout in turn (capture), and
 // capture's downmix buffer is shared; a frame takes hundredths of a millisecond
 static pthread_mutex_t g_render_mu; static pthread_once_t g_render_mu_once = PTHREAD_ONCE_INIT;
@@ -139,7 +141,8 @@ static void render_mu_init(void) { pthread_mutexattr_t a; pthread_mutexattr_init
 // A guest thread that waits for this lock counts as blocked (dm_host_mutex_lock, hle_thread.c's same-core wake handoff): the render thread holds it through the SDK's signal of
 // the game's renderer event, the signal wakes the game's sound thread (a higher priority on the same core), and the handoff waits until that thread blocks. The sound thread's update
 // then waited for this lock for its catch-up render (a timer-driven update just before the event's own, nothing rendered since the one before), a wait the host counted as running:
-// neither side ever went on, the renderer stopped for good and the game's cutscene clock with it (Metroid Dread: the game's 45,692nd render)
+// neither side ever went on, the renderer stopped for good and the game's cutscene clock with it (Metroid Dread: the game's 45,692nd render). Updates no longer render; they wait
+// for the renderer's own lock (ar_t mu) instead, taken the same way
 static void render_lock(void) { pthread_once(&g_render_mu_once, render_mu_init); dm_host_mutex_lock(&g_render_mu); }
 static void render_unlock(void) { pthread_mutex_unlock(&g_render_mu); }
 
@@ -183,29 +186,26 @@ static void render_main(void *arg) {
         else if (held && t > next) next = t;
         else if (next > t) { struct timespec ts = {0, (long)(next - t)}; nanosleep(&ts, NULL); }
         next += FRAME_NS - FRAME_NS / 200;
-        const int16_t *src; int got;
+        // The renderer's lock (a->mu) over the render and the SDK's signal of the game's renderer event, against an update and its clear of that event (h_ars_Update); the render
+        // lock over the render and the copy of the frame (see render_lock)
+        dm_host_mutex_lock(&a->mu);
         render_lock();
-        uint32_t h = atomic_load(&a->cq_head);   // The renderer's own queue and frame (a->), here and in the two lines below
-        if (h != atomic_load(&a->cq_tail)) { src = a->cq[h % CQ]; got = a->cq_n[h % CQ]; atomic_store(&a->cq_head, h + 1); cq_popped(a); }   // play queued catch-up output first
-        else { a->frame_n = 0; exec(a->handle[0], a->handle[1]); src = a->frame; got = a->frame_n; cq_popped(a); }   // SDK: generate commands → CPU processing (output taken in the host takeover) → signal the game's renderer event; cq_popped wakes an update that waits for this render (h_ars_Update)
-        // The frame is copied out before the lock is released. Taking a frame off a full queue wakes the update that waits for room (cq_popped), and its catch-up
-        // render goes into the slot just taken: copied after the unlock, the block played was that newer frame, the frame taken was never played, and the newer one played
-        // again in its turn four blocks later. Fire Emblem: Three Houses keeps the queue full (one update in four renders a catch-up frame): 16.6 % of its sounding 5 ms
-        // blocks were exact copies of the block four before, heard as crackle; Animal Crossing: New Horizons the same
-        int n = got ? got : 240;
+        a->frame_n = 0;
+        exec(a->handle[0], a->handle[1]);   // SDK: generate commands → CPU processing (output taken in the host takeover) → signal the game's renderer event
+        int got = a->frame_n, n = got ? got : 240;
         gbuf *b = free_list[--nfree];
-        if (got) memcpy(b->ptr, src, (size_t)n * 4); else memset(b->ptr, 0, (size_t)n * 4);
+        if (got) memcpy(b->ptr, a->frame, (size_t)n * 4); else memset(b->ptr, 0, (size_t)n * 4);
         b->size = (uint64_t)n * 4;
         render_unlock();
+        pthread_mutex_unlock(&a->mu);
         if (!dm_pcmout_append(out, b)) free_list[nfree++] = b;
     }
     dm_pcmout_close(out);   // the output would otherwise keep its sound card callback or silent sink running and hold one of the AudioOut slots after the renderer closes
-    cq_popped(a);   // an update waiting for queue space (catch-up pacing) sees open cleared
 }
 
 // Both OpenAudioRenderer forms: CPU rendering + manual execution, then the host's render thread. With the event the game waits on it, which each render signals; without it the
 // game paces its updates itself (Balatro: LÖVE's OpenAL Soft) and still needs the renderer to run every 5 ms: the form without an event used to start no render thread, so only the
-// game's updates rendered (catch-up frames, which nothing played) and the game was silent.
+// game's updates rendered (catch-up frames, which nothing played; updates no longer render at all) and the game was silent.
 // SDK 17.5.3's event form opens the renderer by calling the form without one through the PLT (sdk+0x1e489c, ROMANCE OF THE THREE KINGDOMS 8 REMAKE), which the loader binds to the
 // hook below since that form has one (Balatro): the inner call started the render thread before the event form had created its event, and the outer call then logged a second
 // renderer. The inner call (t_in_open) goes straight to the SDK with the host's copy of the parameter, as it did before the form without an event was hooked
@@ -285,8 +285,15 @@ static Result ar_open(void **handle, void *ev, const uint8_t *param, void *work,
     for (int i = 0; i < AR_MAX && !a; i++) if (!g_ar[i].handle[0]) a = &g_ar[i];
     if (a) {   // the slot's old contents are of a closed renderer, whose thread has ended; memset leaves no lock held
         memset(a, 0, sizeof *a);
-        pthread_mutex_init(&a->cq_mu, NULL); pthread_cond_init(&a->cq_cv, NULL);
-        a->handle[0] = handle[0]; a->handle[1] = handle[1]; atomic_store(&a->open, 1);
+        pthread_mutex_init(&a->mu, NULL);
+        a->handle[0] = handle[0]; a->handle[1] = handle[1];
+        // The event each update clears (h_ars_Update): the renderer's own kernel event, or the game's object bound in its place (device 0, both bound above); the game's own
+        // local event for an explicit CPU renderer in auto mode (device 1, mode 0), which the SDK keeps. An explicit CPU + manual renderer (device 1, mode 1) is the game's to
+        // drive, as is its event: the SDK's own Update clears only its internal event there too
+        int device = *(int32_t *)(param + P_DEVICE), manual = device == 1 && *(int32_t *)(param + P_MODE) == 1;
+        a->ev = ev && !manual ? (sev ? sev : ev) : NULL;
+        a->ev_kernel = a->ev && device == 0;
+        atomic_store(&a->open, 1);
     }
     pthread_mutex_unlock(&g_ar_mu);
     LOG("audren: renderer %d opened from %s+%#llx", a ? ar_index(a) : -1, m ? m->name : "host", m ? (unsigned long long)((uint8_t *)ra - m->base) : 0ULL);
@@ -306,6 +313,7 @@ HLE_FORCE("_ZN2nn5audio18CloseAudioRendererENS0_19AudioRendererHandleE", "close 
     ar_t *a = NULL;
     for (int i = 0; i < AR_MAX && !a; i++) if (g_ar[i].handle[0] == obj) a = &g_ar[i];
     if (a && a->render_tt) { atomic_store(&a->open, 0); dm_guest_thread_join(a->render_tt); a->render_tt = NULL; }
+    if (a) { dm_host_mutex_lock(&a->mu); a->ev = NULL; a->ev_kernel = 0; pthread_mutex_unlock(&a->mu); }   // no update clears the event once it is destroyed below
     void *owned = objmap_del(obj), *sev = rev_find(obj);
     orig(obj, state);
     free(owned);
@@ -481,8 +489,8 @@ static int capture(ar_t *a, const uint8_t *cl, size_t len, int16_t *dst) {
     }
     return 0;
 }
-// Render one frame (generate commands + CPU processing); dst = output (stereo int16, *nout samples). The two callers (render thread, catch-up) are serialized by the render lock (above
-// cq_popped): they share one command buffer   (the update, render and catch-up counts are each renderer's, in ar_t)
+// Render one frame (generate commands + CPU processing); dst = output (stereo int16, *nout samples). Its callers (the render threads, a game executing its own CPU renderer)
+// are serialized by the render lock (above render_main): they share capture's state   (the update and render counts are each renderer's, in ar_t)
 // SDK 20's AudioRenderSystem (The Legend of Zelda: Breath of the Wild 1.9.0) has another layout: the member functions for mode / device / command buffer are inlined (sdk+0x22a70c ExecuteAudioRendererRendering:
 //   +0x48 rendering device and +0x4c execution mode, both must be 1; +0xf8 / +0x100 command buffer start / length), GenerateCommand takes a Span<std::byte> and returns a Span (x0 start, x1 length: the generated command list),
 //   and the mutex UpdateImpl holds is at +0x2d0 (+0x1f0 in SDK 16). The layout is recognized by the presence of the Span version of GenerateCommand
@@ -545,7 +553,7 @@ static Result render_once(ar_t *a, uint8_t *sys, int16_t *dst, int *nout) {
     }
     int md = gen20 ? *(int32_t *)(sys + 0x4c) : mode(sys), dv = gen20 ? *(int32_t *)(sys + 0x48) : device(sys);
     if (md != 1 || dv != 1) return 0x40299;   // same as the original: manual rendering needs CPU + manual mode
-    render_lock();   // recursive: the catch-up render nests inside the render thread's or the update's hold
+    render_lock();   // recursive: nests inside the render thread's hold
     uint64_t t0 = now_ns();
     // Command generation must exclude the game thread's RequestUpdate (AudioRenderSystem::Update, which holds the mutex at mu_off): the original system thread (SendCommandToDsp) generates under the same lock. Processing (the CPU DSP) stays outside the lock, as in the original.
     uint8_t *cl; size_t n;
@@ -559,7 +567,7 @@ static Result render_once(ar_t *a, uint8_t *sys, int16_t *dst, int *nout) {
     if (dst) *nout = capture(a, cl, n, dst);
     // render time per frame (budget: 5 ms per frame): mean / max every 2000 frames
     static uint64_t sum, mx, cnt; uint64_t d = now_ns() - t0; sum += d; if (d > mx) mx = d;
-    if (++cnt == 2000) { LOG("audren: render time mean %.2f ms / max %.2f ms (5 ms budget per frame, last 2000 frames); catch-up renders so far %llu", sum / 2000 / 1e6, mx / 1e6, (unsigned long long)atomic_load(&a->catchups)); sum = mx = cnt = 0; }
+    if (++cnt == 2000) { LOG("audren: render time mean %.2f ms / max %.2f ms (5 ms budget per frame, last 2000 frames)", sum / 2000 / 1e6, mx / 1e6); sum = mx = cnt = 0; }
     render_unlock();
     return RES_OK;
 }
@@ -597,60 +605,37 @@ HLE_FORCE("_ZN2nn5audio6server24AudioRendererManagerImpl17AudioRendererImpl29Exe
 HLE_FORCE("_ZN2nn5audio6server17AudioRenderSystem29ExecuteAudioRendererRenderingEv", "render one frame manually (SDK 20, reached through the PLT): same as above, through the host's locked rendering",
           Result, h_ars_Exec, uint8_t *sys) { return ar_exec(sys); }
 
-// At least one rendered frame between two RequestUpdates. An effect's "needs initialization" is set only by the update in which the game flags it as new (e.g. LightLimiterInfo::Update: isNew → parameter status 0);
-// the next update overwrites it with the game's value; if no commands were generated in between, the DSP never receives the initialization and ApplyLightLimiterEffect later reads a null pointer. The real renderer produces a frame every 5 ms on its own
-// and the game waits on the renderer event, so normally it is one update per frame; but at start-up the game updates twice in a row (0.04 ms apart), and with real audio output the sound card opens slowly and the first frame comes late, leaving no frame in between.
-// Here, when nothing has been rendered since the last update, one catch-up frame is rendered on the current thread first; its output is queued and played by the render thread in place of its next render.
-// Catch-up frames keep real time: when the queue is full the update waits for the render thread to play one (at most 50 ms). Square Enix's sound driver (DRAGON QUEST XI S,
-// SQEX::Sd::Driver::Core::CoreAudioOut, main+0x442c5c0) refills its voices in a loop: append a wave buffer, RequestUpdate, take the next released buffer, and it waits on the renderer
-// event only when none is released. Every update there renders a catch-up frame, which releases the buffer just appended, so the loop never waits: discarding catch-up output when the
-// queue was full ran it at 11,000 updates a second on one core, the game's sound about 50 times faster than the output. Waiting keeps the queue full instead: the render thread then
-// only plays queued frames, and the driver's own updates render every frame. A queued frame does not signal the renderer event: the SDK signals it in each render, and a game woken by a
-// queued frame updated with nothing rendered since, which rendered the next catch-up frame, and so on (Big Brain Academy: Brain vs. Brain, one catch-up per update instead of 37 a run)
-HLE_FORCE("_ZN2nn5audio6server17AudioRenderSystem6UpdateEPvmS3_mPKvm", "renderer update: if nothing was rendered since the last update, render a catch-up frame first (so effects get initialized), then hand over to the SDK",
+// Horizon's AudioRenderSystem::Update clears the renderer's SystemEvent under the update lock before it returns success (SDK 16 sdk+0x20c264), so a signal from a frame rendered
+// before the RequestUpdate is dropped and the game's next WaitSystemEvent blocks until a render of the updated state. The CPU + manual open the host substitutes (ar_open) gives
+// ExecuteAudioRendererRendering the renderer event the game waits on (a->ev), and the SDK's Update went on clearing only its own internal one, which nothing signals in that mode.
+// A stale signal (a frame rendered while the sound thread worked between its wait and its update, e.g. adding a light limiter) then let the next wait return at once, and the
+// second update overwrote an effect's "needs initialization" (LightLimiterInfo::Update: isNew → parameter status 0) before any commands were generated: ApplyLightLimiterEffect
+// later read a null pointer (Super Mario Bros. Wonder). The host used to render a catch-up frame inside such an update, queue it for the render thread and, with the queue full,
+// wait up to 50 ms (and, before that, up to 15 ms for the render thread's next frame): updates that polled rather than waited on the event stalled there (Bink's sound driver,
+// Batman: Arkham Asylum's opening movie at 16 fps upstream), and the voices ran ahead of the clock (Fire Emblem: Three Houses). The update now runs the SDK's Update and clears a->ev
+// holding the renderer's lock, which the render thread holds over its render and the SDK's signal (render_main): the console's ordering, with no render and no wait in RequestUpdate.
+// A driver that waits on the event only when no wave buffer came back (DRAGON QUEST XI S's CoreAudioOut, main+0x442c5c0) is paced by the 5 ms renders again
+HLE_FORCE("_ZN2nn5audio6server17AudioRenderSystem6UpdateEPvmS3_mPKvm", "renderer update: run the SDK's update and clear the renderer event, atomically against rendering, as Horizon's service does",
           Result, h_ars_Update, uint8_t *sys, void *o, size_t on, void *p, size_t pn, const void *in, size_t inn) {
     static Result (*orig)(void *, void *, size_t, void *, size_t, const void *, size_t); if (!orig) orig = gsym("_ZN2nn5audio6server17AudioRenderSystem6UpdateEPvmS3_mPKvm");
-    // The update's own renderer (nxnative 18b435ac38): its counts, queue and render thread, in every a-> below
+    // The update's own renderer (nxnative 18b435ac38): its counts, lock and event, in every a-> below
     ar_t *a = ar_of_sys(sys);
-    if (!a) return orig(sys, o, on, p, pn, in, inn);   // two renderers just opened, neither has rendered: at most one catch-up frame less
-    uint64_t u = atomic_fetch_add(&a->updates, 1) + 1, r = atomic_load(&a->renders);
-    // An update with nothing rendered since the one before first waits for the render thread's next frame (at most 15 ms; DM_AUDREN_WAIT=0: no wait, as before), and
-    // renders a catch-up frame only when none came. The console's renderer runs by its own 5 ms timer whatever the game does, so a sound thread that wakes late and updates
-    // twice in a row moves nothing there; a catch-up frame here ran the voices 5 ms ahead of the clock each time. Fire Emblem: Three Houses streams its music through a
-    // voice's four 5 ms wave buffers and refills them by the clock: one update in four rendered a catch-up frame, the voice reached buffers not refilled yet, and a quarter
-    // of the sounding blocks were exact copies of the block 20 ms before (crackle); Animal Crossing: New Horizons the same
-    if (a->updated && r == a->last_r) {
-        static int wait_on = -1; if (wait_on < 0) { const char *e = getenv("DM_AUDREN_WAIT"); wait_on = !e || atoi(e); }
-        if (wait_on && atomic_load(&a->cq_tail) == atomic_load(&a->cq_head)) {   // (no queued frame: the render thread renders its next one itself)
-            struct timespec dl; clock_gettime(CLOCK_REALTIME, &dl); dl.tv_nsec += 15000000; if (dl.tv_nsec >= 1000000000) { dl.tv_sec++; dl.tv_nsec -= 1000000000; }
-            pthread_mutex_lock(&a->cq_mu);
-            dm_host_work++;   // a wait for the render thread is not a thread running on its core (see render_lock)
-            while (atomic_load(&a->open) && atomic_load(&a->renders) == r && !pthread_cond_timedwait(&a->cq_cv, &a->cq_mu, &dl)) {}
-            dm_host_work--;
-            pthread_mutex_unlock(&a->cq_mu);
-            r = atomic_load(&a->renders);
-        }
-    }
-    if (a->updated && r == a->last_r) {
-        uint64_t c = atomic_fetch_add(&a->catchups, 1) + 1;
-        if (c <= 3) LOG("audren: renderer %d: no frame rendered before update %llu, rendering a catch-up frame first (%llu so far)", ar_index(a), (unsigned long long)u, (unsigned long long)c);
-        uint32_t t = atomic_load(&a->cq_tail);
-        if (t - atomic_load(&a->cq_head) >= CQ) {   // queue full: wait for the render thread to play one (every 5 ms), so catch-up frames keep real time; at most 50 ms (an output that stopped)
-            struct timespec dl; clock_gettime(CLOCK_REALTIME, &dl); dl.tv_nsec += 50000000; if (dl.tv_nsec >= 1000000000) { dl.tv_sec++; dl.tv_nsec -= 1000000000; }
-            pthread_mutex_lock(&a->cq_mu);
-            dm_host_work++;
-            while (atomic_load(&a->open) && t - atomic_load(&a->cq_head) >= CQ && !pthread_cond_timedwait(&a->cq_cv, &a->cq_mu, &dl)) {}
-            dm_host_work--;
-            pthread_mutex_unlock(&a->cq_mu);
-        }
-        // Render lock around the catch-up render too (see above), so it cannot cross a render-thread render
-        if (t - atomic_load(&a->cq_head) < CQ) { render_lock(); render_once(a, sys, a->cq[t % CQ], &a->cq_n[t % CQ]); atomic_store(&a->cq_tail, t + 1); render_unlock(); }
-        else render_once(a, sys, NULL, NULL);   // still full (the output stopped): render anyway, output discarded
-    }
+    if (!a) return orig(sys, o, on, p, pn, in, inn);   // two renderers just opened, neither has rendered nor been updated yet: not known which one this is
+    uint64_t u = atomic_fetch_add(&a->updates, 1) + 1;
+    dm_host_mutex_lock(&a->mu);
+    uint64_t r = atomic_load(&a->renders);
     static int tr = -1; if (tr < 0) tr = getenv("DM_AUDREN_TRACE") != NULL;
-    if (tr && u < 200) LOG("audren update #%llu t=%.3f ms, %llu frames rendered since the last update", (unsigned long long)u, now_ns() / 1e6, (unsigned long long)(atomic_load(&a->renders) - (a->updated ? a->last_r : 0)));
+    if (tr && u < 200) LOG("audren update #%llu t=%.3f ms, %llu frames rendered since the last update", (unsigned long long)u, now_ns() / 1e6, (unsigned long long)(r - (a->updated ? a->last_r : 0)));
     Result res = orig(sys, o, on, p, pn, in, inn);
-    a->last_r = atomic_load(&a->renders); a->updated = 1;
+    if (res == RES_OK && a->ev) {
+        if (a->ev_kernel) hle_clear_system_event(a->ev);
+        else {
+            static void (*clear)(void *); if (!clear) clear = gsym("_ZN2nn2os16ClearSystemEventEPNS0_15SystemEventTypeE");
+            clear(a->ev);
+        }
+    }
+    a->last_r = r; a->updated = 1;
+    pthread_mutex_unlock(&a->mu);
     return res;
 }
 
@@ -659,8 +644,7 @@ void dm_audren_dump(void) {   // One line per renderer opened so far (a closed o
     int n = 0;
     for (int i = 0; i < AR_MAX; i++) {
         ar_t *a = &g_ar[i]; if (!a->handle[0] && !atomic_load(&a->updates) && !atomic_load(&a->renders)) continue;
-        LOG("audren: renderer %d %s, %llu renders, %llu updates (%llu catch-up), catch-up queue %u of %d", i, atomic_load(&a->open) ? "open" : "closed", (unsigned long long)atomic_load(&a->renders),
-            (unsigned long long)atomic_load(&a->updates), (unsigned long long)atomic_load(&a->catchups), (unsigned)(atomic_load(&a->cq_tail) - atomic_load(&a->cq_head)), CQ);
+        LOG("audren: renderer %d %s, %llu renders, %llu updates", i, atomic_load(&a->open) ? "open" : "closed", (unsigned long long)atomic_load(&a->renders), (unsigned long long)atomic_load(&a->updates));
         n++;
     }
     if (!n) LOG("audren: closed, no renderer opened yet");

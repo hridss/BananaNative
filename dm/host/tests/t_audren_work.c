@@ -27,6 +27,7 @@ enum { SDK_WORK = 0x760000, SERVICE_WORK = 0x61d000 };
 static int opens, starts, joins, closes, fail_open, nested;
 static int event_destroys, event_binds, attaches, event_in_handle;
 static void *sdk_event, *game_event;
+static int expect_game_event;   // an explicit CPU renderer's open: the SDK keeps the game's own event, as on Horizon
 static void *sdk_work;
 static void *map_key, *map_value;
 static size_t sdk_size(const uint8_t *param) {
@@ -47,7 +48,7 @@ static Result sdk_open(void **handle, const uint8_t *param, void *work, size_t s
     return RES_OK;
 }
 static Result sdk_open_ev(void **handle, void *ev, const uint8_t *param, void *work, size_t size) {
-    assert(ev && ev != game_event);   // the SDK's CPU / manual open keeps this object and signals it on every render: the renderer's, never the game's
+    assert(ev && (expect_game_event ? ev == game_event : ev != game_event));   // the SDK's CPU / manual open keeps this object and signals it on every render: the renderer's, never the game's (unless the game opened a CPU renderer itself)
     sdk_event = ev;
     Result r = nested ? h_ar_Open0(handle, param, work, size) : sdk_open(handle, param, work, size);
     if (!r && event_in_handle) handle[1] = ev;   // SDK 3 to 12 keep the event in the handle (SDK 3 sdk+0x17dffc, SDK 12 sdk+0x4d274); SDK 18 keeps it at *handle[1]
@@ -59,6 +60,15 @@ static void sdk_attach(void *ev, uint32_t h, int managed, int clear) {   // the 
     assert(ev == game_event && h == 0x1003 && managed == 1 && clear == 1);
     attaches++;
 }
+// Each update clears the renderer event the game waits on (upstream nxnative 67e671465): the bound kernel event through the host, a local SDK event through ClearSystemEvent
+static int sdk_updates, event_clears, local_clears;
+static Result update_rc;
+static void *last_cleared;
+static Result sdk_update(void *sys, void *o, size_t on, void *p, size_t pn, const void *in, size_t inn) {
+    (void)sys; (void)o; (void)on; (void)p; (void)pn; (void)in; (void)inn; sdk_updates++; return update_rc;
+}
+static void sdk_clear_event(void *ev) { local_clears++; last_cleared = ev; }
+void hle_clear_system_event(void *ev) { event_clears++; last_cleared = ev; }
 static void sdk_close(void *obj, void *state) {
     assert(obj == sdk_work && state == (event_in_handle ? sdk_event : (uint8_t *)sdk_work + 0x80));
     assert(((uint8_t *)obj)[SDK_WORK - 1] == 0x5a);   // storage is alive through SDK teardown
@@ -72,6 +82,8 @@ void *guest_sym(const char *name) {
     if (!strcmp(name, "_ZN2nn2os18DestroySystemEventEPNS0_15SystemEventTypeE")) return sdk_destroy_event;
     if (!strcmp(name, "_ZN2nn2os30GetReadableHandleOfSystemEventEPKNS0_15SystemEventTypeE")) return sdk_readable;
     if (!strcmp(name, "_ZN2nn2os33AttachReadableHandleToSystemEventEPNS0_15SystemEventTypeEjbNS0_14EventClearModeE")) return sdk_attach;
+    if (!strcmp(name, hle_force_h_ars_Update.name)) return sdk_update;
+    if (!strcmp(name, "_ZN2nn2os16ClearSystemEventEPNS0_15SystemEventTypeE")) return sdk_clear_event;
     return NULL;
 }
 void *objmap_get(const void *key) { return key == map_key ? map_value : NULL; }
@@ -129,6 +141,32 @@ static void render_lock_wait_is_host_work(void) {
     render_unlock();
     pthread_join(th, NULL);
     assert(atomic_load(&lock_waiter_done));
+}
+
+// An update waiting for the renderer's lock, which the render thread holds through its signal of the renderer event, counts as blocked as well (the same Metroid Dread case:
+// the woken sound thread's next update must not hold the same-core handoff)
+static _Atomic(_Atomic int *) update_waiter_work;
+static _Atomic int update_waiter_done;
+static void *update_waiter(void *sys) {
+    atomic_store(&update_waiter_work, &dm_host_work);
+    assert(h_ars_Update(sys, NULL, 0, NULL, 0, NULL, 0) == RES_OK);
+    assert(atomic_load(&dm_host_work) == 0);
+    atomic_store(&update_waiter_done, 1);
+    return NULL;
+}
+static void update_waits_as_host_work(ar_t *a, uint8_t *sys) {
+    pthread_t th; int counted = 0;
+    pthread_mutex_lock(&a->mu);   // the render thread inside exec()
+    assert(!pthread_create(&th, NULL, update_waiter, sys));
+    for (int i = 0; i < 5000 && !counted; i++) {
+        _Atomic int *w = atomic_load(&update_waiter_work);
+        counted = w && atomic_load(w) == 1;
+        if (!counted) usleep(1000);
+    }
+    assert(counted && !atomic_load(&update_waiter_done));
+    pthread_mutex_unlock(&a->mu);
+    pthread_join(th, NULL);
+    assert(atomic_load(&update_waiter_done));
 }
 
 int main(void) {
@@ -226,8 +264,45 @@ int main(void) {
     assert(joins == j + 2 && !g_ar[1].handle[0] && atomic_load(&g_ar[0].open));
     sdk_work = work; join_slot = 0; h_ar_Close(handle[0], handle[1]);
     assert(joins == j + 3 && !g_ar[0].handle[0] && allocations == a && !map_key);
+    // The renderer event each update clears (upstream nxnative 67e671465). A DSP open with an event (what games ask for): the renderer's own kernel event, cleared through
+    // the host after a successful SDK update, kept after a failed one, and forgotten by Close before it destroys the event
+    *(int32_t *)(param + P_DEVICE) = 0; *(int32_t *)(param + P_MODE) = 0;
+    uint8_t dsp_sys[8] = {0};
+    sdk_work = work; join_slot = 0;
+    assert(!h_ar_Open(handle, event, param, work, SDK_WORK) && allocations == a);
+    assert(g_ar[0].ev == sdk_event && g_ar[0].ev_kernel && (uint8_t *)sdk_event >= (uint8_t *)g_rev && (uint8_t *)sdk_event < (uint8_t *)(g_rev + 4));
+    for (int i = 0; i < 3; i++) assert(h_ars_Update(dsp_sys, NULL, 0, NULL, 0, NULL, 0) == RES_OK);   // back-to-back updates: no render, no wait, each clears
+    assert(sdk_updates == 3 && event_clears == 3 && !local_clears && last_cleared == sdk_event && g_ar[0].sys == dsp_sys && atomic_load(&g_ar[0].renders) == 0);
+    update_rc = RES_FAIL;
+    assert(h_ars_Update(dsp_sys, NULL, 0, NULL, 0, NULL, 0) == RES_FAIL && sdk_updates == 4 && event_clears == 3);
+    update_rc = RES_OK;
+    update_waits_as_host_work(&g_ar[0], dsp_sys);
+    assert(sdk_updates == 5 && event_clears == 4);
+    h_ar_Close(handle[0], handle[1]);
+    assert(!g_ar[0].handle[0] && !g_ar[0].ev && !g_ar[0].ev_kernel && !rev_find(handle[0]));
+    // A DSP open without an event (Balatro): nothing to clear
+    assert(!h_ar_Open0(handle, param, work, SDK_WORK) && !g_ar[0].ev && !g_ar[0].ev_kernel);
+    assert(h_ars_Update(dsp_sys, NULL, 0, NULL, 0, NULL, 0) == RES_OK && sdk_updates == 6 && event_clears == 4 && !local_clears);
+    h_ar_Close(handle[0], handle[1]);
+    // An explicit CPU renderer in auto mode (device 1, mode 0): the SDK keeps the game's local event, cleared through nn::os::ClearSystemEvent
+    *(int32_t *)(param + P_DEVICE) = 1;
+    int d = event_destroys, bnd = event_binds;
+    expect_game_event = 1;
+    assert(!h_ar_Open(handle, event, param, work, SDK_WORK));
+    assert(g_ar[0].ev == (void *)event && !g_ar[0].ev_kernel && event_destroys == d && event_binds == bnd);
+    assert(h_ars_Update(dsp_sys, NULL, 0, NULL, 0, NULL, 0) == RES_OK && sdk_updates == 7 && event_clears == 4 && local_clears == 1 && last_cleared == (void *)event);
+    h_ar_Close(handle[0], handle[1]);
+    assert(!g_ar[0].ev && event_destroys == d);
+    // An explicit CPU + manual renderer (device 1, mode 1): the game drives it and its event; updates leave the event alone, as the SDK's own Update does
+    *(int32_t *)(param + P_MODE) = 1;
+    assert(!h_ar_Open(handle, event, param, work, SDK_WORK));
+    expect_game_event = 0;
+    assert(!g_ar[0].ev && !g_ar[0].ev_kernel);
+    assert(h_ars_Update(dsp_sys, NULL, 0, NULL, 0, NULL, 0) == RES_OK && sdk_updates == 8 && event_clears == 4 && local_clears == 1);
+    h_ar_Close(handle[0], handle[1]);
+    assert(allocations == a && !map_key);
     free(work2);
     free(work);
-    puts("audren work buffer: Horizon sizing fixtures, both opens, nested open, failures, close lifetime and two renderers at once passed");
+    puts("audren work buffer: Horizon sizing fixtures, both opens, nested open, failures, close lifetime, two renderers at once and the renderer event cleared by each update passed");
     return 0;
 }

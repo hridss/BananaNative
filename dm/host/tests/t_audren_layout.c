@@ -12,13 +12,29 @@ enum { SAMPLES = 240, NMIX = 8, NCMD = 6 };
 // test_renderer_blocks: the renderer each appended block came from; the output holds what it is given and plays none of it
 static int blocks_on; static gbuf *blocks[AR_MAX][NBUF]; static int blocks_n[AR_MAX];
 static void blocks_exec(void *obj, void *state);
-void *guest_sym(const char *name) { return blocks_on && strstr(name, "ExecuteAudioRendererRendering") ? (void *)blocks_exec : NULL; }
+// test_update_clears_event / test_event_paced_driver (upstream nxnative 67e671465): the SDK's Update and the render thread's exec, and the renderer event the game waits on,
+// modelled as an auto-clear event (a wait consumes the signal) that each exec signals and the host's clear resets
+static int drv_on;
+static struct {
+    pthread_mutex_t mu; pthread_cond_t cv;
+    int signaled, renders, updates, clears, back_to_back, last_update_renders, slow_every, target;
+    Result update_rc;
+    gbuf *ring[NBUF]; unsigned ring_head, ring_tail;
+} drv;
+static void drv_exec(void *obj, void *state);
+static Result drv_update(void *sys, void *o, size_t on, void *p, size_t pn, const void *in, size_t inn);
+void *guest_sym(const char *name) {
+    if (blocks_on && strstr(name, "ExecuteAudioRendererRendering")) return (void *)blocks_exec;
+    if (drv_on && strstr(name, "ExecuteAudioRendererRendering")) return (void *)drv_exec;
+    if (drv_on && !strcmp(name, "_ZN2nn5audio6server17AudioRenderSystem6UpdateEPvmS3_mPKvm")) return (void *)drv_update;
+    return NULL;
+}
 void *objmap_get(const void *key) { (void)key; return NULL; }
 void objmap_put(const void *key, void *value) { (void)key; (void)value; }
 void *objmap_del(const void *key) { (void)key; return NULL; }
 void *dm_guest_thread_spawn(void (*fn)(void *), void *arg, int prio, size_t stack) { (void)fn; (void)arg; (void)prio; (void)stack; return NULL; }
 void dm_guest_thread_join(void *tt) { (void)tt; }
-uint64_t g_t0_ns; uint64_t now_ns(void) { return 0; }
+uint64_t g_t0_ns; uint64_t now_ns(void) { struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec; }   // the render thread's 5 ms clock
 module_t *module_of(const void *p) { (void)p; return NULL; }
 __thread _Atomic int dm_host_work;   // dm.h's host-work count (hle_thread.c), which the render lock's waiters raise: test_renderer_blocks runs the render thread's loop
 void *dm_pcmout_open(int ch) { (void)ch; return NULL; }
@@ -26,14 +42,16 @@ void dm_pcmout_close(void *k) { (void)k; }
 void dm_pcmout_start(void *k) { (void)k; }
 int dm_pcmout_append(void *k, void *b) {
     (void)k;
+    if (drv_on) { drv.ring[drv.ring_tail++ % NBUF] = b; return 1; }   // played at once: handed back by the next dm_pcmout_released
     if (!blocks_on) return 0;
     int r = ar_index(t_ar); blocks[r][blocks_n[r]++] = b;
     if (blocks_n[r] == NBUF) atomic_store(&t_ar->open, 0);
     return 1;
 }
-void *dm_pcmout_released(void *k) { (void)k; return NULL; }
+void *dm_pcmout_released(void *k) { (void)k; return drv_on && drv.ring_head != drv.ring_tail ? drv.ring[drv.ring_head++ % NBUF] : NULL; }
 void dm_pcmout_wait(void *k, int ms) { (void)k; (void)ms; }
 void hle_bind_system_event(void *ev, int ac) { (void)ev; (void)ac; }
+void hle_clear_system_event(void *ev) { (void)ev; pthread_mutex_lock(&drv.mu); drv.clears++; drv.signaled = 0; pthread_mutex_unlock(&drv.mu); }
 uint32_t hle_dup_readable_handle(uint32_t h) { return h; }
 
 static int32_t mix[NMIX * SAMPLES];
@@ -208,7 +226,7 @@ static void blocks_exec(void *obj, void *state) {
 }
 static void test_renderer_blocks(void) {
     blocks_on = 1;
-    for (int r = 0; r < 2; r++) { atomic_store(&g_ar[r].open, 1); render_main(&g_ar[r]); }
+    for (int r = 0; r < 2; r++) { pthread_mutex_init(&g_ar[r].mu, NULL); atomic_store(&g_ar[r].open, 1); render_main(&g_ar[r]); pthread_mutex_destroy(&g_ar[r].mu); }
     blocks_on = 0;
     for (int r = 0; r < 2; r++) {
         assert(blocks_n[r] == NBUF);
@@ -221,9 +239,89 @@ static void test_renderer_blocks(void) {
     memset(g_ar, 0, sizeof g_ar);
 }
 
+// Upstream nxnative 67e671465. The render thread's exec renders a frame and signals the renderer event, holding the renderer's lock as render_main does
+static void drv_exec(void *obj, void *state) {
+    (void)obj; (void)state;
+    for (int i = 0; i < SAMPLES * 2; i++) t_ar->frame[i] = 1;
+    t_ar->frame_n = SAMPLES;
+    pthread_mutex_lock(&drv.mu);
+    drv.renders++; drv.signaled = 1;
+    pthread_cond_broadcast(&drv.cv);
+    pthread_mutex_unlock(&drv.mu);
+}
+// The SDK's Update: counts updates that came with no render since the update before (what left a light limiter's initialization unsent on Super Mario Bros. Wonder)
+static Result drv_update(void *sys, void *o, size_t on, void *p, size_t pn, const void *in, size_t inn) {
+    (void)sys; (void)o; (void)on; (void)p; (void)pn; (void)in; (void)inn;
+    if (drv.update_rc) return drv.update_rc;
+    pthread_mutex_lock(&drv.mu);
+    if (drv.updates++ && drv.renders == drv.last_update_renders) drv.back_to_back++;
+    drv.last_update_renders = drv.renders;
+    pthread_mutex_unlock(&drv.mu);
+    return RES_OK;
+}
+static uint8_t drv_sys[8], drv_ev;
+static void drv_setup(void) {
+    memset(g_ar, 0, sizeof g_ar); memset(&drv, 0, sizeof drv);
+    pthread_mutex_init(&drv.mu, NULL); pthread_cond_init(&drv.cv, NULL);
+    ar_t *a = &g_ar[0];
+    pthread_mutex_init(&a->mu, NULL);
+    a->handle[0] = drv_sys; a->sys = drv_sys; a->ev = &drv_ev; a->ev_kernel = 1;
+    atomic_store(&a->open, 1);
+    drv_on = 1;
+}
+static void drv_teardown(void) {
+    drv_on = 0;
+    pthread_mutex_destroy(&g_ar[0].mu); pthread_cond_destroy(&drv.cv); pthread_mutex_destroy(&drv.mu);
+    memset(g_ar, 0, sizeof g_ar);
+}
+// An update clears a stale signal of the renderer event on success, keeps it on failure or when the renderer has no event, and neither renders nor waits: a sound driver
+// that polls (Bink, Batman: Arkham Asylum upstream) returns at once however often it updates
+static void test_update_clears_event(void) {
+    drv_setup();
+    for (int i = 0; i < 12; i++) {
+        drv.signaled = 1;
+        assert(h_ars_Update(drv_sys, NULL, 0, NULL, 0, NULL, 0) == RES_OK && !drv.signaled);
+    }
+    assert(drv.updates == 12 && drv.clears == 12 && drv.renders == 0 && atomic_load(&g_ar[0].updates) == 12);
+    drv.signaled = 1; drv.update_rc = RES_FAIL;
+    assert(h_ars_Update(drv_sys, NULL, 0, NULL, 0, NULL, 0) == RES_FAIL && drv.signaled && drv.clears == 12);
+    drv.update_rc = RES_OK; g_ar[0].ev = NULL;
+    assert(h_ars_Update(drv_sys, NULL, 0, NULL, 0, NULL, 0) == RES_OK && drv.signaled && drv.clears == 12 && drv.renders == 0);
+    drv_teardown();
+}
+// An event-paced sound thread (Super Mario Bros. Wonder, DRAGON QUEST XI S's CoreAudioOut once no wave buffer comes back): update, wait on the renderer event, work, and
+// again. It starts with a stale signal (the render thread's first frame came before its first update), and every third round its work outlasts a 5 ms frame, so a render
+// signals between its wait and its next update (adding a light limiter). The update's clear drops both: every update has a render of its own before the next one
+static void *drv_driver(void *arg) {
+    (void)arg;
+    for (int round = 0; round < drv.target; round++) {
+        assert(h_ars_Update(drv_sys, NULL, 0, NULL, 0, NULL, 0) == RES_OK);
+        pthread_mutex_lock(&drv.mu);
+        while (!drv.signaled) pthread_cond_wait(&drv.cv, &drv.mu);
+        drv.signaled = 0;   // auto-clear: the wait consumes the signal
+        pthread_mutex_unlock(&drv.mu);
+        if (round % drv.slow_every == drv.slow_every - 1) usleep(7000);
+    }
+    atomic_store(&g_ar[0].open, 0);
+    return NULL;
+}
+static void test_event_paced_driver(void) {
+    drv_setup();
+    drv.target = 40; drv.slow_every = 3;
+    drv.signaled = 1;   // stale
+    pthread_t th; assert(!pthread_create(&th, NULL, drv_driver, NULL));
+    render_main(&g_ar[0]);   // until the driver's last round closes the renderer
+    assert(!pthread_join(th, NULL));
+    assert(drv.updates == drv.target && drv.clears == drv.target && drv.back_to_back == 0 && drv.renders >= drv.target);
+    printf("audren event-paced driver: %d updates, %d renders, every update cleared the event, no two updates without a render between them\n", drv.updates, drv.renders);
+    drv_teardown();
+}
+
 int main(int argc, char **argv) {
     test_two_renderers();
     test_renderer_blocks();
+    test_update_clears_event();
+    test_event_paced_driver();
     if (argc == 2 && !strcmp(argv[1], "--histogram")) { test_histogram(); return 0; }
     if (argc == 2 && !strcmp(argv[1], "--malformed")) { test_malformed(16, 0); return 0; }
     test_headers();
@@ -240,6 +338,6 @@ int main(int argc, char **argv) {
         assert(WIFEXITED(status) && WEXITSTATUS(status) == 0);
     }
     test_histogram();
-    puts("audren layout: two renderers, renderers' own blocks, bounded histograms, malformed-list rejection, unaligned and truncated headers, SDK 4/5/6/16/21 stereo PCM and empty/incomplete startup recovery passed");
+    puts("audren layout: two renderers, renderers' own blocks, the renderer event cleared by each update, an event-paced driver, bounded histograms, malformed-list rejection, unaligned and truncated headers, SDK 4/5/6/16/21 stereo PCM and empty/incomplete startup recovery passed");
     return 0;
 }
