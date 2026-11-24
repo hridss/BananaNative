@@ -24,6 +24,15 @@
 #include "vka_gmem.h"
 #include "vka_lowram.h"
 #include "../../host/dm.h"
+#if __has_include("game_profile.h")
+#include "game_profile.h"
+#endif
+#ifndef DM_GAME_MEM_FILEBACK
+#define DM_GAME_MEM_FILEBACK 1          // (game.tsv mem_fileback)
+#endif
+#ifndef DM_GAME_POOL_GIVEBACK_ASYNC
+#define DM_GAME_POOL_GIVEBACK_ASYNC 0   // (game.tsv pool_giveback)
+#endif
 #include <errno.h>
 #include <stddef.h>
 #include <sched.h>
@@ -752,9 +761,11 @@ void *vka_mem_mapped(size_t n) {
 
 // The host gives [lo, hi) back (heap shrink, UnmapPhysicalMemory). Pools live there are a game error: their segments are given back first (logged), then the host's own release runs
 static void lazy_release_note(uintptr_t lo, uintptr_t hi);
+static int giveback_async(void); static void pend_wait_range(uintptr_t lo, uintptr_t hi);   // (asynchronous give-back, at mtl_pool_del)
 int vka_mem_release(uintptr_t lo, uintptr_t hi) {
     if (!vka_ok() || hi <= lo) return 0;
     segvec v = {0};
+    if (giveback_async()) pend_wait_range(lo, hi);   // a give-back still running on the worker over the range ends before the host maps fresh pages there
     pthread_mutex_lock(&g_pl); pthread_rwlock_wrlock(&g_rw);
     int k = sg_find(lo); if (k < 0 || g_sg[k].hi <= lo) k++;
     while (k < g_nsg && g_sg[k].lo < hi) {
@@ -1072,6 +1083,53 @@ static void lazy_release_note(uintptr_t lo, uintptr_t hi) {
     }
     pthread_mutex_unlock(&g_pmu);
 }
+// Asynchronous give-back (DM_VK_GIVEBACK_ASYNC=1, or game.tsv pool_giveback async): a finalized pool's segments are detached from the table on the game's thread as before
+// (so no lookup finds them and a placement over their range waits in pend_wait), and the give-back itself (unplace: the wait for the GPU, the copy of the bytes into anonymous
+// pages, the free) runs on one worker thread, in order. DRAGON BALL FighterZ (Unreal Engine 4.19) finalizes an 8 MiB pool every few seconds in battle; given back on its
+// render thread that cost 8-19 ms and a dropped frame each time. The game may touch the range meanwhile: reads and writes reach the placed memory until unplace turns the
+// range read-only (writers then wait in the fault hook until the swap ends), and the copy is made after that, so no write is lost. A release of guest memory over a range
+// still being given back (vka_mem_release) waits for it first, since the host maps fresh pages there next
+typedef struct gb_job { struct gb_job *next; segvec v; uintptr_t lo, hi; } gb_job;
+static gb_job *g_gb_head, *g_gb_tail; static pthread_mutex_t g_gbmu = PTHREAD_MUTEX_INITIALIZER; static pthread_cond_t g_gbcv = PTHREAD_COND_INITIALIZER;
+static int giveback_async(void) {
+    static int v = -1;
+    if (v < 0) { v = VKA_ENV("DM_VK_GIVEBACK_ASYNC", DM_GAME_POOL_GIVEBACK_ASYNC) != 0; if (v) VLOG("pool give-backs on a worker thread (DM_VK_GIVEBACK_ASYNC=1 or game profile pool_giveback async)"); }
+    return v;
+}
+static void *gb_worker(void *arg) {
+    (void)arg;
+    for (;;) {
+        pthread_mutex_lock(&g_gbmu);
+        while (!g_gb_head) pthread_cond_wait(&g_gbcv, &g_gbmu);
+        gb_job *j = g_gb_head; g_gb_head = j->next; if (!g_gb_head) g_gb_tail = NULL;
+        pthread_mutex_unlock(&g_gbmu);
+        unplace_all(&j->v);
+        fb_gone(j->lo, j->hi, 1);
+        free(j);
+    }
+    return NULL;
+}
+static int g_gb_ok;
+static void gb_start(void) {
+    pthread_t t; pthread_attr_t a; pthread_attr_init(&a); pthread_attr_setdetachstate(&a, PTHREAD_CREATE_DETACHED);
+    int r = pthread_create(&t, &a, gb_worker, NULL); pthread_attr_destroy(&a); g_gb_ok = !r;
+    if (g_gb_ok) pthread_setname_np(t, "dm-giveback"); else VRED("pool give-backs: no worker thread (error %d): given back on the game's thread", r);
+}
+static int giveback_queue(segvec *v, uintptr_t lo, uintptr_t hi) {   // 1 = queued for the worker (v taken), 0 = give it back here
+    static pthread_once_t once = PTHREAD_ONCE_INIT;
+    pthread_once(&once, gb_start);
+    if (!g_gb_ok) return 0;
+    gb_job *j = malloc(sizeof *j); if (!j) return 0;
+    *j = (gb_job){NULL, *v, lo, hi}; *v = (segvec){0};
+    pthread_mutex_lock(&g_gbmu);
+    if (g_gb_tail) g_gb_tail->next = j; else g_gb_head = j;
+    g_gb_tail = j;
+    pthread_cond_signal(&g_gbcv); pthread_mutex_unlock(&g_gbmu);
+    return 1;
+}
+static void pend_wait_range(uintptr_t lo, uintptr_t hi) {   // without g_pl: until no give-back over [lo, hi) is pending
+    pthread_mutex_lock(&g_pendmu); while (pend_overlaps(lo, hi)) pthread_cond_wait(&g_pendcv, &g_pendmu); pthread_mutex_unlock(&g_pendmu);
+}
 void mtl_pool_del(const void *mem) {
     pool_ent e = {0};
     pthread_mutex_lock(&g_pmu);
@@ -1086,6 +1144,7 @@ void mtl_pool_del(const void *mem) {
     if (!e.segs.n) { free(e.segs.lo); fb_gone((uintptr_t)mem, (uintptr_t)mem + e.size, 1); return; }
     segvec v = {0}; uint64_t t0 = mono_ns();
     pthread_mutex_lock(&g_pl); pthread_rwlock_wrlock(&g_rw); uncover(&e.segs, &v); pthread_rwlock_unlock(&g_rw); pthread_mutex_unlock(&g_pl);
+    if (v.n && giveback_async() && giveback_queue(&v, (uintptr_t)mem, (uintptr_t)mem + e.size)) { atomic_fetch_add(&g_give_ns, mono_ns() - t0); return; }   // (fb_gone on the worker)
     unplace_all(&v);
     atomic_fetch_add(&g_give_ns, mono_ns() - t0);
     fb_gone((uintptr_t)mem, (uintptr_t)mem + e.size, 1);
@@ -1604,7 +1663,8 @@ static int fb_kinds(void) {   // bit 1 shader, bit 2 texture; 0 off
     static int v = -1;
     if (v >= 0) return v;
     const char *e = getenv("DM_MEM_FILEBACK"), *k = getenv("DM_MEM_FILEBACK_KINDS");
-    int on = e && *e ? atoi(e) > 0 : 1; v = 0;   // (default on: the shader kind)
+    int on = e && *e ? atoi(e) > 0 : DM_GAME_MEM_FILEBACK; v = 0;   // (default on: the shader kind; game.tsv mem_fileback off turns the default off)
+    if (!on && !(e && *e)) VLOG("file-backed pools off (game profile mem_fileback off; DM_MEM_FILEBACK=1 turns them on)");
     if (on) { const char *ks = k && *k ? k : "shader"; v = (strstr(ks, "shader") ? 1 : 0) | (strstr(ks, "texture") ? 2 : 0);
               if ((v & 1) && !nvn_shader_pools_deferred()) { v &= ~1; VLOG("file-backed pools: shader kind off: DM_VK_PLACE_SHADER_POOLS=1 places shader-code pools for their address"); }
               if (v) VLOG("file-backed pools (DM_MEM_FILEBACK): %s%s%s (DM_MEM_FILEBACK_KINDS=%s), an unlinked file in %s", v & 1 ? "shader-code pools" : "", v == 3 ? " and " : "",
