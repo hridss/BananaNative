@@ -1,5 +1,6 @@
 /* What libnxhost.so exports: the entry the Android front end calls (dm/host/plat/front_android.c), the launcher interface (dm/host/android/input_android.h), the window and the
-   Vulkan selftest (dm/gfx/vk_android/vk_android.h), and JNI_OnLoad; everything else stays inside */
+   Vulkan selftest (dm/gfx/vk_android/vk_android.h), and JNI_OnLoad. The common flavour (NX_COMMON, android/host/nxprofile_store.c) also exports nxhost_set_profile and
+   nxhost_set_prewarm_seed for the profile libraries: they match `nxhost_*` (named singly they would fail the per-game link, where they do not exist); everything else stays inside */
 {
   global:
     nxhost_main;

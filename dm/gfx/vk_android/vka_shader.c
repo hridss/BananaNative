@@ -10,7 +10,6 @@
 #include "../nvn/nvn_mtl.h"
 #include "../nvn/dmsh_chain.h"
 #include "../nvn/dmsh_chain_vk.h"
-#include "game_profile.h"
 #include "vka_spvpatch.h"
 #include "vka_layerreq.h"
 #include "plat/plat.h"
@@ -370,17 +369,17 @@ static void one_lane_env(void) {
         for (; q && *q && g_one_nenv < 16;) { char *e; uint64_t v = strtoull(q, &e, 16); if (e == q) break; if (v) g_one_env[g_one_nenv++] = v; q = *e ? e + 1 : e; }
     }
     int on = g_one_mode > 0 || (!g_one_mode && V.driver_id == VK_DRIVER_ID_QUALCOMM_PROPRIETARY);
-    if (DM_GAME_NSUBGROUP_ONE_LANE) VLOG("profile subgroup_one_lane (%d shader key%s): %s%s", DM_GAME_NSUBGROUP_ONE_LANE, DM_GAME_NSUBGROUP_ONE_LANE == 1 ? "" : "s",
+    if (DM_N_SUBGROUP_ONE_LANE) VLOG("profile subgroup_one_lane (%d shader key%s): %s%s", DM_N_SUBGROUP_ONE_LANE, DM_N_SUBGROUP_ONE_LANE == 1 ? "" : "s",
                                          g_one_mode < 0 ? "off (DM_VK_ONE_LANE=0)" : g_one_mode > 0 ? "on (DM_VK_ONE_LANE=1)" : on ? "on (Qualcomm's driver; DM_VK_ONE_LANE=0: off)" : "off (this driver; DM_VK_ONE_LANE=1: on)",
                                          g_one_nenv ? ", plus DM_VK_ONE_LANE's keys" : "");
     else if (g_one_nenv) VLOG("subgroup_one_lane: %d shader key%s from DM_VK_ONE_LANE", g_one_nenv, g_one_nenv == 1 ? "" : "s");
 }
 static int one_lane_forced(uint64_t key) {
-    static const uint64_t prof[] = DM_GAME_SUBGROUP_ONE_LANE; static pthread_once_t once = PTHREAD_ONCE_INIT;
+    const dm_subgroup_one_lane_row_t *prof = DM_T_SUBGROUP_ONE_LANE; static pthread_once_t once = PTHREAD_ONCE_INIT;
     pthread_once(&once, one_lane_env);
     for (int i = 0; i < g_one_nenv; i++) if (g_one_env[i] == key) return 1;
     if (g_one_mode > 0 || (!g_one_mode && V.driver_id == VK_DRIVER_ID_QUALCOMM_PROPRIETARY))
-        for (int i = 0; i < DM_GAME_NSUBGROUP_ONE_LANE; i++) if (prof[i] == key) return 1;
+        for (int i = 0; i < DM_N_SUBGROUP_ONE_LANE; i++) if (prof[i] == key) return 1;
     return 0;
 }
 static void single_lane(uint64_t key, int stage, uint32_t **w, size_t *nb) {

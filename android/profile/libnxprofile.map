@@ -1,0 +1,5 @@
+/* libnxprofile_<id>.so exports nothing: its constructor registers the profile with libnxhost.so (android/profile/profile.c) */
+{
+  local:
+    *;
+};

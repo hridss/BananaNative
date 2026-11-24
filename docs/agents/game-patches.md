@@ -530,7 +530,7 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
   - cut `+0x9bf4d4`: dynamic resolution: optimal frame cost 32.01 -> 16.005 ms at 60 fps (second load)
   - cut `+0x9bf4f8`: dynamic resolution: good frame cost 30 -> 15 ms at 60 fps
   - launcher capabilities: DYNAMIC_RESOLUTION
-  - host [hle_fpslock.c:185](../../dm/host/hle_fpslock.c#L185): frame interval and dynamic-resolution floor
+  - host [hle_fpslock.c:188](../../dm/host/hle_fpslock.c#L188): frame interval and dynamic-resolution floor
 
 ### NieR:Automata The End of YoRHa Edition (0100B8E016F76000)
 
@@ -549,7 +549,7 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
   - cut `+0x9c08e8`: dynamic resolution lower bound follows the selected preset
   - cut `+0x9c08f4`: dynamic resolution lower bound follows the selected preset
   - launcher capabilities: DYNAMIC_RESOLUTION
-  - host [hle_fpslock.c:186](../../dm/host/hle_fpslock.c#L186): frame interval and dynamic-resolution floor
+  - host [hle_fpslock.c:189](../../dm/host/hle_fpslock.c#L189): frame interval and dynamic-resolution floor
 
 ### Paper Mario: The Thousand-Year Door
 

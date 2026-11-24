@@ -4,6 +4,9 @@
 #   cmake --build <build>
 # The launcher APK builds one host per game instead: -DNX_GAMES=<title ID>,<title ID>,… makes libnxhost_<title ID>.so for each (the same sources, each with its own
 # profile header), and no plain nxhost or nxreplay (android/app/src/main/cpp/CMakeLists.txt links a libnxlaunch_<title ID>.so to each)
+# -DNX_COMMON=ON (Gradle -PnxCommon=true, the default; -PnxCommon=false builds the per-game hosts) builds the common flavour instead: ONE libnxhost.so with no game compiled in (-DNX_COMMON_PROFILE: the profile is
+# read at run time from dm_game, dm/host/profile_rt.h, filled by nxhost_set_profile in nxprofile_store.c), and one small libnxprofile_<title ID>.so per game (android/profile/profile.c
+# compiled with that game's generated header; its constructor registers the profile and the game's prewarm seed with the host). Needs -DNX_GAMES.
 # The Apple-only sources are left out. NVN replays on Vulkan (dm/gfx/vk_android); audio output, AAC, H.264 and input are Android implementations (dm/host/android,
 # dm/host/plat/movie_avc_android.c). The rest of their entry points come from dm/gfx/nvn/android_stub.c, which logs [RED] lines (what the Vulkan replay does not do yet,
 # Vulkan and OpenGL games on Metal).
@@ -12,6 +15,10 @@ project(nxhost C ASM)
 
 if(NOT ANDROID OR NOT CMAKE_ANDROID_ARCH_ABI STREQUAL "arm64-v8a")
   message(FATAL_ERROR "libnxhost is built for Android arm64-v8a only: use the NDK toolchain file with -DANDROID_ABI=arm64-v8a")
+endif()
+option(NX_COMMON "One common libnxhost.so plus a libnxprofile_<id>.so per game (experimental)" ON)
+if(NX_COMMON AND NOT NX_GAMES)
+  message(FATAL_ERROR "NX_COMMON needs -DNX_GAMES=<title ID>,… (the profile libraries)")
 endif()
 if(NX_GAMES)
   string(REPLACE "," ";" NX_GAME_LIST "${NX_GAMES}")
@@ -104,21 +111,32 @@ target_compile_options(dav1d PRIVATE -O2 -w -fvisibility=hidden)
 target_compile_definitions(dav1d PRIVATE _GNU_SOURCE)
 
 # One host: target <tgt> with the profile of <game> compiled in. The game profile header, as dm/host/Makefile makes it (game.py header), goes into gen/<game>
+# (<game> empty: the common flavour, no game: an empty game_profile.h and the seed accessors from common_inc, the profile in nxprofile_store.c)
 function(nxhost_add tgt game)
-  set(GAME_H ${GEN}/${game}/game_profile.h)
-  add_custom_command(OUTPUT ${GAME_H}
-    COMMAND ${Python3_EXECUTABLE} ${ROOT}/dm/games/game.py header ${game} ${GAME_H}
-    DEPENDS ${ROOT}/dm/games/${game}/game.tsv ${ROOT}/dm/games/game.py
-    COMMENT "game profile ${game}")
-  # The profile's prewarm seed list (vk_prewarm.bin, when it has one) as bytes for the Vulkan replay (vka_pso.c pw_load; dm/gfx/vk_android/vka_pwlist.h). A target that runs at
-  # every build (a seed file added after CMake configured would not be seen by a DEPENDS list); game.py writes the header only when it changes
-  set(SEED_H ${GEN}/${game}/vk_prewarm_seed.h)
-  add_custom_target(${tgt}_seed COMMAND ${Python3_EXECUTABLE} ${ROOT}/dm/games/game.py seed ${game} ${SEED_H} BYPRODUCTS ${SEED_H} COMMENT "prewarm seed ${game}")
-  add_library(${tgt} SHARED ${HOST_C} ${GFX_C} ${ASM_OUT} ${GAME_H} ${SEED_H})
-  add_dependencies(${tgt} ${tgt}_seed)
-  target_include_directories(${tgt} PRIVATE ${GEN}/${game} ${GFX}/nvn/include ${TP}/vulkan-headers/include ${TP}/libvpx ${TP}/libvpx/config ${TP}/dav1d/include ${TP}/stb_vorbis ${HOST} ${NX_COOP_VENDOR_DIR})
+  set(SRCS ${HOST_C} ${GFX_C} ${ASM_OUT})
+  if(game)
+    set(GAME_H ${GEN}/${game}/game_profile.h)
+    add_custom_command(OUTPUT ${GAME_H}
+      COMMAND ${Python3_EXECUTABLE} ${ROOT}/dm/games/game.py header ${game} ${GAME_H}
+      DEPENDS ${ROOT}/dm/games/${game}/game.tsv ${ROOT}/dm/games/game.py
+      COMMENT "game profile ${game}")
+    # The profile's prewarm seed list (vk_prewarm.bin, when it has one) as bytes for the Vulkan replay (vka_pso.c pw_load; dm/gfx/vk_android/vka_pwlist.h). A target that runs at
+    # every build (a seed file added after CMake configured would not be seen by a DEPENDS list); game.py writes the header only when it changes
+    set(SEED_H ${GEN}/${game}/vk_prewarm_seed.h)
+    add_custom_target(${tgt}_seed COMMAND ${Python3_EXECUTABLE} ${ROOT}/dm/games/game.py seed ${game} ${SEED_H} BYPRODUCTS ${SEED_H} COMMENT "prewarm seed ${game}")
+    list(APPEND SRCS ${GAME_H} ${SEED_H})
+    set(GAME_INC ${GEN}/${game})
+  else()
+    list(APPEND SRCS ${CMAKE_CURRENT_SOURCE_DIR}/nxprofile_store.c)
+    set(GAME_INC ${CMAKE_CURRENT_SOURCE_DIR}/common_inc)
+  endif()
+  add_library(${tgt} SHARED ${SRCS})
+  if(game)
+    add_dependencies(${tgt} ${tgt}_seed)
+  endif()
+  target_include_directories(${tgt} PRIVATE ${GAME_INC} ${GFX}/nvn/include ${TP}/vulkan-headers/include ${TP}/libvpx ${TP}/libvpx/config ${TP}/dav1d/include ${TP}/stb_vorbis ${HOST} ${NX_COOP_VENDOR_DIR})
   # DM_NUP_ZSTD: compressed files of a NUP container are decompressed with zstddec (dm/host/nup_image.h)
-  target_compile_definitions(${tgt} PRIVATE _GNU_SOURCE DM_NUP_ZSTD NX_COOP_VENDOR=${NX_COOP_VENDOR} $<$<BOOL:${NX_LSFG}>:NX_LSFG>)
+  target_compile_definitions(${tgt} PRIVATE _GNU_SOURCE DM_NUP_ZSTD NX_COOP_VENDOR=${NX_COOP_VENDOR} $<$<BOOL:${NX_LSFG}>:NX_LSFG> $<$<NOT:$<BOOL:${game}>>:NX_COMMON_PROFILE>)
   # As the Mac host (-O1 -g -Wall -Wno-unused-function). Hidden visibility: the assembly reaches C symbols with adrp, which a shared library allows only for symbols it binds itself
   # -Wno-format: the host prints uint64_t with %ll* (unsigned long long on Darwin, unsigned long on Linux: the same 64 bits)
   target_compile_options(${tgt} PRIVATE -O1 -g -Wall -Wno-unused-function -Wno-format -fvisibility=hidden)
@@ -130,13 +148,39 @@ function(nxhost_add tgt game)
   target_link_libraries(${tgt} PRIVATE vpx dav1d zstddec aaudio mediandk android log m dl z)   # libvulkan.so is opened at run time (vka_dev.c)
 endfunction()
 
+# The common flavour's per-game library: android/profile/profile.c with <game>'s generated header and seed (design A, dm/host/profile.h). It exports nothing (profile.map); its
+# constructor calls nxhost_set_profile and nxhost_set_prewarm_seed, which libnxhost.so exports, so it is linked to it (DT_NEEDED libnxhost.so, found by bare name as nxlaunch's is)
+function(nxprofile_add tgt game host)
+  set(GAME_H ${GEN}/${game}/game_profile.h)
+  add_custom_command(OUTPUT ${GAME_H}
+    COMMAND ${Python3_EXECUTABLE} ${ROOT}/dm/games/game.py header ${game} ${GAME_H}
+    DEPENDS ${ROOT}/dm/games/${game}/game.tsv ${ROOT}/dm/games/game.py
+    COMMENT "game profile ${game}")
+  set(SEED_H ${GEN}/${game}/vk_prewarm_seed.h)
+  add_custom_target(${tgt}_seed COMMAND ${Python3_EXECUTABLE} ${ROOT}/dm/games/game.py seed ${game} ${SEED_H} BYPRODUCTS ${SEED_H} COMMENT "prewarm seed ${game}")
+  add_library(${tgt} SHARED ${ROOT}/android/profile/profile.c ${GAME_H} ${SEED_H})
+  add_dependencies(${tgt} ${tgt}_seed)
+  target_include_directories(${tgt} PRIVATE ${GEN}/${game} ${HOST})
+  target_compile_definitions(${tgt} PRIVATE _GNU_SOURCE)
+  target_compile_options(${tgt} PRIVATE -O2 -g -Wall -Wno-unused-function -fvisibility=hidden)
+  target_link_options(${tgt} PRIVATE -Wl,--no-undefined -Wl,--version-script=${ROOT}/android/profile/libnxprofile.map)
+  target_link_libraries(${tgt} PRIVATE ${host})
+endfunction()
+
 if(NX_GAMES)
   foreach(g ${NX_GAME_LIST})
     if(NOT g MATCHES "^[0-9A-F]+$" OR NOT EXISTS ${ROOT}/dm/games/${g}/game.tsv)
       message(FATAL_ERROR "NX_GAMES: ${g} is not a profile in dm/games")
     endif()
-    nxhost_add(nxhost_${g} ${g})
+    if(NX_COMMON)
+      nxprofile_add(nxprofile_${g} ${g} nxhost)
+    else()
+      nxhost_add(nxhost_${g} ${g})
+    endif()
   endforeach()
+  if(NX_COMMON)
+    nxhost_add(nxhost "")
+  endif()
 else()
   nxhost_add(nxhost ${GAME})
 endif()

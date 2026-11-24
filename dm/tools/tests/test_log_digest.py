@@ -44,7 +44,7 @@ def start(extra_env=()):
         '[nxlaunch] nxhost_main starts on its own thread (8 MiB stack)',
         f'[dm] build: commit abc1234def56, shader chain 111122223333, profile {TID}',
         f'[nxlaunch] [readiness] {TID}: PASS; Adreno (TM) 840, Vulkan 1.4.300; driver turnip Mesa driver (Mesa 26.0), driver ID 18, version 0x1, custom driver Mainline_Turnip_v32; RAM 12 G',
-        f'[nxlaunch] nxnative 0.2.4 (abc1234def56), host libnxhost_{TID}.so; Test Game {TID} version 65536',
+        f'[nxlaunch] nxnative 0.2.4 (abc1234def56), host libnxhost.so (profile libnxprofile_{TID}.so); Test Game {TID} version 65536',
         f'[nxlaunch] device ACME Phone-1, Android 16 (SDK 36), arm64-v8a; game /storage/emulated/0/Switch2/Game; pack {APP}/packs/{TID}',
         '[nxlaunch] GPU driver: Mainline Turnip v32 (Vulkan 1.4.335) (/data/user/0/dev.nxnative.android/files/gpu_drivers/Mainline_Turnip_v32) (picked in the launcher; a DM_VK_DRIVER line in env.txt wins, the host\'s [vk] driver line says which ran)',
         '[dm] thread slots: tpidr_el0 + 0x10 → K18 +0 KTLS +8 KTLR +0x10 KGATE +0x18',

@@ -23,14 +23,15 @@ void dm_oe_perfmode_notify(void);                   // hle_oe.c: notification 31
 int dm_rt_pool_max_render(unsigned *w, unsigned *h); // loader.c: the max_render of the rt_pool row's size written this run, else 0
 int dm_rt_pool_top(unsigned *w, unsigned *h);        // loader.c: the max_render of the rt_pool row's largest size, 0 without a row
 
-#ifndef DM_RENDER_CFG_ROWS   // the unit test (tests/t_render_cfg.c) brings its own rows
-#define DM_RENDER_CFG_ROWS DM_GAME_RENDER_CFG
-#define DM_RENDER_NCFG_ROWS DM_GAME_NRENDER_CFG
-#define DM_RENDER_QUALITY DM_GAME_RENDER_QUALITY
-#define DM_RENDER_DEFAULT_OUT DM_GAME_RENDER_DEFAULT_OUT
-#endif
+#ifdef DM_RENDER_CFG_ROWS   // the unit test (tests/t_render_cfg.c) brings its own rows
 static const rcfg_row_t k_rcfg[] = DM_RENDER_CFG_ROWS;
 static const int k_rq[4] = DM_RENDER_QUALITY;   // Quality: performance mode, smallest level; Performance: the same
+#else
+#define k_rcfg DM_T_RENDER_CFG
+#define DM_RENDER_NCFG_ROWS DM_N_RENDER_CFG
+#define k_rq DM_T_RENDER_QUALITY   // Quality: performance mode, smallest level; Performance: the same
+#define DM_RENDER_DEFAULT_OUT DM_GAME_RENDER_DEFAULT_OUT
+#endif
 
 typedef struct { unsigned ow, oh; int pct, quality; } rset_t;   // a setting: output, render scale, quality (1) or performance (0)
 typedef struct { unsigned rw, rh; int clamped, max_res, perf; } rout_t;   // what it gives

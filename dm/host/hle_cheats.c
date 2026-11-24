@@ -1719,11 +1719,10 @@ static void report_build(void) {
 
 // This build's display version from the profile's build rows (by the whole main build ID), as GetDisplayVersion answers it
 static void profile_version(void) {
-#ifdef DM_GAME_DISPLAY_VERSIONS
-    static const struct { const char *build, *ver; } k[] = {DM_GAME_DISPLAY_VERSIONS};
+    if (!DM_HAS_DISPLAY_VERSIONS) return;
+    const dm_display_versions_row_t *k = DM_T_DISPLAY_VERSIONS;
     const char *bid = dm_main_build();
-    for (unsigned j = 0; j < sizeof k / sizeof *k; j++) if (!strcasecmp(bid, k[j].build)) snprintf(g_version, sizeof g_version, "%s", k[j].ver);
-#endif
+    for (int j = 0; j < DM_N_DISPLAY_VERSIONS; j++) if (!strcasecmp(bid, k[j].build)) snprintf(g_version, sizeof g_version, "%s", k[j].ver);
 }
 
 // The anchored sources (*.cheats.toml) in the folder, for the panel's "compile them for this build" hint

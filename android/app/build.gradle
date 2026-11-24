@@ -13,7 +13,7 @@ nxGames.each { g ->
     if (!(g ==~ /[0-9A-F]{16}/)) throw new GradleException("nxGames: each game must be a title ID (16 upper-case hex digits), not $g")
 }
 // -PnxPlay=true builds a second app (dev.nxnative.android.play, "Banana Native") that installs beside the test app, so test installs leave it alone
-def nxPlay = providers.gradleProperty('nxPlay').getOrElse('false') == 'true'
+def nxPlay = providers.gradleProperty('nxPlay').getOrElse('true') == 'true'
 // -PnxApp=<suffix> builds another test app, dev.nxnative.android.<suffix> ("Banana Native <suffix>", or -PnxLabel), beside the test app: one game's bring-up (-PnxApp=mkw) installs
 // without replacing the test app other agents run. It is a test app (saves-test/), with its own files folder (Android/data/dev.nxnative.android.<suffix>/files: env.txt, logs)
 def nxApp = providers.gradleProperty('nxApp').getOrElse('')
@@ -21,7 +21,7 @@ if (nxApp && !(nxApp ==~ /[a-z][a-z0-9]*/)) throw new GradleException("nxApp mus
 if (nxApp && nxPlay) throw new GradleException('nxApp and nxPlay build different apps: give one of them')
 // -PnxLive=true builds the public release (dev.bananative.android, "Banana Native"): the play app's behaviour (saves/<id>, no test switches), not debuggable, signed
 // with the release key named by the environment (NX_SIGN_STORE, NX_SIGN_ALIAS, NX_SIGN_PASS; the key never lives in this repository). -PnxVersion sets its version
-def nxLive = providers.gradleProperty('nxLive').getOrElse('false') == 'true'
+def nxLive = providers.gradleProperty('nxLive').getOrElse('true') == 'true'
 if (nxLive && (nxPlay || nxApp)) throw new GradleException('nxLive builds the release app: give neither nxPlay nor nxApp')
 def nxVersion = providers.gradleProperty('nxVersion').getOrElse('0.1-bringup')
 // -PnxReleaseKind=major|hotfix|critical|preview says which kind of release this build is (the release notes' "Update type" line; preview for a vX.Y.Z-preview tag). The launcher shows a
@@ -44,6 +44,9 @@ def commit = gitOut(['rev-parse', '--short=12', 'HEAD'])
 def branch = gitOut(['rev-parse', '--abbrev-ref', 'HEAD'])
 def dirty = gitOut(['status', '--porcelain', '--untracked-files=no']) ? '+dirty' : ''
 // Lossless Scaling frame generation (GPL-3.0-or-later, dm/gfx/vk_android/lsfg): in by default, which makes the APK GPL-3.0-or-later; -PnxLsfg=false builds without it (the packer's libdmsh_xlate.so is GPL-3.0-or-later too: android/NOTICE.md)
+// The common host (experimental, Stage 2 of the common host library): -PnxCommon=true builds ONE libnxhost.so, ONE libnxlaunch.so and a tiny libnxprofile_<title ID>.so per game
+// (the game's profile, handed to the host by nxhost_set_profile) instead of a libnxhost_<id>.so and libnxlaunch_<id>.so per game. Default false: the per-game hosts.
+def nxCommon = providers.gradleProperty('nxCommon').getOrElse('true') == 'true'
 def nxLsfg = providers.gradleProperty('nxLsfg').getOrElse('true') != 'false'
 // Preparing the game on the phone (android/ONDEVICE.md): "+ Add game" on a dump without a usable pack offers Prepare, which runs PackService (a foreground service
 // in :pack) with the embedded packer: CPython 3.14 with the repository's tools, the translator (libdmsh_xlate.so) and SPIRV-Tools (libSPIRV-Tools-shared.so). Part of
@@ -254,6 +257,8 @@ android {
         buildConfigField 'String', 'NX_DIRTY', "\"${commit ? dirty : ''}\""
         buildConfigField 'String', 'NX_RELEASE_KIND', "\"${nxVersion.endsWith('-preview') ? 'preview' : nxReleaseKind}\""
         buildConfigField 'boolean', 'NX_LSFG', "$nxLsfg"
+        // true: the common host (libnxhost.so + libnxprofile_<id>.so + libnxlaunch.so; Native.load), false: a host and a shim per game
+        buildConfigField 'boolean', 'NX_COMMON', "$nxCommon"
         buildConfigField 'int', 'NX_MIN_SDK', "$nxMinSdk"
         // The play app and the release behave alike (saves/<id>, the user's build tag, no test switches); every other app is a test app
         buildConfigField 'boolean', 'NX_PLAY', "${nxPlay || nxLive}"
@@ -279,9 +284,11 @@ android {
         buildConfigField 'String', 'NX_REWRITER', "\"$nxRewriter\""
         externalNativeBuild {
             cmake {
-                arguments "-DNX_GAMES=${nxGames.join(',')}", '-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON', "-DNX_LSFG=${nxLsfg ? 'ON' : 'OFF'}"
+                arguments "-DNX_GAMES=${nxGames.join(',')}", '-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON', "-DNX_LSFG=${nxLsfg ? 'ON' : 'OFF'}", "-DNX_COMMON=${nxCommon ? 'ON' : 'OFF'}"
                 // a host and its shim per game, then the custom GPU drivers' loader and hooks (DM_VK_DRIVER)
-                targets(*(nxGames.collectMany { ["nxhost_$it".toString(), "nxlaunch_$it".toString()] } + ['nxadreno', 'hook_impl', 'main_hook']))
+                def hostTargets = nxCommon ? ['nxhost', 'nxlaunch'] + nxGames.collect { "nxprofile_$it".toString() }
+                                           : nxGames.collectMany { ["nxhost_$it".toString(), "nxlaunch_$it".toString()] }
+                targets(*(hostTargets + ['nxadreno', 'hook_impl', 'main_hook']))
             }
         }
     }

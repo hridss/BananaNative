@@ -24,7 +24,6 @@
 #include "vka_texlimit.h"
 #include "vka_lowram.h"
 #include "vka_spvpatch.h"
-#include "game_profile.h"
 #include "vka_texown.h"
 #include "vka_wbfollow.h"
 #include "vka_block_linear_spv.h"   // the block-linear write-back shader (tiled_wb_record)

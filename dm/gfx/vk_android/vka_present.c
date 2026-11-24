@@ -15,9 +15,6 @@
 #include "vka_present_rot.h"
 #include "vka_present_fsr.h"
 #include "vka_present_scale.h"
-#if __has_include("game_profile.h")
-#include "game_profile.h"
-#endif
 #include "vka_present_fit.h"
 #include "vka_ovl.h"
 #include <android/native_window.h>
@@ -180,11 +177,7 @@ static VkFormat g_pfmt;
 int vka_swap_rb(void) {
     const char *e = getenv("DM_VK_SWAP_RB");
     if (e && *e) return atoi(e);
-#if defined(DM_GAME_SWAP_RB)
-    return DM_GAME_SWAP_RB;
-#else
-    return 0;
-#endif
+    return 0;   // (no game profile key sets it: game.py never emitted swap_rb)
 }
 static const VkComponentMapping g_swz_rb = {.r = VK_COMPONENT_SWIZZLE_B, .g = VK_COMPONENT_SWIZZLE_G, .b = VK_COMPONENT_SWIZZLE_R, .a = VK_COMPONENT_SWIZZLE_A};   // vka_swap_rb
 // The present's scaling of the window to the screen. DM_VK_PRESENT_SCALE=nearest|bilinear|bicubic|fsr1|sgsr1|device (live; the launcher's Screen scaling for a game on the DLSS

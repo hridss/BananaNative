@@ -18,9 +18,6 @@
 #include <string.h>
 #include <unistd.h>
 #include "vka_driverpath.h"
-#if __has_include("game_profile.h")
-#include "game_profile.h"
-#endif
 #ifndef DM_GAME_TURNIP_ENV
 #define DM_GAME_TURNIP_ENV ""
 #endif

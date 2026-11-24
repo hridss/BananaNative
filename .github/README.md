@@ -26,6 +26,11 @@ graphics to Vulkan. It is an Android port of [nxnative](https://github.com/seedd
 | Hyrule Warriors: Age of Imprisonment (`04003F40232DE000`) | update 196608 | Experimental | in bring-up: menus, opening movie, cutscenes and the first field at 52-56 fps on Turnip on the tested 16 GB handheld; battles and the system driver are not tested yet |
 | Super Mario Bros. Wonder - Nintendo Switch 2 Edition (`040015100B514001`) | update 327680 (1.2.1), program 1 | Experimental | reached a first course at 30 fps on Turnip on one phone; the system driver is not tested; needs a dump with the edition's own program |
 | Splatoon Raiders (`0400380020056000`) | update 65536 | Experimental | boots and runs, but not playable yet (very low frame rate) |
+| Orbitals (`040032B023CA4000`) | update 327680 (1.1.2.0) | Experimental, preview build only | in bring-up: plays in split screen on one phone (an AYN Thor on Turnip), reported by a contributor; not tested by the maintainers |
+| Kirby and the Forgotten Land - Nintendo Switch 2 Edition (`04004D300C5AE001`) | update 65536 (1.1.0), program 1 | Experimental, preview build only | in bring-up; needs a dump with the edition's own program; not tested by the maintainers |
+
+> [!NOTE]
+> **Preview build only:** Orbitals and Kirby and the Forgotten Land - Nintendo Switch 2 Edition run only in the preview builds (v0.3.53-preview and later), which are offered on the Preview update channel (Settings › Updates › Update channel). The stable release does not include them yet. Preview builds are experimental; please test them and report what you find.
 
 The app tells you if your dump is another version. Splatoon Raiders is not playable yet: it boots and runs at a very low
 frame rate, and ships so that people can test it and help. Ocarina of Time: only version 2.0 is

@@ -6,6 +6,7 @@ import android.view.Surface;
  * libnxlaunch.so (src/main/cpp/nxlaunch.c), which forwards to the C interface of libnxhost.so (dm/host/android/input_android.h, dm/gfx/vk_android/vk_android.h).
  * Loaded only in the game and selftest processes, and only one game's pair per process: {@link #load} before any other call (each game has its own host,
  * libnxhost_&lt;title ID&gt;.so, with its profile compiled in, and its own shim libnxlaunch_&lt;title ID&gt;.so; the JNI names are the same in each).
+ * With BuildConfig.NX_COMMON (experimental) one libnxhost.so and one libnxlaunch.so serve every game, and libnxprofile_&lt;title ID&gt;.so supplies the profile.
  * Each call does nothing (false, -1) in a host without that entry point.
  */
 final class Native {
@@ -20,8 +21,15 @@ final class Native {
         String why = Profile.missing(titleId, null);
         if (why != null) throw new IllegalStateException(why);
         try {
-            System.loadLibrary("nxhost_" + titleId);
-            System.loadLibrary("nxlaunch_" + titleId);
+            if (BuildConfig.NX_COMMON) {
+                // the common host: libnxhost.so, then the game's profile (its constructor hands the profile to the host), then the shim
+                System.loadLibrary("nxhost");
+                System.loadLibrary("nxprofile_" + titleId);
+                System.loadLibrary("nxlaunch");
+            } else {
+                System.loadLibrary("nxhost_" + titleId);
+                System.loadLibrary("nxlaunch_" + titleId);
+            }
         } catch (UnsatisfiedLinkError e) {
             throw new IllegalStateException("The host of " + titleId + " cannot be loaded: " + e.getMessage());
         }

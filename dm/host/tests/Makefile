@@ -136,11 +136,18 @@ run: $(B)/t_language $(B)/t_motion $(B)/t_heap_size $(B)/t_touch $(B)/t_gesture 
 	$(B)/t_android_quad_ind
 	TMPDIR="$(abspath $(B))" $(B)/t_android_layerreq
 	$(B)/t_server_environment
+	$(B)/t_profile_equiv
 run: $(B)/t_nro
 run: $(B)/t_pack_modules
 run: $(B)/t_game_args
 run: $(B)/t_symbols
 run: $(B)/t_server_environment
+run: $(B)/t_profile_equiv
+$(B)/t_profile_equiv: t_profile_equiv.c ../profile.h ../profile_ct.h ../profile_rt.h ../../../android/profile/profile.c $(GAME_H) | $(B)
+	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -Wno-tautological-compare -I.. $(GINC) -c -o $(B)/t_profile_equiv_ct.o t_profile_equiv.c
+	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -I.. -DT_RT_TU -c -o $(B)/t_profile_equiv_rt.o t_profile_equiv.c
+	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -I.. -Istub_inc $(GINC) -c -o $(B)/t_profile_equiv_pf.o ../../../android/profile/profile.c
+	$(CLANG) -o $@ $(B)/t_profile_equiv_ct.o $(B)/t_profile_equiv_rt.o $(B)/t_profile_equiv_pf.o
 $(B)/t_server_environment: t_server_environment.c ../hle_offline.c ../hle_net.c ../hle.h ../dm.h $(GAME_H) | $(B)
 	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -I.. $(GINC) -o $@ t_server_environment.c
 .PHONY: server-environment

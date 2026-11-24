@@ -20,8 +20,8 @@ typedef struct {
     int mesh_ext;           // the device lists VK_EXT_mesh_shader
     int memu;               // NVN2 mesh draws through compute (V.memu)
     int vin_dyn_ext;        // the device has vertex input dynamic state (before DM_VK_VIN_DYN)
-    int prof_one_lane;      // the profile's subgroup_one_lane keys (DM_GAME_NSUBGROUP_ONE_LANE)
-    int prof_prepass_cut;   // the profile's mesh_prepass_cut rows (DM_GAME_NMESH_PREPASS_CUT)
+    int prof_one_lane;      // the profile's subgroup_one_lane keys (DM_N_SUBGROUP_ONE_LANE)
+    int prof_prepass_cut;   // the profile's mesh_prepass_cut rows (DM_N_MESH_PREPASS_CUT)
     int prof_oq_split;      // the profile's occlusion_split_pass (DM_GAME_OCCLUSION_SPLIT_PASS)
 } vka_auto_in;
 

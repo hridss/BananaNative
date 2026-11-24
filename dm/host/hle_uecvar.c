@@ -102,7 +102,8 @@ void dm_ue_lod_tick(void) {
 // from the next frame: of the rows on one variable the last one on is held, and with none on any more the variable gets back the value the game last set: the one before
 // the first hold, or the one the game wrote over the hold since (a hold from the first frame came before the game's device profile: Orbitals' floor 67 % held from the
 // start gave back the engine's start value, far under the game's 83.3, when turned off). The engine reads these variables every frame
-typedef struct { const char *name, *value, *env; int ref; } ue_set_row;
+typedef dm_ue_set_row_t ue_set_row;
+#define UE_SET_CAP 32   // the most ue_set rows a profile may have
 typedef struct { int state, nlog, saved, ngame; const ue_set_row *held; uint32_t bits, orig[2], wrote[2]; uint64_t off; } ue_set_st;   // state: 0 not looked up yet, 1 found, -1 not found; wrote: what the hold last left in each copy
 static int ue_set_on(const ue_set_row *r) { const char *e = *r->env ? getenv(r->env) : "1"; return e && !strcmp(e, "1"); }
 // One variable: `on` is its row to hold (the last row on), NULL to give the game's value back
@@ -145,10 +146,11 @@ static void ue_set_apply(const ue_set_row *r0, const ue_set_row *on, ue_set_st *
     if (!on) { s->saved = 0; float f; memcpy(&f, &s->orig[0], 4); LOG("main: Unreal %s back to the game's value %g / %d (%s off)", r0->name, f, (int32_t)s->orig[0], src); }
 }
 void dm_ue_set_tick(void) {
-#ifdef DM_GAME_UE_SET
-    static const ue_set_row rows[] = DM_GAME_UE_SET;
-    enum { N = sizeof rows / sizeof rows[0] };
-    static ue_set_st st[N];
+    if (!DM_HAS_UE_SET) return;
+    const ue_set_row *rows = (const ue_set_row *)DM_T_UE_SET;
+    const size_t N = (size_t)DM_N_UE_SET;
+    static ue_set_st st[UE_SET_CAP];
+    if (N > UE_SET_CAP) return;
     for (size_t i = 0; i < N; i++) {
         size_t k = 0; while (strcmp(rows[k].name, rows[i].name)) k++;
         if (k != i) continue;   // a variable's rows are handled at its first
@@ -156,5 +158,4 @@ void dm_ue_set_tick(void) {
         for (size_t j = i; j < N; j++) if (!strcmp(rows[j].name, rows[i].name) && ue_set_on(&rows[j])) on = &rows[j];
         ue_set_apply(&rows[i], on, &st[i]);
     }
-#endif
 }

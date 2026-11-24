@@ -42,9 +42,6 @@
 #include "vka_placefail.h"
 #include "vka_fileback.h"
 #include "../../host/plat/plat_guestmap.h"
-#if __has_include("game_profile.h")
-#include "game_profile.h"
-#endif
 #ifndef DM_GAME_PLACE_COALESCE_PCT
 #define DM_GAME_PLACE_COALESCE_PCT -1   // (the replay tools: no game profile)
 #endif

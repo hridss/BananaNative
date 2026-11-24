@@ -1,3 +1,4 @@
+# (-DNX_COMMON=ON: one libnxlaunch.so for all games instead, see below.)
 # The launcher's native side, one pair per game the APK runs (NX_GAMES, from Gradle's nxGames): libnxhost_<title ID>.so from android/host (the host, with that game's
 # profile compiled in) and libnxlaunch_<title ID>.so, the JNI shim that starts it (nxlaunch.c), linked to that host. The game's process loads only its own pair (Native.load).
 # All are linked for 16 KB pages (Android 15+ devices may use them; NDK 28 does this by default, the flag keeps it explicit)
@@ -12,6 +13,15 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../../../host ${CMAKE_CURRENT_BI
 get_filename_component(NX_REPO_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../../../../.. ABSOLUTE)
 add_compile_options(-ffile-prefix-map=${NX_REPO_ROOT}/=)
 string(REPLACE "," ";" games "${NX_GAMES}")
+if(NX_COMMON)
+  # The common flavour (experimental, NX_COMMON in android/host): one libnxlaunch.so linked to the one libnxhost.so (the per-game libnxprofile_<title ID>.so come from android/host)
+  add_library(nxlaunch SHARED nxlaunch.c)
+  target_include_directories(nxlaunch PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../../../../dm/host/android ${CMAKE_CURRENT_SOURCE_DIR}/../../../../../dm/gfx/vk_android)
+  target_compile_options(nxlaunch PRIVATE -O2 -g -Wall -Wextra -Wno-unused-parameter)
+  target_link_options(nxlaunch PRIVATE -Wl,--no-undefined)
+  target_link_libraries(nxlaunch PRIVATE nxhost android log)
+  set(games)
+endif()
 foreach(g ${games})
   add_library(nxlaunch_${g} SHARED nxlaunch.c)
   target_include_directories(nxlaunch_${g} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../../../../dm/host/android ${CMAKE_CURRENT_SOURCE_DIR}/../../../../../dm/gfx/vk_android)   # the host's launcher interface

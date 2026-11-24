@@ -101,7 +101,7 @@ static void host_preload(int argc, char **argv) {
     }
     { void dm_term_install(void); dm_term_install(); }   // SIGTERM graceful exit (hle_lifecycle.c)
     { void crash_set_dump_hook(void (*)(void)); void svc_thread_dump(void); crash_set_dump_hook(svc_thread_dump); }   // Dump guest thread state on a crash
-    const char *names[argc + DM_GAME_NMOD]; int n = 0;
+    const char *names[argc + DM_N_MODULES]; int n = 0;
     int i = 2;
     for (; i < argc && strcmp(argv[i], "--"); i++) names[n++] = argv[i];
     if (i < argc && !strcmp(argv[i], "--")) for (i++; i < argc && g_argc < 63; i++) g_argv[g_argc++] = argv[i];
@@ -113,8 +113,8 @@ static void host_preload(int argc, char **argv) {
     const char *add = getenv("DM_GAME_ARGS_ADD");   // run-time arguments after those (the Android launcher's engine settings, profile key scene_arg; game_args.h)
     if (add && *add) { g_argc = game_args_add(g_argv, g_argc, 63, strdup(add)); LOG("game arguments added: %s", add); }
     static char pm[512];   // an Android pack names the modules it was made with (pack.tsv "modules"): a game whose registered builds have different module sets loads those of its dump's build
-    if (!n) n = pack_modules(argv[1], pm, sizeof pm, names, DM_GAME_NMOD);
-    if (!n) { static const char *def[] = DM_GAME_MODULES; for (int k = 0; k < DM_GAME_NMOD; k++) names[n++] = def[k]; }   // default module list from the game profile's modules (Mario: main sdk)
+    if (!n) n = pack_modules(argv[1], pm, sizeof pm, names, DM_N_MODULES);
+    if (!n) { const char *const *def = DM_T_MODULES; for (int k = 0; k < DM_N_MODULES; k++) names[n++] = def[k]; }   // default module list from the game profile's modules (Mario: main sdk)
     load_modules(argv[1], names, n);
     dm_cheats_init();   // the Atmosphère cheat files for this build (hle_cheats.c): picked by first 16 hex digits of main's build ID, which the loader knows now
     dm_sdk_major();   // logs the SDK version, which SDK-dependent behaviour follows (loader.c)

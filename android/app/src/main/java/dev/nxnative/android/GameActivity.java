@@ -1028,7 +1028,7 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
                     + ", pack " + packDir);
             Native.note("[nxlaunch] save: " + save + " (" + saveHow + ")" + (saveNote != null ? "; " + saveNote : ""));
             if (cheatNote != null) Native.note(cheatNote);
-            Native.note("nxnative " + BuildConfig.VERSION_NAME + " (" + BuildConfig.NX_COMMIT + ")" + BuildKind.logNote(Prefs.buildKind()) + ", host libnxhost_" + id + ".so; " + name + " " + id + " version " + pack.version);
+            Native.note("nxnative " + BuildConfig.VERSION_NAME + " (" + BuildConfig.NX_COMMIT + ")" + BuildKind.logNote(Prefs.buildKind()) + ", host " + (BuildConfig.NX_COMMON ? "libnxhost.so (profile libnxprofile_" + id + ".so)" : "libnxhost_" + id + ".so") + "; " + name + " " + id + " version " + pack.version);
             Native.note("device " + Build.MANUFACTURER + " " + Build.MODEL + ", Android " + Build.VERSION.RELEASE + " (SDK " + Build.VERSION.SDK_INT + "), " + Build.SUPPORTED_ABIS[0]
                     + "; game " + game + "; pack " + packDir);
             if (envProblem != null) Native.note("[RED] env.txt: " + envProblem);
