@@ -535,15 +535,21 @@ HLE_FORCE("_ZN2nn8settings12LanguageCode4MakeENS0_8LanguageE", "language enum �
     if ((unsigned)lang < sizeof k_lang_code / sizeof *k_lang_code) strncpy(code, k_lang_code[lang], sizeof code);
     uint64_t v; memcpy(&v, code, 8); return v;
 }
+// Before SDK 4 the wrappers use set commands 1/3, whose list is fixed at 15 entries (ja through es-419); SDK 4+ uses the extensible commands 5/6, which list the whole
+// system table (Xenoblade Chronicles 2 Japanese 2.0.2, SDK 3.5.0, reserves 15 slots and copied past them when the count was larger; upstream nxnative PR #3235)
+static int settings_language_count(void) {
+    int major = dm_sdk_major();
+    return major > 0 && major < 4 ? 15 : (int)(sizeof k_lang_code / sizeof *k_lang_code);
+}
 // Every language code the system offers, in nn::settings::Language order, as the settings service lists them; returns how many were written (Paper Mario: The Thousand-Year Door, SDK 15:
 // nnMain asks for 32 and takes the index of GetDesiredLanguage's code in the list as its language, main+0x327888; the SDK's own version aborted in sm::Initialize)
-HLE_FORCE("_ZN2nn8settings25GetAvailableLanguageCodesEPNS0_12LanguageCodeEi", "available language codes (the fixed system table)", int, h_set_AvailLang, char *out, int count) {
-    int n = 0;
-    for (; n < count && n < (int)(sizeof k_lang_code / sizeof *k_lang_code); n++) { memset(out + 8 * n, 0, 8); strncpy(out + 8 * n, k_lang_code[n], 8); }
+HLE_FORCE("_ZN2nn8settings25GetAvailableLanguageCodesEPNS0_12LanguageCodeEi", "available language codes (the fixed system table; 15 before SDK 4)", int, h_set_AvailLang, char *out, int count) {
+    int n = 0, limit = settings_language_count();
+    for (; n < count && n < limit; n++) { memset(out + 8 * n, 0, 8); strncpy(out + 8 * n, k_lang_code[n], 8); }
     return n;
 }
 // How many codes that list holds (Catherine: Full Body, SDK 8.2.1: nnMain compares LanguageCode::Make(0 … count − 1) with GetDesiredLanguage's code and keeps the matching index,
 // main+0x117590; the SDK's own version aborted in sm::Initialize)
-HLE_FORCE("_ZN2nn8settings29GetAvailableLanguageCodeCountEv", "number of available language codes (the fixed system table)", int, h_set_AvailLangN, void) {
-    return (int)(sizeof k_lang_code / sizeof *k_lang_code);
+HLE_FORCE("_ZN2nn8settings29GetAvailableLanguageCodeCountEv", "number of available language codes (the fixed system table; 15 before SDK 4)", int, h_set_AvailLangN, void) {
+    return settings_language_count();
 }

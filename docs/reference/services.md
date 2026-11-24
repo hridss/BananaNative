@@ -1003,6 +1003,14 @@ Most service calls can be found before they crash, before the first boot or the 
 - **Fix:** the host lists the system's codes in `nn::settings::Language` order, the table `LanguageCode::Make` uses, and reports the count of that table (`hle_sdk16.c`).
 - **Found on:** [Paper Mario: The Thousand-Year Door](../../dm/games/0100ECD018EBE000/README.md) (SDK 15.3.2, the codes), [Catherine: Full Body](../../dm/games/0100BF00112C0000/README.md) (SDK 8.2.1, the count; one boot).
 
+### Legacy settings language lists before SDK 4
+
+- **Symptom:** Xenoblade Chronicles 2's Japanese release 2.0.2 (`0100F3400332C000`, main `e3938fa78579c1cab27fb0ecef1314e8`) hits its bounds assertion at `main+0x6979dc`, called from `main+0x6ae53c`, just after the first frames.
+- **Cause:** SDK 3.5.0's settings wrappers use the legacy list/count service commands 1/3. The game reserves 15 language slots, asks the count, and then copies that many codes. The host returned the whole table (18 upstream, 20 here) and the game added past its 15-entry container. The legacy interface has the original 15 languages; the extensible commands 5/6 arrived in firmware 4.0.0 ([libnx settings implementation](https://github.com/switchbrew/libnx/blob/master/nx/source/services/set.c)).
+- **Fix:** `GetAvailableLanguageCodes` and `GetAvailableLanguageCodeCount` (`hle_sdk16.c`) use 15 entries for known SDK majors 1-3. SDK 4 and later, and an unknown SDK, keep the whole system table ([Available language codes and their count](#available-language-codes-and-their-count)). The code order, Chinese comparison aliases and `LanguageCode::Make` are unchanged.
+- **Found on:** Xenoblade Chronicles 2, Japanese release 2.0.2, in upstream nxnative during bring-up with a provisional profile ([PR #3235](https://github.com/seedds/nxnative/pull/3235)); a diagnostic boot with the correction reached the language-selection screen and 900 frames in 40 seconds; gameplay remains unverified. Here it reaches every profile on SDK 1-3, such as [Xenoblade Chronicles 2](../../dm/games/0100E95004038000/README.md) 2.1.0 (SDK 3.5.0, a different release); not run on Android yet.
+- **Check:** `t_language.c` tests old SDKs, modern and unknown SDKs, code order, short and empty buffers and untouched buffer tails under AddressSanitizer and UndefinedBehaviorSanitizer.
+
 ### Region code from the language
 
 - **Fix:** `oe::GetRegionCode` answers from the language: Japan, the Americas, Europe or Hong Kong / Taiwan / Korea.
