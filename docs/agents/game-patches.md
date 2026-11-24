@@ -142,6 +142,7 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
 | [Pokémon Shield](#pokémon-shield) | 4 | 0 | 0 | 0 | 1 | `build` → `game` ×2 |
 | [Pokémon Shining Pearl](#pokémon-shining-pearl) | 0 | 0 | 0 | 0 | 1 | `build` → `engine` |
 | [Pokémon Sword](#pokémon-sword) | 0 | 0 | 0 | 0 | 1 | `build` → `game` |
+| [South Park: The Stick of Truth](#south-park-the-stick-of-truth) | 0 | 0 | 0 | 1 | 0 | `game` |
 | [Super Mario Bros. Wonder - Nintendo Switch 2 Edition](#super-mario-bros-wonder---nintendo-switch-2-edition) | 1 | 0 | 0 | 0 | 0 | `build` → `host` |
 | [Super Smash Bros. Ultimate](#super-smash-bros-ultimate) | 11 | 0 | 0 | 1 | 0 | `game` |
 | [Taiko Risshiden V DX](#taiko-risshiden-v-dx) | 1 | 0 | 0 | 2 | 0 | `game` |
@@ -634,6 +635,14 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
 
 - **1.3.2 `main`** `a3b75bcd…`
   - host [hle_fpslock.c:91](../../dm/host/hle_fpslock.c#L91): engine frame limit set to fps_target: Game Freak frame time of interval 2
+
+### South Park: The Stick of Truth
+
+[South Park: The Stick of Truth](../../dm/games/010095300B6A4000/README.md), `010095300B6A4000`, [patches.py](../../dm/games/010095300B6A4000/patches.py).
+
+- **`game`**, frame rate, at goal, checked: 1.0.0 and 1.01 match the complete caller and setter: South Park 60 fps target. The title passes 30 to its own Onyx frame-rate setter while requesting NVN present interval 1. The matched caller selects 60 through the same setter.
+
+- **function-matched** (`main` of builds without CUTS): South Park 60 fps target: 1 function, 1 cut
 
 ### Super Mario Bros. Wonder - Nintendo Switch 2 Edition
 
