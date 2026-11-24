@@ -219,6 +219,30 @@ int main(void) {
     char root[1024], save[1100], work[1200], p[1200];
     const char *sp = getenv("TMPDIR"); snprintf(root, sizeof root, "%s/t_fs.XXXXXX", sp ? sp : "/private/tmp");
     if (!mkdtemp(root)) { perror("mkdtemp"); return 1; }
+    {   // cache storage mounts: <DM_TEMP>_cache<index>
+        char temp[1100], c[1200]; snprintf(temp, sizeof temp, "%s/temp2", root); setenv("DM_TEMP", temp, 1);
+        {   // one mount name for the cache storages in turn, unmounted in between (Taiko no Tatsujin: Rhythm Festival mounts index 1, unmounts, mounts index 2, all as "MyIndexCache")
+            char got[16], f1[1300], f2[1300]; int before = g_nmnt;
+            snprintf(c, sizeof c, "%s_cache11", temp); mkdir(c, 0755); snprintf(f1, sizeof f1, "%s/song", c); put(f1, "one");
+            snprintf(c, sizeof c, "%s_cache12", temp); mkdir(c, 0755); snprintf(f2, sizeof f2, "%s/song", c); put(f2, "two");
+            CHECK(h_fs_MountCache("MyCache", 11) == RES_OK && read_fs("MyCache:/song", got, sizeof got) && !strcmp(got, "one"), "cache storage mount: the first index under a name");
+            CHECK(h_fs_MountCache("MyCache", 12) == RES_PATH_EXISTS && read_fs("MyCache:/song", got, sizeof got) && !strcmp(got, "one"), "cache storage mount: another index under a name still in use is refused, as on Horizon");
+            h_fs_Unmount("MyCache"); CHECK(!h_fs_IsMounted("MyCache"), "cache storage mount: Unmount releases the name");
+            CHECK(h_fs_MountCache("MyCache", 12) == RES_OK && read_fs("MyCache:/song", got, sizeof got) && !strcmp(got, "two"), "cache storage mount: the next index under that name shows its own files (got %s)", got);
+            h_fs_Unmount("MyCache");
+            CHECK(h_fs_MountCache("MyCache", 11) == RES_OK && read_fs("MyCache:/song", got, sizeof got) && !strcmp(got, "one") && g_nmnt == before + 2,
+                  "cache storage mount: the first index again takes its entry back (%d entries for two storages)", g_nmnt - before);
+            CHECK(h_fs_MountCache("MyCache", 11) == RES_OK, "cache storage mount: the same index again under a name in use is harmless");
+            h_fs_Unmount("MyCache"); h_fs_Unmount("MyCache");   // an unmount of a name not mounted is a no-op
+            CHECK(h_fs_MountCache("MyCache", 12) == RES_OK && read_fs("MyCache:/song", got, sizeof got) && !strcmp(got, "two"), "cache storage mount: and the second");
+            h_fs_Unmount("MyCache");
+            snprintf(c, sizeof c, "%s_cache13", temp); mkdir(c, 0755);
+            CHECK(mount("PermCache", c, 0) == RES_OK && h_fs_MountCache("PermCache", 13) == RES_OK, "cache storage mount: repeating a permanent mount of the same folder succeeds");
+            h_fs_Unmount("PermCache");
+            CHECK(h_fs_IsMounted("PermCache"), "cache storage mount: repeating a permanent mount does not make it releasable");
+        }
+        unsetenv("DM_TEMP");
+    }
     char rom[1100], overlay[1100], rdata[1200], odata[1200], fn[1300], got[64];
     snprintf(rom, sizeof rom, "%s/rom", root); snprintf(overlay, sizeof overlay, "%s/overlay", root); snprintf(rdata, sizeof rdata, "%s/data", rom); snprintf(odata, sizeof odata, "%s/data", overlay);
     mkdir(rom, 0755); mkdir(overlay, 0755); mkdir(rdata, 0755); mkdir(odata, 0755);
@@ -317,9 +341,10 @@ int main(void) {
             h_fs_Unmount("AVC");
             CHECK(h_fs_MountAoc("AVC", 2, NULL, 0) == RES_OK && read_fs("AVC:/data/a", got, sizeof got) && !strcmp(got, "hello") && g_nmnt == before + 2,
                   "the first add-on again takes its entry back (%d entries for two add-ons)", g_nmnt - before);
-            CHECK(h_fs_MountAoc("AVC", 3, NULL, 0) == RES_OK && read_fs("AVC:/data/a", got, sizeof got) && !strcmp(got, "hello"), "a name still in use keeps its target, as before");
+            CHECK(h_fs_MountAoc("AVC", 3, NULL, 0) == RES_PATH_EXISTS && read_fs("AVC:/data/a", got, sizeof got) && !strcmp(got, "hello"), "another add-on under a name still in use is refused, as on Horizon");
+            CHECK(h_fs_MountAoc("AVC", 2, NULL, 0) == RES_OK && read_fs("AVC:/data/a", got, sizeof got) && !strcmp(got, "hello"), "the same add-on again under a name in use is harmless");
             CHECK(h_fs_MountRom("rom", NULL, 0) == RES_OK, "mount the RomFS"); h_fs_Unmount("rom");
-            CHECK(h_fs_IsMounted("rom") && read_fs("rom:/data/c", got, sizeof got) && !strcmp(got, "xy"), "Unmount leaves the RomFS mounted, as every mount but an add-on's");
+            CHECK(h_fs_IsMounted("rom") && read_fs("rom:/data/c", got, sizeof got) && !strcmp(got, "xy"), "Unmount leaves the RomFS mounted, as every non-releasable mount");
         }
         unsetenv("DM_AOC_DIR"); g_nmnt = 0;
         {   // a file the image marks damaged (IMG_ENT_DAMAGED) still reads, and the mount counts it and the first open names it once

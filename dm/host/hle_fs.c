@@ -52,8 +52,8 @@ typedef struct {
     char name[32]; char dir[1024]; char overlay[4096]; char commit[1024];
     romfs_img *img;                  // non-NULL: dir is a RomFS image file
     int ro;
-    int aoc;                         // add-on content: Unmount releases the name (mount_aoc)
-    int released;                    // an add-on content entry after its Unmount: kept for open handles and a later mount of its image, matched by no name (mnt_is)
+    int releasable;                  // add-on content and cache storage: Unmount releases the name (mount_releasable)
+    int released;                    // a releasable entry after its Unmount: kept for open handles and a later mount of its target, matched by no name (mnt_is)
     int txn_root;                    // canonical mount entry for this backing transaction, or -1
     int save;                        // mounted as save data (a transaction, or its read-only fallback): Unmount frees its name (h_fs_Unmount)
     _Atomic int poison;              // failure state belongs to this backing, not to the process
@@ -61,7 +61,7 @@ typedef struct {
 } mount_t;
 static mount_t g_mnt[MAX_MOUNT];   // commit non-empty = transactional save mount
 static int g_nmnt;
-// Whether entry m is mounted under the n-byte name s; a released entry (aoc_release) is under none
+// Whether entry m is mounted under the n-byte name s; a released entry (host_unmount) is under none
 static int mnt_is(const mount_t *m, const char *s, size_t n) { return !m->released && strlen(m->name) == n && !strncmp(m->name, s, n); }
 static int mnt_named(const mount_t *m, const char *name) { return mnt_is(m, name, strlen(name)); }
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -239,16 +239,35 @@ static int img_path(const char *p, int *mi, int64_t *k) {
     return 0;
 }
 // soft: game files that cannot be opened answer "target not found" with a [RED] line instead of stopping the host (add-on content: the game runs without that DLC)
-static Result mount_ex(const char *name, const char *dir, int ro, int txn, int soft) {
+// releasable: Unmount releases the name (add-on content, cache storage: mount_releasable)
+static Result mount_impl(const char *name, const char *dir, int ro, int txn, int soft, int releasable) {
     pthread_once(&g_txn_lock_once, txn_locks_init);
     PATH_LOCK(); pthread_mutex_lock(&g_lock);
-    for (int i = 0; i < g_nmnt; i++)
+    int back = -1;
+    for (int i = 0; i < g_nmnt; i++) {
         if (mnt_named(&g_mnt[i], name)) {
+            // A releasable mount under a name in use: the same target again is harmless, another one is refused (MountNameAlreadyExists), as on Horizon
+            if (releasable) {
+                const char *backing = g_mnt[i].commit[0] ? g_mnt[i].commit : g_mnt[i].dir;
+                Result r = !strcmp(backing, dir) && g_mnt[i].ro == ro ? RES_OK : RES_PATH_EXISTS;
+                pthread_mutex_unlock(&g_lock); return r;
+            }
             // A save mounted under a name that already holds another user's save, with no Unmount between: on Horizon the mount fails (the name exists); here the name keeps
             // the save it has, which the game then reads as the other user's
             if (txn && g_mnt[i].save && g_mnt[i].commit[0] && strcmp(g_mnt[i].commit, dir)) LOG("[RED] fs mount %s: the name still holds the save %s, not %s (no Unmount before it)", name, g_mnt[i].commit, dir);
             pthread_mutex_unlock(&g_lock); return RES_OK;
         }
+        if (releasable && !txn && g_mnt[i].released && g_mnt[i].releasable && g_mnt[i].ro == ro && !g_mnt[i].commit[0] && !strcmp(g_mnt[i].dir, dir)) back = i;
+    }
+    // A releasable mount of a target an Unmount released takes its entry back (the entry and any open image stayed for handles left open), so cycling does not grow the table
+    if (back >= 0) {
+        strlcpy(g_mnt[back].name, name, sizeof g_mnt[0].name);
+        g_mnt[back].released = 0;
+        pthread_mutex_unlock(&g_lock);
+        if (!ro) mkdir(dir, 0755);
+        LOG("fs mount %s: → %s (%sthe entry it had before its unmount)", name, dir, ro ? "read-only, " : "");
+        return RES_OK;
+    }
     // A save takes an entry an Unmount freed (h_fs_Unmount: only save entries are ever freed), unless a mounted entry still shares that entry's transaction (txn_root):
     // a game that mounts and unmounts its save again and again then keeps one entry instead of filling the table. Other mounts are never unmounted: they always append
     int s = g_nmnt;
@@ -260,7 +279,7 @@ static Result mount_ex(const char *name, const char *dir, int ro, int txn, int s
     if (s == g_nmnt && g_nmnt >= MAX_MOUNT) die("mount table full");
     strlcpy(g_mnt[s].name, name, sizeof g_mnt[0].name);
     g_mnt[s].ro = ro; g_mnt[s].overlay[0] = 0; g_mnt[s].commit[0] = 0;
-    g_mnt[s].txn_root = -1; g_mnt[s].save = txn; g_mnt[s].aoc = 0; g_mnt[s].released = 0;
+    g_mnt[s].txn_root = -1; g_mnt[s].save = txn; g_mnt[s].releasable = releasable; g_mnt[s].released = 0;
     atomic_store(&g_mnt[s].poison, 0);
     atomic_store(&g_mnt[s].first_write_ns, 0);
     if (!strcmp(name, "rom") && getenv("DM_ROMFS_OVERLAY"))
@@ -317,48 +336,34 @@ static Result mount_ex(const char *name, const char *dir, int ro, int txn, int s
     LOG("fs mount %s: → %s%s%s%s", name, shown, ro || txn_err ? " (read-only)" : txn ? " (transactional save: work directory, swapped in atomically on Commit)" : "", ov ? " (overlay first)" : "", reused ? " (an unmounted entry taken again)" : "");
     return RES_OK;
 }
-static Result mount(const char *name, const char *dir, int ro) { return mount_ex(name, dir, ro, 0, 0); }
+static Result mount_ex(const char *name, const char *dir, int ro, int txn, int soft) { return mount_impl(name, dir, ro, txn, soft, 0); }
+static Result mount(const char *name, const char *dir, int ro) { return mount_impl(name, dir, ro, 0, 0, 0); }
 
-// Add-on content under a name the game gives back. On Horizon Unmount releases the name and the next mount under it gets the add-on it names: Pokémon Friends'
-// AocVersionCheker mounts each add-on as "AVCtitle", reads its AocVersion/AocVersion_<label>.json and unmounts it. The host's table keeps its entries, as an open
-// image file names its entry by index (IMG_HANDLE): Unmount marks an add-on's entry released (aoc_release; it keeps its name for the log, and no name lookup matches it, mnt_is), and a later mount of the same image takes that entry back,
-// so cycling through the add-ons does not grow the table. A name still in use keeps its target, as mount_ex does for every mount.
-static Result mount_aoc(const char *name, const char *dir) {
-    {
-        PATH_LOCK(); pthread_mutex_lock(&g_lock);
-        int back = -1;
-        for (int i = 0; i < g_nmnt; i++) {
-            if (mnt_named(&g_mnt[i], name)) { pthread_mutex_unlock(&g_lock); return RES_OK; }
-            if (g_mnt[i].released && !strcmp(g_mnt[i].dir, dir)) back = i;
-        }
-        if (back >= 0) {
-            strlcpy(g_mnt[back].name, name, sizeof g_mnt[0].name); g_mnt[back].released = 0;
-            pthread_mutex_unlock(&g_lock);
-            LOG("fs mount %s: → %s (read-only, the entry it had before its unmount)", name, dir);
-            return RES_OK;
-        }
-        pthread_mutex_unlock(&g_lock);
-    }
-    Result r = mount_ex(name, dir, 1, 0, 1);   // mount_ex logs it (soft: files that no longer open answer "target not found")
-    if (r == RES_OK) {
-        PATH_LOCK(); pthread_mutex_lock(&g_lock);
-        for (int i = g_nmnt - 1; i >= 0; i--) if (mnt_named(&g_mnt[i], name)) { g_mnt[i].aoc = 1; break; }
-        pthread_mutex_unlock(&g_lock);
-    }
-    return r;
-}
-// Unmount of an add-on content mount: the name is released, the entry and its image stay (a handle left open still reads the image it opened). 1 if the name was one
-static int aoc_release(const char *name) {
+// Add-on content and cache storage under a name the game gives back. On Horizon Unmount releases the name and the next mount under it gets the target it names: Pokémon Friends'
+// AocVersionCheker mounts each add-on as "AVCtitle", reads its AocVersion/AocVersion_<label>.json and unmounts it, and Taiko no Tatsujin: Rhythm Festival's plugin mounts cache
+// storage index 1, unmounts it, and mounts index 2 under the same name. The host's table keeps its entries, as an open image file names its entry by index (IMG_HANDLE): Unmount
+// marks a releasable entry released (host_unmount; it keeps its name for the log, and no name lookup matches it, mnt_is), and a later mount of the same target and mode takes that
+// entry back under the same lock (mount_impl), so cycling indices does not grow the table. A different target under a name still in use is refused with RES_PATH_EXISTS, as on Horizon.
+// Add-on content mounts soft: files that no longer open answer "target not found"
+static Result mount_releasable(const char *name, const char *dir, int ro, int soft) { return mount_impl(name, dir, ro, 0, soft, 1); }
+// Unmount of a host mount, under one lock: 0 when the name is not in the host's table (h_fs_Unmount may then release an SDK-owned mount with no host lock held), else 1.
+// A releasable entry is released (the entry and any open image stay, so handles left open still read); with more than one user a save's name is freed (h_fs_Unmount)
+int dm_account_users(void);   // hle_account.c (a weak single-user form below)
+static int host_unmount(const char *name) {
+    char released[sizeof g_mnt[0].dir] = "";
+    int found = 0, users = dm_account_users();
     PATH_LOCK(); pthread_mutex_lock(&g_lock);
-    for (int i = 0; i < g_nmnt; i++)
-        if (g_mnt[i].aoc && mnt_named(&g_mnt[i], name)) {
-            g_mnt[i].released = 1;
-            pthread_mutex_unlock(&g_lock);
-            LOG("fs unmount %s: add-on content released (%s)", name, g_mnt[i].dir);
-            return 1;
+    for (int i = 0; i < g_nmnt && !found; i++)
+        if (mnt_named(&g_mnt[i], name)) {
+            found = 1;
+            if (g_mnt[i].releasable) { g_mnt[i].released = 1; strlcpy(released, g_mnt[i].dir, sizeof released); }
         }
+    if (found && !released[0] && users >= 2)
+        for (int i = 0; i < g_nmnt; i++)
+            if (g_mnt[i].save && mnt_named(&g_mnt[i], name)) { LOG("fs unmount %s (save %s)", name, g_mnt[i].commit[0] ? g_mnt[i].commit : g_mnt[i].dir); g_mnt[i].name[0] = 0; }
     pthread_mutex_unlock(&g_lock);
-    return 0;
+    if (released[0]) LOG("fs unmount %s: released (%s)", name, released);
+    return found;
 }
 
 // APFS is case-insensitive by default, Horizon paths are case-sensitive: every component is looked up exactly by guest name.
@@ -660,7 +665,7 @@ HLE_FORCE("_ZN2nn2fs17MountAddOnContentEPKciPvm", "fsp-srv; add-on content → D
         LOG("fs mount add-on content %s: index %d does not exist (DM_AOC_DIR=%s)", name, index, getenv("DM_AOC_DIR") ? getenv("DM_AOC_DIR") : "unset");
         return RES_TARGET_NOT_FOUND;
     }
-    return mount_aoc(name, dir);   // mount_ex logs it; files that no longer open answer "target not found" (soft), never a FATAL
+    return mount_releasable(name, dir, 1, 1);   // mount_impl logs it; files that no longer open answer "target not found" (soft), never a FATAL
 }
 // System data archives are firmware content, which the host does not have. The two Mii model archives are the host's stand-in, one directory of files in their shared layout with
 // every part blank (hle_mii.c dm_mii_standin), written into <DM_TEMP>_sysdata/mii and mounted read-only: the Switch's MiiModel, 0100000000000802 (Mario Kart 8 Deluxe mounts it as
@@ -729,7 +734,7 @@ HLE_FORCE("_ZN2nn2fs18CreateCacheStorageEill", "fsp-srv; cache storage → host 
     char b[1100]; LOG("fs create cache storage %d (%lld bytes, journal %lld) → %s", index, (long long)size, (long long)journal, cache_dir(index, b, sizeof b)); mkdir(b, 0755); return RES_OK;
 }
 HLE_FORCE("_ZN2nn2fs17MountCacheStorageEPKci", "fsp-srv; cache storage → host directory", Result, h_fs_MountCache, const char *name, int index) {
-    char b[1100]; cache_dir(index, b, sizeof b); mkdir(b, 0755); return mount(name, b, 0);
+    char b[1100]; cache_dir(index, b, sizeof b); mkdir(b, 0755); return mount_releasable(name, b, 0, 0);
 }
 HLE_FORCE("_ZN2nn2fs18DeleteCacheStorageEi", "fsp-srv; cache storage → deletes the host directory", Result, h_fs_DeleteCache, int index) {
     char b[1100]; rm_tree(cache_dir(index, b, sizeof b)); return RES_OK;
@@ -957,27 +962,19 @@ out:
 HLE_FORCE("_ZN2nn2fs6CommitEPKcRKNS0_12CommitOptionE", "fsp-srv; same as Commit (the option only clears the restore flag)", Result, h_fs_CommitOpt, const char *name, const void *opt) { (void)opt; return h_fs_Commit(name); }
 // SDK 11's old name: CommitSaveData(mount name) is the later Commit (Metroid Dread)
 HLE_FORCE("_ZN2nn2fs14CommitSaveDataEPKc", "fsp-srv; same as Commit (SDK 11's old name)", Result, h_fs_CommitSaveData, const char *name) { return h_fs_Commit(name); }
-// Unmount of a host mount: a save's name is freed, so the next MountSaveData under it mounts that user's save (Super Mario Bros. Wonder unmounts "save" and mounts it again
+// Unmount of a host mount (host_unmount): a save's name is freed, so the next MountSaveData under it mounts that user's save (Super Mario Bros. Wonder unmounts "save" and mounts it again
 // for the user whose save file it opens: a permanent table kept the first user's save under the name, and every user's save file was the first user's). What was not committed
-// is dropped, as on Horizon. An add-on content mount's name is released (aoc_release, mount_aoc: a game may mount the next add-on under it), with any number of users.
-// Other host mounts (rom, cache storage) stay: their table entries are permanent, as before. The freed entry is taken by the next save
-// mount (mount_ex), so a game that mounts and unmounts its save again and again does not fill the table.
+// is dropped, as on Horizon. An add-on content or cache storage mount's name is released (mount_releasable: a game may mount the next add-on or cache storage index under it),
+// with any number of users. Other host mounts (rom) stay: their table entries are permanent, as before. The freed entry is taken by the next save
+// mount (mount_impl), so a game that mounts and unmounts its save again and again does not fill the table.
 // Only with more than one user (dm_account_users): with one, every MountSaveData names the same save, so a kept name mounts the right one, and Unmount stays the no-op it
 // always was (a game that unmounts with writes not committed keeps them, as every earlier run did).
 // A mount call the host does not take over runs in the SDK and registers in the SDK's own table (nn::fs::MountRamDisk), and only the SDK can release it. Paper Mario: The
 // Thousand-Year Door unmounts its "cache" RAM disk, frees the buffer and mounts it again, which with the entry left behind failed with MountNameAlreadyExists and aborted
 // (main+0x303b74, GitHub issue #1012). The SDK's Unmount aborts on a name it does not hold, hence its IsMounted first; a name in neither table stays a no-op. No host lock is
 // held across the SDK's calls, which take the SDK's own locks and free guest memory
-HLE_FORCE("_ZN2nn2fs7UnmountEPKc", "fsp-srv; host mounts: an add-on content mount releases its name, with more than one user a save's name is freed (its uncommitted writes dropped), others stay; a mount in the SDK's own table (RAM disk) is released there", void, h_fs_Unmount, const char *name) {
-    if (!name) return;
-    if (host_mounted(name)) {
-        if (aoc_release(name) || dm_account_users() < 2) return;
-        PATH_LOCK(); pthread_mutex_lock(&g_lock);
-        for (int i = 0; i < g_nmnt; i++)
-            if (g_mnt[i].save && !strcmp(g_mnt[i].name, name)) { LOG("fs unmount %s (save %s)", name, g_mnt[i].commit[0] ? g_mnt[i].commit : g_mnt[i].dir); g_mnt[i].name[0] = 0; }
-        pthread_mutex_unlock(&g_lock);
-        return;
-    }
+HLE_FORCE("_ZN2nn2fs7UnmountEPKc", "fsp-srv; host mounts: an add-on content or cache storage mount releases its name, with more than one user a save's name is freed (its uncommitted writes dropped), others stay; a mount in the SDK's own table (RAM disk) is released there", void, h_fs_Unmount, const char *name) {
+    if (!name || host_unmount(name)) return;
     int (*sdk_is_mounted)(const char *) = guest_sym("_ZN2nn2fs9IsMountedEPKc");
     void (*sdk_unmount)(const char *) = guest_sym("_ZN2nn2fs7UnmountEPKc");
     if (!sdk_is_mounted || !sdk_unmount || !sdk_is_mounted(name)) return;
