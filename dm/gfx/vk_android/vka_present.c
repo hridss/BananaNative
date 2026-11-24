@@ -756,7 +756,7 @@ static void window_take(void) {   // g_pmu held
 }
 
 // ---------- The present queue ----------
-typedef struct { tex_t t; double period; int crop[4], has_crop; uint64_t ticket, fence; vka_img *src; double hold; int fit_w, fit_h; } pq_item;   // src, hold: a generated frame (vka_framegen.c); fit_w, fit_h: the size it is placed by (its game frame's crop), 0 = its own
+typedef struct { tex_t t; double period; int crop[4], has_crop; uint64_t ticket, fence; vka_img *src; double hold; int fit_w, fit_h, own; } pq_item;   // src, hold: a generated frame (vka_framegen.c); fit_w, fit_h: the size it is placed by (its game frame's crop), 0 = its own; own: src is a guest Vulkan swapchain image the item holds a reference to (vka_present_guest)
 static pq_item g_pq[PQ];
 static uint64_t g_pq_in, g_pq_read, g_pq_done, g_pq_fill;   // tickets: reserved, taken by the present thread, shown; filled (a ticket is reserved by the game's present, filled when the replay reaches it: vka_worker.c)
 
@@ -956,7 +956,7 @@ static int present_one(const pq_item *it) {
     } else if (im && !blit) VRED_ONCE("window texture serial %llu (format %#x) cannot be blitted to the swapchain: presented black", (unsigned long long)im->serial, im->d.format);
     if (blit >= 0) vka_img_barrier(cb, g_simg[idx], VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
     ovl_draw(cb, k, idx);   // the launcher's overlay over the picture (generated frames too)
-    if (!it->src) vka_ctl_shot_record(cb, im, g_pfmt, cx, cy, cw, ch);   // the game's own frames only
+    if (!it->src || it->own) vka_ctl_shot_record(cb, im, g_pfmt, cx, cy, cw, ch);   // the game's own frames only
     vk.vkEndCommandBuffer(cb);
     VkSemaphore ws[2] = {g_fr[k].acq, V.tl}; uint64_t wv[2] = {0, it->fence}; VkPipelineStageFlags st[2] = {VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT};   // the image's first barrier is ALL_COMMANDS
     VkTimelineSemaphoreSubmitInfo ti = {VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO, .waitSemaphoreValueCount = 2, .pWaitSemaphoreValues = wv, .signalSemaphoreValueCount = 1, .pSignalSemaphoreValues = wv};
@@ -1040,13 +1040,14 @@ static void *present_main(void *arg) {
         pq_item it = g_pq[g_pq_read % PQ]; g_pq_read++;
         pthread_mutex_unlock(&g_pmu);
         vka_img *gen[VKA_FG_MAX]; double hold = 0, out_period = 0;   // frame generation: the images shown before this frame, each for hold seconds
-        int ng = g_surf ? vka_fg_frame(it.t.serial, it.has_crop ? it.crop : NULL, it.period, it.fence, (int)it.t.d.format, gen, &hold, &out_period) : 0;
+        int ng = g_surf && !it.own ? vka_fg_frame(it.t.serial, it.has_crop ? it.crop : NULL, it.period, it.fence, (int)it.t.d.format, gen, &hold, &out_period) : 0;   // (not for a guest Vulkan image: frame generation takes NVN window textures by serial)
         double game_period = it.period;
         g_fg_on = out_period > 0;
         if (out_period > 0) it.period = out_period;
-        for (int g = 0; g < ng; g++) { pq_item gi = it; gi.src = gen[g]; gi.fit_w = it.has_crop && it.crop[2] > 0 && it.crop[3] > 0 ? it.crop[2] : (int)it.t.d.width; gi.fit_h = it.has_crop && it.crop[2] > 0 && it.crop[3] > 0 ? it.crop[3] : (int)it.t.d.height; gi.has_crop = 0; gi.ticket = 0; gi.fence = 0; gi.hold = hold; vka_fps_note(present_one(&gi), 1); }
+        for (int g = 0; g < ng; g++) { pq_item gi = it; gi.src = gen[g]; gi.fit_w = it.has_crop && it.crop[2] > 0 && it.crop[3] > 0 ? it.crop[2] : (int)it.t.d.width; gi.fit_h = it.has_crop && it.crop[2] > 0 && it.crop[3] > 0 ? it.crop[3] : (int)it.t.d.height; gi.has_crop = 0; gi.ticket = 0; gi.fence = 0; gi.hold = hold; gi.own = 0; vka_fps_note(present_one(&gi), 1); }
         it.hold = ng ? hold : game_period;
         int shown = present_one(&it);
+        if (it.own) vka_tex_drop(it.src);   // (present_one keeps its own reference while its copy runs)
         if (shown) dm_guest_frame_tick();
         if (!shown || !V.display_timing) pres_note(it.ticket, shown ? now_ns() / 1e9 : -1);
         vka_fps_note(shown, 0);
@@ -1083,7 +1084,7 @@ void vka_present_fill(uint64_t tk, const tex_t *t, double period_s, const int cr
     // The last submission handed to the queue, not the last fence reserved: a submission another thread is still recording (its fence taken at the top of mtl_sub_commit) would
     // be queued after this copy, which then waits for it forever (a wait-before-signal on one queue). On the Adreno 840 phone that froze the queue while the first level loaded
     // (fence N+2 never reached at N, android-perf c1ff15fa, three runs), and the compositor waiting on the frame restarted the system server
-    it->ticket = tk; it->fence = vka_fence_queued(); it->src = NULL; it->hold = 0; it->fit_w = it->fit_h = 0;
+    it->ticket = tk; it->fence = vka_fence_queued(); it->src = NULL; it->hold = 0; it->fit_w = it->fit_h = 0; it->own = 0;
     uint64_t res = vka_fence_last();
     if (res > it->fence && !vka_worker_on()) { static _Atomic uint64_t n; uint64_t k = atomic_fetch_add(&n, 1) + 1;
         if (k <= 3 || !(k & (k - 1))) VLOG("present ticket %llu came while fence %llu was still being recorded (%llu queued): the present waits for %llu (%llu such presents)",
@@ -1093,6 +1094,22 @@ void vka_present_fill(uint64_t tk, const tex_t *t, double period_s, const int cr
     pthread_mutex_unlock(&g_pmu);
 }
 uint64_t vka_present_inline(const tex_t *t, double period_s, const int crop[4]) { uint64_t tk = vka_present_reserve(); vka_present_fill(tk, t, period_s, crop); return tk; }
+// A guest Vulkan swapchain image (vka_guest.c vkQueuePresentKHR): shown as the window texture is, once the replay's timeline reaches fence (the submission that handed
+// the image over, already queued); crop as in vka_present_fill. The item holds a reference to the image until the present thread has taken its own. Returns the ticket
+// (mtl_present_wait), on the game's thread
+uint64_t vka_present_guest(vka_img *im, double period_s, const int crop[4], uint64_t fence) {
+    vka_layer_poll(); vka_perf_frame(period_s);
+    uint64_t tk = vka_present_reserve();
+    pthread_mutex_lock(&g_pmu);
+    if (!g_thread_up || tk <= g_pq_fill) { pthread_mutex_unlock(&g_pmu); return tk; }
+    pq_item *it = &g_pq[(tk - 1) % PQ];
+    memset(&it->t, 0, sizeof it->t); it->period = period_s; it->has_crop = crop != NULL; if (crop) memcpy(it->crop, crop, sizeof it->crop);
+    it->ticket = tk; it->fence = fence; it->src = vka_tex_ref(im); it->own = 1; it->hold = 0; it->fit_w = it->fit_h = 0;
+    g_pq_fill = tk;
+    pthread_cond_broadcast(&g_pcv);
+    pthread_mutex_unlock(&g_pmu);
+    return tk;
+}
 void mtl_present_wait(uint64_t tk) { pthread_mutex_lock(&g_pmu); while (g_pq_done < tk) pthread_cond_wait(&g_pcv, &g_pmu); pthread_mutex_unlock(&g_pmu); }
 void mtl_present_flush(void) { pthread_mutex_lock(&g_pmu); uint64_t h = g_pq_in; pthread_mutex_unlock(&g_pmu); mtl_present_wait(h); }
 // The acquire sync of a window image (hle_nvn.c WindowAcquireTexture): the fence of the commits that drew it when it was last presented, not every commit so far. By the time
