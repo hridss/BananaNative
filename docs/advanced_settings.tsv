@@ -695,6 +695,7 @@ DM_VK_PSO_ASYNC	advanced	Performance	Background pipelines		toggle			game		Game s
 DM_VK_PSO_FAIR_MS	developer	Performance			text			both							
 DM_VK_PSO_ORDER	developer	Performance			text			both							
 DM_VK_PSO_SLOTS	developer	Performance			text		1 with Turnip, 4 with other drivers	both							
+DM_VK_PSO_WAIT_MS	developer	Performance			text			both							
 DM_VK_PUSH_DEDUP	developer	Graphics			text			both							
 DM_VK_PUSH_DELTA	developer	Diagnostics			text			both							
 DM_VK_QS_TRACE	developer	Diagnostics			text			both							

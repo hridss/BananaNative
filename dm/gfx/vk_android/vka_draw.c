@@ -17,6 +17,7 @@
 #include "vka_prepass.h"
 #include "vka_wbfollow.h"
 #include "vka_rplist.h"
+#include "vka_psogate.h"
 #include <math.h>
 #include <stdio.h>
 #include <stddef.h>
@@ -2649,7 +2650,11 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
     PT(3);
     if (!mesh) vin_build_kept(d, sh[0], &k);
     PT(4);
-    VkPipeline p = vka_gfx_pipeline(sh, &lay, &k);
+    uint32_t nc_w = 0; int opq_w = 0;
+    for (uint32_t i = 0; i < R.ncolor; i++) if (k.cfmt[i] && k.att[i].mask) { nc_w++; if (!k.att[i].en) opq_w = 1; }
+    int ds_w = !d->rast_discard && (((R.df != VK_FORMAT_UNDEFINED) && d->ds.dt && d->ds.dw) || ((R.sf != VK_FORMAT_UNDEFINED) && d->ds.st && (d->st_wmask[0] || d->st_wmask[1])));
+    int wait_why = vkpg_draw_waits(draw_writes(sh, d), d->rast_discard != 0 || d->tf_on != 0, ds_w, opq_w, nc_w, R.full_w, R.full_h);
+    VkPipeline p = vka_gfx_pipeline_wait(sh, &lay, &k, wait_why);
     if (!p) { g_skipped++; if (vks_pipeline_counts(vka_pso_wait)) g_skip_dev[VKS_PIPELINE]++; return; }   // the driver refused it (logged when it was made); one still being made in the background is not the driver's (vka_skipwarn.h)
     // DM_VK_INSTANCE: a direct indexed draw of one instance with only vertex and pixel shaders, their base modules and no retyped inputs may join the open run (its
     // instanced pipeline stays bound) or start one (decided at the sets, below)

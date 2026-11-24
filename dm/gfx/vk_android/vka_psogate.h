@@ -76,6 +76,32 @@ static inline int vkpg_may_enter(const vkpg_state *s, int slots, int frame, int 
     return s->busy < slots;
 }
 
+// Which graphics draws wait (bounded, DM_VK_PSO_WAIT_MS) for an unbuilt pipeline under DM_VK_PSO_ASYNC instead of being skipped: any draw whose outputs later passes
+// or later frames read, or that paints the opaque scene surface over the cleared/sky background. Only a blended single-target draw on a full-size target with no memory,
+// depth/stencil or discard side effects (a translucent particle, decal or overlay whose absence costs one frame of that object alone) is skipped while compiling
+enum { VKPG_SMALL_TARGET_PX = 960 * 540 };
+enum { VKPG_WAIT_NONE = 0, VKPG_WAIT_MEM, VKPG_WAIT_DISCARD, VKPG_WAIT_DS, VKPG_WAIT_MRT, VKPG_WAIT_OFFSCREEN, VKPG_WAIT_OPAQUE };
+static inline int vkpg_draw_waits(int writes_mem, int rast_discard, int writes_ds, int writes_opaque, uint32_t ncolor_written, uint32_t target_w, uint32_t target_h) {
+    if (writes_mem) return VKPG_WAIT_MEM;
+    if (rast_discard) return VKPG_WAIT_DISCARD;
+    if (writes_ds) return VKPG_WAIT_DS;
+    if (ncolor_written > 1) return VKPG_WAIT_MRT;
+    if (target_w && target_h && (uint64_t)target_w * target_h <= VKPG_SMALL_TARGET_PX) return VKPG_WAIT_OFFSCREEN;
+    if (writes_opaque) return VKPG_WAIT_OPAQUE;
+    return VKPG_WAIT_NONE;
+}
+static inline const char *vkpg_wait_why(int w) {
+    switch (w) {
+    case VKPG_WAIT_MEM: return "shader memory write";
+    case VKPG_WAIT_DISCARD: return "rasterizer discard";
+    case VKPG_WAIT_DS: return "depth/stencil write";
+    case VKPG_WAIT_MRT: return "multiple colour targets";
+    case VKPG_WAIT_OFFSCREEN: return "small offscreen target";
+    case VKPG_WAIT_OPAQUE: return "opaque colour";
+    default: return "none";
+    }
+}
+
 // The pipeline cache saver's debounce (vka_pso.c vka_pso_save / saver_main): how many nanoseconds remain before a pending save (slow = 1: a compile over 1 s asked for
 // DM_VK_PCACHE_SAVE_SLOW_S, else DM_VK_PCACHE_SAVE_S) may run after the last save at last_ns (0: no save yet, due at once). A save requested during the debounce waits
 // for the remainder on the saver thread instead of being dropped

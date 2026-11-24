@@ -368,7 +368,7 @@ void vka_pso_waits(uint64_t *save_ns, uint64_t *pw_wait_ns) { if (save_ns) *save
 // ---------- Graphics pipelines ----------
 // The map's value: the pipeline (VK_NULL_HANDLE = failed, its draws skipped), whether it is a fast-linked one, and whether a thread is still making it (busy: the frame path
 // waits for that thread instead of making it a second time). p and linked change in place when the optimized pipeline replaces the linked one
-typedef struct gval { VkPipeline p; uint8_t linked, busy, pw; pid_t tid; } gval;   // pw, tid: a prewarm thread is making it (busy), that thread (busy_wait)
+typedef struct gval { VkPipeline p; uint8_t linked, busy, pw, waited; pid_t tid; } gval;   // pw, tid: a prewarm thread is making it (busy), that thread (busy_wait); waited: a draw already waited for it
 typedef struct { vka_shader *sh[VKA_NSTAGE]; VkPipelineLayout layout; vka_gkey k; } gkey_full;   // (sh[5], compute, stays NULL)
 static kmap g_gfx = {.klen = sizeof(gkey_full)};
 static pthread_cond_t g_busy_cv = PTHREAD_COND_INITIALIZER;
@@ -1191,7 +1191,7 @@ static void pw_explain(int kind, vka_shader *const sh[5], const vka_gkey *k, uin
     else VLOG("pipeline made%s (%.1f ms%s), not in the prewarm list: %d records with these shaders, the nearest differs in %s", where,
               ms, linked ? ", linked" : "", same_sh, d[0] ? d : "nothing: the same key (the prewarm threads had not reached it yet)");
 }
-static gval *gfx_obtain(const gkey_full *fk, uint64_t h, size_t len, vka_shader *const sh[VKA_NSTAGE], const vka_layout *lay, const vka_gkey *k, int prewarm, int *made);
+static gval *gfx_obtain(const gkey_full *fk, uint64_t h, size_t len, vka_shader *const sh[VKA_NSTAGE], const vka_layout *lay, const vka_gkey *k, int prewarm, int wait_why, int *made);
 static VkPipeline cs_obtain(vka_shader *cs, const vka_layout *lay, int prewarm, int *made, uint64_t umask, uint64_t smask, int frame);
 // MemAvailable in MiB (/proc/meminfo; 0 = not known)
 static uint64_t mem_avail_mb(void) {
@@ -1285,7 +1285,7 @@ static void *pw_main(void *a) {
             else {
                 gkey_full fk; memset(&fk, 0, sizeof fk); memcpy(fk.sh, sh, sizeof fk.sh); fk.layout = lay.layout; fk.k = k;
                 size_t len = k.vin_static ? sizeof fk : offsetof(gkey_full, k.va);
-                gfx_obtain(&fk, fnv(&fk, len, 1469598103934665603ull), len, sh, &lay, &k, 1, &made);
+                gfx_obtain(&fk, fnv(&fk, len, 1469598103934665603ull), len, sh, &lay, &k, 1, 0, &made);
             }
         }
         if (!bad) spec_end(key);
@@ -1338,11 +1338,32 @@ static void busy_wait(gval *g) {
 // (DM_VK_CS_ASYNC, cs_obtain). Open: the cause, slow library compiles on Turnip, is not addressed. cs: a compute job (sh[5] its shader, g an entry of g_cs; len, k unused)
 int vka_pso_redrawn = 1;
 static _Atomic uint64_t g_as_kept;   // frame-path builds for passes whose targets are not drawn every frame
-typedef struct as_job { struct as_job *next; gval *g; size_t len; vka_shader *sh[VKA_NSTAGE]; vka_layout lay; vka_gkey k; uint64_t t0, cost; int cs; uint64_t umask, smask; } as_job;   // umask, smask: a compute job's retyped images (cs_obtain)
+typedef struct as_job { struct as_job *next; gval *g; size_t len; vka_shader *sh[VKA_NSTAGE]; vka_layout lay; vka_gkey k; uint64_t t0, cost; int cs, wait; uint64_t umask, smask; } as_job;   // umask, smask: a compute job's retyped images (cs_obtain); wait: a required draw needs it
 static as_job *g_as_head, **g_as_tail = &g_as_head; static pthread_mutex_t g_as_mu = PTHREAD_MUTEX_INITIALIZER; static pthread_cond_t g_as_cv = PTHREAD_COND_INITIALIZER;
 static _Atomic uint64_t g_as_queued, g_as_made, g_as_skips, g_as_ns, g_as_lat_max_ns; static _Atomic int g_as_depth, g_as_depth_max;
-static _Atomic int g_csw_busy;   // a compute compile a dispatch waits for, running on its own thread (DM_VK_CS_WAIT_MS, csw_wait)
+static _Atomic int g_csw_busy, g_psow_busy;   // compiles a dispatch (DM_VK_CS_WAIT_MS, csw_wait) or a draw (DM_VK_PSO_WAIT_MS, psow_wait) waits for, on their own threads
 static _Atomic uint64_t g_csw_n, g_csw_late, g_csw_ns;   // dispatches that waited, those whose pipeline was not made in time, the frame's time waiting
+static _Atomic uint64_t g_psow_n, g_psow_late, g_psow_ns;   // graphics pipelines a draw waited for, those not made in time, the frame's time waiting
+static _Atomic uint64_t g_warm_t0, g_warm_n0, g_warm_late0, g_warm_ns0, g_warm_skip0;
+static void warm_tick(uint64_t t) {
+    uint64_t t0 = atomic_load_explicit(&g_warm_t0, memory_order_relaxed);
+    if (!t0) {
+        uint64_t z = 0;
+        if (atomic_compare_exchange_strong(&g_warm_t0, &z, t)) {
+            atomic_store(&g_warm_n0, atomic_load(&g_psow_n)); atomic_store(&g_warm_late0, atomic_load(&g_psow_late));
+            atomic_store(&g_warm_ns0, atomic_load(&g_psow_ns)); atomic_store(&g_warm_skip0, atomic_load(&g_as_skips));
+        }
+        return;
+    }
+    if (t - t0 < 1000000000ull || !atomic_compare_exchange_strong(&g_warm_t0, &t0, t)) return;
+    uint64_t wn = atomic_load(&g_psow_n), wl = atomic_load(&g_psow_late), wns = atomic_load(&g_psow_ns), sk = atomic_load(&g_as_skips);
+    uint64_t dn = wn - atomic_exchange(&g_warm_n0, wn), dl = wl - atomic_exchange(&g_warm_late0, wl);
+    uint64_t dns = wns - atomic_exchange(&g_warm_ns0, wns), dsk = sk - atomic_exchange(&g_warm_skip0, sk);
+    if (dn || dsk)
+        VLOG("pipeline warmup (last %.1f s): %llu pipelines waited (%llu made in time, %llu timed out, %.0f ms waiting), %llu draws skipped waiting (%d queued in background)",
+             (t - t0) / 1e9, (unsigned long long)dn, (unsigned long long)(dn >= dl ? dn - dl : 0), (unsigned long long)dl, dns / 1e6,
+             (unsigned long long)dsk, atomic_load(&g_as_depth));
+}
 // The queue's order (vka_psogate.h vkpg_take_oldest): the job of least predicted cost first, the oldest in its turn. DM_VK_PSO_ORDER=0 (restart): arrival order, as
 // before 2026-11-11. DM_VK_PSO_FAIR_MS (restart, 2000; 0 never): how long the oldest job waits before it takes turns with the cheapest. Under g_as_mu: g_as_credit (ns)
 static int g_as_order = -1; static uint64_t g_as_fair_ns; static int64_t g_as_credit; static uint64_t g_as_cheap_n, g_as_old_n, g_as_lat_cheap_ns, g_as_lat_old_ns;
@@ -1367,11 +1388,15 @@ static void *as_main(void *a) {
         pause_point();
         pthread_mutex_lock(&g_as_mu);
         while (!g_as_head) pthread_cond_wait(&g_as_cv, &g_as_mu);
-        // The oldest (the head) in its turn, else the cheapest (the first of least cost: arrival order among equals)
-        as_job **pp = &g_as_head; int oldest = 1;
-        if (g_as_order && !vkpg_take_oldest(now_ns() - g_as_head->t0, g_as_fair_ns, g_as_credit)) {
-            for (as_job **q = &g_as_head; *q; q = &(*q)->next) if ((*q)->cost < (*pp)->cost) pp = q;
-            oldest = pp == &g_as_head;   // (the cheapest is the oldest: counted as an oldest pick)
+        // Required draws' jobs (wait = 1) before disposable ones; within that tier, the oldest in its turn, else the cheapest (first of least cost: arrival order among equals)
+        int want_w = 0;
+        for (as_job *q = g_as_head; q; q = q->next) if (q->wait) { want_w = 1; break; }
+        as_job **pp = &g_as_head;
+        if (want_w) while (*pp && !(*pp)->wait) pp = &(*pp)->next;
+        as_job **tier_head = pp; int oldest = 1;
+        if (g_as_order && *tier_head && !vkpg_take_oldest(now_ns() - (*tier_head)->t0, g_as_fair_ns, g_as_credit)) {
+            for (as_job **q = tier_head; *q; q = &(*q)->next) if ((!want_w || (*q)->wait) && (*q)->cost < (*pp)->cost) pp = q;
+            oldest = pp == tier_head;   // (the cheapest is the oldest in its tier: counted as an oldest pick)
         }
         as_job *j = *pp; *pp = j->next;
         if (g_as_tail == &j->next) g_as_tail = pp;
@@ -1403,14 +1428,74 @@ static void as_start(void) {
     if (v) VLOG("asynchronous pipelines: %d of %d background threads (DM_VK_PSO_ASYNC): a pipeline the cache lacks is made off the frame path and its draws are skipped until then", g_as_n, v);
 }
 static int as_threads(void) { static pthread_once_t once = PTHREAD_ONCE_INIT; pthread_once(&once, as_start); return g_as_n; }
-static void as_queue(gval *g, size_t len, vka_shader *const sh[VKA_NSTAGE], const vka_layout *lay, const vka_gkey *k, uint64_t t0) {
+static void as_queue(gval *g, size_t len, vka_shader *const sh[VKA_NSTAGE], const vka_layout *lay, const vka_gkey *k, uint64_t t0, int wait) {
     as_job *j = malloc(sizeof *j);
     if (!j) { gfx_build(g, len, sh, lay, k, 0, 0, t0); return; }
-    j->next = NULL; j->g = g; j->len = len; memcpy(j->sh, sh, sizeof j->sh); j->lay = *lay; j->k = *k; j->t0 = t0; j->cost = as_cost(sh); j->cs = 0;
+    j->next = NULL; j->g = g; j->len = len; memcpy(j->sh, sh, sizeof j->sh); j->lay = *lay; j->k = *k; j->t0 = t0; j->cost = as_cost(sh); j->cs = 0; j->wait = wait != 0;
     int d = atomic_fetch_add(&g_as_depth, 1) + 1, m = atomic_load(&g_as_depth_max);
     while (d > m && !atomic_compare_exchange_weak(&g_as_depth_max, &m, d)) {}
     atomic_fetch_add(&g_as_queued, 1);
     pthread_mutex_lock(&g_as_mu); *g_as_tail = j; g_as_tail = &j->next; pthread_cond_signal(&g_as_cv); pthread_mutex_unlock(&g_as_mu);
+}
+// DM_VK_PSO_WAIT_MS (live; default 200; 0 = no wait: every missing graphics pipeline is queued and its draws skipped, as before): with DM_VK_PSO_ASYNC, a draw whose
+// outputs later passes or frames depend on (vkpg_draw_waits: shader memory writes, rasterizer discard, depth/stencil writes, multiple colour targets, small offscreen
+// targets, opaque colour writes) waits up to this long for its pipeline before it is skipped. On a fresh pipeline cache, skipping the lit opaque geometry in Ocarina of
+// Time's main pass left the full-screen sky and fog exposed as a white veil for ~20-30 s while ~200 graphics pipelines drained through the background threads (50-185 ms
+// each on Qualcomm's compiler, plus a few 1.4-2.2 s ones). Up to gate_slots() waited compiles may be in flight at once (one on Turnip or with RAM saver Strong, up to 4
+// elsewhere), so a multi-second compile that times out and finishes in the background does not keep the normal 50-185 ms ones after it from waiting. Logged once per
+// pipeline when a draw waits instead of skipping, plus a per-second summary line while warming (warm_tick)
+typedef struct { gval *g; size_t len; vka_shader *sh[VKA_NSTAGE]; vka_layout lay; vka_gkey k; uint64_t t_make; int late; _Atomic int refs; } psow_job;
+static void psow_put(psow_job *j) { if (atomic_fetch_sub(&j->refs, 1) == 1) free(j); }
+static void *psow_main(void *a) {
+    psow_job *j = a;
+    pthread_setname_np(pthread_self(), "vk-psowait"); vka_fp_host("vk-psowait");
+    gfx_build(j->g, j->len, j->sh, &j->lay, &j->k, 0, 1, j->t_make);   // (async: its time is not counted twice in g_create_ns; psow_wait counts the wait)
+    pthread_mutex_lock(&g_mu); int late = j->late; pthread_mutex_unlock(&g_mu);
+    if (late) atomic_fetch_sub(&g_psow_busy, 1);
+    psow_put(j);
+    return NULL;
+}
+static void psow_log(vka_shader *const sh[VKA_NSTAGE], int wait_why, int done, uint64_t dt_ns, int ms) {
+    const vka_shader *pre = sh[7] ? sh[7] : sh[0];
+    uint64_t vk = pre ? pre->key : 0, fk = sh[1] ? sh[1]->key : 0;
+    if (done)
+        VLOG("graphics pipeline (%s %016llx fragment %016llx) made in %.0f ms while its draw waited (%s; DM_VK_PSO_WAIT_MS)",
+             sh[7] ? "mesh" : "vertex", (unsigned long long)vk, (unsigned long long)fk, dt_ns / 1e6, vkpg_wait_why(wait_why));
+    else
+        VLOG("graphics pipeline (%s %016llx fragment %016llx) not made in %d ms while its draw waited (%s; DM_VK_PSO_WAIT_MS): its draws are skipped until it is",
+             sh[7] ? "mesh" : "vertex", (unsigned long long)vk, (unsigned long long)fk, ms, vkpg_wait_why(wait_why));
+    warm_tick(now_ns());
+}
+static int psow_wait(gval *g, size_t len, vka_shader *const sh[VKA_NSTAGE], const vka_layout *lay, const vka_gkey *k, uint64_t t_make, int ms, int wait_why) {
+    int cur = atomic_load(&g_psow_busy);
+    for (;;) {
+        int cap = gate_slots();
+        if (cur >= cap) return -1;
+        if (atomic_compare_exchange_weak(&g_psow_busy, &cur, cur + 1)) break;
+    }
+    psow_job *j = malloc(sizeof *j);
+    if (!j) { atomic_fetch_sub(&g_psow_busy, 1); return -1; }
+    j->g = g; j->len = len; memcpy(j->sh, sh, sizeof j->sh); j->lay = *lay; j->k = *k; j->t_make = t_make; j->late = 0; j->refs = 2;
+    uint64_t t0 = now_ns();
+    pthread_t th;
+    if (vka_compiler_thread(&th, psow_main, j)) { free(j); atomic_fetch_sub(&g_psow_busy, 1); return -1; }
+    pthread_detach(th);
+    struct timespec dl; clock_gettime(CLOCK_REALTIME, &dl);
+    uint64_t ns = (uint64_t)dl.tv_nsec + (uint64_t)ms * 1000000ull;
+    dl.tv_sec += (time_t)(ns / 1000000000ull); dl.tv_nsec = (long)(ns % 1000000000ull);
+    pthread_mutex_lock(&g_mu);
+    while (__atomic_load_n(&g->busy, __ATOMIC_ACQUIRE)) if (pthread_cond_timedwait(&g_busy_cv, &g_mu, &dl)) break;
+    int done = !__atomic_load_n(&g->busy, __ATOMIC_ACQUIRE);
+    if (!done) j->late = 1;
+    uint64_t dt = now_ns() - t0;
+    g_create_ns += dt;
+    pthread_mutex_unlock(&g_mu);
+    if (done) atomic_fetch_sub(&g_psow_busy, 1);
+    psow_put(j);
+    atomic_fetch_add(&g_psow_n, 1); atomic_fetch_add(&g_psow_ns, dt);
+    if (!done) atomic_fetch_add(&g_psow_late, 1);
+    psow_log(sh, wait_why, done, dt, ms);
+    return done;
 }
 void vka_pso_async_line(char *out, size_t n) {
     if (!n) return;
@@ -1423,28 +1508,53 @@ void vka_pso_async_line(char *out, size_t n) {
              "%llu made on the frame path for targets not drawn every frame; "
              "background compiles %d at once (%s), their gate held the frame's %.0f ms and the speculative ones %.0f ms; "
              "taken %s: %llu cheapest (mean wait %.0f ms), %llu oldest (mean wait %.0f ms); "
+             "graphics draws that waited for their pipeline %llu, %llu of them not made in time, %.0f ms in all (DM_VK_PSO_WAIT_MS); "
              "compute dispatches that waited for their pipeline %llu, %llu of them not made in time, %.0f ms in all (DM_VK_CS_WAIT_MS)",
              (unsigned long long)atomic_load(&g_as_queued), (unsigned long long)atomic_load(&g_as_made), atomic_load(&g_as_ns) / 1e6, atomic_load(&g_as_lat_max_ns) / 1e6,
              atomic_load(&g_as_depth_max), (unsigned long long)atomic_load(&g_as_skips), (unsigned long long)atomic_load(&g_as_kept), atomic_load(&g_gate_slots), pso_overlap() ? "ungated: DM_VK_PREWARM_OVERLAP=1" : "by memory, DM_VK_PSO_SLOTS",
              atomic_load(&g_gate_frame_wait_ns) / 1e6, atomic_load(&g_gate_spec_wait_ns) / 1e6,
              g_as_order ? "least cost first, the oldest in turn (DM_VK_PSO_ORDER)" : "in arrival order (DM_VK_PSO_ORDER=0)",
              (unsigned long long)cn, cl, (unsigned long long)on, ol,
+             (unsigned long long)atomic_load(&g_psow_n), (unsigned long long)atomic_load(&g_psow_late), atomic_load(&g_psow_ns) / 1e6,
              (unsigned long long)atomic_load(&g_csw_n), (unsigned long long)atomic_load(&g_csw_late), atomic_load(&g_csw_ns) / 1e6);
 }
-static gval *gfx_obtain(const gkey_full *fk, uint64_t h, size_t len, vka_shader *const sh[VKA_NSTAGE], const vka_layout *lay, const vka_gkey *k, int prewarm, int *made) {
+static gval *gfx_obtain(const gkey_full *fk, uint64_t h, size_t len, vka_shader *const sh[VKA_NSTAGE], const vka_layout *lay, const vka_gkey *k, int prewarm, int wait_why, int *made) {
     *made = 0;
     int async = !prewarm && !sh[7] && as_threads() > 0, kept = async && !vka_pso_redrawn;
     if (kept) async = 0;   // a pass into a target the game keeps: its draws must not be skipped (vka_draw.c pass_redrawn)
+    int wms = async && wait_why ? VKA_ENV("DM_VK_PSO_WAIT_MS", 200) : 0;
     pthread_mutex_lock(&g_mu);
     gval *g = km_get(&g_gfx, fk, h);
     if (g) {
-        if (g->busy && (prewarm || async)) { pthread_mutex_unlock(&g_mu); return prewarm ? NULL : g; }
+        if (g->busy && prewarm) { pthread_mutex_unlock(&g_mu); return NULL; }
         if (g->busy && kept) atomic_fetch_add(&g_as_kept, 1);
+        if (g->busy && async) {
+            if (wms > 0 && !g->waited && atomic_load(&g_psow_busy) < gate_slots()) {
+                __atomic_store_n(&g->waited, 1, __ATOMIC_RELEASE);
+                if (g->pw && g->tid > 0) { errno = 0; int me = getpriority(PRIO_PROCESS, 0); if (!(me == -1 && errno)) setpriority(PRIO_PROCESS, (id_t)g->tid, me); }
+                uint64_t t0 = now_ns();
+                struct timespec dl; clock_gettime(CLOCK_REALTIME, &dl);
+                uint64_t ns = (uint64_t)dl.tv_nsec + (uint64_t)wms * 1000000ull;
+                dl.tv_sec += (time_t)(ns / 1000000000ull); dl.tv_nsec = (long)(ns % 1000000000ull);
+                while (__atomic_load_n(&g->busy, __ATOMIC_ACQUIRE)) if (pthread_cond_timedwait(&g_busy_cv, &g_mu, &dl)) break;
+                int done = !__atomic_load_n(&g->busy, __ATOMIC_ACQUIRE);
+                uint64_t dt = now_ns() - t0;
+                g_create_ns += dt;
+                if (g->pw) atomic_fetch_add(&g_pw_wait_ns, dt);
+                pthread_mutex_unlock(&g_mu);
+                atomic_fetch_add(&g_psow_n, 1); atomic_fetch_add(&g_psow_ns, dt);
+                if (!done) atomic_fetch_add(&g_psow_late, 1);
+                psow_log(sh, wait_why, done, dt, wms);
+                return g;
+            }
+            pthread_mutex_unlock(&g_mu);
+            return g;
+        }
         if (g->busy) busy_wait(g);
         pthread_mutex_unlock(&g_mu);
         return g;
     }
-    g = calloc(1, sizeof *g); g->busy = 1; g->pw = (uint8_t)(prewarm != 0); g->tid = prewarm ? gettid() : 0; km_put(&g_gfx, fk, h, g);
+    g = calloc(1, sizeof *g); g->busy = 1; g->pw = (uint8_t)(prewarm != 0); g->waited = (uint8_t)(wms > 0); g->tid = prewarm ? gettid() : 0; km_put(&g_gfx, fk, h, g);
     pthread_mutex_unlock(&g_mu);
     uint64_t t_make = now_ns();
     if (async) {
@@ -1470,7 +1580,11 @@ static gval *gfx_obtain(const gkey_full *fk, uint64_t h, size_t len, vka_shader 
             *made = 1;
             return g;
         }
-        as_queue(g, len, sh, lay, k, t_make);
+        if (wms > 0 && psow_wait(g, len, sh, lay, k, t_make, wms, wait_why) >= 0) {
+            *made = 1;
+            return g;
+        }
+        as_queue(g, len, sh, lay, k, t_make, wait_why != 0);
         *made = 1;
         return g;
     }
@@ -1529,22 +1643,24 @@ static inline VkPipeline gval_use(gval *g) {
     if (!g) return VK_NULL_HANDLE;
     if (__atomic_load_n(&g->linked, __ATOMIC_ACQUIRE)) atomic_fetch_add_explicit(&g_hy_draws, 1, memory_order_relaxed);
     VkPipeline p = __atomic_load_n(&g->p, __ATOMIC_ACQUIRE);
-    if (!p && __atomic_load_n(&g->busy, __ATOMIC_ACQUIRE)) { atomic_fetch_add_explicit(&g_as_skips, 1, memory_order_relaxed); vka_pso_wait = 1; }
+    if (!p && __atomic_load_n(&g->busy, __ATOMIC_ACQUIRE)) { atomic_fetch_add_explicit(&g_as_skips, 1, memory_order_relaxed); vka_pso_wait = 1; warm_tick(now_ns()); }
     return p;
 }
-VkPipeline vka_gfx_pipeline(vka_shader *const sh[VKA_NSTAGE], const vka_layout *lay, const vka_gkey *k) {
+VkPipeline vka_gfx_pipeline_wait(vka_shader *const sh[VKA_NSTAGE], const vka_layout *lay, const vka_gkey *k, int wait_why) {
     static gkey_full fk, last; static gval *last_g;
     // With vertex input dynamic state the key's static vertex input (va, vb: two thirds of it) stays zero: only what comes before it is hashed and compared with the
     // previous draw's key (draws in a row often share their pipeline). The entry's pipeline is read at each draw: the optimized one replaces a linked one in place
     size_t len = k->vin_static ? sizeof fk : offsetof(gkey_full, k.va);
     memset(&fk, 0, len);   // (the rest stays zero: vin_static is the device's, the same for every key)
     memcpy(fk.sh, sh, sizeof fk.sh); fk.layout = lay->layout; memcpy(&fk.k, k, len - offsetof(gkey_full, k));
-    if (last_g && !memcmp(&fk, &last, len)) return gval_use(last_g);
+    if (last_g && !memcmp(&fk, &last, len) && !(wait_why && __atomic_load_n(&last_g->busy, __ATOMIC_ACQUIRE) && !__atomic_load_n(&last_g->waited, __ATOMIC_ACQUIRE)))
+        return gval_use(last_g);
     int made;
-    gval *g = gfx_obtain(&fk, fnv(&fk, len, 1469598103934665603ull), len, sh, lay, k, 0, &made);
+    gval *g = gfx_obtain(&fk, fnv(&fk, len, 1469598103934665603ull), len, sh, lay, k, 0, wait_why, &made);
     memcpy(&last, &fk, len); last_g = g;
     return gval_use(g);
 }
+VkPipeline vka_gfx_pipeline(vka_shader *const sh[VKA_NSTAGE], const vka_layout *lay, const vka_gkey *k) { return vka_gfx_pipeline_wait(sh, lay, k, 0); }
 
 // ---------- Compute pipelines ----------
 typedef struct { vka_shader *cs; VkPipelineLayout layout; uint64_t umask, smask; } ckey;   // masks: storage images retyped for integer textures (vka_shader_img_module)

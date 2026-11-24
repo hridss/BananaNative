@@ -160,6 +160,19 @@ int main(void) {
     int fifo_last = (NS + NF) * 5;   // every job before the last frame one ran first, one at a time
     CHECK(one < fifo_last / 2, "frame first beats arrival order by more than half (%d against %d)", one, fifo_last);
 
+    // Which draws wait (bounded, DM_VK_PSO_WAIT_MS) and which are skipped under DM_VK_PSO_ASYNC (vkpg_draw_waits)
+    CHECK(vkpg_draw_waits(1, 0, 0, 0, 1, 1920, 1080) == VKPG_WAIT_MEM, "a draw that writes shader memory waits (%s)", vkpg_wait_why(VKPG_WAIT_MEM));
+    CHECK(vkpg_draw_waits(0, 1, 0, 0, 0, 1920, 1080) == VKPG_WAIT_DISCARD, "a rasterizer-discard or transform-feedback draw waits (%s)", vkpg_wait_why(VKPG_WAIT_DISCARD));
+    CHECK(vkpg_draw_waits(0, 0, 1, 0, 0, 1920, 1080) == VKPG_WAIT_DS, "a depth-only prepass draw (c0 mask 0, depth write 1) waits (%s)", vkpg_wait_why(VKPG_WAIT_DS));
+    CHECK(vkpg_draw_waits(0, 0, 1, 0, 1, 1920, 1080) == VKPG_WAIT_DS, "a depth-writing blended draw (b41a4c84b127d96f) waits (%s)", vkpg_wait_why(VKPG_WAIT_DS));
+    CHECK(vkpg_draw_waits(0, 0, 0, 0, 2, 1920, 1080) == VKPG_WAIT_MRT, "a multi-target G-buffer or dual-output draw waits (%s)", vkpg_wait_why(VKPG_WAIT_MRT));
+    CHECK(vkpg_draw_waits(0, 0, 0, 0, 1, 960, 540) == VKPG_WAIT_OFFSCREEN && vkpg_draw_waits(0, 0, 0, 0, 1, 480, 270) == VKPG_WAIT_OFFSCREEN,
+          "a small offscreen pass (960x540 analysis, 480x270 light/bloom) waits even when blended (%s)", vkpg_wait_why(VKPG_WAIT_OFFSCREEN));
+    CHECK(vkpg_draw_waits(0, 0, 0, 1, 1, 1920, 1080) == VKPG_WAIT_OPAQUE,
+          "an EQUAL-depth opaque colour draw (Ocarina of Time's main lit geometry: 3c571def, 35a02875, edce918b) waits (%s)", vkpg_wait_why(VKPG_WAIT_OPAQUE));
+    CHECK(vkpg_draw_waits(0, 0, 0, 0, 1, 1920, 1080) == VKPG_WAIT_NONE && vkpg_draw_waits(0, 0, 0, 0, 1, 1280, 720) == VKPG_WAIT_NONE,
+          "a blended single-target full-size overlay with no depth or memory write is skipped while compiling");
+
     // The pipeline cache saver's debounce (vkpg_save_wait_ns)
     CHECK(vkpg_save_wait_ns(10000000000ull, 0, 0, 3, 20) == 0 && vkpg_save_wait_ns(10000000000ull, 0, 1, 3, 20) == 0, "first save is due at once");
     CHECK(vkpg_save_wait_ns(11200000000ull, 10000000000ull, 1, 3, 20) == 1800000000ull, "slow compile 1.2 s after a save waits the remaining 1.8 s instead of being dropped");
