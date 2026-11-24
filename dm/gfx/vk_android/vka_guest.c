@@ -94,11 +94,11 @@ __attribute__((visibility("hidden"), used)) uint64_t gv_unbound(const char *name
     X(vkCreateSamplerYcbcrConversion, GV_Z2) X(vkDestroySamplerYcbcrConversion, GV_Z2) \
     X(vkCreateDescriptorSetLayout, GV_Z2) X(vkDestroyDescriptorSetLayout, GV_Z2) X(vkGetDescriptorSetLayoutSupport, GV_Z_NONE) \
     X(vkUpdateDescriptorSets, GV_Z_NONE) X(vkCreateDescriptorUpdateTemplate, GV_Z2) X(vkDestroyDescriptorUpdateTemplate, GV_Z2) X(vkUpdateDescriptorSetWithTemplate, GV_Z_NONE) \
-    X(vkCreatePipelineLayout, GV_Z2) X(vkDestroyPipelineLayout, GV_Z2) X(vkDestroyRenderPass, GV_Z2) X(vkGetRenderAreaGranularity, GV_Z_NONE) \
+    X(vkCreatePipelineLayout, GV_Z2) X(vkDestroyPipelineLayout, GV_Z2) X(vkGetRenderAreaGranularity, GV_Z_NONE) \
     X(vkCreateFramebuffer, GV_Z2) X(vkDestroyFramebuffer, GV_Z2) \
     X(vkCreatePipelineCache, GV_Z2) X(vkDestroyPipelineCache, GV_Z2) X(vkGetPipelineCacheData, GV_Z_NONE) X(vkMergePipelineCaches, GV_Z_NONE) X(vkDestroyPipeline, GV_Z2) \
     X(vkCreateCommandPool, GV_Z2) X(vkDestroyCommandPool, GV_Z2) X(vkResetCommandPool, GV_Z_NONE) X(vkTrimCommandPool, GV_Z_NONE) \
-    X(vkAllocateCommandBuffers, GV_Z_NONE) X(vkFreeCommandBuffers, GV_Z_NONE) X(vkBeginCommandBuffer, GV_Z_NONE) X(vkEndCommandBuffer, GV_Z_NONE) X(vkResetCommandBuffer, GV_Z_NONE) \
+    X(vkAllocateCommandBuffers, GV_Z_NONE) X(vkFreeCommandBuffers, GV_Z_NONE) X(vkEndCommandBuffer, GV_Z_NONE) X(vkResetCommandBuffer, GV_Z_NONE) \
     X(vkCreateEvent, GV_Z2) X(vkDestroyEvent, GV_Z2) X(vkGetEventStatus, GV_Z_NONE) X(vkSetEvent, GV_Z_NONE) X(vkResetEvent, GV_Z_NONE) \
     X(vkCreateFence, GV_Z2) X(vkDestroyFence, GV_Z2) X(vkResetFences, GV_Z_NONE) X(vkGetFenceStatus, GV_Z_NONE) \
     X(vkCreateSemaphore, GV_Z2) X(vkDestroySemaphore, GV_Z2) X(vkGetSemaphoreCounterValue, GV_Z_NONE) X(vkSignalSemaphore, GV_Z_NONE) \
@@ -109,12 +109,12 @@ __attribute__((visibility("hidden"), used)) uint64_t gv_unbound(const char *name
     X(vkCmdDraw, GV_Z_NONE) X(vkCmdDrawIndexed, GV_Z_NONE) X(vkCmdDrawIndirect, GV_Z_NONE) X(vkCmdDrawIndexedIndirect, GV_Z_NONE) \
     X(vkCmdDrawIndirectCount, GV_Z_NONE) X(vkCmdDrawIndexedIndirectCount, GV_Z_NONE) \
     X(vkCmdDispatch, GV_Z_NONE) X(vkCmdDispatchIndirect, GV_Z_NONE) X(vkCmdDispatchBase, GV_Z_NONE) X(vkCmdSetDeviceMask, GV_Z_NONE) \
-    X(vkCmdCopyBuffer, GV_Z_NONE) X(vkCmdCopyImage, GV_Z_NONE) X(vkCmdBlitImage, GV_Z_NONE) X(vkCmdCopyBufferToImage, GV_Z_NONE) X(vkCmdCopyImageToBuffer, GV_Z_NONE) \
-    X(vkCmdUpdateBuffer, GV_Z_NONE) X(vkCmdFillBuffer, GV_Z_NONE) X(vkCmdClearColorImage, GV_Z_NONE) X(vkCmdClearDepthStencilImage, GV_Z_NONE) \
-    X(vkCmdClearAttachments, GV_Z_NONE) X(vkCmdResolveImage, GV_Z_NONE) X(vkCmdSetEvent, GV_Z_NONE) X(vkCmdResetEvent, GV_Z_NONE) X(vkCmdWaitEvents, GV_Z_NONE) \
+    \
+    \
+    X(vkCmdClearAttachments, GV_Z_NONE) X(vkCmdSetEvent, GV_Z_NONE) X(vkCmdResetEvent, GV_Z_NONE) X(vkCmdWaitEvents, GV_Z_NONE) \
     X(vkCmdPipelineBarrier, GV_Z_NONE) X(vkCmdPipelineBarrier2, GV_Z_NONE) \
-    X(vkCmdWriteTimestamp, GV_Z_NONE) X(vkCmdPushConstants, GV_Z_NONE) X(vkCmdBeginRenderPass, GV_Z_NONE) \
-    X(vkCmdNextSubpass, GV_Z_NONE) X(vkCmdEndRenderPass, GV_Z_NONE) X(vkCmdExecuteCommands, GV_Z_NONE) \
+    X(vkCmdWriteTimestamp, GV_Z_NONE) X(vkCmdPushConstants, GV_Z_NONE) \
+    X(vkCmdExecuteCommands, GV_Z_NONE) \
     X(vkCmdBeginRenderPass2, GV_Z_NONE) X(vkCmdNextSubpass2, GV_Z_NONE) X(vkCmdEndRenderPass2, GV_Z_NONE)
 #define GV_TRAMP(name, z) GVT(name, z)
 GV_PASS_I(GV_TRAMP)
@@ -126,7 +126,7 @@ GV_PASS_D(GV_TRAMP)
     X(vkGetImageMemoryRequirements) X(vkGetImageMemoryRequirements2) X(vkCreateImage) X(vkDestroyImage) X(vkCreateRenderPass) X(vkCreateRenderPass2) \
     X(vkCreateDescriptorPool) X(vkDestroyDescriptorPool) X(vkResetDescriptorPool) X(vkAllocateDescriptorSets) X(vkFreeDescriptorSets) \
     X(vkCreateShaderModule) X(vkDestroyShaderModule) X(vkCreateGraphicsPipelines) X(vkCreateComputePipelines) X(vkWaitForFences) X(vkWaitSemaphores) \
-    X(vkCreateCommandPool) X(vkDestroyCommandPool) X(vkAllocateCommandBuffers) X(vkBeginCommandBuffer) X(vkEndCommandBuffer) X(vkCmdPipelineBarrier) X(vkCmdBeginQuery) X(vkCmdEndQuery) X(vkCmdResetQueryPool) X(vkResetQueryPool) X(vkCreateQueryPool) X(vkDestroyQueryPool) X(vkCmdCopyQueryPoolResults) X(vkGetQueryPoolResults)
+    X(vkCreateCommandPool) X(vkDestroyCommandPool) X(vkAllocateCommandBuffers) X(vkBeginCommandBuffer) X(vkEndCommandBuffer) X(vkCmdPipelineBarrier) X(vkDestroyRenderPass) X(vkCmdBeginRenderPass) X(vkCmdEndRenderPass) X(vkCmdNextSubpass) X(vkCmdCopyBuffer) X(vkCmdCopyImage) X(vkCmdBlitImage) X(vkCmdCopyBufferToImage) X(vkCmdCopyImageToBuffer) X(vkCmdUpdateBuffer) X(vkCmdFillBuffer) X(vkCmdClearColorImage) X(vkCmdClearDepthStencilImage) X(vkCmdResolveImage) X(vkCmdBeginQuery) X(vkCmdEndQuery) X(vkCmdResetQueryPool) X(vkResetQueryPool) X(vkCreateQueryPool) X(vkDestroyQueryPool) X(vkCmdCopyQueryPoolResults) X(vkGetQueryPoolResults)
 #define GV_DECL(f) PFN_##f f;
 static struct { GV_REAL_D(GV_DECL) } R;
 
@@ -479,10 +479,25 @@ GV(vkDestroyImage, void, VkDevice d, VkImage im, const VkAllocationCallbacks *a)
 // reference, "Attachments opened with LOAD_OP_DONT_CARE"), and games draw over what such a pass left (Re:ZERO's post chain). A tiler's driver would start the tile
 // memory undefined and drop what was drawn: LOAD and STORE instead. DM_VK_GUEST_KEEP=0 leaves them as the game made them
 static int keep_on(void) { return VKA_ENV("DM_VK_GUEST_KEEP", 1) != 0; }
+// Transfer commands inside a render pass (docs/reference/rendering.md "Copies inside a render pass"): Hagi copies from its EFB with vkCmdCopyImage between
+// vkCmdBeginRenderPass and vkCmdEndRenderPass, which NVIDIA's driver runs in order; Vulkan allows no transfer command there, and a tiler running the pass in its tile
+// memory copies what the image held before the pass (Qualcomm's driver drew the EFB-copy effects of Super Mario Sunshine over Mario and Peach). Such a command ends the
+// pass, runs after a full barrier, and the pass goes on in a render pass of its own that loads every attachment from the layout the first one left it in (made with
+// each single-subpass render pass: compatible with its framebuffers). DM_VK_GUEST_SPLIT=0 leaves the commands where the game put them
+static gv_map g_rp_resume;   // render pass → its resume pass
+static void rp_resume_make(VkRenderPass rp, const VkRenderPassCreateInfo *ci, const VkAttachmentDescription *at) {
+    if (ci->subpassCount != 1 || !ci->attachmentCount || ci->attachmentCount > 16) return;
+    VkAttachmentDescription a[16];
+    for (uint32_t i = 0; i < ci->attachmentCount; i++) { a[i] = at[i]; a[i].loadOp = a[i].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_LOAD; a[i].initialLayout = a[i].finalLayout;
+        if (a[i].initialLayout == VK_IMAGE_LAYOUT_UNDEFINED || a[i].initialLayout == VK_IMAGE_LAYOUT_PREINITIALIZED) a[i].initialLayout = VK_IMAGE_LAYOUT_GENERAL; }
+    VkRenderPassCreateInfo c = *ci; c.pAttachments = a;
+    VkRenderPass r = VK_NULL_HANDLE;
+    if (!R.vkCreateRenderPass(V.dev, &c, NULL, &r)) { pthread_mutex_lock(&g_obj_mu); gv_map_put(&g_rp_resume, (uint64_t)(uintptr_t)rp, (uint64_t)(uintptr_t)r); pthread_mutex_unlock(&g_obj_mu); }
+}
 GVB(vkCreateRenderPass, VkResult, VkDevice d, const VkRenderPassCreateInfo *ci, const VkAllocationCallbacks *a, VkRenderPass *out) {
     GV_IN("vkCreateRenderPass");
     (void)d; (void)a;
-    if (!keep_on() || !ci->attachmentCount) return R.vkCreateRenderPass(V.dev, ci, NULL, out);
+    if (!keep_on() || !ci->attachmentCount) { VkResult r0 = R.vkCreateRenderPass(V.dev, ci, NULL, out); if (!r0) rp_resume_make(*out, ci, ci->pAttachments); return r0; }
     VkAttachmentDescription at[16], *p = ci->attachmentCount <= 16 ? at : malloc(ci->attachmentCount * sizeof *p);
     if (!p) return VK_ERROR_OUT_OF_HOST_MEMORY;
     for (uint32_t i = 0; i < ci->attachmentCount; i++) {
@@ -494,6 +509,7 @@ GVB(vkCreateRenderPass, VkResult, VkDevice d, const VkRenderPassCreateInfo *ci, 
     }
     VkRenderPassCreateInfo c = *ci; c.pAttachments = p;
     VkResult r = R.vkCreateRenderPass(V.dev, &c, NULL, out);
+    if (!r) rp_resume_make(*out, &c, p);
     if (p != at) free(p);
     return r;
 }
@@ -515,6 +531,61 @@ GVB(vkCreateRenderPass2, VkResult, VkDevice d, const VkRenderPassCreateInfo2 *ci
     if (p != at) free(p);
     return r;
 }
+
+GV(vkDestroyRenderPass, void, VkDevice d, VkRenderPass rp, const VkAllocationCallbacks *a) {
+    (void)d; (void)a; if (!rp) return;
+    pthread_mutex_lock(&g_obj_mu); int k = gv_map_find(&g_rp_resume, (uint64_t)(uintptr_t)rp); VkRenderPass r = k >= 0 ? (VkRenderPass)(uintptr_t)g_rp_resume.v[k] : VK_NULL_HANDLE; if (k >= 0) gv_map_del(&g_rp_resume, (uint64_t)(uintptr_t)rp); pthread_mutex_unlock(&g_obj_mu);
+    if (r) R.vkDestroyRenderPass(V.dev, r, NULL);   // (a command buffer that used it may not be submitted again once its pass is gone: Vulkan's rule for the game's pass too)
+    R.vkDestroyRenderPass(V.dev, rp, NULL);
+}
+// Per command buffer: the open pass, for the transfer commands inside one (a buffer is recorded by one thread at a time)
+typedef struct { VkRenderPass rp, resume; VkFramebuffer fb; VkRect2D area; VkSubpassContents contents; uint32_t subpass; int open; } cb_pass;
+static gv_map g_cbp;   // command buffer → cb_pass (malloc'd, kept for the buffer's life)
+static _Atomic uint64_t g_split_n;
+static cb_pass *cbp(VkCommandBuffer cb, int make) {
+    pthread_mutex_lock(&g_obj_mu); int k = gv_map_find(&g_cbp, (uint64_t)(uintptr_t)cb); cb_pass *s = k >= 0 ? (cb_pass *)(uintptr_t)g_cbp.v[k] : NULL;
+    if (!s && make && (s = calloc(1, sizeof *s))) gv_map_put(&g_cbp, (uint64_t)(uintptr_t)cb, (uint64_t)(uintptr_t)s);
+    pthread_mutex_unlock(&g_obj_mu); return s;
+}
+GV(vkBeginCommandBuffer, VkResult, VkCommandBuffer cb, const VkCommandBufferBeginInfo *bi) { cb_pass *s = cbp(cb, 0); if (s) s->open = 0; return R.vkBeginCommandBuffer(cb, bi); }
+GV(vkCmdBeginRenderPass, void, VkCommandBuffer cb, const VkRenderPassBeginInfo *bi, VkSubpassContents c) {
+    cb_pass *s = cbp(cb, 1);
+    if (s) { s->rp = bi->renderPass; s->fb = bi->framebuffer; s->area = bi->renderArea; s->contents = c; s->subpass = 0; s->open = 1;
+             pthread_mutex_lock(&g_obj_mu); int k = gv_map_find(&g_rp_resume, (uint64_t)(uintptr_t)bi->renderPass); s->resume = k >= 0 ? (VkRenderPass)(uintptr_t)g_rp_resume.v[k] : VK_NULL_HANDLE; pthread_mutex_unlock(&g_obj_mu); }
+    R.vkCmdBeginRenderPass(cb, bi, c);
+}
+GV(vkCmdNextSubpass, void, VkCommandBuffer cb, VkSubpassContents c) { cb_pass *s = cbp(cb, 0); if (s) s->subpass++; R.vkCmdNextSubpass(cb, c); }
+GV(vkCmdEndRenderPass, void, VkCommandBuffer cb) { cb_pass *s = cbp(cb, 0); if (s) s->open = 0; R.vkCmdEndRenderPass(cb); }
+static void full_barrier(VkCommandBuffer cb) {
+    VkMemoryBarrier mb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER, .srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT, .dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT};
+    R.vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
+}
+// Before a transfer command: the open pass ended (1: resume after it with split_after). 0: no pass open, or one that cannot be split (the command stays inside it)
+static cb_pass *split_before(VkCommandBuffer cb) {
+    cb_pass *s = cbp(cb, 0);
+    if (!s || !s->open) return NULL;
+    if (!s->resume || s->subpass || s->contents != VK_SUBPASS_CONTENTS_INLINE || !VKA_ENV("DM_VK_GUEST_SPLIT", 1)) { GRED_ONCE("a transfer command inside a render pass that cannot be split (subpass %u, contents %d): left inside it", s->subpass, s->contents); return NULL; }
+    R.vkCmdEndRenderPass(cb); full_barrier(cb);
+    uint64_t n = atomic_fetch_add(&g_split_n, 1) + 1; if (n == 1 || n == 1000 || n == 100000) GLOG("transfer commands inside a render pass: %llu so far, each run between the pass and its resumption", (unsigned long long)n);
+    return s;
+}
+static void split_after(VkCommandBuffer cb, cb_pass *s) {
+    if (!s) return;
+    full_barrier(cb);
+    VkRenderPassBeginInfo bi = {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO, .renderPass = s->resume, .framebuffer = s->fb, .renderArea = s->area};
+    R.vkCmdBeginRenderPass(cb, &bi, VK_SUBPASS_CONTENTS_INLINE);
+}
+#define SPLIT(call) do { cb_pass *s_ = split_before(cb); call; split_after(cb, s_); } while (0)
+GV(vkCmdCopyBuffer, void, VkCommandBuffer cb, VkBuffer s, VkBuffer d, uint32_t n, const VkBufferCopy *r) { SPLIT(R.vkCmdCopyBuffer(cb, s, d, n, r)); }
+GV(vkCmdCopyImage, void, VkCommandBuffer cb, VkImage s, VkImageLayout sl, VkImage d, VkImageLayout dl, uint32_t n, const VkImageCopy *r) { SPLIT(R.vkCmdCopyImage(cb, s, sl, d, dl, n, r)); }
+GV(vkCmdBlitImage, void, VkCommandBuffer cb, VkImage s, VkImageLayout sl, VkImage d, VkImageLayout dl, uint32_t n, const VkImageBlit *r, VkFilter f) { SPLIT(R.vkCmdBlitImage(cb, s, sl, d, dl, n, r, f)); }
+GV(vkCmdCopyBufferToImage, void, VkCommandBuffer cb, VkBuffer s, VkImage d, VkImageLayout dl, uint32_t n, const VkBufferImageCopy *r) { SPLIT(R.vkCmdCopyBufferToImage(cb, s, d, dl, n, r)); }
+GV(vkCmdCopyImageToBuffer, void, VkCommandBuffer cb, VkImage s, VkImageLayout sl, VkBuffer d, uint32_t n, const VkBufferImageCopy *r) { SPLIT(R.vkCmdCopyImageToBuffer(cb, s, sl, d, n, r)); }
+GV(vkCmdUpdateBuffer, void, VkCommandBuffer cb, VkBuffer d, VkDeviceSize off, VkDeviceSize n, const void *data) { SPLIT(R.vkCmdUpdateBuffer(cb, d, off, n, data)); }
+GV(vkCmdFillBuffer, void, VkCommandBuffer cb, VkBuffer d, VkDeviceSize off, VkDeviceSize n, uint32_t v) { SPLIT(R.vkCmdFillBuffer(cb, d, off, n, v)); }
+GV(vkCmdClearColorImage, void, VkCommandBuffer cb, VkImage im, VkImageLayout l, const VkClearColorValue *c, uint32_t n, const VkImageSubresourceRange *r) { SPLIT(R.vkCmdClearColorImage(cb, im, l, c, n, r)); }
+GV(vkCmdClearDepthStencilImage, void, VkCommandBuffer cb, VkImage im, VkImageLayout l, const VkClearDepthStencilValue *c, uint32_t n, const VkImageSubresourceRange *r) { SPLIT(R.vkCmdClearDepthStencilImage(cb, im, l, c, n, r)); }
+GV(vkCmdResolveImage, void, VkCommandBuffer cb, VkImage s, VkImageLayout sl, VkImage d, VkImageLayout dl, uint32_t n, const VkImageResolve *r) { SPLIT(R.vkCmdResolveImage(cb, s, sl, d, dl, n, r)); }
 
 // ---------- Descriptor pools and sets ----------
 // A game frees descriptor sets whose pool it already reset or destroyed (Super Mario 64 as it leaves); the Switch's driver lets it pass, the phone's would free memory
@@ -569,42 +640,12 @@ GV(vkFreeDescriptorSets, VkResult, VkDevice d, VkDescriptorPool p, uint32_t n, c
 }
 
 // ---------- Shaders and pipelines ----------
-// SPIR-V a game made that names ArrayStride on a struct member (OpMemberDecorate) instead of on the array type (Hagi's generated GX shaders: Super Mario Galaxy, Sunshine):
-// NVIDIA's driver takes it; the stride is copied onto the array type, after the last such member decoration (upstream's vk_shaders.py fix_strides). NULL: unchanged
-static uint32_t *fix_strides(const uint32_t *w, size_t n, size_t *out_n) {
-    enum { OP_DECORATE = 71, OP_MEMBER_DECORATE = 72, OP_TYPE_ARRAY = 28, OP_TYPE_RTARRAY = 29, OP_TYPE_STRUCT = 30, DEC_ARRAY_STRIDE = 6 };
-    if (n < 5 || w[0] != 0x07230203u) return NULL;
-    size_t at = 0, nmem = 0;
-    for (size_t i = 5; i < n;) { uint32_t op = w[i] & 0xffff, len = w[i] >> 16; if (!len || i + len > n) return NULL;
-        if (op == OP_MEMBER_DECORATE && len >= 5 && w[i + 3] == DEC_ARRAY_STRIDE) { at = i + len; nmem++; }
-        i += len; }
-    if (!nmem) return NULL;
-    // (ids are below the header's bound: small tables by id)
-    uint32_t bound = w[3]; if (!bound || bound > (1u << 22)) return NULL;
-    uint8_t *is_arr = calloc(bound, 1), *has = calloc(bound, 1); uint32_t *add = calloc(bound, 4); const uint32_t **st = calloc(bound, sizeof *st); uint32_t *stn = calloc(bound, 4);
-    uint32_t *res = NULL; size_t nadd = 0;
-    if (!is_arr || !has || !add || !st || !stn) goto out;
-    for (size_t i = 5; i < n; i += w[i] >> 16) { uint32_t op = w[i] & 0xffff, len = w[i] >> 16;
-        if (op == OP_DECORATE && len >= 4 && w[i + 2] == DEC_ARRAY_STRIDE && w[i + 1] < bound) has[w[i + 1]] = 1;
-        else if ((op == OP_TYPE_ARRAY || op == OP_TYPE_RTARRAY) && len >= 3 && w[i + 1] < bound) is_arr[w[i + 1]] = 1;
-        else if (op == OP_TYPE_STRUCT && len >= 2 && w[i + 1] < bound) { st[w[i + 1]] = w + i + 2; stn[w[i + 1]] = len - 2; } }
-    for (size_t i = 5; i < n; i += w[i] >> 16) { uint32_t op = w[i] & 0xffff, len = w[i] >> 16;
-        if (op != OP_MEMBER_DECORATE || len < 5 || w[i + 3] != DEC_ARRAY_STRIDE || w[i + 1] >= bound) continue;
-        uint32_t s = w[i + 1], m = w[i + 2]; if (!st[s] || m >= stn[s]) continue;
-        uint32_t t = st[s][m]; if (t < bound && is_arr[t] && !has[t] && !add[t]) { add[t] = w[i + 4]; nadd++; } }
-    if (!nadd) goto out;
-    res = malloc((n + nadd * 4) * 4); if (!res) goto out;
-    memcpy(res, w, at * 4); size_t o = at;
-    for (uint32_t t = 0; t < bound; t++) if (add[t]) { res[o++] = (4u << 16) | OP_DECORATE; res[o++] = t; res[o++] = DEC_ARRAY_STRIDE; res[o++] = add[t]; }
-    memcpy(res + o, w + at, (n - at) * 4); *out_n = n + nadd * 4;
-out:
-    free(is_arr); free(has); free(add); free(st); free(stn);
-    return res;
-}
 // Scaled vertex formats the device cannot fetch (vka_guest_vin.c): a vertex module's code is kept while the module lives, so a pipeline that feeds one of its inputs in
 // such a format gets a copy whose input reads the integer format and converts it
 uint32_t *vkg_spv_scaled(const uint32_t *w, size_t n, const uint8_t conv[32], size_t *out_n, char *why, size_t wn);   // vka_guest_vin.c
 uint32_t *vkg_spv_nonuniform(const uint32_t *w, size_t n, size_t *out_n, unsigned *kinds, char *why, size_t wn);   // vka_guest_vin.c
+uint32_t *vkg_spv_dual(const uint32_t *w, size_t n, size_t *out_n, char *why, size_t wn);   // vka_guest_vin.c
+uint32_t *vkg_spv_strides(const uint32_t *w, size_t n, size_t *out_n);   // vka_guest_vin.c
 // The device's non-uniform descriptor indexing (bits as vkg_spv_nonuniform's kinds; the replay's device enables every feature it has, vka_dev.c)
 static unsigned nu_have(void) {
     static int v = -1;
@@ -639,15 +680,15 @@ static int vin_scaled_needed(void) {
     }
     return !g_vin_scaled;
 }
-static gv_map g_vcode;   // vertex module → its code (malloc'd: u64 word count, then the words)
-static int has_vertex_entry(const uint32_t *w, size_t n) {
-    for (size_t i = 5; i < n && (w[i] >> 16);) { if ((w[i] & 0xffff) == 15 && (w[i] >> 16) >= 3 && w[i + 1] == 0) return 1; if ((w[i] & 0xffff) == 54) break; i += w[i] >> 16; }
+static gv_map g_vcode;   // vertex and fragment modules → their code (malloc'd: u64 word count, then the words): the rewrites per pipeline start from it
+static int has_entry(const uint32_t *w, size_t n, uint32_t model) {   // an entry point of that execution model (0 vertex, 4 fragment)
+    for (size_t i = 5; i < n && (w[i] >> 16);) { if ((w[i] & 0xffff) == 15 && (w[i] >> 16) >= 3 && w[i + 1] == model) return 1; if ((w[i] & 0xffff) == 54) break; i += w[i] >> 16; }
     return 0;
 }
 GVB(vkCreateShaderModule, VkResult, VkDevice d, const VkShaderModuleCreateInfo *ci, const VkAllocationCallbacks *a, VkShaderModule *out) {
     GV_IN("vkCreateShaderModule");
     (void)d; (void)a;
-    size_t nn = 0; uint32_t *fixed = fix_strides(ci->pCode, ci->codeSize / 4, &nn);
+    size_t nn = 0; uint32_t *fixed = vkg_spv_strides(ci->pCode, ci->codeSize / 4, &nn);
     VkShaderModuleCreateInfo c = *ci; if (fixed) { c.pCode = fixed; c.codeSize = nn * 4; GRED_ONCE("SPIR-V with ArrayStride on struct members (the Switch's driver takes it): the strides copied onto the array types"); }
     {   // descriptor arrays indexed per invocation: declared NonUniform (vka_guest_vin.c)
         size_t nu_n = 0; unsigned kinds = 0; char why[96];
@@ -660,7 +701,7 @@ GVB(vkCreateShaderModule, VkResult, VkDevice d, const VkShaderModuleCreateInfo *
       if (cap && *cap) { uint64_t h = 1469598103934665603ull; const uint8_t *b = (const uint8_t *)c.pCode; for (size_t i = 0; i < c.codeSize; i++) h = (h ^ b[i]) * 1099511628211ull;
           char p[600]; snprintf(p, sizeof p, "%s/%016llx.spv", cap, (unsigned long long)h); FILE *fo = fopen(p, "wb"); if (fo) { fwrite(c.pCode, 1, c.codeSize, fo); fclose(fo); } } }
     uint64_t f = vka_fp_host(NULL); VkResult r = R.vkCreateShaderModule(V.dev, &c, NULL, out); vka_fp_back(f);
-    if (!r && vin_scaled_needed() && has_vertex_entry(c.pCode, c.codeSize / 4)) {
+    if (!r && ((vin_scaled_needed() && has_entry(c.pCode, c.codeSize / 4, 0)) || (V.dual_src && has_entry(c.pCode, c.codeSize / 4, 4)))) {
         uint64_t *keep = malloc(8 + c.codeSize);
         if (keep) { keep[0] = c.codeSize / 4; memcpy(keep + 1, c.pCode, c.codeSize); pthread_mutex_lock(&g_obj_mu); gv_map_put(&g_vcode, (uint64_t)(uintptr_t)*out, (uint64_t)(uintptr_t)keep); pthread_mutex_unlock(&g_obj_mu); }
     }
@@ -677,7 +718,7 @@ GV(vkDestroyShaderModule, void, VkDevice d, VkShaderModule m, const VkAllocation
 }
 // A pipeline whose vertex input has a scaled format the device cannot fetch: the copies it is made from (its stage array, vertex input state, attributes) and the
 // rewritten vertex module, destroyed once the pipeline is made. 0 = nothing to change (or the rewrite failed: said once, the pipeline made as the game asked)
-typedef struct { VkPipelineShaderStageCreateInfo st[8]; VkPipelineVertexInputStateCreateInfo vi; VkVertexInputAttributeDescription at[32]; VkShaderModule mod; } vin_fix;
+typedef struct { VkPipelineShaderStageCreateInfo st[8]; VkPipelineVertexInputStateCreateInfo vi; VkVertexInputAttributeDescription at[32]; VkShaderModule mod, fmod; } vin_fix;
 static int pso_fix_scaled(VkGraphicsPipelineCreateInfo *ci, vin_fix *fx) {
     const VkPipelineVertexInputStateCreateInfo *vi = ci->pVertexInputState;
     if (!vi || !vi->vertexAttributeDescriptionCount || vi->vertexAttributeDescriptionCount > 32 || ci->stageCount > 8 || !vin_scaled_needed()) return 0;
@@ -748,6 +789,27 @@ GV(vkGetQueryPoolResults, VkResult, VkDevice d, VkQueryPool p, uint32_t first, u
     (void)d; if (!qrange(p, &first, &n, "vkGetQueryPoolResults") || !n) return VK_SUCCESS;
     return R.vkGetQueryPoolResults(V.dev, p, first, n, size, data, stride, f);
 }
+static int src1(VkBlendFactor f) { return f >= VK_BLEND_FACTOR_SRC1_COLOR && f <= VK_BLEND_FACTOR_ONE_MINUS_SRC1_ALPHA; }
+// A pipeline that blends with SRC1 whose fragment module writes source 1 at location 1 (vkg_spv_dual): a copy with it at Location 0 Index 1
+static void pso_fix_dual(VkGraphicsPipelineCreateInfo *ci, vin_fix *fx) {
+    const VkPipelineColorBlendStateCreateInfo *cb = ci->pColorBlendState;
+    if (!V.dual_src || !cb || !cb->attachmentCount || ci->stageCount > 8) return;
+    const VkPipelineColorBlendAttachmentState *a = &cb->pAttachments[0];
+    if (!a->blendEnable || !(src1(a->srcColorBlendFactor) || src1(a->dstColorBlendFactor) || src1(a->srcAlphaBlendFactor) || src1(a->dstAlphaBlendFactor))) return;
+    int fs = -1; for (uint32_t k = 0; k < ci->stageCount; k++) if (ci->pStages[k].stage == VK_SHADER_STAGE_FRAGMENT_BIT) fs = (int)k;
+    if (fs < 0) return;
+    pthread_mutex_lock(&g_obj_mu); int k = gv_map_find(&g_vcode, (uint64_t)(uintptr_t)ci->pStages[fs].module); const uint64_t *keep = k >= 0 ? (const uint64_t *)(uintptr_t)g_vcode.v[k] : NULL; pthread_mutex_unlock(&g_obj_mu);
+    if (!keep) return;
+    char why[96]; size_t nn = 0; uint32_t *code = vkg_spv_dual((const uint32_t *)(keep + 1), (size_t)keep[0], &nn, why, sizeof why);
+    if (!code) { if (why[0]) GRED_ONCE("dual-source blending not rewritten: %s", why); return; }
+    VkShaderModuleCreateInfo mi = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, .codeSize = nn * 4, .pCode = code};
+    uint64_t f = vka_fp_host(NULL); VkResult r = R.vkCreateShaderModule(V.dev, &mi, NULL, &fx->fmod); vka_fp_back(f);
+    free(code);
+    if (r) { GRED_ONCE("dual-source blending: the rewritten module was refused: %d", r); fx->fmod = VK_NULL_HANDLE; return; }
+    if (ci->pStages != fx->st) { memcpy(fx->st, ci->pStages, ci->stageCount * sizeof *fx->st); ci->pStages = fx->st; }
+    fx->st[fs].module = fx->fmod;
+    static _Atomic int told; if (!atomic_exchange(&told, 1)) GLOG("dual-source blending: a fragment shader's source 1 at location 1 moved to location 0 index 1 (and every such pipeline from now on)");
+}
 // A pipeline with a logic op where the device has none: drawn without it, said once (Hagi makes a dozen VK_LOGIC_OP_INVERT pipelines at boot)
 static int pso_fix_logic(VkGraphicsPipelineCreateInfo *ci, VkPipelineColorBlendStateCreateInfo *cb) {
     if (V.logic_op || !ci->pColorBlendState || !ci->pColorBlendState->logicOpEnable) return 0;
@@ -761,13 +823,13 @@ GVB(vkCreateGraphicsPipelines, VkResult, VkDevice d, VkPipelineCache c, uint32_t
     VkGraphicsPipelineCreateInfo *cc = malloc(n * sizeof *cc); VkPipelineColorBlendStateCreateInfo *cbs = malloc(n * sizeof *cbs); vin_fix *fx = calloc(n, sizeof *fx);
     if (cc && cbs && fx) {
         memcpy(cc, ci, n * sizeof *cc);
-        for (uint32_t j = 0; j < n; j++) { pso_fix_logic(&cc[j], &cbs[j]); pso_fix_scaled(&cc[j], &fx[j]); }
+        for (uint32_t j = 0; j < n; j++) { pso_fix_logic(&cc[j], &cbs[j]); pso_fix_scaled(&cc[j], &fx[j]); pso_fix_dual(&cc[j], &fx[j]); }
         ci = cc;
     }
     for (uint32_t i = 0; i < n; i++) { const VkPipelineVertexInputStateCreateInfo *vi = ci[i].pVertexInputState;
         for (uint32_t j = 0; vi && j < vi->vertexAttributeDescriptionCount; j++) fmt_check(vi->pVertexAttributeDescriptions[j].format, 1, 0, 0); }
     uint64_t f = vka_fp_host(NULL); VkResult r = R.vkCreateGraphicsPipelines(V.dev, c, n, ci, NULL, out); vka_fp_back(f);
-    if (fx) for (uint32_t j = 0; j < n; j++) if (fx[j].mod) R.vkDestroyShaderModule(V.dev, fx[j].mod, NULL);   // (a pipeline does not need its modules once made)
+    if (fx) for (uint32_t j = 0; j < n; j++) { if (fx[j].mod) R.vkDestroyShaderModule(V.dev, fx[j].mod, NULL); if (fx[j].fmod) R.vkDestroyShaderModule(V.dev, fx[j].fmod, NULL); }   // (a pipeline does not need its modules once made)
     free(cc); free(cbs); free(fx);
     static _Atomic uint64_t npso; uint64_t k = atomic_fetch_add(&npso, n) + n;
     if (r) { static _Atomic int nr; if (atomic_fetch_add(&nr, 1) < 16) GRED("vkCreateGraphicsPipelines (%u): %d", n, r); }

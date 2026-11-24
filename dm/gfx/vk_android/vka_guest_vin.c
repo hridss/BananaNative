@@ -207,3 +207,85 @@ out:
     free(cst); free(kind); free(dec); free(ptype); free(elem); free(tkind); free(block);
     return res;
 }
+// Dual-source blending from output location 1 (docs/reference/rendering.md "Dual-source blending from output location 1"): Hagi's GX fragment shaders write the
+// second blend source as an ordinary output at location 1 (no Index decoration) and their pipelines blend with SRC1 factors. NVIDIA's hardware feeds colour target 1 to
+// source 1; Vulkan takes source 1 only from Location 0 Index 1, and leaves it undefined otherwise (Qualcomm's driver drew Peach's dress see-through, Turnip happened to
+// read target 1). For a pipeline that blends with SRC1, its fragment module's output at location 1 becomes Location 0 Index 1, when the module has outputs at
+// locations 0 and 1 only. NULL: nothing to change (why "") or not done
+uint32_t *vkg_spv_dual(const uint32_t *w, size_t n, size_t *out_n, char *why, size_t wn) {
+    enum { DEC_INDEX = 32, SC_OUTPUT = 3 };
+    why[0] = 0;
+    if (n < 5 || w[0] != 0x07230203u) { snprintf(why, wn, "not SPIR-V"); return NULL; }
+    uint32_t bound = w[3];
+    if (!bound || bound > (1u << 22)) { snprintf(why, wn, "id bound %u", bound); return NULL; }
+    uint8_t *out = calloc(bound, 1); int32_t *loc = malloc(bound * sizeof *loc); uint8_t *idx = calloc(bound, 1);
+    uint32_t *res = NULL; size_t at1 = 0; uint32_t v1 = 0; int frag = 0, bad = 0;
+    if (!out || !loc || !idx) { snprintf(why, wn, "out of memory"); goto out; }
+    for (uint32_t i = 0; i < bound; i++) loc[i] = -1;
+    for (size_t i = 5; i < n;) {
+        uint32_t op = w[i] & 0xffff, len = w[i] >> 16; const uint32_t *x = w + i;
+        if (!len || i + len > n) { snprintf(why, wn, "bad instruction length"); goto out; }
+        if (op == OP_ENTRY_POINT && len >= 3 && x[1] == 4) frag = 1;
+        else if (op == OP_DECORATE && len >= 4 && x[1] < bound && x[2] == DEC_LOCATION) loc[x[1]] = (int32_t)x[3];
+        else if (op == OP_DECORATE && len >= 3 && x[1] < bound && x[2] == DEC_INDEX) idx[x[1]] = 1;
+        else if (op == OP_VARIABLE && len >= 4 && x[2] < bound && x[3] == SC_OUTPUT) out[x[2]] = 1;
+        i += len;
+    }
+    if (!frag) goto out;
+    int have0 = 0;
+    for (uint32_t id = 1; id < bound; id++) {
+        if (!out[id] || loc[id] < 0) continue;
+        if (idx[id]) goto out;   // (the module says it already)
+        if (loc[id] == 0) have0 = 1; else if (loc[id] == 1) v1 = id; else bad = 1;
+    }
+    if (!v1 || !have0) goto out;
+    if (bad) { snprintf(why, wn, "outputs at locations past 1"); goto out; }
+    for (size_t i = 5; i < n; i += w[i] >> 16) if ((w[i] & 0xffff) == OP_DECORATE && (w[i] >> 16) >= 4 && w[i + 1] == v1 && w[i + 2] == DEC_LOCATION) { at1 = i; break; }
+    res = malloc((n + 4) * 4);
+    if (!res) { snprintf(why, wn, "out of memory"); goto out; }
+    memcpy(res, w, at1 * 4);
+    res[at1] = w[at1]; res[at1 + 1] = v1; res[at1 + 2] = DEC_LOCATION; res[at1 + 3] = 0;   // Location 0
+    res[at1 + 4] = (4u << 16) | OP_DECORATE; res[at1 + 5] = v1; res[at1 + 6] = DEC_INDEX; res[at1 + 7] = 1;   // Index 1
+    memcpy(res + at1 + 8, w + at1 + 4, (n - at1 - 4) * 4);
+    *out_n = n + 4;
+out:
+    free(out); free(loc); free(idx);
+    return res;
+}
+// ArrayStride on a struct member (docs/reference/rendering.md "Vulkan shaders generated at run time"): Hagi's generated GX shaders (Super Mario Galaxy, Sunshine) put
+// it on the member (OpMemberDecorate) instead of the array type, which NVIDIA's driver takes and Vulkan does not allow. Each such stride is copied onto the member's array
+// type (upstream's vk_shaders.py fix_strides) and the member decoration is dropped, so the module is valid. NULL: unchanged
+uint32_t *vkg_spv_strides(const uint32_t *w, size_t n, size_t *out_n) {
+    enum { OP_TYPE_ARRAY = 28, OP_TYPE_RTARRAY = 29, OP_TYPE_STRUCT = 30, OP_MEMBER_DECORATE = 72, DEC_ARRAY_STRIDE = 6 };
+    if (n < 5 || w[0] != 0x07230203u) return NULL;
+    size_t at = 0, nmem = 0;
+    for (size_t i = 5; i < n;) { uint32_t op = w[i] & 0xffff, len = w[i] >> 16; if (!len || i + len > n) return NULL;
+        if (op == OP_MEMBER_DECORATE && len >= 5 && w[i + 3] == DEC_ARRAY_STRIDE) { at = i + len; nmem++; }
+        i += len; }
+    if (!nmem) return NULL;
+    uint32_t bound = w[3]; if (!bound || bound > (1u << 22)) return NULL;
+    uint8_t *is_arr = calloc(bound, 1), *has = calloc(bound, 1); uint32_t *add = calloc(bound, 4); const uint32_t **st = calloc(bound, sizeof *st); uint32_t *stn = calloc(bound, 4);
+    uint32_t *res = NULL; size_t nadd = 0;
+    if (!is_arr || !has || !add || !st || !stn) goto out;
+    for (size_t i = 5; i < n; i += w[i] >> 16) { uint32_t op = w[i] & 0xffff, len = w[i] >> 16;
+        if (op == OP_DECORATE && len >= 4 && w[i + 2] == DEC_ARRAY_STRIDE && w[i + 1] < bound) has[w[i + 1]] = 1;
+        else if ((op == OP_TYPE_ARRAY || op == OP_TYPE_RTARRAY) && len >= 3 && w[i + 1] < bound) is_arr[w[i + 1]] = 1;
+        else if (op == OP_TYPE_STRUCT && len >= 2 && w[i + 1] < bound) { st[w[i + 1]] = w + i + 2; stn[w[i + 1]] = len - 2; } }
+    for (size_t i = 5; i < n; i += w[i] >> 16) { uint32_t op = w[i] & 0xffff, len = w[i] >> 16;
+        if (op != OP_MEMBER_DECORATE || len < 5 || w[i + 3] != DEC_ARRAY_STRIDE || w[i + 1] >= bound) continue;
+        uint32_t s = w[i + 1], m = w[i + 2]; if (!st[s] || m >= stn[s]) continue;
+        uint32_t t = st[s][m]; if (t < bound && is_arr[t] && !has[t] && !add[t]) { add[t] = w[i + 4]; nadd++; } }
+    res = malloc((n + nadd * 4) * 4); if (!res) goto out;
+    size_t o = 0; memcpy(res, w, 5 * 4); o = 5;
+    for (size_t i = 5; i < n;) {
+        uint32_t op = w[i] & 0xffff, len = w[i] >> 16;
+        if (i == at) for (uint32_t t = 0; t < bound; t++) if (add[t]) { res[o++] = (4u << 16) | OP_DECORATE; res[o++] = t; res[o++] = DEC_ARRAY_STRIDE; res[o++] = add[t]; }
+        if (!(op == OP_MEMBER_DECORATE && len >= 5 && w[i + 3] == DEC_ARRAY_STRIDE)) { memcpy(res + o, w + i, len * 4); o += len; }   // (the member decoration dropped)
+        i += len;
+    }
+    if (at >= n) for (uint32_t t = 0; t < bound; t++) if (add[t]) { res[o++] = (4u << 16) | OP_DECORATE; res[o++] = t; res[o++] = DEC_ARRAY_STRIDE; res[o++] = add[t]; }
+    *out_n = o;
+out:
+    free(is_arr); free(has); free(add); free(st); free(stn);
+    return res;
+}
