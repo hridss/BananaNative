@@ -1760,9 +1760,11 @@ static int memu_stop_kind(uint32_t op) {
 void vka_memu_stop_stats(char *b, size_t n, double frames) {
     static uint64_t s0[MEMU_STOP_N]; uint64_t t = 0; for (int i = 0; i < MEMU_STOP_N; i++) t += g_memu_stop[i] - s0[i];
     if (frames <= 0 || !t) { if (n) b[0] = 0; memcpy(s0, g_memu_stop, sizeof s0); return; }
-    static const char *const nm[MEMU_STOP_N] = {"barrier", "inline update", "render targets", "dispatch", "copy / clear", "wait / event", "render condition", "other", "128 draws", "a draw past a barrier"};
+    static const char *const nm[MEMU_STOP_N] = {"barrier", "inline update", "render targets", "dispatch", "copy / clear", "wait / event", "render condition", "other", "batch size", "a draw past a barrier"};
     size_t o = (size_t)snprintf(b, n, "mesh look-ahead stops per frame:");
-    for (int i = 0; i < MEMU_STOP_N && o < n; i++) if (g_memu_stop[i] != s0[i]) o += (size_t)snprintf(b + o, n - o, " %s %.1f,", nm[i], (g_memu_stop[i] - s0[i]) / frames);
+    for (int i = 0; i < MEMU_STOP_N && o < n; i++) if (g_memu_stop[i] != s0[i]) {
+        if (i == MEMU_STOP_LIMIT) o += (size_t)snprintf(b + o, n - o, " %s (%d draws now) %.1f,", nm[i], vka_memu_batch_cap(), (g_memu_stop[i] - s0[i]) / frames);   // (the size in force: vka_memu_batch_cap)
+        else o += (size_t)snprintf(b + o, n - o, " %s %.1f,", nm[i], (g_memu_stop[i] - s0[i]) / frames); }
     if (o < n && o && b[o - 1] == ',') b[o - 1] = 0;
     memcpy(s0, g_memu_stop, sizeof s0);
 }

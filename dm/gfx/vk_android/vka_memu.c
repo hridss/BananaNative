@@ -127,28 +127,21 @@ int vka_memu_vs_feeds(vka_shader *vs, vka_shader *fs) {
 enum { NARENA = 6 };
 // The most mesh draws a batch takes (vka_exec.c memu_walk; at most VKA_MEMU_ORDER_MAX, 128). One batch's output can still pass the arena's limit (a Hyrule Field
 // batch of Ocarina of Time asked 128.5 MiB on Turnip, whose maxStorageBufferRange is 128 MiB): when a batch of the last submission asked for more than the arena
-// at its limit, the next batches take half as many draws (down to 8), and after 64 submissions whose largest batch used at most a third of the limit they may
-// take twice as many again, but never again as many as the size that outgrew it, for the rest of the run (the phone: back at 128 after a few seconds, the same
-// Hyrule Field batches outgrew it again). DM_VK_MESH_EMU_BATCH=<n> (live) fixes it instead
-static _Atomic int g_bcap = 128; static int g_bcap_calm, g_bceil = 128;
+// at its limit, the next batches take half as many draws (down to 8) for the rest of the run: on the phone, when the size went back up after a few seconds the
+// same Hyrule Field batches outgrew it again, and in another run batches of 16 draws still asked 128.4 MiB. DM_VK_MESH_EMU_BATCH=<n> (live) fixes it instead
+static _Atomic int g_bcap = 128;
 int vka_memu_batch_cap(void) {
     int f = VKA_ENV("DM_VK_MESH_EMU_BATCH", 0);
     if (f > 0) return f < 128 ? f : 128;
     return atomic_load_explicit(&g_bcap, memory_order_relaxed);
 }
 static void bcap_after(uint64_t asked, uint32_t maxw, int used) {   // the largest batch of a submission that ended (made with batches of at most used draws), against the arena's limit (words)
-    int c = atomic_load_explicit(&g_bcap, memory_order_relaxed);
-    if (asked > maxw) {
-        // Halved from the size that submission was made with, not from the current one: the submissions still in flight when the first overflow is read
-        // were made with the old size and report the same overflow (the phone: four in two seconds took 128 down to 8)
-        int n = used / 2 > 8 ? used / 2 : 8;
-        g_bcap_calm = 0;
-        if (n < c) { atomic_store(&g_bcap, n); if (g_bceil > n) g_bceil = n;
-            VLOG("mesh draws through compute: a batch of at most %d draws asked for %.1f MiB, more than the arena's %u MiB: batches take at most %d draws now, for the rest of the run (DM_VK_MESH_EMU_BATCH)", used, asked / 262144.0, maxw >> 18, n); }
-    } else if (c < g_bceil && asked * 3 <= maxw && ++g_bcap_calm >= 64) {
-        g_bcap_calm = 0; atomic_store(&g_bcap, c * 2);
-        VLOG("mesh draws through compute: 64 submissions with every batch within a third of the arena's %u MiB: batches take at most %d draws again", maxw >> 18, c * 2);
-    } else if (asked * 3 > maxw) g_bcap_calm = 0;
+    if (asked <= maxw) return;
+    // Halved from the size that submission was made with, not from the current one: the submissions still in flight when the first overflow is read
+    // were made with the old size and report the same overflow (the phone: four in two seconds took 128 down to 8)
+    int n = used / 2 > 8 ? used / 2 : 8;
+    if (n < atomic_load_explicit(&g_bcap, memory_order_relaxed)) { atomic_store(&g_bcap, n);
+        VLOG("mesh draws through compute: a batch of at most %d draws asked for %.1f MiB, more than the arena's %u MiB: batches take at most %d draws now, for the rest of the run (DM_VK_MESH_EMU_BATCH)", used, asked / 262144.0, maxw >> 18, n); }
 }
 typedef struct { VkBuffer buf, ctl; VkDeviceMemory mem, cmem; volatile uint32_t *cp; uint32_t words; uint64_t fence; int used, bcap; } arena;   // bcap: the batch size its submission was made with
 static arena g_ar[NARENA]; static int g_cur = -1;
