@@ -1345,6 +1345,40 @@ def half_pads(fa, fb, insl, at, base):
     tgt, _ = table_at(fa, fb, insl, at)
     if not tgt or any(t < base or (t - base) % 4 for t in tgt): return None
     return max(t - base for t in tgt) // 4 + 1
+def masked_table(insl, j, fa, fb):
+    """An offset table whose bound is checked on a masked copy of the index and whose index is masked again from the source (DRAGON BALL FighterZ main+0x252b78,
+    Unreal Engine 4 on SDK 4.5: and w18,w8,#0xffff; cmp w18,#0x10; b.hi L; and x18,x8,#0xffff; ldrsw x18,[x14,x18,lsl #2]; add x18,x18,x14; br x18). jump_solver
+    keeps the bound on w18 only, so the re-masked x18 reads as 65,536 entries. → the targets, or None: the same register and mask on both, the b.hi right after the
+    cmp, the table base an adrp + add in the 16 instructions before, every target an instruction of [fa, fb)"""
+    ctx = insl[max(0, j - 16):j]
+    if len(ctx) < 4: return None
+    ld, ad = ctx[-2], ctx[-1]
+    m = re.fullmatch(r'x18, \[(x\d+), x18, lsl #2\]', ld.op_str) if ld.mnemonic == 'ldrsw' else None
+    if not m or ad.mnemonic != 'add' or ad.op_str != f'x18, x18, {m[1]}': return None
+    tb_reg = m[1]
+    mk = next((p for p in reversed(ctx[:-2]) if p.mnemonic == 'and' and p.op_str.startswith('x18, x')), None)
+    mm = re.fullmatch(r'x18, x(\d+), #(0x[0-9a-f]+|\d+)', mk.op_str) if mk else None
+    if not mm: return None
+    src, mask = mm[1], int(mm[2], 0)
+    k = ctx.index(mk); n = None
+    for a, b, c in zip(ctx[:k], ctx[1:k], ctx[2:k]):
+        ma = re.fullmatch(r'(w\d+), w(\d+), #(0x[0-9a-f]+|\d+)', a.op_str) if a.mnemonic == 'and' else None
+        if not ma or ma[2] != src or int(ma[3], 0) != mask: continue
+        mc = re.fullmatch(rf'{ma[1]}, #(0x[0-9a-f]+|\d+)', b.op_str) if b.mnemonic == 'cmp' else None
+        if mc and c.mnemonic == 'b.hi': n = int(mc[1], 0) + 1
+    if not n or n > 4096: return None
+    page = lo = None
+    for p in reversed(ctx[:-2]):
+        if lo is None and p.mnemonic == 'add' and p.op_str.startswith(f'{tb_reg}, {tb_reg}, #'): lo = p.operands[2].imm
+        elif lo is not None and p.mnemonic == 'adrp' and p.op_str.startswith(f'{tb_reg}, '): page = p.operands[1].imm; break
+    if page is None: return None
+    tb = page + lo
+    if tb < 0 or tb + 4 * n > len(IMG): return None
+    tgt = [tb + struct.unpack_from('<i', IMG, tb + 4 * i)[0] for i in range(n)]
+    at = {p.address for p in insl}
+    if not all(fa <= t < fb and t in at for t in tgt): return None
+    print(f'jump table {insl[j].address:x}: {n} entries from a masked index (masked_table)')
+    return tgt
 selects = {}
 function_ends = dict(nso_code.fde_ranges(IMG))
 progress('functions')
@@ -1380,6 +1414,7 @@ for n_fn, (fa, fb) in enumerate(funcs):
             if not (base and width):
                 if (far := jump_bytes_far(insl, j, lambda b, fa=fa, fb=fb, insl=insl, at=ins.address: half_pads(fa, fb, insl, at, b))): jumps[ins.address] = far; continue   # a byte or halfword table keeps its pads wherever its add is
                 tgt, why = table_at(fa, fb, insl, ins.address)
+                if not tgt: tgt = masked_table(insl, j, fa, fb) or tgt
                 if not tgt and tail_call(insl, j): tailcalls.add(ins.address); continue
                 assert tgt, f'jump table {ins.address:x}: {why}'
                 tabjumps[ins.address] = tgt; continue
