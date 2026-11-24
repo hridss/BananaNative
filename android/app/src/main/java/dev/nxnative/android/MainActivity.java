@@ -89,7 +89,7 @@ public final class MainActivity extends Activity {
         });   // a controller or keyboard moves the focus
         PadFocus.watch(getWindow());   // a controller: the focus frame (PadFocus)
         build();
-        if (saved == null) { setIntent(gated(getIntent())); fromIntent(getIntent()); GameReturn.back(this, getIntent()); }   // start() reads no_pause from getIntent() too; GameReturn: Home made anew by the app's icon while a game runs
+        if (saved == null && !ProgramSwitch.take(this, getIntent())) { setIntent(gated(getIntent())); fromIntent(getIntent()); GameReturn.back(this, getIntent()); }   // ProgramSwitch: a game of several programs starts its next program   // start() reads no_pause from getIntent() too; GameReturn: Home made anew by the app's icon while a game runs
         GpuGl.probe(this, () -> { if (!isFinishing() && settingsGame != null) gameSettingsAgain(); });   // the GPU's name and, before any readiness check, the system driver's facts for the recommendations
         Updater.changed = this::updatesChanged;
         Updater.onStart(this);   // the release app: a newer release on GitHub opens the update popup (once per process start: not on a resume or a rotation)
@@ -992,6 +992,7 @@ public final class MainActivity extends Activity {
 
     @Override protected void onNewIntent(Intent i) {
         super.onNewIntent(i);
+        if (ProgramSwitch.take(this, i)) return;   // a game of several programs starts its next program (the game's screen sent Home this)
         if (GameReturn.back(this, i)) return;   // the app's icon while a game runs: back to the game, not Home (the icon brought Home's task forward; the game's own task waits behind it)
         fromIntent(i);
     }

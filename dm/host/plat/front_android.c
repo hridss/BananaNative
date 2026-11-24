@@ -22,6 +22,20 @@ int front_text_input(const char *title, const char *sub, const char *guide, cons
 int front_user_select(const char *const *names, const int *offered, int n, int def) { return android_user_select(names, offered, n, def); }
 // Controller applet (front.h): the launcher's join screen over the game (input_android.c, GameActivity's CtrlScreen); -2 without its callback (the host answers at once)
 int front_controller_support(const void *arg, int *count) { return android_controller_support(arg, count); }
+// A program hands over to another (front.h, hle_oe.c): the launcher reads DM_EXEC_OUT and starts the game's screen again with that program (GameActivity.programHandoff);
+// the guest thread waits until the launcher has what it needs, then the host ends. Without the launcher's callback the program just ends
+static nxhost_program_fn _Atomic g_pg_fn; static void *_Atomic g_pg_ctx;
+void nxhost_program_callback(nxhost_program_fn fn, void *ctx) {
+    atomic_store(&g_pg_ctx, ctx); atomic_store(&g_pg_fn, fn);
+    LOG("front end: a program switch goes to the launcher%s", fn ? "" : " (none: the program just ends)");
+}
+void front_program_handoff(int index, const char *name) {
+    nxhost_program_fn fn = atomic_load(&g_pg_fn);
+    int prev; const char *note; dm_oe_handoff(&prev, &note);
+    if (!fn) { LOG("[RED] front end: program %d (%s) cannot be started: the launcher has no program callback; this program ends", index, name ? name : "?"); return; }
+    LOG("front end: program %d (%s) handed to the launcher, previous program %d%s%s", index, name ? name : "?", prev, note ? ": " : "", note ? note : "");
+    fn(atomic_load(&g_pg_ctx), index, prev, note);
+}
 int main(int argc, char **argv);
 // The launcher (android/app) calls this on a thread of its own with an 8 MB stack, which is not attached to ART. Heap pointer tagging goes off first: Bionic's malloc hands
 // out pointers with a tag in the top byte (0xb4) since Android 11, and the host gives malloc'd blocks to the guest (its TLS and thread-local region, the libc passthrough),

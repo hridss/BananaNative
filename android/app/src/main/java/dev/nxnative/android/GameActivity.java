@@ -783,10 +783,15 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
     private void start() {
         String id = getIntent().getStringExtra("title_id"), name = getIntent().getStringExtra("name");
         bootName = name != null && !name.isEmpty() ? name : String.valueOf(id);
-        File game = new File(getIntent().getStringExtra("game")), packDir = new File(getIntent().getStringExtra("pack"));
+        // A program n > 0 of a game of several programs (ProgramSwitch: the game's own oe::ExecuteProgram) plays from the pack's p<n>/ folder, its own pack of that program's code
+        int program = getIntent().getIntExtra("program", 0);
+        File game = new File(getIntent().getStringExtra("game")), basePack = new File(getIntent().getStringExtra("pack"));
+        File packDir = program > 0 ? new File(basePack, "p" + program) : basePack;
         File files = getExternalFilesDir(null);
         try {
+            if (program > 0 && !new File(packDir, "pack.tsv").isFile()) throw new IOException("The pack has no program " + program + " (" + packDir + "): prepare the game again");
             Pack pack = Pack.read(packDir);
+            String progId = program > 0 ? pack.titleId : id;   // that program's own title for its temporary files and shader library; the host, logs and save stay the game's
             String romfs = pack.romfsPath(game);   // a folder's RomFS folder, or <file>.nup:<selector>/romfs (NUP.md)
             if (romfs == null) throw new IOException(Nup.isNup(game) ? game.getName() + " has no " + pack.romfsSelector() + " with a RomFS" : "no RomFS in " + game);
             if (readinessHold(id)) return;   // after the pack's own checks (a missing pack says so first), before the save is locked or anything is written
@@ -809,7 +814,7 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
             // the save is the application's: a program pack (a Switch 2 Edition's program 1, its pack.tsv's application row) keeps the game's save, as on the console;
             // its temp, logs and host are its own. So every start of it (the card's edition switch, a frontend, a shortcut) plays the same save
             String saveId = pack.application.isEmpty() ? id : pack.application;
-            File save = saveDir(files, game, saveId), temp = mkdirs(new File(files, "temp/" + id)), root = mkdirs(new File(files, "root"));
+            File save = saveDir(files, game, saveId), temp = mkdirs(new File(files, "temp/" + progId)), root = mkdirs(new File(files, "root"));
             // The DLC links live in internal app storage: the external files folder is shared storage (FUSE), which refuses symbolic links (errno not yet confirmed on a phone; a refused link is now a [RED] line), so
             // every link failed there and no game saw its DLC (docs/reference/packing.md "DLC links in shared storage"). Their targets stay where they are
             File aoc = aocLinks(mkdirs(new File(getFilesDir(), "aoc/" + id)), game, pack, nupFd);
@@ -821,6 +826,7 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
                     "DM_ROMFS=" + romfs, "DM_SAVE=" + save, "DM_TEMP=" + temp, "DM_ROOT=" + root, "DM_AOC_DIR=" + aoc,
                     "HOME=" + files, "TMPDIR=" + getCacheDir(), "DM_BUILD_COMMIT=" + BuildConfig.NX_COMMIT,
                     "DM_CTL=" + new File(files, "ctl.txt"), "NX_EXIT_RECORD=" + ExitWatch.record(this)));   // live control lines (android/TESTING.md "Live control", android/tools/nxctl.sh); DM_CTL= in env.txt turns it off
+            programEnv(id, program, env);   // DM_EXEC_OUT for every game (oe::ExecuteProgram, RequestToRelaunchApplication: ProgramSwitch), and the program this start is
             // The shader layer lives in the pack (shaders/layer, kept between runs: LayerDir); a pack folder that cannot take it leaves the host's own place, DM_TEMP/shader_layer
             layerRoot = LayerDir.resolve(packDir, temp);
             runLayer = ShaderLibs.layerCovers(id, Prefs.layerEnv(this, id));   // the switch as the host gets it (DM_VK_LAYER=0 while Shaders while playing is off or in the player's lines; a Switch 2 title only)
@@ -830,11 +836,11 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
             String layerTidy = LayerDir.tidy(layerRoot, BuildConfig.NX_DMSH_VK_CHAIN);
             if (!layerTidy.isEmpty()) unknownNotes.add("[nxlaunch] shader layer: " + layerTidy);
             // Requests the library the host plays already has (one built on a computer moved into the pack, or Prepare finished since) are not built for nothing
-            File hostLib = ShaderLibs.hostLibrary(packDir, id, BuildConfig.NX_DMSH_VK_CHAIN, BuildConfig.NX_DMSH_VK_ABI, BuildConfig.NX_DMSH_VK_ABI_COMPAT);
+            File hostLib = ShaderLibs.hostLibrary(packDir, progId, BuildConfig.NX_DMSH_VK_CHAIN, BuildConfig.NX_DMSH_VK_ABI, BuildConfig.NX_DMSH_VK_ABI_COMPAT);
             runLibrary = hostLib != null;
             runKept = hostLib != null && ShaderLibs.kept(hostLib) ? hostLib : null;
             seedDump = runLayer && !runLibrary ? game.getPath() : null; seedVersion = pack.version;
-            int dropped = runLayer ? LayerGuard.dropCovered(layerRoot, hostLib, id) : 0;   // (layer off: no watcher and no build, the old requests are left as they are and no line claims them dropped)
+            int dropped = runLayer ? LayerGuard.dropCovered(layerRoot, hostLib, progId) : 0;   // (layer off: no watcher and no build, the old requests are left as they are and no line claims them dropped)
             if (dropped > 0) unknownNotes.add("[nxlaunch] shader layer: " + dropped + " requests the shader library already has are dropped");
             env.add(0, "NX_BUILD_TAG=" + Prefs.buildTag(this) + " \u00b7 signer " + Prefs.signerId(this));   // nxlaunch.c writes it as the log's first line; the signer says which key signed the APK (Signer)
             // a program pack (a Switch 2 Edition's program 1): each program index's RomFS for the indexed MountRom (hle_fs.c DM_ROMFS_PROGRAM_<i>; 0 is the game's, "conorig")
@@ -912,6 +918,7 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
             // Read once the game has run a while (the host finds the game's limiter after it starts); the in-game panel updates it too
             ui.postDelayed(this::noteOwnRate, 30000);
             hostRunning = true;
+            ProgramSwitch.screen = this;   // a program switch of the game goes through this screen (programHandoff)
             runIntent = new Intent(getIntent());
             if ("java".equals(testCrash)) { Native.note("[RED] DM_TEST_CRASH=java: an exception on the main thread in 10 s"); ExitWatch.testCrash(ui); }   // =native: nxlaunch.c
             if (readinessLine != null) Native.note(readinessLine + (triedAnyway ? "; the player chose Try anyway" : ""));   // the readiness check (readinessHold)
@@ -935,6 +942,7 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
                 android.widget.Toast.makeText(this, Tx.s(R.string.game_environment_lines, msg), android.widget.Toast.LENGTH_LONG).show();
             }
             if (testSave != null) Native.note("[nxlaunch] test app: DM_SAVE from env-" + id + ".txt: " + testSave);
+            if (programNote != null) Native.note(programNote);
             Native.note("frame generation: " + (Lsfg.on(this) ? "on" : "off") + "; " + Lsfg.note);
             if (Prefs.ramSaverLevel(this, id) == 2) Native.note("RAM saver: Strong (DM_VK_RAM_SAVER=2); frame generation " + (Lsfg.on(this) ? "on" : "off"));
             Native.note(gpuNote + " (picked in the launcher; a DM_VK_DRIVER line in env.txt wins, the host's [vk] driver line says which ran)");
@@ -1039,6 +1047,7 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
      */
     private void attach() {
         Native.note("the game's screen opened again; the running game carries on");
+        ProgramSwitch.screen = this;   // a program switch goes through the screen that shows
         log = null;   // the run's log is the first screen's; this one shows no log
         overlay.setVisibility(View.GONE);
         input = Native.hasInput();
@@ -1074,6 +1083,60 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
         backToFrontend();
         finishAndRemoveTask();   // the game's own task (taskAffinity <application ID>.game) leaves Recents with it
         endProcess();   // now, not at onDestroy: Android may hold a finishing screen's destroy until the next one is idle
+    }
+
+    // ---- Programs of one game (ProgramSwitch): DM_EXEC_OUT for every game, and for a start the game's own oe::ExecuteProgram asked for, the program, its parameters and the one before ----
+    private String programNote;   // the log line of this start's program
+    private boolean switching;   // the host hands over to another program: it ends the process itself (its graceful exit), the screen's end does not kill it
+
+    private void programEnv(String id, int program, List<String> env) {
+        File rec = ProgramSwitch.record(this, id);
+        if (rec.isFile() && !rec.delete()) Native.note("[RED] program switch: an old " + rec + " could not be removed");
+        env.add("DM_EXEC_OUT=" + rec);
+        android.content.Intent i = getIntent();
+        if (program > 0) env.add("DM_PROGRAM=" + program);
+        String lp = i.getStringExtra("launch_param");
+        boolean relaunch = i.getBooleanExtra("relaunch", false);
+        int prev = i.getIntExtra("prev_program", -1);
+        if (relaunch) env.add("DM_RELAUNCH=1");
+        else if (i.hasExtra("prev_program") && prev >= 0) {
+            env.add("DM_PREV_PROGRAM=" + prev);
+            if (lp != null && !lp.isEmpty()) env.add("DM_LAUNCH_PARAM=" + lp);
+        }
+        if (program > 0 || i.hasExtra("prev_program") || relaunch) {
+            String note = i.getStringExtra("note");
+            programNote = "[nxlaunch] program switch: program " + program + (relaunch ? " (the game started itself again)" : i.hasExtra("prev_program") ? " started by program " + prev : "")
+                    + (lp != null && !lp.isEmpty() ? ", launch parameters " + new File(lp).length() + " bytes" : "") + (note != null ? "; the program before ended: " + note : "");
+        }
+    }
+
+    /**
+     * The host hands over to program index (ProgramSwitch.handoff, on the UI thread; the host ends when this returns): the parameters out of the host's record, the request
+     * for Home, then Home starts and this screen goes. The host's own graceful exit ends the process, so the save's commits finish; Home starts the program once it is gone
+     */
+    void programHandoff(int index, int prev, String note) {
+        String id = titleId();
+        android.content.Intent i = getIntent();
+        byte[] rec = null;
+        try { rec = java.nio.file.Files.readAllBytes(ProgramSwitch.record(this, id).toPath()); }
+        catch (IOException e) { Native.note("[RED] program switch: the host's record could not be read (" + e.getMessage() + "): program " + index + " starts without parameters"); }
+        File pf = ProgramSwitch.param(this, id);
+        byte[] par = ProgramSwitch.params(rec, index);
+        try { java.nio.file.Files.write(pf.toPath(), par); }
+        catch (IOException e) { Native.note("[RED] program switch: the launch parameters could not be written (" + e.getMessage() + ")"); }
+        java.util.Map<String, String> req = new java.util.LinkedHashMap<>();
+        req.put("title_id", id); req.put("name", String.valueOf(i.getStringExtra("name"))); req.put("game", i.getStringExtra("game")); req.put("pack", i.getStringExtra("pack"));
+        req.put("program", String.valueOf(index)); req.put("prev", String.valueOf(prev)); req.put("relaunch", prev < 0 ? "1" : "0");
+        req.put("param", prev < 0 ? "" : pf.getPath()); req.put("frontend", i.getBooleanExtra("frontend", false) ? "1" : "0");
+        if (note != null) req.put("note", note);
+        req.put("pid", String.valueOf(android.os.Process.myPid())); req.put("time", String.valueOf(System.currentTimeMillis()));
+        try { java.nio.file.Files.write(ProgramSwitch.request(this).toPath(), ProgramSwitch.format(req).getBytes(java.nio.charset.StandardCharsets.UTF_8)); }
+        catch (IOException e) { Native.note("[RED] program switch: the request could not be written (" + e.getMessage() + "): the game ends"); return; }
+        Native.note("[nxlaunch] program switch: program " + index + (prev < 0 ? " (relaunch)" : ", " + par.length + " bytes of launch parameters") + "; Home starts it once this process has ended");
+        ExitWatch.stopped();   // an end the game asked for: no notice
+        switching = true;
+        startActivity(new android.content.Intent(this, MainActivity.class).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK).putExtra(ProgramSwitch.EXTRA, true));
+        finishAndRemoveTask();
     }
 
     /** Stop (the in-game panel): as the player asked, the game ends with its screen */
@@ -1120,7 +1183,7 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
             if (focus != null) audio.abandonAudioFocusRequest(focus);
             if (route != null) { audio.unregisterAudioDeviceCallback(route); route = null; }
         }
-        boolean ends = RunGuard.endsProcess(isFinishing(), isChangingConfigurations());
+        boolean ends = RunGuard.endsProcess(isFinishing(), isChangingConfigurations()) && !switching;   // a program switch: the host ends the process with its graceful exit
         super.onDestroy();
         if (ends) endProcess();
     }

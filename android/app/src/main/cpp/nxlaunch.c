@@ -76,6 +76,7 @@ void nxhost_fps_hold60_set(int on);   // hle_fpslock.c: a steps framework held a
 #pragma weak nxhost_ctrl_callback
 #pragma weak nxhost_ctrl_state
 #pragma weak nxhost_ctrl_button
+#pragma weak nxhost_program_callback
 
 // ---- Log: the host's stdout and stderr go straight into the log file (nothing is lost when the process dies), and a thread copies new lines to logcat ----
 // At the end of the file the thread sleeps until the file is written (inotify IN_MODIFY), not on a 20 ms timer: the timer woke it 50 times a second for the whole game,
@@ -301,6 +302,35 @@ JNIEXPORT jbyteArray JNICALL Java_dev_nxnative_android_Native_ctrlState(JNIEnv *
 }
 JNIEXPORT void JNICALL Java_dev_nxnative_android_Native_ctrlButton(JNIEnv *env, jclass cls, jint what) { (void)env; (void)cls; if (nxhost_ctrl_button) nxhost_ctrl_button(what); }
 
+// ---- A program switch (nxhost_program_callback; oe::ExecuteProgram, RequestToRelaunchApplication): ProgramSwitch.handoff writes the request and starts Home, which starts the
+// game's screen again with that program once this process is gone; called the way the input box is (a thread of this shim attached for the call while the guest thread waits).
+// The host ends when this returns ----
+static jclass g_ps_class; static jmethodID g_ps_handoff;
+typedef struct { int index, prev; const char *note; } prog_req;
+static void *program_thread(void *p) {
+    prog_req *q = p; JNIEnv *env = NULL; JavaVMAttachArgs a = {JNI_VERSION_1_6, "nxprogram", NULL};
+    if ((*g_vm)->AttachCurrentThread(g_vm, &env, &a) != JNI_OK) { fprintf(stderr, "[RED] [nxlaunch] program switch: cannot attach to the VM\n"); return NULL; }
+    jbyteArray note = q->note ? jbytes(env, q->note) : NULL;
+    (*env)->CallStaticVoidMethod(env, g_ps_class, g_ps_handoff, (jint)q->index, (jint)q->prev, note);
+    if ((*env)->ExceptionCheck(env)) { (*env)->ExceptionDescribe(env); (*env)->ExceptionClear(env); fprintf(stderr, "[RED] [nxlaunch] program switch: ProgramSwitch.handoff threw\n"); }
+    (*g_vm)->DetachCurrentThread(g_vm);
+    return NULL;
+}
+static void program_handoff(void *ctx, int index, int prev, const char *note) {
+    (void)ctx; prog_req q = {index, prev, note}; pthread_t t;
+    int e = pthread_create(&t, NULL, program_thread, &q);
+    if (e) { fprintf(stderr, "[RED] [nxlaunch] program switch: cannot start its thread: %s\n", strerror(e)); return; }
+    pthread_join(t, NULL);
+}
+static void program_setup(JNIEnv *env) {
+    if (!nxhost_program_callback) { fprintf(stderr, "[nxlaunch] program switch: not in this host (a switch ends the game)\n"); return; }
+    jclass k = (*env)->FindClass(env, "dev/nxnative/android/ProgramSwitch");
+    jmethodID m = k ? (*env)->GetStaticMethodID(env, k, "handoff", "(II[B)V") : NULL;
+    if (!m || (!g_vm && (*env)->GetJavaVM(env, &g_vm) != JNI_OK)) { (*env)->ExceptionClear(env); fprintf(stderr, "[RED] [nxlaunch] program switch: no ProgramSwitch.handoff: a switch ends the game\n"); return; }
+    g_ps_class = (*env)->NewGlobalRef(env, k); g_ps_handoff = m;
+    nxhost_program_callback(program_handoff, NULL);
+}
+
 // A surface can arrive while the readiness dialog is still up, before Native.start opens the log file and applies env.txt / env-<id>.txt (DM_VK_DRIVER, DM_VK_GPL,
 // DM_VK_MESH, DM_VK_VALIDATE, ...). Hold the window here and hand it to nxhost_set_window only once Native.start has set the environment
 static ANativeWindow *g_window;
@@ -339,6 +369,7 @@ JNIEXPORT jint JNICALL Java_dev_nxnative_android_Native_start(JNIEnv *env, jclas
     text_input_setup(env);
     user_select_setup(env);
     ctrl_setup(env);
+    program_setup(env);
     pthread_attr_t a; pthread_attr_init(&a); pthread_attr_setstacksize(&a, HOST_STACK);
     pthread_t t; int r = pthread_create(&t, &a, host_thread, NULL); pthread_attr_destroy(&a);
     if (r) { fprintf(stderr, "[nxlaunch] cannot start the host thread: %s\n", strerror(r)); return -3; }

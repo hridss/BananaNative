@@ -83,6 +83,12 @@ NXHOST_API int nxhost_ctrl_state(char *buf, int n);
 enum { NXHOST_CTRL_CANCEL = 0, NXHOST_CTRL_OK = 1, NXHOST_CTRL_JOIN_TOUCH = 2 };
 NXHOST_API void nxhost_ctrl_button(int what);
 int android_controller_support(const void *arg, int *count);   // host-internal (front_android.c): -2 without a callback
+// A program switch (oe::ExecuteProgram, oe::RequestToRelaunchApplication; dm/host/plat/front_android.c): the host calls fn(ctx, index, prev, note) from the guest thread once the program's
+// index and parameters are in the launcher's DM_EXEC_OUT file, and ends when fn returns: the launcher starts the game again with program index (DM_PROGRAM), the parameters in a file of
+// their own (DM_LAUNCH_PARAM) and prev as DM_PREV_PROGRAM (prev -1: a relaunch, DM_RELAUNCH=1). note: NULL, or why the program that ends could not run (UTF-8), for the player.
+// Without a callback the program just ends
+typedef void (*nxhost_program_fn)(void *ctx, int index, int prev, const char *note);
+NXHOST_API void nxhost_program_callback(nxhost_program_fn fn, void *ctx);
 
 // ---- Lifecycle ----
 // event: 0 onPause, 1 onStop, 2 onStart (after onStop), 3 onResume, 4 pause, 5 continue. The app is suspended while it is stopped (1 until 2) or paused (4 until 5):

@@ -745,6 +745,8 @@ def pack_shaders(a, g, work, out, vdir, parts=None, aoc=()):
     """shaders/v-<V>/ in the pack: an up-to-date library from the cache (built there first when it is missing or stale, from the shader package, split from the dump
     first when there is none and --shader-pkg names none). → the library path in the pack, or None"""
     require_shaders(g)   # an empty map without the profile's word for it is no library to pack
+    if no_nvn_shaders(g) and not map_keys(g.dir / 'shader_map.tsv'):   # a game that draws only through the Vulkan or OpenGL layer (Super Mario 3D All-Stars' Super Mario 64 and Sunshine): no NVN shader to build
+        print(f'shaders: {g.id} has no NVN shaders (its profile says so, and its shader_map.tsv is empty): the pack has no shader library', flush=True); return None
     v = vk_chain(); name = VK_PREFIX + v
     cache = (a.shader_cache or work / 'android-shaders' / 'lib').resolve(); lib = cache / name
     dst = out / 'shaders' / name
@@ -852,6 +854,33 @@ def place_cheats(g, out):
     if files: print(f'cheats: {", ".join(f.name for f in files)} into {d}')
 
 
+def pack_programs(a, folder, out, work, g):
+    """The other programs of a game of several programs (the profile's programs row: Super Mario 3D All-Stars' Super Mario 64 and Sunshine beside its launcher), each packed
+    by this script with --program n into <pack>/p<n>/, its work folder <work>/p<n>/ (its NROs, its shader split and library cache). One pack then holds every program the
+    launcher may start (GameActivity, ProgramSwitch: the game's own oe::ExecuteProgram). A program the dump does not have (a .nup holds program 0 only) is left out with a red
+    line: the game plays its first program, and a switch to the missing one starts the first again (hle_oe.c). The phone's packer (--in-process, which starts no program)
+    packs program 0 alone. → [(n, its folder in the pack)]"""
+    progs = sorted(int(n) for n, _ in g.pairs('programs')) if g.get('programs', '') else []
+    if progs and (a.in_process or a.code_only or a.keep_code):
+        print(f'[RED] programs {" ".join(map(str, progs))} of {g.id} are packed by a full run on a computer only: this pack holds program 0', flush=True); return []
+    done = []
+    for n in progs:
+        try: found = pack_dump.program_dir(folder, n)
+        except (OSError, ValueError, pack_dump.Error): found = None
+        if found is None:
+            print(f'[RED] program {n} of {g.id} is not in {folder} (program/{n}/exefs/main.npdm in a version folder; a .nup holds program 0 only): the pack is made without it', flush=True)
+            continue
+        stage(f'packing program {n}')
+        cmd = [sys.executable, str(Path(__file__).resolve()), str(folder), '--program', str(n), '--out', str(out / f'p{n}'), '--work-dir', str(work / f'p{n}'),
+               '-j', str(a.j), '-J', str(a.J), *(['--shader-python', a.shader_python] if a.shader_python else []), *(['--no-shaders'] if a.no_shaders else []),
+               *(['--optional-shaders'] if a.optional_shaders else []), *(['--made-by', a.made_by] if a.made_by else [])]
+        print(f'program {n}: {" ".join(cmd[1:])}', flush=True)
+        r = subprocess.run(cmd, env=child_env())
+        if r.returncode: raise Error(f'program {n}: pack_android.py --program {n} exit code {r.returncode}')
+        done.append((n, f'p{n}'))
+    return done
+
+
 def main():
     ap = argparse.ArgumentParser(description='Pack a dumped game for the Android launcher: its code modules rewritten with --target android, no RomFS')
     ap.add_argument('game', type=Path, help='the game folder (base/exefs, base/romfs or an update\'s romfs, updates/<version>/, dlc/), or a .nup file')
@@ -870,6 +899,7 @@ def main():
     ap.add_argument('--keep-code', action='store_true', help='do not rewrite: the pack\'s modules must be there with their key files (the phone\'s pack step)')
     ap.add_argument('--made-by', help='who makes this pack, written as its made_by row (the phone\'s pack step: "app <version>"; the launcher then updates the pack\'s code by itself when only the tools changed)')
     ap.add_argument('--in-process', action='store_true', help='run the rewriter in this process, no subprocesses (the phone\'s packer); the shader library must be current or left out')
+    ap.add_argument('--work-dir', type=Path, help='the work folder (NROs, shader split and library cache; default: the <title ID>-work beside or holding the pack folder): a program packed with its game (pack_programs) gets <work>/p<n>')
     a = ap.parse_args()
     if WINDOWS:
         for s in (sys.stdout, sys.stderr): s.reconfigure(encoding='utf-8', errors='backslashreplace')   # as the tools' output (child_env): one encoding for the reader
@@ -919,7 +949,7 @@ def main():
         try: out.relative_to(REPO); raise Error(f'{out} is inside the repository: packs never go there')
         except ValueError: pass
         out.mkdir(parents=True, exist_ok=True)
-        work = work_dir(out, app)
+        work = a.work_dir.resolve() if a.work_dir else work_dir(out, app)   # --work-dir: a program packed with its game (pack_programs) works beside its first program's
         ids = {m: nso_build_id(srcs[m]) for m in mods}
         print(f'{app:016X} {g.get("name", "?")} version {ver}: {vdir}', flush=True)
         for m, known in unregistered(g, ids).items(): print(f'[RED] {m} build {ids[m]} is none of the profile\'s builds ({", ".join(known)}): build-gated cuts do not apply')
@@ -948,6 +978,7 @@ def main():
         # The add-ons go by the program's ID, not by --program: a dump whose base/ is program 1 itself (its exefs, program 0's RomFS beside it) splits them too
         shaders = None if a.no_shaders else pack_shaders(a, g, work, out, vdir, (conorig, exe) if a.program else (romfs, exe), pack_dump.split_addons(app, dlc))
         scenes = scene_overlays(g, romfs, out)
+        progs = [] if a.program else pack_programs(a, folder, out, work, g)   # a game of several programs: the others into <pack>/p<n>/, before this pack.tsv (written last)
         top = folder.parent if pack_dump.nup.is_nup(folder) else folder   # a NUP file's paths are `<name>.nup:<package>/...`, relative to its folder
         rel = lambda p: p.relative_to(top).as_posix()
         rows = [('format', str(FORMAT)), ('title_id', f'{app:016X}'), ('name', g.get('name', '')), ('version', str(ver)), ('target', 'android'),
@@ -955,7 +986,7 @@ def main():
                 *[('aoc', f'{pack_dump.dlc_index(tid, app)}\t{rel(p)}') for tid, p in sorted(dlc.items())],
                 # program n > 0: which program it is, the application (its save and add-ons), and each program index's RomFS (DM_ROMFS_PROGRAM_<i>: 0 is the game's, "conorig")
                 *([('program', str(a.program)), ('application', f'{app0:016X}'), ('romfs_program', f'0\t{rel(conorig)}'), ('romfs_program', f'{a.program}\t{rel(romfs)}')] if a.program else []),
-                *([('shaders', shaders.relative_to(out).as_posix())] if shaders else []), *[('scene_res', f'{n}\t{p}') for n, p in scenes], ('packer', commit()), *([('made_by', a.made_by)] if a.made_by else [])]
+                *([('shaders', shaders.relative_to(out).as_posix())] if shaders else []), *[('scene_res', f'{n}\t{p}') for n, p in scenes], *[('program_pack', f'{n}\t{d}') for n, d in progs], ('packer', commit()), *([('made_by', a.made_by)] if a.made_by else [])]
         stage('writing the pack\'s list of files')
         tmp = out / 'pack.tsv.partial'
         write_lf(tmp, ''.join(f'{k}\t{v}\n' for k, v in rows)); os.replace(tmp, out / 'pack.tsv')
