@@ -47,6 +47,7 @@ uint64_t mtl_sub_commit(void);
 uint64_t mtl_last_fence(void);                       // Fence value of the most recent submit (0 = never submitted)
 uint64_t mtl_acquire_fence(uint64_t presented);       // The fence a window acquire sync waits for (presented: the last fence reserved when that image was last presented); weak default in hle_nvn.c: mtl_last_fence()
 void mtl_queue_wait_fence(uint64_t serial, uint64_t fence);   // QueueWaitSync on a fenced sync: that queue's later work runs after the fence's submission (weak no-op in hle_nvn.c; vka_worker.c on Android)
+int mtl_queue_wait_present(uint64_t serial, uint64_t ticket);   // QueueWaitSync on an acquire sync whose texture's previous present was not handed to the GPU yet: that queue's later work runs after it (1: queued; weak 0 in hle_nvn.c: the caller waits on the CPU; vka_worker.c on Android)
 void mtl_event_cpu_signal(void);                     // EventSignal wrote an event word on the CPU: a queue waiting for it may go on (weak no-op in hle_nvn.c; vka_worker.c on Android)
 int mtl_wait(uint64_t fence, uint64_t timeout_ns);   // Returns 1 when the GPU has completed up to fence, 0 on timeout
 int mtl_wait_acq(uint64_t fence, uint64_t timeout_ns);   // the same for a sync WindowAcquireTexture handed out (its own line in the wait ledger, DM_NVN_WAITS)

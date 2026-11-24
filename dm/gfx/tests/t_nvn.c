@@ -809,9 +809,31 @@ int main(void) {
         P(nvnQueuePresentTexture)(&q, &win, idx[f]);
     }
     EXPECT("swapchain rotates 0,1,0,1", 0x0101, idx[0] << 12 | idx[1] << 8 | idx[2] << 4 | idx[3]);
-    EXPECT("sync signaled after acquire (0)", 0, P(nvnSyncWait)(&s2, 0));
+    // The acquire's wait is the sync's (nvn_acq.h): a blocking wait finishes it, a second one finds it signaled
+    NVNsyncWaitResult awr = P(nvnSyncWait)(&s2, UINT64_MAX);
+    EXPECT("blocking wait on the deferred acquire sync succeeds (0 or 1)", 1, awr == NVN_SYNC_WAIT_RESULT_ALREADY_SIGNALED || awr == NVN_SYNC_WAIT_RESULT_CONDITION_SATISFIED);
+    EXPECT("sync signaled once its acquire wait completed (0)", 0, P(nvnSyncWait)(&s2, 0));
     unsigned bi = 0; while (strcmp(nvn_names[bi], "nvnCommandBufferBarrier")) bi++;
     EXPECT("Barrier count = 4 frames × 5", 20, nvn_slot[bi].cnt);
+    // 6a. Deferred acquire syncs: QueueWaitSync without a CPU wait (the next acquire waits it out), the sync fenced again while its acquire is pending, and the window finalized
+    // with an acquire pending (a later SyncWait is signaled at once)
+    {
+        NVNsync sa; P(nvnSyncInitialize)(&sa, &dev);
+        int a0 = -1, a1 = -1;
+        P(nvnWindowAcquireTexture)(&win, &sa, &a0);
+        EXPECT("acquire with a sync hands out a deferred wait (fenced 4)", 4, (int)((sync_t *)&sa)->fenced);
+        P(nvnQueueWaitSync)(&q, &sa);
+        P(nvnQueuePresentTexture)(&q, &win, a0);
+        P(nvnWindowAcquireTexture)(&win, &sa, &a1);
+        EXPECT("the swapchain goes on rotating", 1, a0 != a1);
+        P(nvnQueueFenceSync)(&q, &sa, NVN_SYNC_CONDITION_ALL_GPU_COMMANDS_COMPLETE, 0);
+        NVNsyncWaitResult r = P(nvnSyncWait)(&sa, UINT64_MAX);
+        EXPECT("a sync fenced again over a pending acquire waits for its fence (0 or 1)", 1, r == NVN_SYNC_WAIT_RESULT_ALREADY_SIGNALED || r == NVN_SYNC_WAIT_RESULT_CONDITION_SATISFIED);
+        P(nvnWindowAcquireTexture)(&win, &sa, &a0);   // waits out the acquire the fence replaced
+        P(nvnWindowFinalize)(&win);
+        EXPECT("SyncWait after WindowFinalize is signaled at once (0)", 0, P(nvnSyncWait)(&sa, 0));
+        P(nvnSyncFinalize)(&sa);
+    }
 
     // 6b. Readback: pixel (x,y) = {x*16+y, y*16+x, 0x55, 0xAA} (expected values computed directly from the formula)
     {

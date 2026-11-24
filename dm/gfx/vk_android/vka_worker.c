@@ -35,14 +35,18 @@ void vka_worker_waits(uint64_t *room_ns, uint64_t *sub_ns) { if (room_ns) *room_
 uint64_t vka_worker_sub_cpu(void) { return atomic_load(&g_sub_cpu_all); }   // a recording time far above it: the replay thread was blocked in the submission, not busy
 static uint64_t thread_cpu_ns(void) { struct timespec t; clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t); return (uint64_t)t.tv_sec * 1000000000ull + (uint64_t)t.tv_nsec; }
 
-enum { J_SUB = 1, J_PRESENT, J_FORGET, J_WAIT, J_PROG_FORGET };
+// J_PWAIT: a GPU wait on a window's acquire sync (hle_nvn.c, sync fenced 4): the worker goes on once the present that last showed the texture (ticket) has been handed to the
+// queue, so its copy is queued before anything the game draws into the texture next. The CPU acquire no longer waits for it (deferred to the sync, nvn_acq.h); its J_PRESENT
+// came earlier in this FIFO and was filled already, so the present thread needs nothing from the worker to finish it
+enum { J_SUB = 1, J_PRESENT, J_FORGET, J_WAIT, J_PROG_FORGET, J_PWAIT };
 typedef struct {
     int kind;
     uint64_t serial, fence, frame; int origin_ll;   // J_SUB: the queue, its window origin, the fence reserved for it, the game's frame when it submitted; J_WAIT: the queue, the fence it waits for
     const uint8_t **h; int nh;                   // J_SUB: the command handles, in order
     qs_wsnap *ws; int nws;                       // J_SUB: what the syncs of its WAIT_SYNC records held when it was submitted
     int w0done, w0kind; volatile uint32_t *w0word; uint32_t w0mode, w0value; uint64_t w0fence;   // J_SUB: its first wait, when no event signal comes before it (qs_sub.w0kind)
-    uint64_t ticket; tex_t t; double period; int has_crop, crop[4];   // J_PRESENT
+    uint64_t ticket; tex_t t; double period; int has_crop, crop[4];   // J_PRESENT; J_PWAIT: ticket
+    uint64_t pwait;                              // J_SUB (on the game's thread only): the newest present its WAIT_SYNC records on acquire syncs still wait for (a J_PWAIT before it)
 } job_t;
 enum { NJOB = 256 };
 static job_t g_q[NJOB]; static uint64_t g_qin, g_qout, g_pres_in, g_pres_out;   // jobs queued / done; presents queued / done
@@ -333,6 +337,8 @@ static void *worker_main(void *arg) {
             if (qon) { qs_force_all(&g_qs, QS_WHY_PRESENT); qs_publish(); }
             vka_qtrace(QT_PRESENT, 0, 0, j.ticket, 0, 0, 0, 0, NULL);
             vka_present_fill(j.ticket, &j.t, j.period, j.has_crop ? j.crop : NULL);
+        } else if (j.kind == J_PWAIT) {
+            mtl_present_wait(j.ticket);
         } else if (j.kind == J_FORGET) {
             if (qon) { qs_force_all(&g_qs, QS_WHY_FORGET); qs_publish(); }
             vka_rp_queue_forget(j.serial);
@@ -384,8 +390,10 @@ static void fence_syncs(const uint8_t *p, uint64_t fence, int depth, job_t *j, i
         if (h.op == OP_FENCE_SYNC) { sync_t *s; memcpy(&s, a, 8); s->fence = fence; s->fenced = 1; }
         if (h.op == OP_WAIT_SYNC && j) {
             const sync_t *s; memcpy(&s, a, 8);
+            uint64_t f = s && s->fenced ? s->fence : 0;
+            if (s && s->fenced == 4) { uint64_t tk = 0; nvn_acq_gpu_wait(s, &f, &tk); if (tk > j->pwait) j->pwait = tk; }   // an acquire sync: its fence, and its texture's previous present
             if (j->nws == *cap) { *cap = *cap ? 2 * *cap : 8; j->ws = realloc(j->ws, (size_t)*cap * sizeof *j->ws); }
-            j->ws[j->nws++] = (qs_wsnap){p, s && s->fenced ? s->fence : 0};
+            j->ws[j->nws++] = (qs_wsnap){p, f};
             if (!j->w0done) { j->w0done = 1; j->w0kind = 2; j->w0fence = j->ws[j->nws - 1].fence; }
         }
         if (h.op == OP_WAIT_EVENT && j && !j->w0done) { p_wait_event w; memcpy(&w, a, sizeof w); j->w0done = 1; if (w.val) { j->w0kind = 1; j->w0word = w.val; j->w0mode = w.mode; j->w0value = w.value; } }
@@ -419,6 +427,7 @@ uint64_t mtl_sub_commit(void) {
     j.h = malloc((size_t)(j.nh ? j.nh : 1) * sizeof *j.h); if (j.nh) memcpy(j.h, g_cur.h, (size_t)j.nh * sizeof *j.h);
     j.fence = vka_fence_next(); j.frame = vka_frame();
     int cap = 0; for (int i = 0; i < j.nh; i++) fence_syncs(j.h[i], j.fence, 0, &j, &cap);
+    if (j.pwait) { job_t w = {J_PWAIT}; w.ticket = j.pwait; push(&w); }
     push(&j);
     return j.fence;
 }
@@ -426,6 +435,13 @@ uint64_t mtl_sub_commit(void) {
 void mtl_queue_wait_fence(uint64_t serial, uint64_t fence) {
     if (!fence || !up()) return;   // inline: in submission order, which already has the fence's submission before it
     job_t j = {J_WAIT}; j.serial = serial; j.fence = fence; j.frame = vka_frame(); push(&j);
+}
+// nvnQueueWaitSync on an acquire sync (hle_nvn.c): the later work waits for the texture's previous present on the worker (J_PWAIT); inline, the caller waits for it (0)
+int mtl_queue_wait_present(uint64_t serial, uint64_t ticket) {
+    (void)serial;
+    if (!ticket || !up()) return 0;
+    job_t j = {J_PWAIT}; j.ticket = ticket; push(&j);
+    return 1;
 }
 // nvnEventSignal wrote an event word on the CPU: a queue parked on it looks again
 // (a gate on the word opens now, from this thread)

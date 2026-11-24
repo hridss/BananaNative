@@ -1096,7 +1096,8 @@ uint64_t vka_present_inline(const tex_t *t, double period_s, const int crop[4]) 
 void mtl_present_wait(uint64_t tk) { pthread_mutex_lock(&g_pmu); while (g_pq_done < tk) pthread_cond_wait(&g_pcv, &g_pmu); pthread_mutex_unlock(&g_pmu); }
 void mtl_present_flush(void) { pthread_mutex_lock(&g_pmu); uint64_t h = g_pq_in; pthread_mutex_unlock(&g_pmu); mtl_present_wait(h); }
 // The acquire sync of a window image (hle_nvn.c WindowAcquireTexture): the fence of the commits that drew it when it was last presented, not every commit so far. By the time
-// the acquire returns, the present of that image has been handed to the queue (mtl_present_wait of its ticket), its copy waiting for that fence; the game's later
+// the acquire sync's wait passes, the present of that image has been handed to the queue (mtl_present_wait of its ticket: in nvnSyncWait, or for nvnQueueWaitSync and a
+// command buffer's WaitSync on the replay worker before that queue's later work, vka_worker.c J_PWAIT), its copy waiting for that fence; the game's later
 // submissions come after it on the one queue and begin with a full barrier, so they cannot write the image before the copy has read it. Waiting for every commit made the
 // game wait for its own last frame at each acquire: Donkey Kong Bananza's level blocked ~64 ms a frame in SyncWait, recording (~45 ms) and GPU (~30 ms) one after the other
 uint64_t mtl_acquire_fence(uint64_t presented) { return presented; }
@@ -1116,8 +1117,11 @@ int mtl_link_stalled(void) { return 0; }
 int mtl_link_tick(uint64_t n, double *target, double *lead_ms, int *ticks, double *gap_ms) { (void)n; if (target) *target = 0; if (lead_ms) *lead_ms = 0; if (ticks) *ticks = 0; if (gap_ms) *gap_ms = 0; return 0; }
 int mtl_link_wait_tick(int vsyncs, uint64_t timeout_ns) { (void)vsyncs; (void)timeout_ns; return 0; }
 int mtl_link_wait_ticks(int ticks, uint64_t timeout_ns) { (void)ticks; (void)timeout_ns; return 0; }
+int mtl_link_ready_tick(int vsyncs) { (void)vsyncs; return 1; }
+int mtl_link_ready_ticks(int ticks) { (void)ticks; return 1; }
 int mtl_snap_on(void) { return 0; }
 uint64_t mtl_snap_acquire_wait(void) { return 0; }
+int mtl_snap_acquire_ready(void) { return 1; }
 
 static void *selftest_main(void *arg) { vka_fp_host("vk-selftest"); int r = nxhost_vk_selftest(NULL, (int)(intptr_t)arg); VLOG("selftest (NXHOST_VK_SELFTEST) ended: %s", r ? "FAILED" : "passed"); return NULL; }
 #endif

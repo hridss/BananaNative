@@ -12076,6 +12076,13 @@ uint64_t mtl_snap_acquire_wait(void) {
     if (ws_on()) ws_put(WS_SNAP, w0, blocked);
     return ws_t0() - w0;
 }
+int mtl_snap_acquire_ready(void) {   // mtl_snap_acquire_wait would return at once
+    if (!mtl_snap_on() || atomic_load(&g_present_discard)) return 1;
+    int k = (int)(atomic_load(&g_snap_next) % (uint64_t)g_snap_n);
+    uint64_t ticket = atomic_load(&g_snap[k].ticket), ev = atomic_load(&g_snap[k].ev);
+    pthread_mutex_lock(&g_pq_mu); int busy = ticket > g_pq_done; pthread_mutex_unlock(&g_pq_mu);
+    return !busy && (!ev || g_snap_ev.signaledValue >= ev);
+}
 // Copy the presented texture into the next ring slot; returns the slot's serial (0 = no snapshot: the game's texture is presented as before)
 static uint64_t snap_take(const tex_t *t) {
     int k = (int)(atomic_load(&g_snap_next) % (uint64_t)g_snap_n);
@@ -12231,18 +12238,30 @@ int mtl_link_wait_tick(int vsyncs, uint64_t timeout_ns) {
 // The display link's rate: 120 Hz (DM_PRESENT_LINK=2), 60, or 30 in power-saving mode
 int mtl_link_rate(void) { return g_link_mode == 3 ? 30 : g_link_mode == 2 ? 120 : 60; }
 // The same wait counted in the display link's own ticks: one per frame for a frame rate as high as the link's (present_interval display at DM_PRESENT_HZ=120 on a 120 Hz link)
+static uint64_t g_link_started_tick;   // Display-link tick number when the previous frame started work (under g_link_mu; the acquire waits of a window run one at a time, hle_nvn.c)
 int mtl_link_wait_ticks(int ticks, uint64_t timeout_ns) {
     if (!mtl_link_active()) return 0;
-    static uint64_t started_tick;   // Display-link tick number when the previous frame started work (only the game's present thread calls this function)
     const uint64_t step = ticks < 1 ? 1 : (uint64_t)ticks;
     pthread_mutex_lock(&g_link_mu);
-    if (g_link_tick_n >= started_tick + step) { started_tick = g_link_tick_n; pthread_mutex_unlock(&g_link_mu); return 1; }
+    if (g_link_tick_n >= g_link_started_tick + step) { g_link_started_tick = g_link_tick_n; pthread_mutex_unlock(&g_link_mu); return 1; }
     struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts);
     ts.tv_sec += timeout_ns / 1000000000ull; ts.tv_nsec += timeout_ns % 1000000000ull;
     if (ts.tv_nsec >= 1000000000L) { ts.tv_sec++; ts.tv_nsec -= 1000000000L; }
-    while (g_link_tick_n < started_tick + step) if (pthread_cond_timedwait(&g_link_cv, &g_link_mu, &ts) == ETIMEDOUT) { pthread_mutex_unlock(&g_link_mu); return 0; }
-    started_tick = g_link_tick_n;
+    while (g_link_tick_n < g_link_started_tick + step) if (pthread_cond_timedwait(&g_link_cv, &g_link_mu, &ts) == ETIMEDOUT) { pthread_mutex_unlock(&g_link_mu); return 0; }
+    g_link_started_tick = g_link_tick_n;
     pthread_mutex_unlock(&g_link_mu); return 1;
+}
+// Whether those waits would return at once, without taking a tick (a zero-timeout nvnSyncWait on an acquire sync)
+int mtl_link_ready_ticks(int ticks) {
+    if (!mtl_link_active()) return 1;
+    const uint64_t step = ticks < 1 ? 1 : (uint64_t)ticks;
+    pthread_mutex_lock(&g_link_mu); int ok = g_link_tick_n >= g_link_started_tick + step; pthread_mutex_unlock(&g_link_mu);
+    return ok;
+}
+int mtl_link_ready_tick(int vsyncs) {
+    if (!mtl_link_active()) return 1;
+    if (vsyncs < 1) vsyncs = 1;
+    return mtl_link_ready_ticks(g_link_mode == 3 ? (vsyncs + 1) / 2 : vsyncs * (g_link_mode == 2 ? 2 : 1));
 }
 
 // The display's vsync for vi::GetDisplayVsyncEvent (hle_sdk16.c): returns 1 at the first display-link tick of the next 60 Hz vsync after *seen (the tick count it last returned, updated),

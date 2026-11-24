@@ -61,6 +61,43 @@ static void acquire_ticks(int hz, int display, int interval, double want, const 
     printf("%s: %.2f ticks per acquire (expected %.2f)\n", label, got, want);
     CHECK(got == want, label);
 }
+// Deferred acquire waits (nvn_acq.h): an acquire with a sync object returns without waiting, and the display-link wait runs in nvnSyncWait (or at the next acquire for a game
+// that waits only on the GPU). Zero and short finite timeouts take no tick; WindowFinalize detaches a pending wait
+static void deferred_acquire_sync(void) {
+    g_link_mode = 1;
+    nvn_present_config(60, 0);
+    win_t win = {.interval = 2, .ntex = 2};
+    NVNsync s; h_nvnSyncInitialize(&s, NULL);
+    int idx = -1;
+    mtl_link_wait_ticks(1, 100000000ull);   // the tick baseline: a frame that just started
+    uint64_t t0 = g_link_tick_n; unsigned w0 = test_waits;
+    CHECK(h_nvnWindowAcquireTexture((NVNwindow *)&win, &s, &idx) == NVN_WINDOW_ACQUIRE_TEXTURE_RESULT_SUCCESS, "deferred acquire succeeds");
+    CHECK(g_link_tick_n == t0 && test_waits == w0, "an acquire with a sync object takes no tick and no wait");
+    CHECK(h_nvnSyncWait(&s, 0) == NVN_SYNC_WAIT_RESULT_TIMEOUT_EXPIRED, "a zero-timeout SyncWait before the ticks returns TIMEOUT_EXPIRED");
+    CHECK(g_link_tick_n == t0 && test_waits == w0, "and takes no tick and no wait");
+    CHECK(h_nvnSyncWait(&s, 1000000ull) == NVN_SYNC_WAIT_RESULT_TIMEOUT_EXPIRED, "a short finite timeout before the tick returns TIMEOUT_EXPIRED");
+    CHECK(g_link_tick_n == t0, "and takes no tick");
+    CHECK(h_nvnSyncWait(&s, UINT64_MAX) == NVN_SYNC_WAIT_RESULT_CONDITION_SATISFIED, "a blocking SyncWait finishes the acquire's wait");
+    CHECK(g_link_tick_n - t0 == 2, "interval 2 takes two 60 Hz ticks, in SyncWait");
+    t0 = g_link_tick_n; w0 = test_waits;
+    CHECK(h_nvnSyncWait(&s, 0) == NVN_SYNC_WAIT_RESULT_ALREADY_SIGNALED && g_link_tick_n == t0 && test_waits == w0, "a second SyncWait is signaled, with no tick and no wait");
+    w0 = test_waits;
+    h_nvnWindowAcquireTexture((NVNwindow *)&win, &s, &idx);
+    g_link_tick_n += 2;
+    CHECK(h_nvnSyncWait(&s, 0) == NVN_SYNC_WAIT_RESULT_ALREADY_SIGNALED && test_waits == w0, "ticks already passed satisfy a zero-timeout SyncWait without a wait");
+    t0 = g_link_tick_n;
+    h_nvnWindowAcquireTexture((NVNwindow *)&win, &s, &idx);
+    CHECK(g_link_tick_n == t0, "an acquire nobody waits for takes no tick");
+    h_nvnWindowAcquireTexture((NVNwindow *)&win, &s, &idx);
+    CHECK(g_link_tick_n - t0 == 2, "the next acquire waits it out (two ticks)");
+    t0 = g_link_tick_n;
+    CHECK(h_nvnSyncWait(&s, UINT64_MAX) == NVN_SYNC_WAIT_RESULT_CONDITION_SATISFIED && g_link_tick_n - t0 == 2, "SyncWait then waits out the second (two ticks)");
+    t0 = g_link_tick_n; w0 = test_waits;
+    h_nvnWindowAcquireTexture((NVNwindow *)&win, &s, &idx);
+    h_nvnWindowFinalize((NVNwindow *)&win);
+    CHECK(h_nvnSyncWait(&s, 0) == NVN_SYNC_WAIT_RESULT_ALREADY_SIGNALED && g_link_tick_n == t0 && test_waits == w0, "SyncWait after WindowFinalize is signaled, with no wait");
+    h_nvnSyncFinalize(&s);
+}
 int main(void) { @autoreleasepool {
     setenv("DM_RT", "0", 1); setenv("DM_PRESENT_SNAP", "0", 1);
     // Test uncapped display pacing independently of the selected game's default.
@@ -111,5 +148,6 @@ int main(void) { @autoreleasepool {
     CHECK(g_link_tick_n == tick && test_now - start == 5000000ull, "timeout reaches its deadline without inventing ticks");
     test_silent = 0;
     CHECK(mtl_link_wait_ticks(2, 10000000ull) && g_link_tick_n - tick == 2, "ticks resume from the last successful wait after timeout");
+    deferred_acquire_sync();
     printf("t_link_ticks: %d checks, %d failed\n", checks, failed); return failed != 0;
 } }
