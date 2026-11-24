@@ -87,7 +87,7 @@ __attribute__((visibility("hidden"), used)) uint64_t gv_unbound(const char *name
     X(vkCreateDescriptorSetLayout, GV_Z2) X(vkDestroyDescriptorSetLayout, GV_Z2) X(vkGetDescriptorSetLayoutSupport, GV_Z_NONE) \
     X(vkUpdateDescriptorSets, GV_Z_NONE) X(vkCreateDescriptorUpdateTemplate, GV_Z2) X(vkDestroyDescriptorUpdateTemplate, GV_Z2) X(vkUpdateDescriptorSetWithTemplate, GV_Z_NONE) \
     X(vkCreatePipelineLayout, GV_Z2) X(vkDestroyPipelineLayout, GV_Z2) X(vkDestroyRenderPass, GV_Z2) X(vkGetRenderAreaGranularity, GV_Z_NONE) \
-    X(vkCreateFramebuffer, GV_Z2) X(vkDestroyFramebuffer, GV_Z2) X(vkDestroyShaderModule, GV_Z2) \
+    X(vkCreateFramebuffer, GV_Z2) X(vkDestroyFramebuffer, GV_Z2) \
     X(vkCreatePipelineCache, GV_Z2) X(vkDestroyPipelineCache, GV_Z2) X(vkGetPipelineCacheData, GV_Z_NONE) X(vkMergePipelineCaches, GV_Z_NONE) X(vkDestroyPipeline, GV_Z2) \
     X(vkCreateCommandPool, GV_Z2) X(vkDestroyCommandPool, GV_Z2) X(vkResetCommandPool, GV_Z_NONE) X(vkTrimCommandPool, GV_Z_NONE) \
     X(vkAllocateCommandBuffers, GV_Z_NONE) X(vkFreeCommandBuffers, GV_Z_NONE) X(vkBeginCommandBuffer, GV_Z_NONE) X(vkEndCommandBuffer, GV_Z_NONE) X(vkResetCommandBuffer, GV_Z_NONE) \
@@ -118,7 +118,7 @@ GV_PASS_D(GV_TRAMP)
     X(vkQueueSubmit) X(vkQueueSubmit2) X(vkQueueWaitIdle) X(vkQueueBindSparse) X(vkAllocateMemory) X(vkGetBufferMemoryRequirements) X(vkGetBufferMemoryRequirements2) \
     X(vkGetImageMemoryRequirements) X(vkGetImageMemoryRequirements2) X(vkCreateImage) X(vkDestroyImage) X(vkCreateRenderPass) X(vkCreateRenderPass2) \
     X(vkCreateDescriptorPool) X(vkDestroyDescriptorPool) X(vkResetDescriptorPool) X(vkAllocateDescriptorSets) X(vkFreeDescriptorSets) \
-    X(vkCreateShaderModule) X(vkCreateGraphicsPipelines) X(vkCreateComputePipelines) X(vkWaitForFences) X(vkWaitSemaphores) \
+    X(vkCreateShaderModule) X(vkDestroyShaderModule) X(vkCreateGraphicsPipelines) X(vkCreateComputePipelines) X(vkWaitForFences) X(vkWaitSemaphores) \
     X(vkCreateCommandPool) X(vkDestroyCommandPool) X(vkAllocateCommandBuffers) X(vkBeginCommandBuffer) X(vkEndCommandBuffer) X(vkCmdPipelineBarrier)
 #define GV_DECL(f) PFN_##f f;
 static struct { GV_REAL_D(GV_DECL) } R;
@@ -428,8 +428,26 @@ GV(vkGetImageMemoryRequirements2, void, VkDevice d, const VkImageMemoryRequireme
 // ---------- Images ----------
 static pthread_mutex_t g_obj_mu = PTHREAD_MUTEX_INITIALIZER;   // the tables below
 static gv_map g_swapimg;   // the images of the swapchains (value: 1)
+// Formats the Switch's driver takes and the phone's may not (optional in Vulkan: three-component and scaled vertex formats, packed 4- and 5-bit texture formats):
+// each format used in a way the device does not support is named once, with what it lacks
+static void fmt_check(VkFormat f, int vertex, VkImageTiling tiling, VkImageUsageFlags usage) {
+    enum { NFC = 64 }; static _Atomic uint64_t seen[NFC];   // (format, use) pairs already said
+    VkFormatProperties p; vk.vkGetPhysicalDeviceFormatProperties(V.pd, f, &p);
+    VkFormatFeatureFlags have = vertex ? p.bufferFeatures : tiling == VK_IMAGE_TILING_LINEAR ? p.linearTilingFeatures : p.optimalTilingFeatures, need = 0;
+    if (vertex) need = VK_FORMAT_FEATURE_VERTEX_BUFFER_BIT;
+    else {
+        if (usage & VK_IMAGE_USAGE_SAMPLED_BIT) need |= VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
+        if (usage & VK_IMAGE_USAGE_STORAGE_BIT) need |= VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT;
+        if (usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) need |= VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT;
+        if (usage & VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT) need |= VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT;
+    }
+    VkFormatFeatureFlags miss = need & ~have; if (!miss) return;
+    uint64_t key = (uint64_t)f << 8 | (vertex ? 1 : 2 + tiling);
+    for (int i = 0; i < NFC; i++) { uint64_t s = atomic_load(&seen[i]); if (s == key) return; if (!s) { uint64_t z = 0; if (atomic_compare_exchange_strong(&seen[i], &z, key)) break; if (atomic_load(&seen[i]) == key) return; } }
+    GRED("format %d %s: the device lacks format features %#x (has %#x)", f, vertex ? "as a vertex attribute" : tiling == VK_IMAGE_TILING_LINEAR ? "in a linear image" : "in an optimal image", miss, have);
+}
 GVB(vkCreateImage, VkResult, VkDevice d, const VkImageCreateInfo *ci, const VkAllocationCallbacks *a, VkImage *out) {
-    (void)d; (void)a;
+    (void)d; (void)a; fmt_check(ci->format, 0, ci->tiling, ci->usage);
     VkResult r = R.vkCreateImage(V.dev, ci, NULL, out);
     if (r) {
         static _Atomic int n; if (atomic_fetch_add(&n, 1) < 16)
@@ -569,16 +587,84 @@ out:
     free(is_arr); free(has); free(add); free(st); free(stn);
     return res;
 }
+// Scaled vertex formats the device cannot fetch (vka_guest_vin.c): a vertex module's code is kept while the module lives, so a pipeline that feeds one of its inputs in
+// such a format gets a copy whose input reads the integer format and converts it
+uint32_t *vkg_spv_scaled(const uint32_t *w, size_t n, const uint8_t conv[32], size_t *out_n, char *why, size_t wn);   // vka_guest_vin.c
+static int g_vin_scaled = -1;   // 1: the device fetches every scaled format the check found (nothing kept), 0: some it cannot
+static int scaled_of(VkFormat f, VkFormat *ifmt) {   // 1 USCALED, 2 SSCALED (*ifmt: its UINT / SINT twin, two values on in every group), 0 neither
+    static const VkFormat us[] = {VK_FORMAT_R8_USCALED, VK_FORMAT_R8G8_USCALED, VK_FORMAT_R8G8B8_USCALED, VK_FORMAT_B8G8R8_USCALED, VK_FORMAT_R8G8B8A8_USCALED,
+        VK_FORMAT_B8G8R8A8_USCALED, VK_FORMAT_A8B8G8R8_USCALED_PACK32, VK_FORMAT_A2R10G10B10_USCALED_PACK32, VK_FORMAT_A2B10G10R10_USCALED_PACK32, VK_FORMAT_R16_USCALED,
+        VK_FORMAT_R16G16_USCALED, VK_FORMAT_R16G16B16_USCALED, VK_FORMAT_R16G16B16A16_USCALED};
+    for (size_t i = 0; i < sizeof us / sizeof *us; i++) {
+        if (f == us[i]) { *ifmt = (VkFormat)(f + 2); return 1; }
+        if (f == us[i] + 1) { *ifmt = (VkFormat)(f + 2); return 2; }
+    }
+    return 0;
+}
+static int vtx_ok(VkFormat f) { VkFormatProperties p; vk.vkGetPhysicalDeviceFormatProperties(V.pd, f, &p); return (p.bufferFeatures & VK_FORMAT_FEATURE_VERTEX_BUFFER_BIT) != 0; }
+static int vin_scaled_needed(void) {
+    if (g_vin_scaled < 0) {
+        int all = 1; VkFormat i;
+        for (int f = VK_FORMAT_R8_USCALED; f <= VK_FORMAT_R16G16B16A16_SSCALED; f++) if (scaled_of((VkFormat)f, &i) && !vtx_ok((VkFormat)f)) all = 0;
+        g_vin_scaled = all;
+        GLOG("scaled vertex formats: %s", all ? "the device fetches them" : "the device lacks some: attributes in them are fed as integers and converted in the vertex shader");
+    }
+    return !g_vin_scaled;
+}
+static gv_map g_vcode;   // vertex module → its code (malloc'd: u64 word count, then the words)
+static int has_vertex_entry(const uint32_t *w, size_t n) {
+    for (size_t i = 5; i < n && (w[i] >> 16);) { if ((w[i] & 0xffff) == 15 && (w[i] >> 16) >= 3 && w[i + 1] == 0) return 1; if ((w[i] & 0xffff) == 54) break; i += w[i] >> 16; }
+    return 0;
+}
 GVB(vkCreateShaderModule, VkResult, VkDevice d, const VkShaderModuleCreateInfo *ci, const VkAllocationCallbacks *a, VkShaderModule *out) {
     (void)d; (void)a;
     size_t nn = 0; uint32_t *fixed = fix_strides(ci->pCode, ci->codeSize / 4, &nn);
     VkShaderModuleCreateInfo c = *ci; if (fixed) { c.pCode = fixed; c.codeSize = nn * 4; GRED_ONCE("SPIR-V with ArrayStride on struct members (the Switch's driver takes it): the strides copied onto the array types"); }
     uint64_t f = vka_fp_host(NULL); VkResult r = R.vkCreateShaderModule(V.dev, &c, NULL, out); vka_fp_back(f);
+    if (!r && vin_scaled_needed() && has_vertex_entry(c.pCode, c.codeSize / 4)) {
+        uint64_t *keep = malloc(8 + c.codeSize);
+        if (keep) { keep[0] = c.codeSize / 4; memcpy(keep + 1, c.pCode, c.codeSize); pthread_mutex_lock(&g_obj_mu); gv_map_put(&g_vcode, (uint64_t)(uintptr_t)*out, (uint64_t)(uintptr_t)keep); pthread_mutex_unlock(&g_obj_mu); }
+    }
     free(fixed);
     static _Atomic uint64_t nmod; uint64_t k = atomic_fetch_add(&nmod, 1) + 1;
     if (r) GRED("vkCreateShaderModule (%zu bytes): %d", ci->codeSize, r);
     else if (k == 1 || !(k & (k - 1))) GLOG("shader modules so far: %llu", (unsigned long long)k);
     return r;
+}
+GV(vkDestroyShaderModule, void, VkDevice d, VkShaderModule m, const VkAllocationCallbacks *a) {
+    (void)d; (void)a; if (!m) return;
+    pthread_mutex_lock(&g_obj_mu); int k = gv_map_find(&g_vcode, (uint64_t)(uintptr_t)m); void *keep = k >= 0 ? (void *)(uintptr_t)g_vcode.v[k] : NULL; if (k >= 0) gv_map_del(&g_vcode, (uint64_t)(uintptr_t)m); pthread_mutex_unlock(&g_obj_mu);
+    free(keep); R.vkDestroyShaderModule(V.dev, m, NULL);
+}
+// A pipeline whose vertex input has a scaled format the device cannot fetch: the copies it is made from (its stage array, vertex input state, attributes) and the
+// rewritten vertex module, destroyed once the pipeline is made. 0 = nothing to change (or the rewrite failed: said once, the pipeline made as the game asked)
+typedef struct { VkPipelineShaderStageCreateInfo st[8]; VkPipelineVertexInputStateCreateInfo vi; VkVertexInputAttributeDescription at[32]; VkShaderModule mod; } vin_fix;
+static int pso_fix_scaled(VkGraphicsPipelineCreateInfo *ci, vin_fix *fx) {
+    const VkPipelineVertexInputStateCreateInfo *vi = ci->pVertexInputState;
+    if (!vi || !vi->vertexAttributeDescriptionCount || vi->vertexAttributeDescriptionCount > 32 || ci->stageCount > 8 || !vin_scaled_needed()) return 0;
+    uint8_t conv[32] = {0}; int any = 0; VkFormat ifmt[32];
+    for (uint32_t j = 0; j < vi->vertexAttributeDescriptionCount; j++) {
+        const VkVertexInputAttributeDescription *d = &vi->pVertexAttributeDescriptions[j];
+        int s = d->location < 32 ? scaled_of(d->format, &ifmt[j]) : 0;
+        if (s && !vtx_ok(d->format)) { if (!vtx_ok(ifmt[j])) { GRED_ONCE("vertex format %d: neither it nor its integer twin %d can be fetched here", d->format, ifmt[j]); return 0; } conv[d->location] = (uint8_t)s; any = 1; }
+    }
+    if (!any) return 0;
+    int vs = -1; for (uint32_t k = 0; k < ci->stageCount; k++) if (ci->pStages[k].stage == VK_SHADER_STAGE_VERTEX_BIT) vs = (int)k;
+    if (vs < 0) return 0;
+    pthread_mutex_lock(&g_obj_mu); int k = gv_map_find(&g_vcode, (uint64_t)(uintptr_t)ci->pStages[vs].module); const uint64_t *keep = k >= 0 ? (const uint64_t *)(uintptr_t)g_vcode.v[k] : NULL; pthread_mutex_unlock(&g_obj_mu);
+    if (!keep) { GRED_ONCE("a pipeline feeds a scaled vertex format the device lacks, and its vertex module's code was not kept: drawn as made"); return 0; }
+    char why[128]; size_t nn = 0; uint32_t *code = vkg_spv_scaled((const uint32_t *)(keep + 1), (size_t)keep[0], conv, &nn, why, sizeof why);
+    if (!code) { if (why[0]) GRED_ONCE("scaled vertex input not rewritten: %s (drawn as made)", why); return 0; }
+    VkShaderModuleCreateInfo mi = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, .codeSize = nn * 4, .pCode = code};
+    uint64_t f = vka_fp_host(NULL); VkResult r = R.vkCreateShaderModule(V.dev, &mi, NULL, &fx->mod); vka_fp_back(f);
+    free(code);
+    if (r) { GRED_ONCE("scaled vertex input: the rewritten module was refused: %d (drawn as made)", r); return 0; }
+    memcpy(fx->st, ci->pStages, ci->stageCount * sizeof *fx->st); fx->st[vs].module = fx->mod; ci->pStages = fx->st;
+    fx->vi = *vi; memcpy(fx->at, vi->pVertexAttributeDescriptions, vi->vertexAttributeDescriptionCount * sizeof *fx->at); fx->vi.pVertexAttributeDescriptions = fx->at;
+    for (uint32_t j = 0; j < vi->vertexAttributeDescriptionCount; j++) if (fx->at[j].location < 32 && conv[fx->at[j].location]) fx->at[j].format = ifmt[j];
+    ci->pVertexInputState = &fx->vi;
+    static _Atomic int told; if (!atomic_exchange(&told, 1)) GLOG("scaled vertex input: a pipeline's scaled attributes fed as integers and converted in its vertex shader (and every such pipeline from now on)");
+    return 1;
 }
 // A pipeline with a logic op where the device has none: drawn without it, said once (Hagi makes a dozen VK_LOGIC_OP_INVERT pipelines at boot)
 static int pso_fix_logic(VkGraphicsPipelineCreateInfo *ci, VkPipelineColorBlendStateCreateInfo *cb) {
@@ -589,14 +675,17 @@ static int pso_fix_logic(VkGraphicsPipelineCreateInfo *ci, VkPipelineColorBlendS
 }
 GVB(vkCreateGraphicsPipelines, VkResult, VkDevice d, VkPipelineCache c, uint32_t n, const VkGraphicsPipelineCreateInfo *ci, const VkAllocationCallbacks *a, VkPipeline *out) {
     (void)d; (void)a;
-    VkGraphicsPipelineCreateInfo *cc = NULL; VkPipelineColorBlendStateCreateInfo *cbs = NULL;
-    if (!V.logic_op) for (uint32_t i = 0; i < n; i++) if (ci[i].pColorBlendState && ci[i].pColorBlendState->logicOpEnable) {
-        cc = malloc(n * sizeof *cc); cbs = malloc(n * sizeof *cbs);
-        if (cc && cbs) { memcpy(cc, ci, n * sizeof *cc); for (uint32_t j = 0; j < n; j++) pso_fix_logic(&cc[j], &cbs[j]); ci = cc; }
-        break;
+    VkGraphicsPipelineCreateInfo *cc = malloc(n * sizeof *cc); VkPipelineColorBlendStateCreateInfo *cbs = malloc(n * sizeof *cbs); vin_fix *fx = calloc(n, sizeof *fx);
+    if (cc && cbs && fx) {
+        memcpy(cc, ci, n * sizeof *cc);
+        for (uint32_t j = 0; j < n; j++) { pso_fix_logic(&cc[j], &cbs[j]); pso_fix_scaled(&cc[j], &fx[j]); }
+        ci = cc;
     }
+    for (uint32_t i = 0; i < n; i++) { const VkPipelineVertexInputStateCreateInfo *vi = ci[i].pVertexInputState;
+        for (uint32_t j = 0; vi && j < vi->vertexAttributeDescriptionCount; j++) fmt_check(vi->pVertexAttributeDescriptions[j].format, 1, 0, 0); }
     uint64_t f = vka_fp_host(NULL); VkResult r = R.vkCreateGraphicsPipelines(V.dev, c, n, ci, NULL, out); vka_fp_back(f);
-    free(cc); free(cbs);
+    if (fx) for (uint32_t j = 0; j < n; j++) if (fx[j].mod) R.vkDestroyShaderModule(V.dev, fx[j].mod, NULL);   // (a pipeline does not need its modules once made)
+    free(cc); free(cbs); free(fx);
     static _Atomic uint64_t npso; uint64_t k = atomic_fetch_add(&npso, n) + n;
     if (r) { static _Atomic int nr; if (atomic_fetch_add(&nr, 1) < 16) GRED("vkCreateGraphicsPipelines (%u): %d", n, r); }
     else if (k <= n || !(k & (k - 1)) || (k & ~(k - 1)) < n) OLOG("graphics pipelines so far: %llu", (unsigned long long)k);

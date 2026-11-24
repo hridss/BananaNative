@@ -169,6 +169,7 @@ void vka_ctl_frame(uint64_t f) {   // mtl_set_frame: frame f begins
 static pthread_mutex_t g_smu = PTHREAD_MUTEX_INITIALIZER;
 static char g_shot_path[1024]; static _Atomic int g_shot_want;
 static VkBuffer g_sbuf; static VkDeviceMemory g_smem; static void *g_smap; static VkDeviceSize g_ssize;
+int vka_present_origin_ll(void);   // vka_present.c: the presented frame is stored bottom-up
 static struct { int on, w, h, fmt, flip; uint64_t frame; } g_rec_shot;
 static char g_ctl_dir[1024];
 static void ctl_dir(void) {
@@ -215,7 +216,7 @@ void vka_ctl_shot_record(VkCommandBuffer cb, vka_img *im, VkFormat fmt, int cx, 
     vk.vkCmdCopyImageToBuffer(cb, im->img, VK_IMAGE_LAYOUT_GENERAL, g_sbuf, 1, &r);
     VkMemoryBarrier mb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER, .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT, .dstAccessMask = VK_ACCESS_HOST_READ_BIT};
     vk.vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
-    g_rec_shot.on = 1; g_rec_shot.w = cw; g_rec_shot.h = ch; g_rec_shot.fmt = fmt; g_rec_shot.flip = vka_origin_ll(); g_rec_shot.frame = vka_frame();
+    g_rec_shot.on = 1; g_rec_shot.w = cw; g_rec_shot.h = ch; g_rec_shot.fmt = fmt; g_rec_shot.flip = vka_present_origin_ll(); g_rec_shot.frame = vka_frame();
 }
 typedef struct { uint8_t *rgb; int w, h; char path[1100]; uint64_t frame; } shot_job;
 static void put32(uint8_t *p, uint32_t v) { p[0] = v >> 24; p[1] = v >> 16; p[2] = v >> 8; p[3] = v; }

@@ -88,6 +88,12 @@ void nxhost_picture_place(float x, float y) {
     X(vkCmdBindPipeline) X(vkCmdBindDescriptorSets) X(vkCmdPushConstants) X(vkCmdSetViewport) X(vkCmdSetScissor) X(vkCmdDraw)
 static struct { ROT_FNS(VKA_DECL) } rk;   // loaded here: the replay's table (vka.h) does not need them
 static struct { int state; VkFormat fmt; VkPipeline pipe; VkPipelineLayout lay; VkDescriptorSetLayout dsl; VkDescriptorPool pool; VkDescriptorSet set[NFRAME]; VkSampler samp[2]; } g_rot;
+// The present's origin: the frame being presented is stored bottom-up (NVN's lower-left window origin, vka_origin_ll) or top-down. A guest Vulkan swapchain image
+// (vka_present_guest) is always top-down: the replay's origin flag starts at NVN's default, lower left, and a game that never calls NVN never sets it, so its frames were
+// flipped (on a pre-rotated panel, a mirror image). Set by present_one for the item it presents (present thread)
+static int g_present_ll = 1;
+static int present_ll(void) { return g_present_ll; }
+int vka_present_origin_ll(void) { return g_present_ll; }   // vka_ctl.c: the screenshot the present records
 static int rot_rotates(VkSurfaceTransformFlagBitsKHR t) { return t == VK_SURFACE_TRANSFORM_ROTATE_90_BIT_KHR || t == VK_SURFACE_TRANSFORM_ROTATE_180_BIT_KHR || t == VK_SURFACE_TRANSFORM_ROTATE_270_BIT_KHR; }
 static int rot_quarter(VkSurfaceTransformFlagBitsKHR t) { return t == VK_SURFACE_TRANSFORM_ROTATE_90_BIT_KHR || t == VK_SURFACE_TRANSFORM_ROTATE_270_BIT_KHR; }
 static int stretch_wanted(void) { return VKA_ENV("DM_VK_STRETCH", 0) != 0; }   // Game settings › Display: Stretch to screen
@@ -238,7 +244,7 @@ static void rot_copy(VkCommandBuffer cb, unsigned k, uint32_t idx, vka_img *im, 
         }
         // texture (u, v) = (cx + ul cw, cy + vl ch) / size, vl turned over for a lower-left origin (stored bottom-up)
         float tw = (float)im->w, th = (float)im->h, su = cw / tw, sv = ch / th, ou = cx / tw, ov = cy / th;
-        if (vka_origin_ll()) { sv = -sv; ov = (cy + ch) / th; }
+        if (present_ll()) { sv = -sv; ov = (cy + ch) / th; }
         float pc[6] = {su * a, su * b, sv * c, sv * d, ou + su * e, ov + sv * f};
         VkRect2D sc = {{0, 0}, g_ext};
         rk.vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, g_rot.pipe);
@@ -362,7 +368,7 @@ static int fsr_copy(VkCommandBuffer cb, unsigned k, uint32_t idx, vka_img *im, i
     vk.vkUpdateDescriptorSets(V.dev, 2, w, 0, NULL);
     float sx = (float)cw / dw, sy = (float)ch / dh, rw = 1.0f / im->w, rh = 1.0f / im->h;
     float easu[16] = {sx, sy, 0.5f * sx - 0.5f + cx, 0.5f * sy - 0.5f + cy, rw, rh, rw, -rh, -rw, 2 * rh, rw, 2 * rh, 0, 4 * rh, 0, 0};
-    if (vka_origin_ll()) { easu[1] = -sy; easu[3] = cy + ch - 0.5f * sy - 0.5f; }
+    if (present_ll()) { easu[1] = -sy; easu[3] = cy + ch - 0.5f * sy - 0.5f; }
     uint32_t pc[16];
     for (int i = 0; i < 16; i++) pc[i] = fsr_bits(easu[i]);
     // Sharpening off (DM_VK_FSR_SHARP below 0) and no turn: EASU draws straight into the letterbox of the swapchain image, no intermediate image and no RCAS pass. Its fragment
@@ -468,7 +474,7 @@ static int scale_copy(VkCommandBuffer cb, unsigned k, uint32_t idx, vka_img *im,
     }
     float tw = (float)im->w, th = (float)im->h;
     pc.uv[0] = (float)cw / dw / tw; pc.uv[1] = (float)ch / dh / th; pc.uv[2] = cx / tw; pc.uv[3] = cy / th;
-    if (vka_origin_ll()) { pc.uv[1] = -pc.uv[1]; pc.uv[3] = (cy + ch) / th; }   // stored bottom-up: the picture's rows read from the crop's bottom
+    if (present_ll()) { pc.uv[1] = -pc.uv[1]; pc.uv[3] = (cy + ch) / th; }   // stored bottom-up: the picture's rows read from the crop's bottom
     pc.tex[0] = 1.0f / tw; pc.tex[1] = 1.0f / th; pc.tex[2] = tw; pc.tex[3] = th;
     _Static_assert(sizeof pc == 16 * sizeof(uint32_t), "present_uv.h's P");
     VkRect2D sc = {{0, 0}, g_ext};
@@ -865,6 +871,7 @@ static int present_one(const pq_item *it) {
     { static int rw = -1; int w = rot_wanted(); if (rw >= 0 && w != rw) { VLOG("DM_VK_PRETRANSFORM=%d: new swapchain", w); g_recreate = 1; } rw = w; }
     if (!g_swap || g_recreate) { if (g_swap) { swap_destroy(0); } if (!swap_create()) return 0; }
     vka_img *im = it->src ? vka_tex_ref(it->src) : vka_tex_acquire(it->t.serial);
+    g_present_ll = it->own ? 0 : vka_origin_ll();
     g_pfmt = present_fmt(it, im); int ownfmt = im && g_pfmt != raw_unorm_twin(im->f.vk);   // a view in the window texture's format: sampled, never blitted (a blit reads the image's format)
     unsigned k = g_fi++ % NFRAME;
     if (!g_fr[k].cb) {
@@ -949,7 +956,7 @@ static int present_one(const pq_item *it) {
     }
     if (blit > 0) {
         vka_barrier(cb);   // the replay's writes to the window texture (earlier submissions, in submission order)
-        int y0 = cy, y1 = cy + ch; if (vka_origin_ll()) { y0 = cy + ch; y1 = cy; }   // lower-left origin: the window texture is stored bottom-up
+        int y0 = cy, y1 = cy + ch; if (present_ll()) { y0 = cy + ch; y1 = cy; }   // lower-left origin: the window texture is stored bottom-up
         VkImageBlit b = {{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {{cx, y0, 0}, {cx + cw, y1, 1}}, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {{dx, dy, 0}, {dx + dw, dy + dh, 1}}};
         vk.vkCmdBlitImage(cb, im->img, VK_IMAGE_LAYOUT_GENERAL, g_simg[idx], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &b,
                           (fp.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) && !nearest_wanted() ? VK_FILTER_LINEAR : VK_FILTER_NEAREST);
