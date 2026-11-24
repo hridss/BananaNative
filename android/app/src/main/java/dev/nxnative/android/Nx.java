@@ -700,6 +700,7 @@ final class Nx {
         // NCA snapshots (NX.md "NCA snapshots"): their CNMT names the packages, one per program; a selector two snapshots give is ambiguous, except the same
         // tree given again (one NCA snapshot reached from two programs of the Catalog)
         Map<String, Long> ncaRoot = new LinkedHashMap<>();
+        Set<String> ncaSets = new HashSet<>();
         for (long[] ns : ncaSnaps) {
             int si = (int) ns[0];
             Map<String, Nup.Node> files = new LinkedHashMap<>();
@@ -711,6 +712,9 @@ final class Nx {
                 if (lower.endsWith(".ncz")) throw new Nsp.Refused(NCA, name + ": snapshot " + si + " holds " + nm + ", an NCZ (compressed NCA), which this app does not read");
                 if (lower.endsWith(".nca")) files.put(lower, nx.file(r, u32(man, e + 12), nm));
             }
+            // the same NCAs as a snapshot read already (their names are content IDs): NXConvert gives each program of a cartridge's one content set its own
+            // snapshot of it (Super Mario 3D All-Stars: four programs, four base and four update snapshots of one set), whose CNMT names every program's package
+            if (!ncaSets.add(ns[2] + "\t" + new java.util.TreeSet<>(files.keySet()))) continue;
             String where = name + ": snapshot " + si;
             for (Nup.Pkg q : NxNca.packages(nx, r, (int) ns[2], files, where)) {
                 Nup.Pkg p = new Nup.Pkg(out.size(), q.titleId, q.rootDir, q.exefsDir, q.romfsDir, q.version, q.kind, q.flags);

@@ -542,8 +542,11 @@ class Nx(nup.Nup):
             for j in range(first, first + count):
                 s = self.snapshots[j]
                 if not self._nca_tree(s): by.setdefault(n, []).append(self._package(s, pid)); continue
-                if j in seen: continue   # (program 0 and its own index name one row when program 0 is not index 0)
-                seen.add(j)
+                # (program 0 and its own index name one row when program 0 is not index 0; and NXConvert gives each program of a cartridge's one content set its own
+                # snapshot of the same NCAs, whose names are content IDs: Super Mario 3D All-Stars, four programs, four base and four update snapshots of one set)
+                same = (s.type, s.version, tuple(sorted(self._root_kids(s.root))))
+                if j in seen or same in seen: continue
+                seen.add(j); seen.add(same)
                 for m, q in self._nca_packages(s): q.program = m; by.setdefault(m, []).append(q)   # an NCA snapshot: its Program NCAs' ID offsets name the programs
         for n, own in by.items():
             if sum(q.kind == BASE for q in own) > 1: raise Error(f'more than one base snapshot of program {n}')

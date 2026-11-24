@@ -350,6 +350,20 @@ static int nx_snap_nca(const nx_man *M, uint32_t root) {
     }
     return 0;
 }
+// Two NCA snapshots with the same files (the same NCA names, which are content IDs) are one content set: NXConvert gives each program of a cartridge's one content
+// set its own snapshot of it (Super Mario 3D All-Stars: four programs, four base and four update snapshots of the same NCAs), and the CNMT names each program's package
+static int nx_same_ncas(const nx_man *M, uint32_t a, uint32_t b) {
+    if (a == b) return 1;
+    const uint8_t *da = M->man + M->o_dir + 16ull * a, *db = M->man + M->o_dir + 16ull * b;
+    if (nup_u32(da + 4) != nup_u32(db + 4)) return 0;
+    for (uint64_t j = 0; j < nup_u32(da + 4); j++) {
+        const uint8_t *ra = M->man + M->o_ent + 24 * (nup_u32(da) + j), *rb = M->man + M->o_ent + 24 * (nup_u32(db) + j);
+        uint64_t na = nup_u64(ra), nb = nup_u64(rb); uint32_t la = nup_u32(ra + 8), lb = nup_u32(rb + 8);
+        if (ra[16] != rb[16] || la != lb || na < M->o_path || nb < M->o_path || la > M->path_size || na - M->o_path > M->path_size - la || nb - M->o_path > M->path_size - lb) return 0;
+        if (memcmp(M->man + na, M->man + nb, la)) return 0;
+    }
+    return 1;
+}
 #include "nx_nca.h"
 
 // Opens the archive at fd (taken: closed on failure, the image's otherwise) as the image of sel's RomFS. NULL with errno set and a reason in why
@@ -555,10 +569,13 @@ static romfs_img *nx_image_open_fd(int fd, uint64_t fsize, const char *file, con
         }
         if (!nca && (mainp == NX_NONE || nup_u32(s) != mainp)) continue;
         if (ty == 4) { unknown++; continue; }
+        // (an NCA snapshot with the same NCAs as the one already taken is that one again: nx_same_ncas)
+#define NX_AGAIN(k) (nca && (k) >= 0 && nx_snap_nca(&M, nup_u32(cat + o_snap + 120ull * (k) + 12)) && nx_same_ncas(&M, nup_u32(s + 12), nup_u32(cat + o_snap + 120ull * (k) + 12)))
         if (ty == 1 || ty == 3) {   // an update or a standalone update: update/<version>
-            if (upick < 0 || ver > best) { upick = i; best = ver; nupd = 1; } else if (ver == best) nupd++;
-            if (want == 1 && ver == want_ver) { pick = i; nmatch++; }
-        } else if (ty == 0) { bpick = i; nbase++; if (!want) { pick = i; nmatch++; } }
+            if (upick < 0 || ver > best) { upick = i; best = ver; nupd = 1; } else if (ver == best && !NX_AGAIN(upick)) nupd++;
+            if (want == 1 && ver == want_ver && !NX_AGAIN(pick)) { pick = i; nmatch++; }
+        } else if (ty == 0) { if (!NX_AGAIN(bpick)) { bpick = i; nbase++; if (!want) { pick = i; nmatch++; } } }
+#undef NX_AGAIN
     }
     if (want == -2) { pick = upick >= 0 ? upick : bpick; nmatch = upick >= 0 ? nupd : nbase; }
     if (pick < 0) {
