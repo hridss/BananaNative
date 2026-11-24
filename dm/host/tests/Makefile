@@ -50,6 +50,7 @@ run: $(B)/t_language $(B)/t_motion $(B)/t_heap_size $(B)/t_touch $(B)/t_gesture 
 	$(B)/t_android_pkp_ui43
 	$(B)/t_drs_steps
 	$(B)/t_uecvar
+	$(B)/t_ue_freed_ring
 	$(B)/t_audren_work
 	$(B)/t_audren_layout
 	$(B)/t_swkbd
@@ -268,6 +269,9 @@ $(B)/t_fpslock: t_fpslock.c ../hle_fpslock.c ../hle.h ../dm.h $(GAME_H) | $(B)
 run: $(B)/t_uecvar
 $(B)/t_uecvar: t_uecvar.c ../hle_uecvar.c ../hle.h ../dm.h $(GAME_H) | $(B)
 	$(CLANG) -O1 -g -Wno-unused-function $(GINC) -o $@ t_uecvar.c
+run: $(B)/t_ue_freed_ring
+$(B)/t_ue_freed_ring: t_ue_freed_ring.c ../hle_uemalloc.c ../hle.h ../dm.h $(GAME_H) | $(B)
+	$(CLANG) -O1 -g -Wno-unused-function -I.. $(GINC) -o $@ t_ue_freed_ring.c
 $(B)/t_swkbd: t_swkbd.c ../hle_swkbd.c ../hle.h ../dm.h $(GAME_H) | $(B)
 	$(CLANG) -O1 -Wno-unused-function -I.. $(GINC) -o $@ t_swkbd.c ../hle_swkbd.c
 run: $(B)/t_bigstack
@@ -437,7 +441,7 @@ include ../../sanitizers/sanitizers.mk
 asan:
 	@$(call san_fresh,$(B)/asan,$(ASAN_FLAGS))
 	$(ASAN_ENV) $(MAKE) B=$(B)/asan SAN="$(ASAN_FLAGS)" run
-TSAN_T = t_audio t_audio_stats t_audio_device t_thread_leak t_oe t_fs_commit_list t_fs_case t_save_sync t_condvar t_condvar_old t_preempt t_system_event t_notify_sched t_altstack
+TSAN_T = t_audio t_audio_stats t_audio_device t_thread_leak t_oe t_fs_commit_list t_fs_case t_save_sync t_condvar t_condvar_old t_preempt t_system_event t_notify_sched t_altstack t_ue_freed_ring
 tsan-threads:
 	@$(call san_fresh,$(B)/tsan,$(TSAN_FLAGS))
 	$(TSAN_ENV) $(MAKE) B=$(B)/tsan SAN="$(TSAN_FLAGS)" tsan-threads-run
@@ -458,6 +462,7 @@ tsan-threads-run: $(addprefix $(B)/,$(TSAN_T))
 	$(B)/t_notify_sched
 	$(B)/t_notify_sched --all-peers
 	$(B)/t_altstack
+	$(B)/t_ue_freed_ring
 	DM_QOS_MAP=1 $(B)/t_notify_sched
 	DM_QOS_MAP=1 $(B)/t_notify_sched --all-peers
 $(B)/t_pad_hid: t_pad_hid.c ../pad_hid.h ../dm_input.h | $(B)
