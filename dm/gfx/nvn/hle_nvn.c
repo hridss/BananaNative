@@ -3498,7 +3498,24 @@ static void write_texels(const tex_t *t, const view_t *v, const NVNcopyRegion *r
     int bw, bh, bpb = nvn_fmt_bpb(t->d.format, &bw, &bh);
     if (!bpb) { ONCE_LOG("[RED] WriteTexels: unknown format %#x", t->d.format); return; }
     unsigned level = v && v->set_levels ? (unsigned)v->base_level : 0, layer0 = v && v->set_layers ? (unsigned)v->min_layer : 0;
-    int is3d = t->d.target == NVN_TEXTURE_TARGET_3D, nz = r->depth ? r->depth : 1;
+    unsigned levels = t->d.levels ? t->d.levels : 1;
+    int is3d = t->d.target == NVN_TEXTURE_TARGET_3D, one_d = t->d.target == NVN_TEXTURE_TARGET_1D || t->d.target == NVN_TEXTURE_TARGET_1D_ARRAY;
+    int nz = r->depth ? r->depth : 1;
+    // Out-of-range regions are refused here, before any storage is touched: the block-linear writes below refuse them too, but then fell back to the whole-level scratch buffer,
+    // which had no bounds checks (copied past the end of lin), and a multi-layer region overflowing on a later layer had already written the earlier ones (nxnative PR #2906)
+    if (level >= levels || level >= 32 || r->xoffset < 0 || r->yoffset < 0 || r->zoffset < 0 || r->width < 0 || r->height < 0 || nz < 0) {
+        ONCE_LOG("[RED] WriteTexels: invalid mip or region");
+        return;
+    }
+    uint32_t lw = t->d.width >> level ? t->d.width >> level : 1;
+    uint32_t lh = one_d ? 1 : (t->d.height >> level ? t->d.height >> level : 1);
+    uint32_t lz = is3d ? (t->d.depth >> level ? t->d.depth >> level : 1) : 1;
+    if ((uint64_t)r->xoffset + (uint64_t)r->width > lw || (uint64_t)r->yoffset + (uint64_t)r->height > lh ||
+        (uint64_t)r->zoffset + (uint64_t)nz + (is3d ? 0ull : (uint64_t)layer0) > (is3d ? lz : t->L.layers)) {
+        ONCE_LOG("[RED] WriteTexels: region exceeds the mip dimensions or layers");
+        return;
+    }
+    if (!r->width || !r->height) return;
     if (!is3d) {
         size_t wb0 = (size_t)((r->width + bw - 1) / bw) * bpb, row0 = row ? row : wb0, img0 = img ? img : row0 * (size_t)((r->height + bh - 1) / bh);
         uint64_t lo = nvn_tex_level_offset(&t->d, level), hi = level + 1 < t->d.levels ? nvn_tex_level_offset(&t->d, level + 1) : t->L.layer_size;
@@ -3512,7 +3529,6 @@ static void write_texels(const tex_t *t, const view_t *v, const NVNcopyRegion *r
         for (int z = 0; z < nz && ok; z++) ok = !write_region_bl(t, level, layer0 + (unsigned)(r->zoffset + z), r, src + (size_t)z * img0, row0, bw, bh, bpb);
         if (ok) { mtl_tex_write_region(t, level, layer0, r, src, row0, img0); return; }
     }
-    uint32_t lw = t->d.width >> level ? t->d.width >> level : 1, lh = t->d.height >> level ? t->d.height >> level : 1, lz = is3d ? (t->d.depth >> level ? t->d.depth >> level : 1) : 1;
     size_t lp = (size_t)((lw + bw - 1) / bw) * bpb, lr = (lh + bh - 1) / bh;
     size_t wb = (size_t)((r->width + bw - 1) / bw) * bpb, hb = (size_t)(r->height + bh - 1) / bh;
     if (!row) row = wb;

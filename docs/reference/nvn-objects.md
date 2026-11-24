@@ -448,6 +448,14 @@ Games read this count as a position in their own command memory and size their h
 - **Found on:** [Metroid Dread](../../dm/games/010093801237C000/README.md).
 - **Check:** `t_nvn` checks 15 regions in RGBA8, BC1 and a two-layer RGBA16F array, from 1×1 to the whole level, byte for byte against the old whole-level path.
 
+### Out-of-range `WriteTexels` regions overran the scratch buffer
+
+- **Symptom:** heap corruption or unexpected storage writes when a game calls `nvnTextureWriteTexels` / `nvnTextureWriteTexelsStrided` with an invalid mip level, negative coordinates/size, or a region exceeding the mip dimensions or layers.
+- **Cause:** `write_region_bl` returned `-1` on out-of-range regions and `write_texels` (`hle_nvn.c`) fell back to the whole-level `lin` scratch-buffer path, which had no bounds checks and copied past the end of `lin` before swizzling back into `t->mem`. A multi-layer region that overflowed on a later layer also mutated earlier layers before failing.
+- **Fix:** `write_texels` validates the mip level (`levels = t->d.levels ? t->d.levels : 1`, `< 32`), a non-negative origin, size and depth, and the mip width/height/depth/layer bounds (a `1D` or `1D_ARRAY` level is one texel high) before it touches storage or allocates `lin`, logging `[RED] WriteTexels: ...` once on rejection; a zero-width or zero-height region returns without writing or marking the texture CPU-written. It holds on both hosts, ahead of `mtl_tex_write_region` (the Vulkan replay's region copies).
+- **Found on:** [nxnative PR #2906](https://github.com/seedds/nxnative/pull/2906) (reported alongside Baldur's Gate: Dark Alliance, Guacamelee! and Oceanhorn testing); reproduced directly by synthetic bounds checks.
+- **Check:** upstream's `t_cpu_tex --metal` (`write_texels_bounds`, a Metal test not carried here) writes oversized width/height, a negative origin/size, an out-of-range mip level, zero-sized regions, an overflowing multi-layer 2D array write and a `1D_ARRAY` height > 1, and checks that each leaves storage untouched and does not mark the texture CPU-written.
+
 ### `WriteTexels` subregion updates on the Vulkan replay
 
 - **Symptom:** severe frame rate drops (down to 5–11 FPS, `texture prepare` taking 80–165 ms) in scenes where background threads update lighting or bake tiles with `nvnTextureWriteTexels` (e.g. `bake::ModuleMgr` in Splatoon Raiders).
