@@ -92,6 +92,10 @@ class PatchIndex(unittest.TestCase):
     def test_index_is_current(self):
         self.assertEqual(docs_patches.OUT.read_text(), docs_patches.page(), 'docs/agents/game-patches.md is out of date: run dm/tools/docs_patches.py')
 
+    def test_switches_cover_header_and_header_one(self):
+        keys = {k for k, _, _ in docs_patches.switches(docs_patches.games())}
+        self.assertLessEqual({'op_mode', 'fps_target', 'tex_flush_upload', 'tex_copy_staging'}, keys)
+
 
 class Gallery(unittest.TestCase):
     def test_gallery_is_current(self):

@@ -6,7 +6,7 @@
 # FRAME_STEP function against a recording context (no game files). Run it after changing a patch file, a build-keyed host table or a profile key; --check only reports whether the page is
 # current (dm/tools/tests/test_docs.py runs it).
 # Usage: docs_patches.py [--check]
-import importlib.util, re, subprocess, sys, pathlib, types
+import importlib.util, inspect, re, subprocess, sys, pathlib, types
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / 'dm/tools')); sys.path.insert(0, str(REPO / 'dm/games'))
@@ -322,7 +322,7 @@ def shader_rules():   # (file, line, comment) of translator rules keyed by a sha
 
 
 def switches(gs):   # [(key, value, [games])] of every profile key set away from its default in game.py
-    src = (REPO / 'dm/games/game.py').read_text(); src = src[src.find('def header('):]; src = re.split(r'\n(?=\S)', src)[0]   # the keys the host's header takes (to the next top-level line)
+    src = '\n'.join(inspect.getsource(f) for f in (game.header, getattr(game, 'header_one', None)) if f)   # the keys the host's header takes (header, and header_one where game.py splits it out)
     defaults = {}
     for k, d in re.findall(r'g\.(?:get|words)\(\s*[\'"](\w+)[\'"]\s*,\s*[\'"]([^\'"]*)[\'"]\s*\)', src): defaults.setdefault(k, d)
     out = {}
