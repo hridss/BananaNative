@@ -22,6 +22,8 @@
 
 #define R_TIMEOUT     0xEA01u   // Kernel module 1, description 117
 #define R_CANCELLED   0xEC01u   // 118
+#define R_BAD_ENUM    0xF001u   // 120
+#define R_BUSY        0xF401u   // 122
 #define R_BAD_HANDLE  0xE401u   // 114
 #define R_BAD_STATE   0xFA01u   // 125
 #define R_OUT_OF_RES  0xCE01u   // 103
@@ -77,9 +79,12 @@ typedef struct thr {
     plat_thread_t mport;       // Host thread (to get CPU time, to stop it for a dump)
     _Atomic int qos_pending;   // SetThreadPriority from another thread changed prio: the thread applies the new class at its next SVC (only a thread can set its own QoS)
     uint32_t qos;
-    // Pausing (SetThreadActivity, used by IL2CPP's garbage collector to stop the world): pause_req = requested, paused = stopped for the current request; when stopped inside an SVC the context comes from the gate frame svc_regs (registered on SVC entry),
-    // when stopped in guest code the signal handler saves it into ctx_*; pcv lets the requester wait for "stopped" and the paused thread wait for "resume"
-    _Atomic int pause_req; int paused;
+    // Pausing (SetThreadActivity, used by IL2CPP's garbage collector to stop the world): pause_req = requested, paused = stopped for the current request;
+    // act_busy / act_waiters serialize SetThreadActivity and GetThreadContext3 on this thread (Horizon's KThread::m_activity_pause_lock) while a pause wait releases G;
+    // when stopped inside an SVC the context comes from the gate frame svc_regs (registered on SVC entry),
+    // when stopped in guest code the signal handler saves it into ctx_*; pcv lets the requester wait for "stopped", the paused thread wait for "resume",
+    // and concurrent activity/context callers wait out an in-flight pause
+    _Atomic int pause_req; int paused, act_busy, act_waiters;
     uint64_t *_Atomic svc_regs; uint64_t svc_pc, svc_x18;   // svc_x18: the guest's x18 at SVC entry (its thread slot; the gate frame holds the Apple platform register)
     // SVC exit without G: bit 0 = inside an SVC, bit 1 = a pause was requested. The exit clears bit 0 with one compare-and-swap when bit 1 is clear, and takes G only otherwise;
     // the requester sets bit 1 and treats the thread as stopped only if bit 0 was set, so a thread it counts as stopped in an SVC cannot leave the SVC without G (svc_regs stays valid for GetThreadContext3)
@@ -399,12 +404,20 @@ static void thr_free(thr_t *t) {   // Holding G; unlink from the all-threads cha
 static void thr_put(thr_t *t) {   // Holding G; drop a reference taken with t->refs++ (a pause): the last holder of a closed, exited thread frees it
     if (!--t->refs && t->closed && t->exited) thr_free(t);
 }
+static void act_wait(thr_t *t) {   // Holding G, caller holds a reference on t: wait out an in-flight SetThreadActivity pause on t (Horizon's KThread::m_activity_pause_lock)
+    if (!t->act_busy) return;
+    t->act_waiters++;
+    while (t->act_busy) pthread_cond_wait(&t->pcv, &G);
+    t->act_waiters--;
+}
 static void wake_sync_waiters(const void *obj);
 static void thread_exit(thr_t *t) {
     t->exit_ns = now_ns(); t->exit_tick = dm_thread_tick_fn ? dm_thread_tick_fn() : 0;
     // No logging here: the exit happens on the guest thread's own stack (some are only a dozen or so KiB), and a printf with floating point would blow the stack (real-device smoke test: SIGBUS when LibcurlResolver exits, backtrace fprintf → __dtoa). Only the time is recorded, and it is printed later in the state dump
     pthread_mutex_lock(&G);
     t->exited = 1;
+    atomic_store(&t->svc_regs, NULL); t->ctx_ok = 0;   // dead thread's pthread stack is about to be reclaimed
+    if (atomic_load(&t->pause_req)) pthread_cond_broadcast(&t->pcv);   // wake an in-flight SetThreadActivity wait at once
     wake_sync_waiters(t);   // Synchronization waiters on this thread re-check
     pthread_setspecific(g_keythr, NULL);
     if (t->closed && !t->refs) thr_free(t);
@@ -1107,36 +1120,61 @@ static int svc_thread_impl(int num, uint64_t *regs) {
                  regs[0] = (uint64_t)(uint32_t)(c >= 0 ? c : m ? __builtin_ctzll(m) : 0); return 1; }
     case 0x32: {  // SetThreadActivity(w0 thread, w1 0 runnable / 1 paused): see "Pausing threads" above
         thr_t *me = cur(); int act = (int)regs[1];
+        if (act != 0 && act != 1) { regs[0] = R_BAD_ENUM; return 1; }
         pthread_mutex_lock(&G);
         thr_t *t = h_get((uint32_t)regs[0], O_THREAD); int64_t r = 0;
         if (!t) r = R_BAD_HANDLE;
-        else if (t == me) r = R_BAD_STATE;
-        else if (act == 1) {
-            atomic_store(&t->pause_req, 1);
-            int st = atomic_fetch_or(&t->svc_state, 2);
-            if (!t->started || t->exited || (st & 1)) t->paused = 1;
-            uint64_t t0 = now_ns(); int warned = 0;
-            // The loop lets go of G (the signal, the timed wait): hold a reference so that an exit and a CloseHandle meanwhile cannot free t under it
+        else if (t == me) r = R_BUSY;
+        else {
+            // Hold a reference across any wait (act_wait or the pause loop below) so an exit and a CloseHandle meanwhile cannot free t.
+            // Horizon's KThread::SetActivity serializes on m_activity_pause_lock, takes a thread that is Waiting or Runnable with no request of the same kind pending, and answers InvalidState
+            // otherwise: a thread not yet started or already exited, a second pause, a resume of a thread that is not paused. The host used to answer success to all of them and, for a pause
+            // before StartThread, set `paused` at once: the thread then ran guest code once started (thread_main waits only for `started`) while the requester believed it stopped
             t->refs++;
-            while (!t->paused && !t->exited) {
-                pthread_mutex_unlock(&G); pthread_kill(t->pt, SIGUSR2); pthread_mutex_lock(&G);
-                if (t->paused || t->exited) break;
-                struct timespec dl; clock_gettime(WAIT_CLOCK, &dl); dl.tv_nsec += 100000; if (dl.tv_nsec >= 1000000000) { dl.tv_sec++; dl.tv_nsec -= 1000000000; }
-                pthread_cond_timedwait(&t->pcv, &G, &dl);
-                if (!warned && now_ns() - t0 > 1000000000ull) { warned = 1; LOG("[RED] thread %#x still not suspended after more than 1 second (stuck in host code?)", t->handle); }
-            }
+            act_wait(t);
+            if (!t->started || t->exited) r = R_BAD_STATE;
+            else if (act == 1) {
+                if (atomic_load(&t->pause_req)) r = R_BAD_STATE;
+                else {
+                    atomic_store(&t->pause_req, 1);
+                    int st = atomic_fetch_or(&t->svc_state, 2);
+                    if (st & 1) t->paused = 1;
+                    t->act_busy = 1;
+                    uint64_t t0 = now_ns(); int warned = 0;
+                    while (!t->paused && !t->exited) {
+                        pthread_mutex_unlock(&G); pthread_kill(t->pt, SIGUSR2); pthread_mutex_lock(&G);
+                        if (t->paused || t->exited) break;
+                        struct timespec dl; clock_gettime(WAIT_CLOCK, &dl); dl.tv_nsec += 100000; if (dl.tv_nsec >= 1000000000) { dl.tv_sec++; dl.tv_nsec -= 1000000000; }
+                        pthread_cond_timedwait(&t->pcv, &G, &dl);
+                        if (!warned && now_ns() - t0 > 1000000000ull) { warned = 1; LOG("[RED] thread %#x still not suspended after more than 1 second (stuck in host code?)", t->handle); }
+                    }
+                    t->act_busy = 0;
+                    if (t->act_waiters) pthread_cond_broadcast(&t->pcv);
+                }
+            } else if (!atomic_load(&t->pause_req)) r = R_BAD_STATE;
+            else { atomic_store(&t->pause_req, 0); atomic_fetch_and(&t->svc_state, ~2); t->paused = 0; pthread_cond_broadcast(&t->pcv); }
             thr_put(t);
-        } else { atomic_store(&t->pause_req, 0); atomic_fetch_and(&t->svc_state, ~2); t->paused = 0; pthread_cond_broadcast(&t->pcv); }
+        }
         pthread_mutex_unlock(&G);
-        { static int n; if (n++ < 4) LOG("SetThreadActivity %#x → %s (%s)", (uint32_t)regs[0], act ? "pause" : "resume", r ? "failed" : "ok"); }
+        { static _Atomic int n; if (atomic_fetch_add_explicit(&n, 1, memory_order_relaxed) < 4) LOG("SetThreadActivity %#x → %s (%s)", (uint32_t)regs[0], act ? "pause" : "resume", r ? "failed" : "ok"); }
         regs[0] = (uint64_t)r; return 1;
     }
     case 0x33: {  // GetThreadContext3(x0 out ThreadContext*, w1 thread): only for stopped threads
+        thr_t *me = cur();
         pthread_mutex_lock(&G);
         thr_t *t = h_get((uint32_t)regs[1], O_THREAD); int64_t r = 0;
         if (!t) r = R_BAD_HANDLE;
-        else if (!t->paused) r = R_BAD_STATE;
-        else ctx_fill(t, (hz_ctx_t *)regs[0]);
+        else if (t == me) r = R_BUSY;
+        else {
+            t->refs++;
+            act_wait(t);
+            // Horizon's KThread::GetThreadContext3 serializes on m_activity_pause_lock, requires SuspendType_Thread, and zeroes out without failing if the thread has since exited
+            if (!atomic_load(&t->pause_req)) r = R_BAD_STATE;
+            else if (t->exited) memset((hz_ctx_t *)regs[0], 0, sizeof(hz_ctx_t));
+            else if (!t->paused) r = R_BAD_STATE;
+            else ctx_fill(t, (hz_ctx_t *)regs[0]);
+            thr_put(t);
+        }
         pthread_mutex_unlock(&G);
         regs[0] = (uint64_t)r; return 1;
     }
