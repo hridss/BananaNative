@@ -11,7 +11,7 @@ sys.path.insert(0, here)
 os.environ.setdefault('DM_GAME', '0400D4201C6EA000')
 import boot_nro, shader_split
 from test_boot_nro import put
-from test_split_cra import Image
+from test_split_cra import Image, Image2021
 
 
 def nrr(hashes):   # a version 1 NRR (nro_collect.nrr_hashes)
@@ -82,6 +82,16 @@ class RuntimeNros(unittest.TestCase):
                 jobs, arcs = shader_split.cra_jobs([(arc, '42')], nros=[('main part 0', Image(rows).bytes)])
         self.assertEqual(arcs, {arc})
         self.assertEqual([e[1] for _, _, es in jobs for e in es], ['shader/font/font.narc'])
+
+    def test_cra_table_of_the_2021_layout(self):   # Mario Golf: Super Rush's NRO reads the older layout: cra.index, not cra.Index, finds its table
+        rows = [(0, 0, 'shader/grass.narc', 0x20, 0x100, 5)]
+        with tempfile.TemporaryDirectory() as t:
+            arc = os.path.join(t, '42'); put(arc, shader_split.CRA + bytes(0x400))
+            with mock.patch.dict(os.environ, {}, clear=False):
+                os.environ.pop('DM_NRO_DIR', None)
+                jobs, arcs = shader_split.cra_jobs([(arc, '42')], nros=[('nro0.nro', Image2021(rows).bytes)])
+        self.assertEqual(arcs, {arc})
+        self.assertEqual([(e[1], e[5]) for _, _, es in jobs for e in es], [('shader/grass.narc', 'cra2021')])
 
     def test_scan_jobs_passes_the_nros(self):   # the split's main reaches cra_jobs through scan_jobs
         rows = [(0, 0, '', -1, 0, 0), (0, 0, 'shader/font/$', 0, 0x20, 0x100)]

@@ -1121,7 +1121,7 @@ def cra_jobs(files, parts=64, nros=()):
         import cra
         idx = None
         for _, body in nros:
-            try: idx = cra.Index(body); break
+            try: idx = cra.index(body); break   # the layout the NRO's code reads: today's, else the 2021 one (Mario Golf: Super Rush)
             except cra.Error: continue
         if idx is None: red(f'/{r}: a CRA archive, and none of the game\'s {len(nros)} NROs (DM_NRO_DIR {os.environ.get("DM_NRO_DIR")}, else those a boot stub packs into main) holds its file table')
         es = idx.files()
