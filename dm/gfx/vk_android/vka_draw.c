@@ -1848,6 +1848,16 @@ static uint32_t *read_indices(uint64_t addr, int itype, uint32_t count) {
 static struct { int valid; VkPipeline pipe; VkViewport vp; VkRect2D sc; uint32_t cull, ff, topo, dt, dw, dc, dbt, stt, dbe, rd, pr, sop[8], smask[6]; float db[3], bc[4], dbb[2]; } DY;
 #define DY_SET(f, val, call) do { if (!DY.valid || !g_dyn_filter || memcmp(&DY.f, &(val), sizeof DY.f)) { memcpy(&DY.f, &(val), sizeof DY.f); call; } } while (0)
 #define DY_SET1(f, val, call) do { uint32_t v_ = (val); if (!DY.valid || !g_dyn_filter || DY.f != v_) { DY.f = v_; call; } } while (0)
+// After a graphics pipeline bind the depth, stencil and depth bias states are set again at the draw, whatever the filter remembers (the vertex input state is handled the same way,
+// vin_bind). Vulkan keeps dynamic state across a bind of a pipeline that has it dynamic too, but Qualcomm's driver (Adreno 740, V@0676 / driver 0x802a4035) does not keep it
+// there: Princess Peach: Showtime!'s shadow cascades (a 4096x2048 D32 pass of alpha-tested draws, then depth-only draws of a pipeline without a fragment shader) hung the
+// GPU at the first such frame in every run when the depth-only pipeline's draws took the depth state the filter had skipped; set again after each bind, or with
+// DM_VK_DYN_FILTER=0, it did not hang (docs/reference/rendering.md "Dynamic depth state lost at a pipeline bind on Qualcomm's driver"). Which of the states the driver
+// drops is not known (each alone was not enough), so all of them; a few calls a pipeline change, on every driver
+static void dy_forget_ds(void) {
+    DY.dt = DY.dw = DY.dc = DY.dbt = DY.stt = DY.dbe = ~0u;
+    memset(DY.sop, 0xff, sizeof DY.sop); memset(DY.smask, 0xff, sizeof DY.smask); memset(DY.db, 0xff, sizeof DY.db); memset(DY.dbb, 0xff, sizeof DY.dbb);
+}
 // The index buffer the command buffer holds: bound again only when it changes (DM_VK_VB_FILTER), forgotten with the dynamic state
 static struct { int valid; VkBuffer b; VkDeviceSize o; VkIndexType t; } IB;
 static void ib_bind(VkBuffer b, VkDeviceSize o, VkIndexType t) {
@@ -2659,7 +2669,7 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
     int ijoin = icand && RUN.open && p == RUN.base.p && DY.valid && DY.pipe == RUN.ipipe && vka_enc_total() == RUN.mark && inst_same_draw(&RUN.base, i_ib, i_io, i_it, di, d);
     if (!ijoin) {
         if (RUN.open) inst_close();
-        if (!DY.valid || !g_dyn_filter || DY.pipe != p) { vk.vkCmdBindPipeline(g_cb, VK_PIPELINE_BIND_POINT_GRAPHICS, p); DY.pipe = p; VB.vin_stale = 1; }
+        if (!DY.valid || !g_dyn_filter || DY.pipe != p) { vk.vkCmdBindPipeline(g_cb, VK_PIPELINE_BIND_POINT_GRAPHICS, p); DY.pipe = p; VB.vin_stale = 1; dy_forget_ds(); }
     }
     if (vka_nan_on()) vka_nan_draw(mesh ? sh[7]->key : sh[0]->key, fs ? fs->key : 0);
     PT(5);
@@ -2673,7 +2683,7 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
                     && (VkDeviceSize)i_d + g_w.bi[i_wv].range <= RUN.win_v && (VkDeviceSize)i_d + g_w.bi[i_wp].range <= RUN.win_p;
             if (!ijoin) {   // not the run's draw after all: drawn alone with its own pipeline
                 inst_close(); g_inst_falls++;
-                vk.vkCmdBindPipeline(g_cb, VK_PIPELINE_BIND_POINT_GRAPHICS, p); DY.pipe = p; VB.valid = 0; g_pd[0].n = 0;
+                vk.vkCmdBindPipeline(g_cb, VK_PIPELINE_BIND_POINT_GRAPHICS, p); DY.pipe = p; VB.valid = 0; g_pd[0].n = 0; dy_forget_ds();
                 if (!sets_push(&lay, VK_PIPELINE_BIND_POINT_GRAPHICS, g_dry_pool)) { g_skipped++; return; }
             }
         } else {   // a run from the last draw drawn alone: the same draw with the object block moved
@@ -2691,7 +2701,7 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
             istart = ip && wv >= g_w.bi[i_wv].range && wp >= g_w.bi[i_wp].range && inst_snap(&RUN.base, p, i_ib, i_io, i_it, di, d)
                      && vka_scratch(4 * INST_CAP, 16, &i_ta) && vka_scratch(20, 4, &i_aa);
             if (istart) {
-                vk.vkCmdBindPipeline(g_cb, VK_PIPELINE_BIND_POINT_GRAPHICS, ip); DY.pipe = ip; VB.valid = 0;
+                vk.vkCmdBindPipeline(g_cb, VK_PIPELINE_BIND_POINT_GRAPHICS, ip); DY.pipe = ip; VB.valid = 0; dy_forget_ds();
                 g_w.bi[i_wv].range = wv; g_w.bi[i_wp].range = wp;
                 vk.vkCmdPushDescriptorSetKHR(g_cb, VK_PIPELINE_BIND_POINT_GRAPHICS, lay.layout, 0, g_w.n, g_w.w); g_pd[0].n = 0;
                 RUN.open = 1; RUN.ipipe = ip; RUN.wv = i_wv; RUN.wp = i_wp; RUN.win_v = wv; RUN.win_p = wp; RUN.n = 1;
