@@ -114,6 +114,7 @@ One row per profile; the notes are each profile's `README.md`.
 | [Kirby Air Riders](040077201BE50000/README.md) | `040077201BE50000` | v458752 (Switch 2) | 20.5.26 (Ounce) | Its own engine (`phx`, `Aurora`) | NVN2 |
 | [Kirby and the Forgotten Land](01004D300C5AE000/README.md) | `01004D300C5AE000` | 1.1.0 | 11.4.0 | HAL Laboratory's engine (NintendoWare) | NVN |
 | [Kirby and the Forgotten Land - Nintendo Switch 2 Edition](04004D300C5AE001/README.md) | `04004D300C5AE001` | 1.1.0 (program 1) | 19.3.7 (Ounce) | HAL Laboratory's engine (NintendoWare) | NVN2 |
+| [Kirby's Dream Buffet](0100A8E016236000/README.md) | `0100A8E016236000` | 1.0.0 | 13.3.0 | HAL Laboratory's engine (Basil, NintendoWare) | NVN |
 | [Kirby's Return to Dream Land Deluxe](01006B601380E000/README.md) | `01006B601380E000` | 1.0.0 (base) | 13.3.5 | HAL Laboratory's engine (NintendoWare G3d / Ui2d / Vfx2) | NVN |
 | [Luigi's Mansion 3](0100DCA0064A6000/README.md) | `0100DCA0064A6000` | 1.4.0 | 7.3.2 | Next Level Games' engine | NVN |
 | [Mario Kart 8 Deluxe](0100152000022000/README.md) | `0100152000022000` | 4.0.0, 4.0.1 | 4.4.0 | Nintendo (sead / agl / gsys, NintendoWare, Pia) | NVN |
