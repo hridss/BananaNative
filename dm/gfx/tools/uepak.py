@@ -41,6 +41,8 @@
 #        uepak.py job <RomFS> <main NSO> <work dir> [<Mac host> <rewritten modules>]   the shader code archives of every pak, and an Oodle job of their Oodle-compressed shaders (LZ4 ones
 #                                                                       decoded at once); IoStore shader libraries (UE 5.6) decoded at once through the game's Oodle in the host (OodleHost)
 #        uepak.py finish <work dir> <out dir>                           after the host has run the job: the archives with every shader decoded
+#        uepak.py decode <RomFS> <main NSO> <out dir>                   job and finish in one, without a host (pack_android.py): exit 0 with the archives in <out dir> (or nothing to do), exit 3 when
+#                                                                       the shaders need the game's Oodle (the NSP script's decode_ue_shaders on the Mac)
 import ctypes, json, os, re, struct, sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../tools'))
 from romfs import os, open
@@ -700,6 +702,35 @@ def finish(work, out):
         tmp = os.path.join(out, x['name'] + '.partial'); open(tmp, 'wb').write(decoded_archive(src, raws)); os.replace(tmp, os.path.join(out, x['name']))
     return [x['name'] for x in meta['archives']]
 
+class NeedsHost(ValueError): pass
+
+
+def decode(romfs, main_nso, out):
+    """The shader code archives of the RomFS's paks into out, every shader decoded, when no host is needed: stored or LZ4 shaders (Unreal Engine 4.26 and later by default,
+    Princess Peach: Showtime!). The NSP script writes the same folder (decode_ue_shaders); a pack from an .nx or .nup cannot put one beside its RomFS, so pack_android.py
+    makes it in its work folder and names it to the split (DM_UE_SHADERS). → the archive names; [] when the RomFS has no shader code archive (nothing to decode).
+    NeedsHost when the shaders need the game's Oodle (Octopath Traveler 0's archives, IoStore shader libraries). out/stamp names the RomFS's paks and TOCs: a folder whose
+    stamp matches is kept"""
+    import shutil
+    if io_shader_tocs(romfs): raise NeedsHost(f'{romfs}: IoStore shader libraries (Unreal Engine 5.6) need the game\'s Oodle')
+    found = unreal_paks(romfs, inline=False, mains=[main_nso])
+    if not found: return []
+    stamp = ''.join(f'{os.path.relpath(p, romfs)}\t{os.path.getsize(p)}\n' for p in sorted(found))
+    try:
+        if open(os.path.join(out, 'stamp')).read() == stamp: return sorted(f for f in os.listdir(out) if f.endswith('.ushaderbytecode'))
+    except OSError: pass
+    work = out + '.job'; shutil.rmtree(work, ignore_errors=True)
+    try:
+        listing, n = job(romfs, main_nso, work)
+        if n: raise NeedsHost(f'{romfs}: {n:,} shaders of its shader code archives are Oodle-compressed and need the game\'s Oodle')
+        part = out + '.partial'; shutil.rmtree(part, ignore_errors=True)
+        names = finish(work, part)
+        with open(os.path.join(part, 'stamp'), 'w') as f: f.write(stamp)
+        shutil.rmtree(out, ignore_errors=True); os.replace(part, out)
+        return names
+    finally: shutil.rmtree(work, ignore_errors=True)
+
+
 def lslg(s):
     """A decoded Switch shader (LSLG): 'LSLG', a stage tag (SV vertex, SP pixel, SC compute, ...), a header with the shader's source name, then u32 code length, the code area,
     u32 control length and the control section (0x880 bytes), and a short tail (24 or 29 bytes). → (tag, control section, code area), or None if the layout differs"""
@@ -766,5 +797,9 @@ if __name__ == '__main__':
             print(f'{n} records in {os.path.join(sys.argv[4], "oodle.job")}')
         elif cmd == 'finish':
             print('decoded:', ', '.join(finish(*sys.argv[2:4])))
+        elif cmd == 'decode':
+            try: names = decode(*sys.argv[2:5])
+            except NeedsHost as e: print(f'[RED] {e}', flush=True); sys.exit(3)
+            print(f'decoded: {", ".join(names)} in {sys.argv[4]}' if names else 'no shader code archive in the paks: nothing to decode')
         else: sys.exit(__doc__ or 'usage: uepak.py list | job | finish (see the header)')
     except ValueError as e: sys.exit(f'[RED] {e}')   # a damaged main (nso.Error), pak or archive

@@ -695,6 +695,29 @@ def require_shaders(g):
                     f'--no-shaders packs the code alone')
 
 
+UEPAK = REPO / 'dm/gfx/tools/uepak.py'
+
+
+def ue_shaders(py, rd, ed, pkg):
+    """The decoded Unreal Engine shader code archives for the split (DM_UE_SHADERS), or None to leave it to the split. The NSP script decodes them into <version dir>/ue_shaders,
+    beside the RomFS, where the split looks; a .nup or .nx has no folder beside its RomFS, and a dump folder may have none. Then uepak.py decodes them into <work>/android-shaders/
+    ue_shaders when no host is needed (stored or LZ4 shaders, Princess Peach: Showtime!); shaders that need the game's Oodle (Octopath Traveler 0, IoStore shader libraries)
+    stop the pack with what to do. A game without Unreal paks takes nothing (uepak.py says so)"""
+    if os.environ.get('DM_UE_SHADERS'): return None   # given: the split reads it
+    if not pack_dump.nup.split(str(rd)) and (Path(rd).parent / 'ue_shaders').is_dir(): return None   # the NSP script's, beside the RomFS
+    try: unreal = any(f.endswith(('.pak', '.utoc')) for _, _, fs in rfs().os.walk(str(rd)) for f in fs)
+    except OSError: unreal = False
+    if not unreal: return None   # no pak or IoStore container: not an Unreal game
+    out = pkg.parent / 'ue_shaders'
+    r = subprocess.run([py, str(UEPAK), 'decode', str(rd), str(ed / 'main'), str(out)], env=child_env(), capture_output=True, text=True, errors='replace')
+    if r.returncode == 3:
+        raise Error(f'the game\'s Unreal Engine shaders need the game\'s own Oodle decoder, which only the Mac host runs ({r.stdout.strip().removeprefix("[RED] ")}): decode them there with '
+                    f'scripts/build_ipa_from_nsp.py (it writes <version dir>/ue_shaders) and name that folder in DM_UE_SHADERS, or pack with --no-shaders')
+    if r.returncode: raise Error(f'uepak.py decode exit code {r.returncode}: {(r.stderr or r.stdout).strip()[-800:]}')
+    if r.stdout.startswith('decoded:'): print(f'shaders: Unreal shader code archives {r.stdout.strip().removeprefix("decoded: ")}', flush=True); return out
+    return None
+
+
 def split_shaders(a, g, vdir, pkg, parts=None, aoc=(), nros=None):   # parts: the version's (romfs, exefs) when they are not vdir's own (pack_dump.version_part); aoc: add-on RomFS roots to split too; nros: collected_nros
     """The Switch shader package from the dump, as the phone's split step makes it (the version's romfs and main, android/app PackService "split"): shader_split.py into
     <pkg> (written beside it, then renamed, so a stopped split leaves no half package). Its tables go beside the package. The library is the profile's (its shader_map.tsv
@@ -704,8 +727,10 @@ def split_shaders(a, g, vdir, pkg, parts=None, aoc=(), nros=None):   # parts: th
     py = shader_python(a.shader_python, split=True)
     tmp = pkg.with_name(pkg.name + '.tmp'); shutil.rmtree(tmp, ignore_errors=True); tmp.mkdir(parents=True)
     print(f'shaders: splitting the shaders out of {rd} into {pkg} with {py} (a few minutes)', flush=True)
+    ue = ue_shaders(py, rd, ed, pkg)
     env = child_env(DM_GAME=g.id, DM_SPLIT_TARGETED='1',
                     **({'J': str(a.J)} if getattr(a, 'J', None) is not None else {}),
+                    **({'DM_UE_SHADERS': str(ue)} if ue else {}),
                     **({'DM_NRO_DIR': str(nros)} if nros else {}))   # as the phone: only the files the profile's map names, when the build is the profile's and the tables come out the same
     # a program n > 0 keeps its shaders in the application's add-ons (pack_dump.split_addons): a Switch 2 Edition's NVN2 archives are in its add-on (Wonder's 010015100B515001)
     r = subprocess.run([py, str(SPLIT), str(rd), str(ed / 'main'), str(tmp / 'pkg'),

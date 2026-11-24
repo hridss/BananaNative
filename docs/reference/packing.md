@@ -207,6 +207,22 @@
 - **Check:** Well Dweller's `main` decodes to 85,370,056 bytes with segments `0x39680d0 / 0x9f7e74 / 0x9b1930`, every SHA-256 matching; `dm/tools/tests/test_nso.py` checks that a flag-bit-7 module whose segments are not ZBIC is an Error naming ZBIC, that ZBIC segments decode to the LZ4 module's image with each decoder there is, that libzbicdec decodes a committed ZBIC stream of synthetic text (`zbic_synthetic.zbic`, with low-probability counts) and refuses it damaged, that it agrees with the zbic package, and that with neither the Error names both.
 - **Found on:** [Well Dweller](../../dm/games/0100217023F6C000/README.md) (SDK 22.2.0); [The Legend of Zelda: Ocarina of Time](../../dm/games/0400486024DEC000/README.md) (the Android packer).
 
+### The NRO scan fills the disk with temporary copies of a file inside an `.nx`
+
+- **Symptom:** `pack_android.py` of an `.nx` stops at "finding the NROs": `[RED] nro_collect.py exit code 1`, `OSError: [Errno 28] No space left on device` in `nx.py` `fileno`. The drive of `TEMP` (or `DM_TEMP`) fills by tens of GB within a minute.
+- **Cause:** `nro_collect.py` scans the RomFS's large files for NROs in about 48 jobs per file, 10 at once, and each job mapped the whole file (`mmap` of `fileno()`). A file of an NCA snapshot (`.nx`, `nx.py` `_VStream`) has no file to map: its `fileno()` copies all of it to a temporary file, so every job copied the whole file again (Mario Golf: Super Rush's `42`, 3.8 GB).
+- **Fix:** general, in `nro_collect.scan`: a job reads its own range (and a frame head's reach past it) and reads further bytes, an NRO or a zstd frame running past the range, from the file as needed. No temporary file; a plain file is read the same way.
+- **Check:** `dm/tools/tests/test_pack_android_ue.py` (`ScanRange`: a stored NRO across one job's end and a zstd frame starting near the next's). Mario Golf: Super Rush 4.0.0 from an `.nx` scans its 3.8 GB in about 10 s.
+- **Found on:** Mario Golf: Super Rush (0100C9C00E25C000) 4.0.0, packed from an `.nx`. Applies to every game with an NRR whose NROs are not loose files, packed from an `.nx`.
+
+### A pack from an `.nx` or `.nup` stops at the split of an Unreal Engine game
+
+- **Symptom:** `[RED] the RomFS has Unreal shader archives, but there are no decoded shader code archives in <file>.nx:base\ue_shaders (the NSP script writes them)`, then `shader_split.py exit code 1`.
+- **Cause:** the split reads Unreal's shader code archives decoded, from `ue_shaders/` beside the RomFS or `DM_UE_SHADERS`. Only the NSP script wrote that folder (`decode_ue_shaders`), and a `.nx` or `.nup` has no folder beside its RomFS.
+- **Fix:** general, in `pack_android.py` `ue_shaders`: when the RomFS has a pak or IoStore container and no folder is given, `uepak.py decode` writes the archives into `<work>/android-shaders/ue_shaders` (stamped with the paks' paths and sizes, reused while they match) and the split gets it as `DM_UE_SHADERS`. That needs no host for stored or LZ4 shaders (Unreal Engine 4.26 and later by default). Oodle-compressed shaders and IoStore shader libraries need the game's own decoder, which only the Mac host runs: the pack stops and says to decode them with `build_ipa_from_nsp.py` and name the folder in `DM_UE_SHADERS`, or to pack with `--no-shaders`.
+- **Check:** `dm/tools/tests/test_pack_android_ue.py`. Princess Peach: Showtime! from an `.nx`: 56,594 shaders from two LZ4 archives in about 30 s, the same bytes as the NSP script's `job` and `finish`.
+- **Found on:** Princess Peach: Showtime! (01007A3009184000) 1.0.0, packed from an `.nx`. Applies to every Unreal Engine game with shader code archives packed from an `.nx` or `.nup`.
+
 ## Packing on the phone
 
 ### Prepare is not offered for a game whose supported build is its base game

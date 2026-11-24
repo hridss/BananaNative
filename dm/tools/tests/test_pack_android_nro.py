@@ -113,6 +113,7 @@ class Split(unittest.TestCase):
             def run(argv, env=None, **kw): seen.update(env or {}); return mock.Mock(returncode=1)
             a = mock.Mock(shader_python=None); g = mock.Mock(id='0400D4201C6EA000', dir=Path(d) / 'profile')
             with mock.patch.object(pack_android, 'shader_python', return_value='py'), mock.patch.object(pack_android.subprocess, 'run', run), \
+                 mock.patch.object(pack_android, 'ue_shaders', return_value=None), \
                  mock.patch.dict(pack_android.os.environ, {}, clear=False), self.assertRaises(pack_android.Error):
                 pack_android.os.environ.pop('DM_NRO_DIR', None)
                 pack_android.split_shaders(a, g, Path(d) / 'v', work / 'android-shaders' / 'pkg', nros=pack_android.collected_nros(work))
