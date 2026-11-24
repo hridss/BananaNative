@@ -67,6 +67,7 @@ DM_ENTITLEMENTS	developer	Diagnostics			text			both
 DM_ENV_FILE	developer	Diagnostics			text			both							
 DM_ENV_FILE_KEYS	internal	Input			text			both						Mac or iOS only	
 DM_ENV_LAUNCH_KEYS	internal	Input			text			both						Mac or iOS only	
+DM_EXEC_OUT	internal	Game			text			both						set by the launcher for a program switch	
 DM_FASTBOOT	developer	Game			text			both							
 DM_FD_LOG	developer	Diagnostics			text			both							
 DM_FIXED_TIME	developer	Game			text			both							
@@ -123,6 +124,7 @@ DM_KBD_PLAYER	internal	Game			text			both						Mac or iOS only
 DM_KEYS	developer	Input			text			both							
 DM_LANG	advanced	Game	Game language		toggle			game		Game settings > Game language					
 DM_LAUNCHER	internal	Game			text			both						Mac or iOS only	
+DM_LAUNCH_PARAM	internal	Game			text			both						set by the launcher for a program switch	
 DM_LINK_VTICK	internal	Game			text			both						Mac or iOS only	
 DM_LOADHASH	developer	Diagnostics			text			both							
 DM_LONGFRAME	developer	Diagnostics			text			both							
@@ -344,6 +346,7 @@ DM_PRESENT_LATENCY	developer	Performance			text			both
 DM_PRESENT_LINK	developer	Performance			text			both							
 DM_PRESENT_SNAP	developer	Performance			text			both							
 DM_PRESENT_UPSCALE	internal	Performance			text			both						Mac or iOS only	
+DM_PREV_PROGRAM	internal	Game			text			both						set by the launcher for a program switch	
 DM_PROBE	internal	Diagnostics			text			both						Mac or iOS only	
 DM_PROBE_ALL	developer	Diagnostics			text			both							
 DM_PROBE_DUMP	developer	Diagnostics			text			both							
@@ -359,6 +362,7 @@ DM_PROBE_LIVE	developer	Diagnostics			text			both
 DM_PROBE_POLL	developer	Diagnostics			text			both							
 DM_PROBE_WATCH	developer	Diagnostics			text			both							
 DM_PROBE_X2	developer	Diagnostics			text			both							
+DM_PROGRAM	internal	Game			text			both						set by the launcher for a program switch	
 DM_PROGRAM_ID	developer	Memory			text			both							
 DM_PSO_ARCHIVE	internal	Diagnostics			text			both						Mac or iOS only	
 DM_PSO_BUNDLE	internal	Diagnostics			text			both						Mac or iOS only	
@@ -381,6 +385,7 @@ DM_QOS_EDGES	developer	Game			text			both
 DM_QOS_MAP	developer	Game			text			both							
 DM_REC	developer	Diagnostics			text			both							
 DM_REGIONS	developer	Diagnostics			text			both							
+DM_RELAUNCH	internal	Game			text			both						set by the launcher for a program switch	
 DM_RENDER_PCT	friendly	Graphics	Render size	the picture is too soft (raise it) or the game is too slow (lower it)	choice	33 %=33;50 %=50;59 %=59;67 %=67;100 %=100	50 %	game			render_cfg	04007EF01F8AE000			
 DM_RENDER_SCALE	developer	Graphics			text			both							
 DM_RENDER_UNCAPPED	developer	Diagnostics			text			both							

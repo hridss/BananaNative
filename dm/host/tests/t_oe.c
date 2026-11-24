@@ -12,6 +12,7 @@ void dm_audio_suspend(int on) { (void)on; }   // stubs for the bg item of DM_OE_
 void guest_clock_freeze_for(int reason, int on) { (void)reason; (void)on; }
 void dm_gfx_suspend(int on) { (void)on; }
 void dm_host_shutdown(const char *why) { (void)why; fflush(stdout); _exit(42); }   // oe::ExecuteProgram's graceful exit: the child that called it ends with 42
+__asm__(".text\n.p2align 2\n.globl " PLAT_ASM_SYM(dm_bigstack_enter) "\n" PLAT_ASM_SYM(dm_bigstack_enter) ":\n    br x16\n");   // the big host stack (hle_bigstack.c): the call runs on this one
 #ifdef DM_GAME_MULTI
 const dm_game_t *dm_game_cur(void) {   // main.c's: the program DM_PROGRAM names, program 0 without it
     const char *e = getenv("DM_PROGRAM"); int p = e ? atoi(e) : 0;

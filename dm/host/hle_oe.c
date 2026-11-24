@@ -203,10 +203,11 @@ static void oe_start(int index, const void *param, size_t n, int relaunch) {
     for (;;) pause();   // another thread is ending the host
 }
 void dm_oe_execute(int index, const void *param, size_t n) { oe_start(index, param, n, 0); }
-HLE_FORCE("_ZN2nn2oe14ExecuteProgramEiPKvm", "end this program and start another of the application (the front end starts it: DM_EXEC_OUT); never returns", void, h_oe_ExecProgram, int index, const void *param, size_t n) { dm_oe_execute(index, param, n); }
+// (both on the big host stack: they log and write a file on the game's thread, whose stack may be nearly used up)
+HLE_FORCE_BIG("_ZN2nn2oe14ExecuteProgramEiPKvm", "end this program and start another of the application (the front end starts it: DM_EXEC_OUT); never returns", void, h_oe_ExecProgram, int index, const void *param, size_t n) { dm_oe_execute(index, param, n); }
 // Super Smash Bros. Ultimate 13.0.5 calls it after Options > Language > Yes ("the software will restart"), once the new language is saved. The SDK asks the am application proxy, which the
 // host never opens: applet::RequestToLaunchApplication read through the null proxy (sdk+0x804c8, SIGSEGV at address 0)
-HLE_FORCE("_ZN2nn2oe28RequestToRelaunchApplicationEv", "end this application and start it again from its first program, no launch parameter (the front end starts it: DM_EXEC_OUT); never returns", void, h_oe_Relaunch, void) { oe_start(0, NULL, 0, 1); }
+HLE_FORCE_BIG("_ZN2nn2oe28RequestToRelaunchApplicationEv", "end this application and start it again from its first program, no launch parameter (the front end starts it: DM_EXEC_OUT); never returns", void, h_oe_Relaunch, void) { oe_start(0, NULL, 0, 1); }
 // A program this host cannot run (main.c: a game that renders with Vulkan on Android, which has no guest Vulkan yet): why goes to the log as a red line and to the front end with
 // the handoff; a program n > 0 of a multi-program application started by the front end hands over to its first program, as the game's own way back to it would (the player is
 // back in its menu and is told why), anything else ends here with die's message

@@ -14,6 +14,7 @@ static int observed_wait(pthread_cond_t *, pthread_mutex_t *);
 #include HLE_OE_SOURCE
 #undef pthread_cond_wait
 void dm_host_shutdown(const char *why) { (void)why; }   // oe::ExecuteProgram: not exercised here
+__asm__(".text\n.p2align 2\n.globl " PLAT_ASM_SYM(dm_bigstack_enter) "\n" PLAT_ASM_SYM(dm_bigstack_enter) ":\n    br x16\n");   // the big host stack (hle_bigstack.c) of hle_oe.c's ExecuteProgram: not exercised here
 static _Atomic int waiting, resumed, finish;
 static uint32_t message;
 static thr_t *notifier;

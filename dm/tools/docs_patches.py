@@ -225,7 +225,13 @@ SWITCH_BINDING = [
     ('jit_key_data', '', {'what': 'the bytes of a nn::jit request that make the request', 'now': 'game', 'goal': 'game', 'purpose': 'runtime', 'why': "the layout of the game's own request struct, for the image an iPhone serves"}),
     ('jit_route', '', {'what': 'a route for the nn::jit capture', 'now': 'game', 'goal': 'game', 'purpose': 'runtime', 'why': "the game's own menus, for the image an iPhone serves"}),
     ('jit_out_code', '', {'what': 'where a nn::jit output lists the code it made', 'now': 'game', 'goal': 'game', 'purpose': 'runtime', 'why': "the layout of the game's own output buffer, for the image an iPhone serves"}),
-    ('op_mode', '', {'what': 'the operation mode at start', 'now': 'game', 'goal': 'game', 'purpose': 'runtime', 'why': "the game's controls (handheld: the touch screen instead of a gyro pointer)"}),
+    ('launch_param', '', {'what': 'the launch parameter its launcher program passes', 'now': 'game', 'goal': 'game', 'purpose': 'runtime',
+     'why': "what another program of the application hands over with oe::ExecuteProgram, for one run alone"}),
+    ('programs', '', {'what': 'the other programs of a game of several programs', 'now': 'game', 'goal': 'game', 'purpose': 'runtime', 'why': 'which programs a game has that this host can run: a fact of its files, the profiles that exist for them'}),
+    ('program_of', '', {'what': 'the first program of the game this one belongs to', 'now': 'game', 'goal': 'game', 'purpose': 'runtime', 'why': 'as programs'}),
+    ('jit_key_data', '', {'what': 'the bytes of a nn::jit request that make the request', 'now': 'game', 'goal': 'game', 'purpose': 'runtime', 'why': "the layout of the game's own request struct, for the image an iPhone serves (upstream's)"}),
+    ('jit_route', '', {'what': 'a route for the nn::jit capture', 'now': 'game', 'goal': 'game', 'purpose': 'runtime', 'why': "the game's own menus, for the image an iPhone serves (upstream's)"}),
+    ('jit_out_code', '', {'what': 'where a nn::jit output lists the code it made', 'now': 'game', 'goal': 'game', 'purpose': 'runtime', 'why': "the layout of the game's own output buffer, for the image an iPhone serves (upstream's)"}),    ('op_mode', '', {'what': 'the operation mode at start', 'now': 'game', 'goal': 'game', 'purpose': 'runtime', 'why': "the game's controls (handheld: the touch screen instead of a gyro pointer)"}),
 ]
 
 
@@ -322,7 +328,7 @@ def shader_rules():   # (file, line, comment) of translator rules keyed by a sha
 
 
 def switches(gs):   # [(key, value, [games])] of every profile key set away from its default in game.py
-    src = (REPO / 'dm/games/game.py').read_text(); src = src[src.find('def header('):]; src = re.split(r'\n(?=\S)', src)[0]   # the keys the host's header takes (to the next top-level line)
+    src = (REPO / 'dm/games/game.py').read_text(); src = '\n'.join(re.split(r'\n(?=\S)', src[src.find(f'def {fn}('):])[0] for fn in ('header', 'header_one'))   # the keys the host's header takes (header, and header_one: one profile's; each to the next top-level line)
     defaults = {}
     for k, d in re.findall(r'g\.(?:get|words)\(\s*[\'"](\w+)[\'"]\s*,\s*[\'"]([^\'"]*)[\'"]\s*\)', src): defaults.setdefault(k, d)
     out = {}

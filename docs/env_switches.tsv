@@ -65,6 +65,7 @@ DM_ENTITLEMENTS	path	`=<plist>` gives a prepared Xcode project another entitleme
 DM_ENV_FILE	path	`=<file>` makes `build_ipa.sh` bake its `KEY=VALUE` lines into the app as `dm/env.txt`, applied at boot; `Documents/env.txt` overrides them
 DM_ENV_FILE_KEYS	switch	Set by the iOS app and the Mac launcher at launch to the space-separated names an env file set; the settings screen keeps those values and shows them greyed out
 DM_ENV_LAUNCH_KEYS	switch	Set at launch by the Mac launcher (the launcher settings already in the environment) and the iOS app (every DM_* variable already in it) to the space-separated names; the settings screen keeps those values and shows them greyed out
+DM_EXEC_OUT	path	File `oe::ExecuteProgram` and `RequestToRelaunchApplication` record the next program in (4 bytes of index, then the launch parameters) before the program ends (`hle_oe.c`); the Android launcher sets it for every game and starts that program (`ProgramSwitch.java`)
 DM_FASTBOOT	switch	`1` (test runs) sets the game profile's `fastboot_env` switches that are not set already: for Donkey Kong Bananza, A every 12 presented frames from the first one, `DM_MARK_DRAWS=3000` and `DM_MARK_KEYS_STOP=1`, so a run reaches the first level as fast as the game allows and logs when (android/TESTING.md, Fast test runs)
 DM_FD_LOG	diagnostic	`=<seconds>` logs, every that many seconds, the number and kinds of file descriptors the process has open
 DM_FIXED_TIME	switch	`=<seconds>`: the user clock always returns that time and the host time zone is pinned to UTC, for deterministic comparison
@@ -121,6 +122,7 @@ DM_KBD_PLAYER	switch	`own` makes the Mac keyboard player 1 on its own, with cont
 DM_KEYS	switch	Scripted input: `<seconds or f<frame>>:<key>[+key][~hold or ~f<frames>][*count/interval],…` presses buttons, sticks, touches and `Shake` at those times; `=@<file>` reads the steps from the file
 DM_LANG	player	Game language as a language code (default `en-US`): a console code (`ja`, `en-US`, `en-GB`, `fr`, `fr-CA`, `de`, `it`, `es`, `es-419`, `nl`, `pt`, `pt-BR`, `ru`, `ko`, `zh-Hans`, `zh-Hant`, `pl`, `th`) or a BCP-47 tag mapped to one (`fr-FR` is `fr`; `hle_oe.c` `dm_lang_code`); the Android launcher sets the phone's language or Game settings › Game language, the iOS app the one the IPA was packed with
 DM_LAUNCHER	switch	`0` skips the iOS settings screen or the Mac settings window and starts the game at once, with the saved choices (on the Mac also `--no-launcher`)
+DM_LAUNCH_PARAM	path	Set by the Android launcher on a program switch: the file whose bytes `oe::TryPopLaunchParameter` hands the program once (the parameters the program before passed to `oe::ExecuteProgram`)
 DM_LINK_VTICK	switch	`0` keeps the system's display-link rate on 144 or 165 Hz Mac screens; by default the link counts only the refreshes nearest a steady 1/60 s clock
 DM_LOADHASH	diagnostic	`=1` logs an address-independent SHA-256 per module after loading
 DM_LONGFRAME	diagnostic	`0` turns off the long-frame log (on by default), a line for a frame over 20 ms or with GPU time over 16.7 ms that is clearly above recent frames
@@ -342,6 +344,7 @@ DM_PRESENT_LATENCY	switch	`=1` or `2`: overrides the display link's preferred fr
 DM_PRESENT_LINK	switch	Present pacing: `0` acquires the drawable itself, `1` (the default) presents on a 60 Hz display link, `2` uses a 120 Hz display link with a frame every other tick
 DM_PRESENT_SNAP	player	`=<n>`: present snapshots, a ring of n host textures (2 to 4; `1` = 2) the presents are copied to so the game's swapchain texture is free at once; `0` off (default: the profile's `present_snap`)
 DM_PRESENT_UPSCALE	player	`metalfx` scales a picture smaller than its rectangle on the screen through MetalFX's spatial scaler; `off` (the default) scales it bilinearly
+DM_PREV_PROGRAM	switch	Set by the Android launcher on a program switch: the program that started this one, which `oe::GetPreviousProgramIndex` returns (-1 without it, launched from HOME); `DM_CTL` then starts at the end of its file
 DM_PROBE	diagnostic	`=module:offset,…` (Mac only): puts a `brk` at each guest address and on every hit prints the thread, registers, strings they point to and a backtrace, then runs the original instruction
 DM_PROBE_ALL	diagnostic	Set: probe hits (`DM_PROBE`) also print x8–x18
 DM_PROBE_DUMP	diagnostic	`=module:offset:length[:file]`: on the first hit of any probe, writes that range of guest memory to a file (default `run/<platform>/probe_dump.bin`)
@@ -357,6 +360,7 @@ DM_PROBE_LIVE	diagnostic	`=<hex offset>[?x<n>=<hex>][,…]` into `main` (with `D
 DM_PROBE_POLL	diagnostic	`=<address>[+<length>]` (hex, 4 bytes by default, up to 8): a host thread spins on the bytes and on each change snapshots every thread's pc, lr and frames, for writes the watch misses
 DM_PROBE_WATCH	diagnostic	`=<address>[+<length>]` (hex, 8 bytes by default): write-protects that host page and reports who writes these bytes, without a debugger
 DM_PROBE_X2	diagnostic	`=<bytes>` (hex): probe hits also dump that many bytes of the memory x2 points to
+DM_PROGRAM	switch	The program a host built over a game of several programs runs (`game.py` `header_multi`, `main.c` `dm_game_cur`; default 0, the first); the Android launcher sets it on a program switch, with the pack's `p<n>/` folder
 DM_PROGRAM_ID	switch	`=<hex>`: the program ID the host reports from `svcGetInfo(ProgramId)` (default: the profile's `program_id`)
 DM_PSO_ARCHIVE	path	The folder of the per-game Metal 4 pipeline archive of pipeline bases (default `pso_archive/` beside `pso_user.tsv`); `off` keeps no archive
 DM_PSO_BUNDLE	path	The pipeline archive made offline (`<GPU architecture>.mtl4a`, `prebuilt.tsv`), read only; the iOS app and Mac launcher set it to their `pso/` folder; `off` ignores it
@@ -379,6 +383,7 @@ DM_QOS_EDGES	switch	`=e1,e2`: the Switch priority edges of `DM_QOS_MAP` (default
 DM_QOS_MAP	switch	`=1` maps guest thread priority to QoS class: ≤ 44 user-interactive, 45–59 user-initiated, the rest utility (off by default: every guest thread runs user-interactive)
 DM_REC	diagnostic	`=<file>`: writes player 1's physical input (keyboard, mouse touches, controllers; never `DM_KEYS` / `DM_CTL`) to the file as `DM_KEYS` steps in presented frames, for replaying a run (`DM_KEYS=@<file>`)
 DM_REGIONS	diagnostic	`=<file>` writes the table of the SDK's address regions every 2 s (alias offset, size, where the request returns to in the game, bytes mapped, the part opened, the SDK offset the request came through; `hle_svc.c` "Address regions"); the NSP script's address region check sets it
+DM_RELAUNCH	switch	Set by the Android launcher when the game restarted itself (`oe::RequestToRelaunchApplication`): `DM_CTL` starts at the end of its file
 DM_RENDER_PCT	player	For a game with a profile `render_cfg` row: `33`, `50`, `59`, `67` or `100`, the render size in percent of the output its upscaler takes it to (33 exactly 1/3, 67 exactly 2/3, 100 the output itself; each side rounded to even, 1/3 rounded down), capped at the row's `max_render` (or a profile `rt_pool` row's when its larger pool was written, `DM_RT_POOL_MB`) with the output's aspect kept; unset `50` (`hle_render.c`)
 DM_RENDER_SCALE	player	`0.5` to `1.0`: fixes the game's 3D views at that fraction of their size and turns its dynamic resolution off, for builds with a render scale stub; `1.0` (the default) keeps it.
 DM_RENDER_UNCAPPED	diagnostic	`=1`: for a game with a profile `render_cfg` row, render sizes above the row's `max_render` are written as they are (a pool stress run; `hle_render.c`)
