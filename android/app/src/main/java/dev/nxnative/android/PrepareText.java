@@ -166,11 +166,6 @@ final class PrepareText {
         return Words.s("prepare_keeping_the_shaders_already_transl", "Keeping the shaders already translated") + (total > 0 ? String.format(Locale.getDefault(), ": %,d of %,d", Math.min(done, total), total) : "");
     }
 
-    /**
-     * A step and its count from the tool's progress lines (Job.stepText; not the shaders step's, which counts shaders). The split counts the dump's files it
-     * reads, not shaders (shader_split.py's "progress: <files done>/<files>"), so its count says so: "Finding the shaders: 1,203 of 1,890 files". part: the
-     * tool's "<n>%" inside a large file, added as "(40 % of a large file)"
-     */
     /** A step's count alone, for after its stage text (withNote): "203 of 1,442 files", "40 % of a large file"; "" while it has none */
     static String countText(boolean files, long done, long total, String part) {
         String c = total > 0 ? String.format(Locale.getDefault(), files ? "%,d of %,d " + (total == 1 ? "file" : "files") : "%,d / %,d", done, total) : "";
@@ -178,6 +173,11 @@ final class PrepareText {
         return c.isEmpty() ? p : p.isEmpty() ? c : c + " (" + p + ")";
     }
 
+    /**
+     * A step and its count from the tool's progress lines (Job.stepText; not the shaders step's, which counts shaders). The split counts the dump's files it
+     * reads, not shaders (shader_split.py's "progress: <files done>/<files>"), so its count says so: "Finding the shaders: 1,203 of 1,890 files". part: the
+     * tool's "<n>%" inside a large file, added as "(40 % of a large file)"
+     */
     static String stepCountText(String step, boolean files, long done, long total, String part) {
         String count = files ? (total > 0 ? String.format(Locale.getDefault(), ": %,d of %,d %s", done, total, total == 1 ? "file" : "files") : "")
                 : total > 1 ? String.format(Locale.getDefault(), " %,d / %,d", done, total) : total == 1 || done == 0 ? "" : String.format(Locale.getDefault(), " %,d", done);

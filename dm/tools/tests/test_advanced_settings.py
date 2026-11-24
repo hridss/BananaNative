@@ -1,6 +1,7 @@
 """docs/advanced_settings.tsv keeps a player-facing row for every switch of docs/env_switches.tsv (dm/tools/advanced_switches.py): a new DM_ switch cannot ship without a
 tier, and a friendly or advanced row cannot ship without a label and a "try this if" line."""
 from pathlib import Path
+import subprocess
 import sys
 import unittest
 
@@ -34,6 +35,10 @@ class AdvancedSettings(unittest.TestCase):
         bad = A.problems(A.load(), A.read_env(), keys, ids, A.java_strings(), wp.read_text() if wp.exists() else '')
         self.assertEqual(bad, [])
         self.assertEqual((A.TABLE).read_text(), A.text(A.load()), 'run dm/tools/advanced_switches.py')
+
+    def test_cli_check_passes_standalone(self):
+        r = subprocess.run([sys.executable, str(REPO / 'dm/tools/advanced_switches.py'), '--check'], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
 
     def test_missing_and_extra_rows_fail(self):
         self.assertEqual(A.problems([row('DM_A'), row('DM_B'), row('DM_P')], ENV), [])

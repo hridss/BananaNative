@@ -178,11 +178,6 @@ public final class GameListJvmTest {
         check(op.romfs(ounce) != null && op.romfs(ounce).getPath().endsWith("base/program/0/romfs".replace('/', File.separatorChar)), "ouncecake: the RomFS without pack.tsv's " + op.romfs(ounce));
     }
 
-    /**
-     * A build is its code, not its version number (Mario Kart World "1.8.1" that is 1.8.0's code): a dump whose modules have the supported build's IDs under
-     * another version number is that build. Prepare starts from it (DumpLayout.find, with the profile build it is), and the 1.8.0 pack (version 0) plays it as it
-     * is: the card's build check passes and the RomFS is that version's (its own, else the base's). Another build ID under any number is still refused
-     */
     /** A folder dump's .nup, in a folder of its own: .nup files of one game beside each other find each other (an update .nup, a DLC), and these fixtures are not parts of one game */
     static File alone(File root, File folder) {
         File d = new File(root, "nup-" + folder.getName());
@@ -190,6 +185,11 @@ public final class GameListJvmTest {
         return new File(d, folder.getName() + ".nup");
     }
 
+    /**
+     * A build is its code, not its version number (Mario Kart World "1.8.1" that is 1.8.0's code): a dump whose modules have the supported build's IDs under
+     * another version number is that build. Prepare starts from it (DumpLayout.find, with the profile build it is), and the 1.8.0 pack (version 0) plays it as it
+     * is: the card's build check passes and the RomFS is that version's (its own, else the base's). Another build ID under any number is still refused
+     */
     static void sameBuildOtherVersion(File repo, File run, String python, File root, File otherCode, File otherBoth) throws Exception {
         Pack v0 = pack(new File(run, "pack-v0"), FIX2, "0", "main=" + id(11), "sdk=" + id(3));
         // "1.8.1" alone: an update package with 1.8.0's modules and its own RomFS

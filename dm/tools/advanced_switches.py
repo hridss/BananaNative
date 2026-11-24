@@ -106,9 +106,32 @@ def profile_keys():
     return keys, ids
 
 
+def _xml_strings():
+    """English string resources keyed by R.string name, for standalone CLI --check runs without javatext."""
+    xml_path = REPO / 'android/app/src/main/res/values/strings.xml'
+    if not xml_path.is_file():
+        return {}
+    xml = xml_path.read_text(encoding='utf-8', errors='replace')
+    assert len(xml) > 0, 'strings.xml is empty'
+    out = {}
+    for k, v in re.findall(r'<string name="([A-Za-z0-9_]+)"[^>]*>(.*?)</string>', xml, re.S):
+        s = v.strip()
+        if len(s) > 1 and s[0] == '"' and s[-1] == '"':
+            s = s[1:-1]
+        out[k] = s.replace("\\'", "'").replace('&lt;', '<').replace('&gt;', '>').replace('&amp;', '&').replace('"', '\\"')
+    assert len(out) > 0 or '<string ' not in xml, 'failed to parse strings.xml'
+    return out
+
+
 def java_strings():
+    strings = _xml_strings()
     out = []
-    for p in (REPO / 'android/app/src/main/java').rglob('*.java'): out.append(p.read_text(errors='replace'))
+    for p in (REPO / 'android/app/src/main/java').rglob('*.java'):
+        src = p.read_text(errors='replace')
+        if strings:
+            src = re.sub(r'Tx\.s\((?:dev\.nxnative\.android\.)?R\.string\.(\w+)\)', lambda m: '"' + strings.get(m.group(1), m.group(1)) + '"', src)
+            src = re.sub(r'Tx\.s\((?:dev\.nxnative\.android\.)?R\.string\.(\w+),', lambda m: 'Tx.s("' + strings.get(m.group(1), m.group(1)) + '",', src)
+        out.append(src)
     return '\n'.join(out)
 
 

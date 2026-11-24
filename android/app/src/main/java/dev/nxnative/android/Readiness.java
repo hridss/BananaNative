@@ -181,7 +181,6 @@ final class Readiness {
         return new Check(Words.s("ready_status_on_android", "Status on Android"), Status.INFO, status, null);
     }
 
-    /** Of a game's environment (KEY=VALUE, in start's order), the lines that pick its GPU driver: what the readiness facts must be read on */
     /**
      * The game's environment for the check, as start() will set it (KEY=VALUE lines in start's order, the last of a key winning), less the keys in skip (the paths
      * start sets itself). A driver reads some variables once, when its first device is made (Mesa's FD_DEV_FEATURES, TU_DEBUG): the check makes that device in the

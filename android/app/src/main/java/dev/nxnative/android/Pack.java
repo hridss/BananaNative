@@ -434,14 +434,6 @@ final class Pack {
         return false;
     }
 
-    /**
-     * The links GameActivity makes in DM_AOC_DIR (hle_fs.c aoc_dir), link name → target. A folder game: &lt;index&gt; → its DLC's RomFS folder in the game
-     * folder, for each aoc row whose folder is there (as before). A .nup game: &lt;index&gt;.nup → a .nup file (the host picks the addon package by the index,
-     * NUP.md), for each aoc row: the game's own .nup when it has that addon, else the .nup the row names (relative to the folder holding the game) when it is
-     * there and has it, else no link: the game runs without that DLC, and skipped (when not null) gets a line naming it. The game's own .nup used to be linked
-     * for a row it had no addon for (a pack made from a folder, or from another .nup with the DLC): the host reported the DLC as owned and stopped at its
-     * mount (Forgejo #30, docs/reference/packing.md)
-     */
     /** Makes a symbolic link (GameActivity: Os.symlink, its errno in the message; the JVM tests: Files.createSymbolicLink) */
     interface Linker { void link(String target, String path) throws IOException; }
 
@@ -467,6 +459,14 @@ final class Pack {
         dir.delete();
     }
 
+    /**
+     * The links GameActivity makes in DM_AOC_DIR (hle_fs.c aoc_dir), link name → target. A folder game: &lt;index&gt; → its DLC's RomFS folder in the game
+     * folder, for each aoc row whose folder is there (as before). A .nup game: &lt;index&gt;.nup → a .nup file (the host picks the addon package by the index,
+     * NUP.md), for each aoc row: the game's own .nup when it has that addon, else the .nup the row names (relative to the folder holding the game) when it is
+     * there and has it, else no link: the game runs without that DLC, and skipped (when not null) gets a line naming it. The game's own .nup used to be linked
+     * for a row it had no addon for (a pack made from a folder, or from another .nup with the DLC): the host reported the DLC as owned and stopped at its
+     * mount (Forgejo #30, docs/reference/packing.md)
+     */
     Map<String, String> aocLinks(File game) { return aocLinks(game, null); }
 
     Map<String, String> aocLinks(File game, List<String> skipped) {
