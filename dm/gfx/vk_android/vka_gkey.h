@@ -13,6 +13,6 @@ typedef struct {   // what a graphics pipeline is made from beyond its shaders a
     struct { uint8_t en, src, dst, op, srca, dsta, opa, mask; } att[8];
     uint32_t vin_static;              // no vertex input dynamic state: the attributes and bindings below are part of the pipeline
     struct { uint32_t fmt, offset; uint8_t binding, used, pad[2]; } va[32];   // by location
-    struct { uint32_t stride, divisor; uint8_t used, pad[3]; } vb[33];         // by binding (stream; 32 = the zero buffer of inputs no attribute feeds)
+    struct { uint32_t stride, divisor; uint8_t used, pad[3]; } vb[33];         // by binding (stream; VI.zb = the default buffer of inputs no attribute feeds, vka_vdef.h)
 } vka_gkey;
 #endif

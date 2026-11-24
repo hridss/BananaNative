@@ -17,6 +17,7 @@
 #include "vka_prepass.h"
 #include "vka_wbfollow.h"
 #include "vka_rplist.h"
+#include "vka_vdef.h"
 #include <math.h>
 #include <stdio.h>
 #include <stddef.h>
@@ -100,7 +101,7 @@ int vka_state_op(vka_dstate *d, uint32_t op, const void *a) {
         }
         break; }
     case OP_BIND_VATTR: { const p_bind_vattr *b = a; d->s_vfmt = vka_stamp();
-        // The bind replaces the attribute state, as the Metal backend does (S.nattr = b->n): shader inputs past its count read the zero buffer (vin_build).
+        // The bind replaces the attribute state, as the Metal backend does (S.nattr = b->n): shader inputs past its count read NVN's default attribute (vin_build).
         // Merging kept the attributes past the count from earlier binds, so such an input read another mesh's format and offset from this mesh's stream.
         if (b->first >= 0 && b->first + b->n <= 32) {   // NVN2: 32 attributes
             if (g_vattr_clear) { memset(d->attr, 0, sizeof d->attr); d->nattr = 0; }
@@ -145,12 +146,12 @@ int vka_state_op(vka_dstate *d, uint32_t op, const void *a) {
     return 1;
 }
 
-// ---------- Static buffers: zeros, a write sink, the support buffer ----------
-static vka_span g_zero, g_sink, g_support;
+// ---------- Static buffers: zeros, a write sink, the support buffer, absent vertex inputs' defaults ----------
+static vka_span g_zero, g_sink, g_support, g_vdef;   // g_vdef: vka_vdef.h (vin_build); g_zero stays all zero for the unbound descriptors and streams
 static int statics(void) {
     static int ok = -1; if (ok >= 0) return ok;
-    ok = vka_static(65536, V.ub_align > V.sb_align ? V.ub_align : V.sb_align, &g_zero) && vka_static(65536, V.sb_align, &g_sink) && vka_static(VKA_SUPPORT_SIZE, V.ub_align, &g_support);
-    if (ok) { memset(g_zero.ptr, 0, 65536); memset(g_sink.ptr, 0, 65536); vka_support_fill(g_support.ptr, VKA_SUPPORT_SIZE); }
+    ok = vka_static(65536, V.ub_align > V.sb_align ? V.ub_align : V.sb_align, &g_zero) && vka_static(65536, V.sb_align, &g_sink) && vka_static(VKA_SUPPORT_SIZE, V.ub_align, &g_support) && vka_static(VKA_VDEF_SIZE, 16, &g_vdef);
+    if (ok) { memset(g_zero.ptr, 0, 65536); memset(g_sink.ptr, 0, 65536); vka_support_fill(g_support.ptr, VKA_SUPPORT_SIZE); vka_vdef_fill(g_vdef.ptr); }
     return ok;
 }
 
@@ -1743,25 +1744,27 @@ static int resolve(const prog_t *p, int st, vka_shader **out, unsigned *bad) {
     if (ps.bad & (1u << st | VKA_BAD_MISSING)) { *bad |= 1u << st | (ps.bad & VKA_BAD_MISSING); return 1; }   // (VKA_BAD_MISSING kept: not the device's cause)
     *out = ps.sh[st]; return 1;
 }
-// Vertex input: an attribute per input location the vertex shader reads (Location = NVN attribute index), each from its stream; an input no attribute feeds reads a zero buffer.
+// Vertex input: an attribute per input location the vertex shader reads (Location = NVN attribute index), each from its stream; an input no attribute feeds reads the
+// default buffer (vka_vdef.h, at binding VI.zb with stride 0): (0, 0, 0, 1.0) as raw words when the attribute is absent, zeros when its format is not mapped.
 // With VK_EXT_vertex_input_dynamic_state the descriptions are set per draw, else they go into the pipeline key
 static struct { VkVertexInputBindingDescription2EXT b[33]; VkVertexInputAttributeDescription2EXT a[32]; uint32_t nb, na, used, zb; int zero; } VI;
 static uint32_t g_vi_ser;   // raised at each vin_build: VI may have changed
 static void vin_build(const vka_dstate *d, const vka_shader *vs, vka_gkey *k) {
     VI.nb = VI.na = VI.used = 0; VI.zero = 0; g_vi_ser++;
-    VI.zb = V.max_vin_bindings > 32 ? 31 : V.max_vin_bindings > 16 ? V.max_vin_bindings - 1 : 15;   // the zero buffer's binding: past the 16 streams when the device has room
+    VI.zb = V.max_vin_bindings > 32 ? 31 : V.max_vin_bindings > 16 ? V.max_vin_bindings - 1 : 15;   // the default buffer's binding: past the 16 streams when the device has room
     for (uint32_t loc = 0; loc < 32; loc++) {
         if (!(vs->e->vin_mask >> loc & 1)) continue;
         int want = (int)(vs->e->vin_types >> (2 * loc) & 3), changed = 0, retype = 0;
         const va_st *a = (int)loc < d->nattr ? &d->attr[loc] : NULL;
         VkFormat f = a && a->fmt ? vin_format(a->fmt, want, &changed, &retype) : VK_FORMAT_UNDEFINED;
         if (retype == DMSH_VK_TYPE_UINT) k->vin_u |= 1u << loc; else if (retype == DMSH_VK_TYPE_SINT) k->vin_s |= 1u << loc;
-        if (a && a->fmt && !f) { static _Atomic int n; if (atomic_fetch_add(&n, 1) < 4) VRED("vertex attribute format %#x is not mapped: the input reads zeros", a->fmt); }
+        if (a && a->fmt && !f) { static _Atomic int n; if (atomic_fetch_add(&n, 1) < 4) VRED("vertex attribute format %#x is not mapped: the input reads zeros", a->fmt); }   // (absent: (0, 0, 0, 1.0))
         if (changed) { static uint64_t seen[4]; unsigned b = a->fmt & 255; if (!(seen[b >> 6] >> (b & 63) & 1)) { seen[b >> 6] |= 1ull << (b & 63);
             VRED("vertex attribute format %#x feeds a %s input: bound as VkFormat %d of that class (values may differ from Maxwell's fetch)", a->fmt, want == 0 ? "float" : want == 1 ? "sint" : "uint", f); } }
         if (!f) {
             f = want == DMSH_VK_TYPE_UINT ? VK_FORMAT_R32G32B32A32_UINT : want == DMSH_VK_TYPE_SINT ? VK_FORMAT_R32G32B32A32_SINT : VK_FORMAT_R32G32B32A32_SFLOAT;
-            VI.a[VI.na++] = (VkVertexInputAttributeDescription2EXT){VK_STRUCTURE_TYPE_VERTEX_INPUT_ATTRIBUTE_DESCRIPTION_2_EXT, NULL, loc, VI.zb, f, 0};
+            // 4 x 32 bits of the input's type: the words unchanged (W = 0x3f800000 for integer inputs too, vka_vdef.h)
+            VI.a[VI.na++] = (VkVertexInputAttributeDescription2EXT){VK_STRUCTURE_TYPE_VERTEX_INPUT_ATTRIBUTE_DESCRIPTION_2_EXT, NULL, loc, VI.zb, f, vka_vdef_offset(a ? a->fmt : 0)};
             VI.zero = 1; continue;
         }
         uint32_t st = a->stream & 15;
@@ -1810,7 +1813,7 @@ static void vin_bind(const vka_dstate *d) {
                     if (run) { b = cb; o = co; sz = run; } else VRED_ONCE("vertex stream at %#llx is not in placed guest RAM: it reads zeros", (unsigned long long)addr); }
         vb_set(st, b, o, sz, &n0, &nn, rb, ro, rs);
     }
-    if (VI.zero) vb_set(VI.zb, g_zero.buf, g_zero.off, 65536, &n0, &nn, rb, ro, rs);
+    if (VI.zero) vb_set(VI.zb, g_vdef.buf, g_vdef.off, VKA_VDEF_SIZE, &n0, &nn, rb, ro, rs);
     if (nn) vk.vkCmdBindVertexBuffers2(g_cb, n0, nn, rb, ro, rs, NULL);
     VB.valid = 1;
 }
