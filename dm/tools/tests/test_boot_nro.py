@@ -72,6 +72,26 @@ class BootNro(unittest.TestCase):
         img, table = self.image(chunks, parts)
         self.assertEqual(boot_nro.decode(img, 0x40, table, parts), b''.join(chunks))
 
+    def test_stream_ends_through_relocations(self):
+        # Mario Golf: Super Rush 4.0.0: the ends are GOT slots that R_AARCH64_RELATIVE relocations fill, 0 in the image
+        parts = [(0x68, 0x0d, 0x34414e5b, None), (0x70, 0x0e, 0x38465462, None), (0x78, 0x0f, 0x3c4b5a69, 0x76)]
+        chunks = [b'NRO header and code ' * 5, b'abcdabcdabcdXYZ' * 7, b'tail of the module' * 3]
+        img, table = self.image(chunks, parts)
+        ends = {table + 8 * i: struct.unpack_from('<Q', img, table + 8 * i)[0] for i in range(3)}
+        zeroed = img[:table] + bytes(24)
+        self.assertEqual(boot_nro.decode(zeroed, 0x40, table, parts, ends), b''.join(chunks))
+        with self.assertRaises(boot_nro.Error): boot_nro.decode(zeroed, 0x40, table, parts)
+
+    def test_relative_relocs(self):
+        # a minimal module: MOD0 at 0x10, its dynamic table with DT_RELA / DT_RELASZ, two relocations (RELATIVE and GLOB_DAT)
+        img = bytearray(0x200)
+        struct.pack_into('<I', img, 4, 0x10); img[0x10:0x14] = b'MOD0'; struct.pack_into('<i', img, 0x14, 0x40 - 0x10)
+        struct.pack_into('<qQqQqQqQ', img, 0x40, 7, 0x100, 8, 48, 0, 0, 0, 0)
+        struct.pack_into('<QQq', img, 0x100, 0x1d0, 1027, 0x1234)
+        struct.pack_into('<QQq', img, 0x118, 0x1d8, 1025 | 1 << 32, 0)
+        self.assertEqual(boot_nro.relative_relocs(bytes(img)), {0x1d0: 0x1234})
+        self.assertEqual(boot_nro.relative_relocs(bytes(0x40)), {})
+
     def test_wrong_size_is_an_error(self):
         parts = [(0x68, 0x0d, 0x34414e5b, None)]
         img, table = self.image([b'0123456789' * 5], parts)

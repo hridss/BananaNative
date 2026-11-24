@@ -15,6 +15,11 @@ The decoding of one part (main+0xde0 and its five siblings, 1.1.1):
 Checked: the six parts of 1.1.1's main make the NRO that nxnative's Mac host captured (DM_NRO_CAPTURE), byte for byte: SHA-256 1ec347bc…ce975, the hash the NRR
 registers. nro_collect.py keeps a decoded NRO only when an NRR registers its SHA-256.
 
+Mario Golf: Super Rush's main (0100C9C00E25C000, 4.0.0) is the same engine's stub with three threads (main+0xa54, +0xc84, +0xe9c, started by nnMain at main+0x600): the
+first three parts' constants of Mario Tennis Fever, the third with the MT19937 layer (seed 0x76, after a first seeding with 0x1571 that it seeds over). Its stream ends are
+GOT slots (main+0x910d10, +0x910d18, +0x910d20) that R_AARCH64_RELATIVE relocations fill, so the image holds 0 there: a slot is read through the module's relocations.
+Checked: the three parts make an NRO of 11,202,560 bytes, SHA-256 d5dc317e…31c14, the hash its NRR registers.
+
 The constants and the table's address are per build (BUILDS, keyed by main's build ID): a build not listed is not decoded."""
 import os, struct, sys
 
@@ -26,6 +31,8 @@ BUILDS = {
     '104bce6874603701935eb76cb7d8b59e': ('Mario Tennis Fever 1.1.1 (v327680)', 0xcd6e0,
                                          [(0x68, 0x0d, 0x34414e5b, None), (0x70, 0x0e, 0x38465462, None), (0x78, 0x0f, 0x3c4b5a69, None),
                                           (0x80, 0x10, 0x40506070, None), (0x88, 0x11, 0x44556677, None), (0x90, 0x12, 0x485a6c7e, 0x76)]),
+    'c83882f4352bc4d9bba8e0907a414c46': ('Mario Golf: Super Rush 4.0.0 (v262144)', 0x910d10,
+                                         [(0x68, 0x0d, 0x34414e5b, None), (0x70, 0x0e, 0x38465462, None), (0x78, 0x0f, 0x3c4b5a69, 0x76)]),
 }
 MT_UNUSED = 4   # MT19937 outputs the last part draws before its size
 
@@ -69,12 +76,32 @@ def part_size(img, end, xor, mt=None):
     return w ^ xor
 
 
-def decode(img, lo, table, parts):
-    """The NRO the parts make: [(key0, step, size XOR, MT seed)] with their stream ends in img at table, table + 8, … Part 0's stream starts at lo (the data segment), each
-    other part's after the previous part's end"""
-    out = bytearray()
+def relative_relocs(img):
+    """{offset: addend} of the module's R_AARCH64_RELATIVE relocations (its image as loaded at 0); {} for an image without MOD0"""
+    try:
+        mod0 = struct.unpack_from('<I', img, 4)[0]
+        if img[mod0:mod0 + 4] != b'MOD0': return {}
+        p, d = mod0 + struct.unpack_from('<i', img, mod0 + 4)[0], {}
+        while True:
+            t, v = struct.unpack_from('<qQ', img, p); p += 16
+            if t == 0: break
+            d.setdefault(t, v)
+        rela, size = d.get(7), d.get(8, 0)   # DT_RELA, DT_RELASZ
+        if rela is None: return {}
+        out = {}
+        for q in range(rela, rela + size, 24):
+            off, info, add = struct.unpack_from('<QQq', img, q)
+            if info & 0xffffffff == 1027: out[off] = add   # R_AARCH64_RELATIVE
+        return out
+    except struct.error: return {}
+
+
+def decode(img, lo, table, parts, relocs=None):
+    """The NRO the parts make: [(key0, step, size XOR, MT seed)] with their stream ends in img at table, table + 8, … (a slot a relocation fills is read through relocs,
+    relative_relocs). Part 0's stream starts at lo (the data segment), each other part's after the previous part's end"""
+    out = bytearray(); relocs = relocs or {}
     for i, (key0, step, xor, seed) in enumerate(parts):
-        end = struct.unpack_from('<Q', img, table + 8 * i)[0]
+        end = relocs.get(table + 8 * i, struct.unpack_from('<Q', img, table + 8 * i)[0])
         mt = None
         if seed is not None:
             mt = mt19937(seed)
@@ -97,7 +124,7 @@ def nros(data, name='module'):
     import nso
     m = nso.load(data, name)
     where, table, parts = BUILDS[b]
-    return [(f'{os.path.basename(name)} boot stub ({where})', decode(m.image, m.segments[2][0], table, parts))]
+    return [(f'{os.path.basename(name)} boot stub ({where})', decode(m.image, m.segments[2][0], table, parts, relative_relocs(m.image)))]
 
 
 if __name__ == '__main__':

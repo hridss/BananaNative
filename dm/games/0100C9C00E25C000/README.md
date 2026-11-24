@@ -20,7 +20,7 @@ No rewriter patch, no per-game host code. Outside the profile it needs open PR #
 
 ## Files
 
-- `main` is 2.3 MB of code. Upstream's note: the game's code is a 10.7 MB NRO in the RomFS (`.nrr` registers its hash), loaded at the start of `nnMain`; `nro_collect.py` finds loose NROs, and the split reads the archive's file table from the collected NROs (`DM_NRO_DIR`). Not checked here on the game's files.
+- `main` is 2.3 MB of code. **Current (2026-11-24):** it is a boot stub: the game's code, a 10.7 MB NRO (11,202,560 bytes, SHA-256 `d5dc317e…31c14`, which the RomFS's `.nrr` registers), is packed into `main`'s data segment in three parts, which three threads decode at the start of `nnMain` (main+0x600) before `nn::ro::LoadModule`; no RomFS file holds it. `boot_nro.py` decodes it for 4.0.0 (`main` c83882f4352bc4d9bba8e0907a414c46) and `nro_collect.py` collects it; the split reads the archive's file table from it (`DM_NRO_DIR`). Checked on the game's files, packed from an `.nx`.
 - The RomFS is `42` (3.8 GB, Camelot's CRA archive) and the NRR. `42` holds 5,101 files, listed only in the NRO, in the archive's 2021 layout: `dm/gfx/tools/cra.py` reads it ([One scrambled archive indexed by the NRO](../../../docs/reference/shaders.md#one-scrambled-archive-indexed-by-the-nro)).
 - Movies are VP9 at 1920x1080, which the game feeds the SDK's decoder in CPU mode (output format 4, NV12).
 
@@ -45,3 +45,4 @@ No rewriter patch, no per-game host code. Outside the profile it needs open PR #
 
 - [A Mii made in the editor's place](../../../docs/reference/services.md#a-mii-made-in-the-editors-place): Golf Adventure asks for a Mii and went back to its save slots at a cancel (upstream's run).
 - [One scrambled archive indexed by the NRO](../../../docs/reference/shaders.md#one-scrambled-archive-indexed-by-the-nro): the archive's older layout, which the split did not ask for.
+- [The game's code packed into `main` by a boot stub](../../../docs/reference/services.md#the-games-code-packed-into-main-by-a-boot-stub): resolved (2026-11-24). A pack stopped at `[RED] 1 registered NROs not found`: 4.0.0's build was not in `boot_nro.py`, and its stream ends are relocated GOT slots.
