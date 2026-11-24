@@ -466,7 +466,8 @@ VkSampler vka_samp_default(void);                   // the sampler an unbound sa
 typedef struct vka_shader {
     uint64_t key; const dmsh_vk_entry *e; const dmsh_vk_bind *b;
     const vka_shlib *lib;               // the library the entry is in (its header's translator answers; its other modules)
-    VkShaderModule mods[5];             // by DMSH_VK_MOD_* variant, made when a pipeline first asks (the base when the shader is made)
+    VkShaderModule mods[5];             // by DMSH_VK_MOD_* variant, made when a pipeline first asks (the base when the shader is made; MOD_DUAL from the base when the library has none)
+    int no_dual;                        // a pixel shader whose dual-source module could not be made from its base module (vka_shader_has_dual asks once)
     struct vka_vinmod *vin;             // vertex modules with integer-fed inputs retyped, by masks (vka_shader_vin_module)
     struct vka_vinmod *fout;            // pixel modules with float outputs retyped for integer targets, by masks (vka_shader_fout_module)
     vka_span c1; VkDeviceSize c1_len;   // the c1 bytes in static memory (none when c1_len is 0)
@@ -507,6 +508,7 @@ int vka_shader_memu_key(uint64_t key);      // key is no library entry but a tas
 uint32_t *vka_shader_memu_words(vka_shader *s, size_t *nb, char *err, size_t errn);   // a task / mesh shader's words for its compute form (vka_memu.c), malloc'd
 vka_shader *vka_shader_by_key(uint64_t key);   // the game library's shader of key (the library loaded first if needed); NULL = not there or refused
 VkShaderModule vka_shader_module(vka_shader *s, int variant);
+int vka_shader_has_dual(vka_shader *s);   // 1 when the pixel shader has a dual-source module (DMSH_VK_MOD_DUAL): the library's, or one made from its base module (vka_spv_dual_source; made here)
 vka_shader *vka_shader_remap(vka_shader *s, uint64_t map);   // a pixel shader with its inputs moved / made constant for another mesh module (vka_spv_input_remap), NULL = refused
 void vka_shader_pfb_hook(void);               // vka_dev.c, once the device's functions are loaded: modules made from then on report their pool reads (vka_tex_pfb_flags)
 VkShaderModule vka_shader_pfb_pick(VkShaderModule m, int a2c, int alpha_func);   // a pixel module given early tests, or its twin without them for a pipeline that needs late ones

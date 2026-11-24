@@ -103,7 +103,8 @@
 #define DMSH_VK_MOD_BASE 0
 #define DMSH_VK_MOD_UINT 1               // every colour output as the unsigned integer vector of its bits: for a pipeline whose colour attachments are all UINT formats
 #define DMSH_VK_MOD_UINT_MIXED 2         // only the targets of the entry's uint_mask as unsigned integers, the others float: for exactly those UINT attachments
-#define DMSH_VK_MOD_DUAL 3               // output 1 as Location 0 Index 1: for a pipeline blending target 0 with a SRC1 factor (dualSrcBlend); profile table dual_want.tsv
+#define DMSH_VK_MOD_DUAL 3               // output 1 as Location 0 Index 1: for a pipeline blending target 0 with a SRC1 factor (dualSrcBlend); built by older libraries
+                                         // for a profile's dual_want.tsv; the replay makes it from the base module when the library has none (vka_spv_dual_source)
 #define DMSH_VK_MOD_SHUFFLE_LDS 4        // compute: its 32-bit subgroup shuffles through workgroup memory (vk_android_spv.py shuffle_lds), for a driver without an arbitrary-index
                                          // shuffle instruction (Turnip makes each one a loop); its workgroup memory, with the rows this adds, is at most DMSH_VK_SHARED_MAX bytes
 // How a module is stored: the SPIR-V words as they are, or one zstd frame of them (about a fifth of the size; the replay links zstd's decompressor)

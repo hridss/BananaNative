@@ -526,7 +526,6 @@ def private_viewport_mask(m):
 OP_CONSTANT_TRUE, OP_CONSTANT_FALSE, OP_SPEC_CONSTANT, OP_CONSTANT_NULL = 41, 42, 50, 46
 OP_IEQUAL, OP_FORD_EQUAL, OP_FUNORD_NOT_EQUAL, OP_FORD_LESS, OP_FORD_GREATER, OP_FORD_LESS_EQUAL, OP_FORD_GREATER_EQUAL = 170, 180, 183, 184, 186, 188, 190
 OP_SELECTION_MERGE, OP_BRANCH_CONDITIONAL, OP_KILL = 247, 250, 252
-DEC_INDEX = 32
 
 
 def _float_vec(m, t):
@@ -647,19 +646,6 @@ def buffer_block_to_storage(m):
             x[1] = sb_ptr(x[1]); sb.add(x[2])
     m.index()
     return len(blocks)
-
-
-def dual_source(m):
-    """Dual-source blending (dmsh_build.py fs_dual): NVN's SRC1 factors read output 1 as target 0's second source; Vulkan reads it only from Location 0 Index 1. For a shader
-    writing exactly colours 0 and 1: output 1 moved to Location 0, Index 1. → True when rewritten"""
-    outs = m.io(SC_OUTPUT)
-    if sorted(outs) != [0, 1]: return False
-    var = outs[1][0]
-    for k, x in enumerate(m.ins):
-        if x[0] & 0xffff == OP_DECORATE and x[1] == var and x[2] == DEC_LOCATION:
-            x[3] = 0; m.ins.insert(k + 1, [4 << 16 | OP_DECORATE, var, DEC_INDEX, 1]); break
-    m.index()
-    return True
 
 
 ALPHA_CMP = {2: OP_FORD_LESS, 3: OP_FORD_EQUAL, 4: OP_FORD_LESS_EQUAL, 5: OP_FORD_GREATER, 6: OP_FUNORD_NOT_EQUAL, 7: OP_FORD_GREATER_EQUAL}   # NVN_ALPHA_FUNC_* → comparison of alpha with the reference

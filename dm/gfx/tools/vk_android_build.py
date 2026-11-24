@@ -367,8 +367,6 @@ for ln in open(MAP):
     c = ln.rstrip('\n').split('\t')
     if len(c) > 4 and c[0].endswith('.bin'): pc_of.setdefault(c[3], c[4]); loc.setdefault(c[3], (c[0], int(c[1])))
 PAIRS = NS['load_pairs'](GAME, dm_dir)
-_dw = GAME.table('dual_want.tsv')   # pixel shaders a pipeline blends with output 1 as the second source (dmsh_build.py DUAL_WANT, from the Mac host's DM_NVN_DUAL_WANT)
-DUAL_WANT = {l.split()[0] for l in open(_dw) if l.strip() and not l.lstrip().startswith('#')} if _dw.exists() else set()
 VS_OF = collections.defaultdict(set)
 for _v, _ps in PAIRS.items():
     for _p in _ps: VS_OF[_p].add(_v)
@@ -654,9 +652,10 @@ def finish(key, w, job, c1):
 
 
 def ps_variants(key, m):
-    """A pixel shader's extra modules (dmsh_build.py fs_uint / fs_dual on SPIR-V): MOD_UINT when it writes an output from integer bits or only constants (a clear into an
-    integer target), MOD_UINT_MIXED when it also writes float outputs (uint_mask: the integer ones), MOD_DUAL for the profile's dual_want.tsv shaders writing exactly
-    colours 0 and 1. → ([(variant, SPIR-V)], uint_mask)"""
+    """A pixel shader's extra modules (dmsh_build.py fs_uint on SPIR-V): MOD_UINT when it writes an output from integer bits or only constants (a clear into an integer
+    target), MOD_UINT_MIXED when it also writes float outputs (uint_mask: the integer ones). No MOD_DUAL: the replay makes the dual-source module from the base module
+    for any shader writing exactly colours 0 and 1 (vka_spvpatch.c vka_spv_dual_source), which the library would carry at a quarter of its size, and which a profile's
+    list (dual_want.tsv, the Metal path's) never named in full. → ([(variant, SPIR-V)], uint_mask)"""
     out, mask = [], 0
     fl = {l for l, (_, t) in m.io(spv.SC_OUTPUT).items() if not m.int_type(m.scalar_of(t))}
     from_int = spv.int_outputs(m) & fl
@@ -666,9 +665,6 @@ def ps_variants(key, m):
         if from_int and fl - from_int:
             u = spv.Module(m.data()); done = spv.retype_outputs(u, from_int)
             if done: out.append((VK['MOD_UINT_MIXED'], u.data())); mask = sum(1 << l for l in done if l < 8)
-    if key in DUAL_WANT:
-        d = spv.Module(m.data())
-        if spv.dual_source(d): out.append((VK['MOD_DUAL'], d.data()))
     return out, mask
 
 

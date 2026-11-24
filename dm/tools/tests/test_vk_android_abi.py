@@ -379,9 +379,6 @@ class Rewrites(unittest.TestCase):
         mx = spv.Module(m.data()); self.assertEqual(spv.retype_outputs(mx, {1}), [1])
         text = self.valid(mx)
         if text: self.assertIn('OpVariable %_ptr_Output_v4uint', text); self.assertIn('OpVariable %_ptr_Output_v4float', text)
-        d = spv.Module(m.data()); self.assertTrue(spv.dual_source(d))
-        text = self.valid(d)
-        if text: self.assertIn('Index 1', text)
         self.assertEqual(spv.const_written_outputs(self.module(FS.replace('OpStore %p %bits', 'OpStore %p %f1').replace('OpStore %p %back', ''))), {0, 1})
 
     def test_per_primitive_inputs(self):

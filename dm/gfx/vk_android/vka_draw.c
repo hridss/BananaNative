@@ -2598,7 +2598,8 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
     k.gl_depth = !vka_depth_zero();
     const vka_shader *fs = d->rast_discard ? NULL : sh[1];
     // The pixel shader's module (android/SHADERS.md "Variants"): MOD_UINT when every target it writes is a UINT attachment, MOD_UINT_MIXED when the UINT ones are exactly its
-    // uint_mask, MOD_DUAL when target 0 blends with a SRC1 factor; else the base. The alpha test is the base's specialization constant in every variant
+    // uint_mask, MOD_DUAL when target 0 blends with a SRC1 factor (the library's module, or one made from the base for a shader writing exactly colours 0 and 1:
+    // vka_shader_has_dual); else the base. The alpha test is the base's specialization constant in every variant
     uint32_t umask = 0, amask = 0;
     for (uint32_t i = 0; i < R.ncolor; i++) if (R.cf[i]) { amask |= 1u << i; if (R.ckind[i] == 1) umask |= 1u << i; }
     int variant = DMSH_VK_MOD_BASE;
@@ -2606,9 +2607,9 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
         uint32_t fm = fs->e->fout_mask;
         if ((umask & fm) && (umask & fm) == (amask & fm) && vka_shlib_module(fs->lib, fs->e, DMSH_VK_MOD_UINT)) variant = DMSH_VK_MOD_UINT;
         else if ((umask & fm) && fs->e->uint_mask == (umask & fm) && vka_shlib_module(fs->lib, fs->e, DMSH_VK_MOD_UINT_MIXED)) variant = DMSH_VK_MOD_UINT_MIXED;
-        else if ((d->color.blend_en & 1) && V.dual_src && vka_shlib_module(fs->lib, fs->e, DMSH_VK_MOD_DUAL)) {
+        else if ((d->color.blend_en & 1) && V.dual_src) {
             blend_st b0 = adv_blend(d->blend[0]);
-            if (is_src1(b0.src_rgb) || is_src1(b0.dst_rgb) || is_src1(b0.src_a) || is_src1(b0.dst_a)) variant = DMSH_VK_MOD_DUAL;
+            if ((is_src1(b0.src_rgb) || is_src1(b0.dst_rgb) || is_src1(b0.src_a) || is_src1(b0.dst_a)) && vka_shader_has_dual((vka_shader *)fs)) variant = DMSH_VK_MOD_DUAL;
         }
     }
     if (fs && (fs->e->flags & DMSH_VK_F_ALPHA_TEST) && d->color.alpha_func != NVN_ALPHA_FUNC_ALWAYS) k.alpha_func = (uint8_t)d->color.alpha_func;
@@ -2627,7 +2628,8 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
         k.cfmt[i] = R.cf[i];
         if (!R.cf[i]) continue;
         uint32_t m = d->chmask.mask >> (4 * i) & 0xf;
-        int written = fs && (fs->e->fout_mask >> i & 1);
+        int written = fs && (fs->e->fout_mask >> i & 1) && !(variant == DMSH_VK_MOD_DUAL && i == 1);   // (a dual-source module has no output at location 1: output 1 is
+                                                                                                    // target 0's second source, and target 1 is left as it was, as on Maxwell)
         int out_cls = !fs ? 0 : variant == DMSH_VK_MOD_UINT || (variant == DMSH_VK_MOD_UINT_MIXED && (fs->e->uint_mask >> i & 1)) ? DMSH_VK_TYPE_UINT : (int)(fs->e->fout_types >> (2 * i) & 3);
         int att_cls = R.ckind[i] == 1 ? DMSH_VK_TYPE_UINT : R.ckind[i] == 2 ? DMSH_VK_TYPE_SINT : DMSH_VK_TYPE_FLOAT;
         if (variant == VKA_FS_RETYPE && out_cls == DMSH_VK_TYPE_FLOAT && att_cls != DMSH_VK_TYPE_FLOAT) out_cls = att_cls;   // (retyped in the module: vka_pso.c fout_masks)
@@ -2644,7 +2646,10 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
             k.att[i] = (typeof(k.att[i])){1, (uint8_t)bfac(b.src_rgb), (uint8_t)bfac(b.dst_rgb), (uint8_t)bop(b.eq_rgb), (uint8_t)bfac(b.src_a), (uint8_t)bfac(b.dst_a), (uint8_t)bop(b.eq_a), (uint8_t)m};
         }
     }
-    if (src1_used) VRED_ONCE("a SRC1 blend factor with no dual-source module (MOD_DUAL; the profile's dual_want.tsv) or no dualSrcBlend: the second source reads as zero");
+    if (src1_used) { static _Atomic int n; if (atomic_fetch_add(&n, 1) < 4)
+        VRED("pixel shader %016llx: a SRC1 blend factor with no dual-source module (%s): the second source reads as zero", (unsigned long long)(fs ? fs->key : 0),
+             !V.dual_src ? "the device has no dualSrcBlend" : variant != DMSH_VK_MOD_BASE ? "an integer-output variant"
+             : "only target 0 takes a second source, from a pixel shader whose colour outputs are exactly the float outputs 0 and 1"); }
 
     PT(3);
     if (!mesh) vin_build_kept(d, sh[0], &k);

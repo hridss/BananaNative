@@ -502,7 +502,54 @@ fail:
 #undef FAIL
 }
 
-// vka_spv_spec_freeze: Qualcomm's Adreno 840 driver (Vulkan 1.4, driver 2150932524) reads SubgroupLocalInvocationId as 0 in every invocation of a compute or mesh shader
+// vka_spv_dual_source: dual-source blending. NVN, as Maxwell, takes a pixel shader's output 1 as target 0's second blend source when target 0 blends with a SRC1 factor; the
+// translator declares it an ordinary output at Location 1, and Vulkan reads the second source only from Location 0 Index 1. So for such a pipeline, a shader whose colour
+// outputs are exactly locations 0 and 1 gets output 1 at Location 0 with Index 1 (the body is unchanged). The library built this module (MOD_DUAL) only for the shaders a
+// profile listed (dual_want.tsv), which were never all of them; made here for any shader it applies to, it costs the library nothing (a quarter of Mario Kart World's library
+// if built for every such shader)
+enum { DecIndex = 32 };
+uint32_t *vka_spv_dual_source(const uint32_t *w, size_t nw, size_t *out_nw, char *err, size_t errn) {
+#define FAIL(...) do { snprintf(err, errn, __VA_ARGS__); goto fail; } while (0)
+    uint32_t *loc = NULL; uint8_t *out = NULL; vec_t o = {0};
+    if (nw < 5 || w[0] != 0x07230203) { snprintf(err, errn, "not SPIR-V"); return NULL; }
+    uint32_t bound = w[3];
+    if (!(loc = calloc(bound, 4)) || !(out = calloc(bound, 1))) FAIL("out of memory");
+    for (uint32_t i = 0; i < bound; i++) loc[i] = ~0u;
+    size_t first_fn = nw;
+    for (size_t i = 5; i < nw;) {
+        uint32_t op = w[i] & 0xffff, len = w[i] >> 16;
+        if (!len || i + len > nw) FAIL("bad instruction at word %zu", i);
+        if (op == OpDecorate && len >= 4 && w[i + 2] == DecLocation && w[i + 1] < bound) loc[w[i + 1]] = w[i + 3];
+        else if (op == OpDecorate && len >= 4 && w[i + 2] == DecIndex && w[i + 1] < bound && w[i + 3]) FAIL("an output already has Index %u", w[i + 3]);
+        else if (op == OpVariable && len >= 4 && w[i + 3] == SCOutput && w[i + 2] < bound && first_fn == nw) out[w[i + 2]] = 1;
+        else if (op == OpFunction && first_fn == nw) first_fn = i;
+        i += len;
+    }
+    uint32_t one = 0, seen = 0;   // seen: bit l = an Output variable at Location l (built-ins have none)
+    for (uint32_t id = 0; id < bound; id++) if (out[id] && loc[id] != ~0u) {
+        if (loc[id] >= 32 || (seen >> loc[id] & 1)) FAIL("output location %u", loc[id]);
+        seen |= 1u << loc[id]; if (loc[id] == 1) one = id;
+    }
+    if (seen != 3) FAIL("colour outputs %#x, not exactly locations 0 and 1", seen);
+    if (!put_n(&o, w, 5)) FAIL("out of memory");
+    for (size_t i = 5; i < nw;) {
+        uint32_t op = w[i] & 0xffff, len = w[i] >> 16;
+        if (!put_n(&o, w + i, len)) FAIL("out of memory");
+        if (op == OpDecorate && len >= 4 && w[i + 1] == one && w[i + 2] == DecLocation) {
+            o.w[o.n - 1] = 0;
+            uint32_t x[4] = {4u << 16 | OpDecorate, one, DecIndex, 1}; if (!put_n(&o, x, 4)) FAIL("out of memory");
+        }
+        i += len;
+    }
+    free(loc); free(out);
+    *out_nw = o.n; return o.w;
+fail:
+    free(loc); free(out); free(o.w);
+    return NULL;
+#undef FAIL
+}
+
+// vka_spv_spec_freeze:Qualcomm's Adreno 840 driver (Vulkan 1.4, driver 2150932524) reads SubgroupLocalInvocationId as 0 in every invocation of a compute or mesh shader
 // whose module has a specialization constant (any SpecId, used or not, with or without VkSpecializationInfo), and the subgroup masks derived from it (Eq/Ge/Gt/Le/Lt) as
 // those of lane 0; the subgroup operations themselves (shuffle, ballot, scans) still use the real lanes, and pixel shaders are not affected. Such a module with its
 // specialization constants made plain constants reads its lanes right: SpecId spec_id takes value (a bool one: nonzero is true), the others keep their defaults, and the SpecId

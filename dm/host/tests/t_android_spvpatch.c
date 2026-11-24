@@ -245,6 +245,34 @@ int main(void) {
             1u << 16 | 253, 1u << 16 | 56};
         CHECK(!vka_spv_fout_comps(zw, sizeof zw / 4, m) && m[0] == 0xc, "stores into z and w only: mask %x", m[0]);
     }
+    {   // Dual-source blending (vka_spv_dual_source): a pixel shader writing vec4 outputs at locations 0 and 1 gets output 1 at Location 0 Index 1
+        // ids: 1 float, 2 vec4, 3 ptr Output vec4, 4 / 5 the outputs, 6 void, 7 fn type, 8 main, 9 label, 10 const 1.0, 11 vec4 of it
+        uint32_t two[] = {0x07230203, 0x00010000, 0, 12, 0,
+            2u << 16 | 17, 1, 3u << 16 | 14, 0, 1,
+            7u << 16 | 15, 4, 8, 0x6e69616d, 0, 4, 5,      // OpEntryPoint Fragment %8 "main" %4 %5
+            3u << 16 | 16, 8, 7,                           // OriginUpperLeft
+            4u << 16 | 71, 4, 30, 0,                       // OpDecorate %4 Location 0
+            4u << 16 | 71, 5, 30, 1,                       // OpDecorate %5 Location 1
+            3u << 16 | 22, 1, 32, 4u << 16 | 23, 2, 1, 4, 4u << 16 | 32, 3, 3, 2,
+            4u << 16 | 59, 3, 4, 3, 4u << 16 | 59, 3, 5, 3,
+            2u << 16 | 19, 6, 3u << 16 | 33, 7, 6,
+            4u << 16 | 43, 1, 10, 0x3f800000, 7u << 16 | 44, 2, 11, 10, 10, 10, 10,
+            5u << 16 | 54, 6, 8, 0, 7, 2u << 16 | 248, 9,
+            3u << 16 | 62, 4, 11, 3u << 16 | 62, 5, 11,
+            1u << 16 | 253, 1u << 16 | 56};
+        size_t tn = sizeof two / 4;
+        uint32_t *d = vka_spv_dual_source(two, tn, &on, err, sizeof err);
+        CHECK(d && on == tn + 4, "dual-source module made (%s)", err);
+        if (d) {
+            int idx = 0, loc1 = 0;
+            for (size_t i = 5; i < on; i += d[i] >> 16) if ((d[i] & 0xffff) == 71 && d[i + 1] == 5) { if (d[i + 2] == 32 && d[i + 3] == 1) idx = 1; if (d[i + 2] == 30 && d[i + 3] == 1) loc1 = 1; }
+            CHECK(idx && !loc1, "output 1 at Location 0 Index 1");
+            if (val) CHECK(validate(d, on, "dual source"), "dual-source module valid");
+            free(d);
+        }
+        CHECK(!vka_spv_dual_source(SPV_TRI_FRAG, sizeof SPV_TRI_FRAG / 4, &on, err, sizeof err), "only location 0 written: refused");
+        two[27] = 2; CHECK(!vka_spv_dual_source(two, tn, &on, err, sizeof err), "locations 0 and 2: refused");
+    }
     {   // A geometry shader writing only gl_Position between the selftest's vertex and pixel shaders (vka_spv_gs_link): the pixel input at location 0 added, copied
         size_t gn = sizeof SPV_PASS_GEOM / 4, vn = sizeof SPV_TRI_VERT / 4, fn = sizeof SPV_TRI_FRAG / 4; uint32_t cp = 0, nl = 0;
         uint32_t *g = vka_spv_gs_link(SPV_PASS_GEOM, gn, SPV_TRI_VERT, vn, SPV_TRI_FRAG, fn, &cp, &nl, &on, err, sizeof err);

@@ -485,19 +485,52 @@ vka_shader *vka_shader_remap(vka_shader *s, uint64_t map) {
     pthread_mutex_unlock(&mu);
     return v;
 }
+// The dual-source module (DMSH_VK_MOD_DUAL) of a pixel shader the library has none of: one whose colour outputs are exactly the float outputs 0 and 1 (the rewrite checks
+// the module itself), made from its base module (vka_spv_dual_source)
+static int dual_made_here(const vka_shader *s) {
+    return s->e && s->e->stage == DMSH_VK_STAGE_FS && s->e->fout_mask == 3 && (s->e->fout_types & 0xf) == (DMSH_VK_TYPE_FLOAT | DMSH_VK_TYPE_FLOAT << 2)
+        && !vka_shlib_module(s->lib, s->e, DMSH_VK_MOD_DUAL) && vka_shlib_module(s->lib, s->e, DMSH_VK_MOD_BASE);
+}
+// A module's words: the library's module of that variant, or the dual-source one made from the base module (dual_made_here)
+static uint32_t *variant_words(const vka_shader *s, int variant, size_t *nb, char *err, size_t errn) {
+    const dmsh_vk_module *m = vka_shlib_module(s->lib, s->e, variant);
+    if (m) return lib_words(s->lib, s->e, m, nb, err, errn);
+    if (variant != DMSH_VK_MOD_DUAL || !dual_made_here(s)) { snprintf(err, errn, "no module of variant %d", variant); return NULL; }
+    uint32_t *w = lib_words(s->lib, s->e, vka_shlib_module(s->lib, s->e, DMSH_VK_MOD_BASE), nb, err, errn);
+    size_t on = 0; uint32_t *o = w ? vka_spv_dual_source(w, *nb / 4, &on, err, errn) : NULL;
+    free(w); if (o) *nb = on * 4;
+    return o;
+}
 VkShaderModule vka_shader_module(vka_shader *s, int variant) {
     if (variant < 0 || variant > DMSH_VK_MOD_SHUFFLE_LDS) return VK_NULL_HANDLE;
     if (s->mods[variant]) return s->mods[variant];
     const dmsh_vk_module *m = vka_shlib_module(s->lib, s->e, variant);
-    if (!m) return VK_NULL_HANDLE;
-    const char *why = NULL; char err[256];
-    VkShaderModule mod = spv_module(s->lib, s->e, m, s->key, &why, err, sizeof err);
+    if (!m && !(variant == DMSH_VK_MOD_DUAL && !s->no_dual && dual_made_here(s))) return VK_NULL_HANDLE;
+    const char *why = NULL; char err[256] = "";
+    VkShaderModule mod = VK_NULL_HANDLE;
+    if (m) mod = spv_module(s->lib, s->e, m, s->key, &why, err, sizeof err);
+    else {   // (the dual-source module made here: a refusal is remembered, so the draw asks once)
+        size_t nb = 0; uint32_t *w = variant_words(s, variant, &nb, err, sizeof err);
+        if (w) { prep_words(s->e, s->key, &w, &nb);
+                 VkShaderModuleCreateInfo ci = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, .codeSize = nb, .pCode = w};
+                 VkResult r = vk.vkCreateShaderModule(V.dev, &ci, NULL, &mod); if (r) { snprintf(err, sizeof err, "vkCreateShaderModule %d", r); mod = VK_NULL_HANDLE; } }
+        free(w);
+        if (!mod) { pthread_mutex_lock(&g_mu); s->no_dual = 1; pthread_mutex_unlock(&g_mu);
+                    static _Atomic int n; if (atomic_fetch_add(&n, 1) < 8) VRED("pixel shader %016llx: no dual-source module (%s); its SRC1 blend factors read zero", (unsigned long long)s->key, err);
+                    return VK_NULL_HANDLE; }
+        static _Atomic int n; if (atomic_fetch_add(&n, 1) < 8) VLOG("pixel shader %016llx: dual-source module made from its base module (output 1 at Location 0 Index 1)", (unsigned long long)s->key);
+    }
     if (!mod) { static _Atomic int n; if (atomic_fetch_add(&n, 1) < 8) VRED("shader %016llx variant %d: %s", (unsigned long long)s->key, variant, why); return VK_NULL_HANDLE; }
     pthread_mutex_lock(&g_mu);
     if (s->mods[variant]) { pthread_mutex_unlock(&g_mu); vk.vkDestroyShaderModule(V.dev, mod, NULL); return s->mods[variant]; }
     s->mods[variant] = mod;
     pthread_mutex_unlock(&g_mu);
     return mod;
+}
+int vka_shader_has_dual(vka_shader *s) {
+    if (!s || !s->e || s->e->stage != DMSH_VK_STAGE_FS) return 0;
+    if (vka_shlib_module(s->lib, s->e, DMSH_VK_MOD_DUAL)) return 1;
+    return !s->no_dual && dual_made_here(s) && vka_shader_module(s, DMSH_VK_MOD_DUAL) != VK_NULL_HANDLE;
 }
 // A geometry shader that writes memory, with those writes made by one run per primitive (vka_spv_gs_claim: the Adreno 840 runs a geometry shader several times for each
 // primitive, each run writing memory). out NULL: only counts them. Made from the base module after the one-invocation subgroup rewrite
@@ -686,9 +719,7 @@ VkShaderModule vka_shader_tex_module(vka_shader *s, const vka_texmod_key *key) {
     for (struct vka_texmod *v = s->tex; v; v = v->next) if (!memcmp(&v->k, &k, sizeof k)) { VkShaderModule m = v->mod; pthread_mutex_unlock(&g_mu); return m; }
     pthread_mutex_unlock(&g_mu);
     VkShaderModule mod = VK_NULL_HANDLE; char err[256] = "";
-    const dmsh_vk_module *m = vka_shlib_module(s->lib, s->e, k.variant);
-    size_t nb = 0; uint32_t *w = m ? lib_words(s->lib, s->e, m, &nb, err, sizeof err) : NULL;
-    if (!m) snprintf(err, sizeof err, "no module of variant %d", k.variant);
+    size_t nb = 0; uint32_t *w = variant_words(s, k.variant, &nb, err, sizeof err);   // (MOD_DUAL: the library's, or made from the base module)
     if (w) prep_words(s->e, s->key, &w, &nb);
     size_t on = 0; uint32_t *o;
     if (w && (k.vin_u | k.vin_s)) { o = vka_spv_vin_retype(w, nb / 4, k.vin_u, k.vin_s, &on, err, sizeof err); free(w); w = o; nb = on * 4; }
