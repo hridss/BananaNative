@@ -8,6 +8,41 @@ SDK 22.2.8, NVN API 231.40, with Nintendo's sead, agl and gsys. The three loaded
 
 `fps_limit 60` (Android, since 2026-11-11; 30 before): the host's frame limiter starts the game at its own top rate, 60 fps, and the in-game panel's Frame rate cap picks 30 (steadier, cooler: below) ([dm/games/README.md](../README.md), `hle_fpslock.c` `fps_limit_wait`); the launcher's Frame rate cap (60 / 45 / 40 / 30 fps) and `DM_FPS_LIMIT` override it. `DM_FPS=30` does not cap on Android (it moves only the frame statistics' targets). The game has a frame step ([`patches.py`](patches.py), v131072): the limit is the step's cap in whole vsyncs (30 fps = 2 vsyncs a frame; 45 and 40 run at 30, 20 at 3 vsyncs), and `fps_target 60` has the host decide the step with no limit too (current, 2026-11-10: [a frame limit on a game with a frame step ran it slow](../../../docs/reference/frame-rate.md#a-frame-limit-on-a-game-with-a-frame-step-ran-it-slow-android)). Measured with `DM_FPS_LIMIT=30` in Link's house (2026-11-10, Qualcomm's driver, `DM_VK_EVENT_WAIT=0`): 30.0 fps in every window, frame time p50 33.33 / p95 33.40 ms, the phone 51 → 62-64 C over a run, where uncapped it ran 37-38 fps from cool and 27-32 hot (p95 38.5, max 56.5 ms) and warmed 50 → 74 C; a hot phone (67 C) cools under the cap (→ 63 C). Kokiri Forest runs below 30 anyway. Frame generation counts the limit's period as the game's (two refreshes of a 60 Hz panel a frame: one generated frame, 60 shown). It does not step by the time between frames: under the limiter alone it ran at half speed at 30 (resolved 2026-11-10 by the frame step taking the limit; the phone check of speed is open).
 
+## Opening movie audio and the frame cap
+
+Current, 2026-11-24: the opening `Event/Movie/Dm_Kokiri_0000.webm` is
+60 fps, 9,252 pictures, 154.234 seconds. At a 30 fps cap, two Xiaomi 15
+system-driver runs of 0.3.51 took about 315 seconds to present it. The
+soundtrack finished first: the renderer continued producing silent frames,
+without output underruns or failed Opus decoding. With no cap the movie
+finished in about 160 seconds and audio continued into the next scene.
+
+The v131072 main's movie constructor (`main+0x3b5cec0`) receives mode 1
+from `main+0x3b5c55c`. At `main+0x3b5d084` it selects a one-picture budget
+(two for mode >= 2), stores it at player +0x20, and doubles it for input
+buffering at +0x50. The elapsed-time consumer (`main+0x3b5cb2c`) and
+audio-clock catch-up (`main+0x3b5e400`) both limit advancement to this budget.
+The worker's extractor feeding loop also uses it (`main+0x3b5e7dc`). One
+picture per update cannot sustain a 60 fps movie at 30 rendered frames/s.
+
+Fix, verified on the phone at 30 fps (2026-11-24): the build-gated cut in
+[`patches.py`](patches.py) selects the existing two-picture budget, including
+its matching buffering. It deliberately changes the game's own assumption;
+a general decoder must continue returning every decoded picture. Consumer
+bounds stay in place. `test_oot_movie_budget.py` executes the constructor and
+both consumer paths: 60 fps movies advance at full speed under a 30 fps cap,
+60 fps presentation still advances one picture, and catch-up remains bounded.
+On a Xiaomi 15 (Snapdragon 8 Elite / Adreno 830, 12 GB, Android 17), the
+separate test app completed the full movie in 154.9 seconds on the Qualcomm
+system driver (build `7cd9369a93`, Vulkan 1.3.284) and 154.4 seconds on
+Turnip Gen8 V39 (Mesa 27.0.0-devel `2648b2059f`, Vulkan 1.4.367). Both
+held a 30 fps cap and consumed about 60 movie pictures/s. The output was
+not silent during the story; Turnip also continued with audio after the
+transition. This checks the opening movie, not sustained gameplay. No
+60 fps rendering regression run was made with the modified pack; the
+instruction-level test checks its unchanged one-picture advance there.
+Below 30 rendered frames/s the two-picture budget is still insufficient.
+
 ## Render size
 
 Current, 2026-11-10 (static, update v131072's main `e0f3ccfa`; phone check open). As on Mario Kart World, the size the game draws at follows the operation mode and the Switch 2 graphics scale, not a window getter: the swap chain is 3 × 2560x1440 and the game shows the size it picks as the window crop (`[nvn] WindowCrop 0,0 1920x1080` in handheld runs). The applet-state object (`main+0xe376a0`) reads `oe::GetCurrentGraphicsScale` beside the operation, performance and focus modes, and its notification handler (`main+0x3bc0230`) copies the handheld flag (operation mode not console) and the scale into bytes +0x546 and +0x549 of the graphics settings. The display state (`main+0x6502e0`) applies them as +0x547 (mode) and +0x54a (scale) and asks `main+0x112c5e0` for the crop, an index into the size table at `main+0x3f58540` (640x480, 720x480, 1280x720, 1600x900, 1920x1080, 2560x1440, 3840x2160):

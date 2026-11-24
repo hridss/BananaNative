@@ -8,6 +8,17 @@ CUTS = {
   # simdgroup_matrix"): the branch always takes the plain player, which shows the decoded 1920x1080 picture as it is
   'e0f3ccfaf50065ae4ea01eb5aeb13b1a': [
     (0x3b5f524, '28010034', '09000014', 'movie player: cbz w8 → b main+0x3b5f548 (the plain player, without the NDVE tensor network)'),
+    # The game's normal movie configuration requests one video packet/picture per
+    # update (main+0x3b5c55c). Its constructor chooses a budget of one or two here;
+    # the budget bounds both feeding the extractor and advancing decoded pictures.
+    # At 30 rendered frames/s a 60 fps movie therefore takes twice its duration,
+    # while its audio plays in real time. Select the existing two-picture budget,
+    # including its matching input buffers, rather than bypassing the consumer's
+    # bounds. This deliberately changes the game's own 60 fps assumption; the host
+    # decoder must keep returning every picture. Verified at 30 fps on the system
+    # driver and Turnip Gen8 V39 (Xiaomi 15, Android 17);
+    # this budget cannot sustain a 60 fps movie below 30 rendered frames/s.
+    (0x3b5d084, '88b79c1a', '48008052', 'movie player: use the existing two-picture update budget for 60 fps movies at a 30 fps cap'),
   ],
 }
 
@@ -171,6 +182,9 @@ FRAME_STEP = {'e0f3ccfaf50065ae4ea01eb5aeb13b1a': frame_step}
 # How general each patch is and could be (dm/tools/docs_patches.py "Binding", listed in docs/agents/game-patches.md): what, its binding now, the loosest it could have (goal),
 # purpose, why; blocked or kept: why the gap stays open (cannot close yet, or left open on purpose); checked: what was checked on game files (else a judgement)
 BINDING = [
+    {'what': 'movie player: two-picture update budget for 60 fps movies at 30 fps', 'now': 'build', 'goal': 'game', 'purpose': 'frame rate',
+     'why': 'the game caps both packet feeding and picture advancement at one per update; the host decoder cannot discard pictures to correct a player timing assumption',
+     'blocked': 'one build and its two-buffer constructor verified by disassembly and phone runs; below 30 fps remains limited by the two-picture budget'},
     {'what': 'camera aspect: the 3D cameras follow the picture shape (Game settings > Aspect ratio)', 'now': 'build', 'goal': 'game', 'purpose': 'rendering',
      'why': 'sead::PerspectiveProjection is the same in every title of this engine, but the five read sites are fixed addresses of this build',
      'blocked': 'one build on hand; the projection reads are plain sead code and could be found by function fingerprint'},
