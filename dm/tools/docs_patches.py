@@ -93,8 +93,6 @@ HOST_BINDING = [
      'why': "the studio's engine, which its other games ship", 'blocked': 'one game on that engine here'}),
     ('k_locks', 'Criterion', '', {'what': "Criterion's 60 fps mode, frame ticks and game step at fixed addresses", 'now': 'build', 'goal': 'engine', 'purpose': 'frame rate',
      'why': "the studio's engine, which its other games ship", 'blocked': 'one game on that engine here'}),
-    ('k_locks', 'FIFA', '', {'what': "Frostbite's frame regulator at a fixed pointer", 'now': 'build', 'goal': 'engine', 'purpose': 'frame rate',
-     'why': "engine code other Frostbite games ship (the simulation's own rate is already set by name)", 'blocked': 'one Frostbite game here'}),
     ('k_locks', 'sead', '', {'what': "sead's dynamic interval controller floor behind a fixed global (the app object's framework)", 'now': 'build', 'goal': 'engine', 'purpose': 'frame rate',
      'why': "sead's game framework code that other Nintendo EPD games ship: the rewriter now finds the controller by its code (nso_code.py sead_find) and its gate hands the host the controller's address, which the floor could take instead of the fixed chain"}),
     ('k_locks', 'Grezzo frame controller', '', {'what': "Grezzo's frame controller least and most extra vsyncs behind a fixed global (Link's Awakening)", 'now': 'build', 'goal': 'game', 'purpose': 'frame rate',

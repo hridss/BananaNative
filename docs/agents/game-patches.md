@@ -69,7 +69,6 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
 | `build` → `host` | resource heap size +16 KB (ExpHeap create size, main+0x130514) | memory | blocked: the native NVN2 sizes of a recorded indexed draw are not established (nxnative #1580) | judgement | 1 | [Super Mario Bros. Wonder - Nintendo Switch 2 Edition](../../dm/games/040015100B514001/README.md) | the shortfall comes from the host's NVN2 command-memory accounting (nxnative #1580); a correct host representation would make the cut unnecessary for every build |
 | `build` → `sdk` | VammManager node area and alignment, SDK 4.4.0 (9de92bad) | address space | blocked: one game ships it | judgement | 1 | [sdk_patches.py](../../dm/tools/sdk_patches.py) | an older implementation no rule covers (its large regions aligned to 32 MB, not the rules' 2 MB); a rule once a second game ships it |
 | `build` → `engine` | Criterion's 60 fps mode, frame ticks and game step at fixed addresses | frame rate | blocked: one game on that engine here | judgement | 1 | [Need For Speed™ Hot Pursuit Remastered](../../dm/games/010029B0118E8000/README.md) | the studio's engine, which its other games ship |
-| `build` → `engine` | Frostbite's frame regulator at a fixed pointer | frame rate | blocked: one Frostbite game here | judgement | 1 | [EA SPORTS FC 27](../../dm/games/0100C49025D3E000/README.md) | engine code other Frostbite games ship (the simulation's own rate is already set by name) |
 | `build` → `engine` | Next Level Games' frame limiter target at a fixed address | frame rate | blocked: one game on that engine here | judgement | 1 | [Luigi's Mansion 3](../../dm/games/0100DCA0064A6000/README.md) | the studio's engine, which its other games ship |
 | `build` → `engine` | RE Engine's frame limit at a fixed pointer | frame rate | blocked: one RE Engine game here | judgement | 1 | [Monster Hunter Rise](../../dm/games/0100B04011742000/README.md) | engine code other RE Engine games ship |
 | `build` → `game` | 60 fps frame step and render scale (ksys::VFR) | frame rate | blocked: frame-step stubs have no function-matched form yet | judgement | 1 | [The Legend of Zelda: Breath of the Wild](../../dm/games/01007EF00011E000/README.md) | the game's own frame code; the frame-step state page is general |
@@ -117,7 +116,6 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
 | [Batman: Arkham Knight](#batman-arkham-knight) | 8 | 0 | 0 | 0 | 1 | `build` → `game` ×2 |
 | [DARK SOULS: REMASTERED](#dark-souls-remastered) | 2 | 0 | 0 | 0 | 0 | `build` → `game` |
 | [Donkey Kong Bananza](#donkey-kong-bananza) | 2 | 8 | 0 | 0 | 2 | `build` → `game` ×4, `build` |
-| [EA SPORTS FC 27](#ea-sports-fc-27) | 0 | 0 | 0 | 0 | 1 | `build` → `engine` |
 | [FINAL FANTASY TACTICS - The Ivalice Chronicles](#final-fantasy-tactics---the-ivalice-chronicles) | 2 | 0 | 0 | 0 | 0 | `build` → `game` |
 | [Fire Emblem Engage](#fire-emblem-engage) | 1 | 0 | 0 | 0 | 0 | `build` → `engine` |
 | [Fire Emblem Fortune's Weave](#fire-emblem-fortunes-weave) | 0 | 0 | 0 | 0 | 0 | `build` → unreviewed |
@@ -331,15 +329,6 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
   - host [dkb_wide.c:41](../../dm/host/android/dkb_wide.c#L41): build check
   - host [hle_fpslock.c:55](../../dm/host/hle_fpslock.c#L55): engine frame limit set to fps_target: sead frame-rate controller minimum interval
 
-### EA SPORTS FC 27
-
-[EA SPORTS FC 27](../../dm/games/0100C49025D3E000/README.md), `0100C49025D3E000`.
-
-- **`build` → `engine`**, frame rate, blocked: one Frostbite game here, judgement: Frostbite's frame regulator at a fixed pointer. Engine code other Frostbite games ship (the simulation's own rate is already set by name)
-
-- **1.8d.310c `main`** `a48c0de3…`
-  - host [hle_fpslock.c:122](../../dm/host/hle_fpslock.c#L122): engine frame limit set to fps_target: FIFA frame regulator
-
 ### FINAL FANTASY TACTICS - The Ivalice Chronicles
 
 [FINAL FANTASY TACTICS - The Ivalice Chronicles](../../dm/games/010038B015560000/README.md), `010038B015560000`, [patches.py](../../dm/games/010038B015560000/patches.py).
@@ -526,7 +515,7 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
   - cut `+0x9bf4d4`: dynamic resolution: optimal frame cost 32.01 -> 16.005 ms at 60 fps (second load)
   - cut `+0x9bf4f8`: dynamic resolution: good frame cost 30 -> 15 ms at 60 fps
   - launcher capabilities: DYNAMIC_RESOLUTION
-  - host [hle_fpslock.c:185](../../dm/host/hle_fpslock.c#L185): frame interval and dynamic-resolution floor
+  - host [hle_fpslock.c:179](../../dm/host/hle_fpslock.c#L179): frame interval and dynamic-resolution floor
 
 ### NieR:Automata The End of YoRHa Edition (0100B8E016F76000)
 
@@ -545,7 +534,7 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
   - cut `+0x9c08e8`: dynamic resolution lower bound follows the selected preset
   - cut `+0x9c08f4`: dynamic resolution lower bound follows the selected preset
   - launcher capabilities: DYNAMIC_RESOLUTION
-  - host [hle_fpslock.c:186](../../dm/host/hle_fpslock.c#L186): frame interval and dynamic-resolution floor
+  - host [hle_fpslock.c:180](../../dm/host/hle_fpslock.c#L180): frame interval and dynamic-resolution floor
 
 ### Paper Mario: The Thousand-Year Door
 

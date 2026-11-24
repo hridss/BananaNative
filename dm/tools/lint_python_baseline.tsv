@@ -97,7 +97,7 @@ pyright	dm/tools/patch_nso.py	reportOptionalMemberAccess	1	"loader" is not a kno
 pyright	dm/tools/patch_nso.py	reportOptionalMemberAccess	1	"op_str" is not a known attribute of "None"
 pyright	dm/tools/patch_nso.py	reportOptionalMemberAccess	1	"replace" is not a known attribute of "None"
 pyright	dm/tools/patch_nso.py	reportOptionalOperand	2	Operator "+" not supported for "None"
-pyright	dm/tools/patch_nso.py	reportOptionalSubscript	3	Object of type "None" is not subscriptable
+pyright	dm/tools/patch_nso.py	reportOptionalSubscript	1	Object of type "None" is not subscriptable
 pyright	dm/tools/patch_nso.py	reportWildcardImportFromLibrary	1	Wildcard import from a library not allowed
 pyright	dm/tools/sdis.py	reportWildcardImportFromLibrary	1	Wildcard import from a library not allowed
 pyright	dm/tools/tests/test_astral_fps.py	reportArgumentType	1	Argument of type "ModuleSpec | None" cannot be assigned to parameter "spec" of type "ModuleSpec" in function "module_from_spec" Type "ModuleSpec | None" is not assignable to type "ModuleSpec" "None" is not assignable to "ModuleSpec"
