@@ -22,7 +22,7 @@ import java.util.Locale;
  * <pre>
  * { "format": 1, "title_id", "name", "version", "dump", "work", "pack": the pack folder the job writes,
  *   "apk": { "engine", "dmsh_chain", "dmsh_vk_chain", "xlate_source", "version_code" }: what the outputs depend on (a change restarts the translation),
- *   "state": "pending" | "running" | "paused" | "done" | "failed", "reason": why paused (user, battery, thermal, timeout) or "", "error": why failed,
+ *   "state": "pending" | "running" | "paused" | "done" | "failed", "reason": why paused (user, battery, thermal, timeout, game) or "", "error": why failed,
  *   "step": the current step, "steps": { "&lt;step&gt;": { "state": "pending" | "running" | "done", "done", "total", "stage" } }, "code_only": true for a job with no shader translation (create / adopt codeOnly), "redo_code": an adopted job that rewrites the code (adopt; redoesCode), "updated": ms }
  * </pre>
  * A "running" job whose service is gone (the process was killed, the phone rebooted) is resumed by the service (START_STICKY) or the launcher's Resume.
@@ -631,6 +631,7 @@ final class Job {
     static String reasonText(String r) {
         switch (r) {
             case "user": return "by you";
+            case "game": return "a game is running: it resumes when you return";
             case "battery": return "battery below 20 %: plug in the charger to go on";
             case "thermal": return "the phone reports it is too hot: it goes on when it has cooled";
             case "timeout": return "Android's daily limit for background work: open the app and tap Resume";

@@ -47,17 +47,37 @@ class Policy(unittest.TestCase):
         self.assertEqual(out[0].split('\t')[2], 'thermal status 3 (severe), headroom 0.50, battery 80 %, charging')
         self.assertEqual(out[-1], 'thermal status 1 (light), headroom not known, battery 50 %')
 
+    def test_game_running_pauses(self):   # an active game (:game) always pauses Prepare with no override
+        self.assertEqual(self.reasons('80 1 0 - 0 1', '10 0 3 - 1 1', '80 0 0 - 0 0'),
+                         [['game', 'false'], ['game', 'false'], ['-', 'false']])
+
     def test_service_uses_policy(self):   # PackService decides with PackPolicy, and logs each pause and each going on to the step's log
         src = SERVICE.read_text(encoding='utf-8')
         self.assertIn('PackPolicy.reason(batteryPct, charging, thermal, autoReason, heatOverride)', src)
+        self.assertIn('PackPolicy.reason(batteryPct, charging, thermal, autoReason, heatOverride, Ondevice.gameRunning(this))', src)
+        self.assertIn('ACTION_GAME_START', src)
+        self.assertIn('START_NOT_STICKY', src)
+        game_branch = src[src.index('ACTION_GAME_START.equals(action)'):src.index('String path = intent')]
+        self.assertNotIn('START_STICKY', game_branch)
         self.assertIn('stepLog(j, "pausing: "', src)
         self.assertIn('stepLog(j, "going on after the "', src)
         self.assertNotIn('THERMAL_STATUS_SEVERE', src)
         self.assertIn('PackPolicy.workers(', src)
 
+    def test_game_launch_pauses_and_return_resumes(self):
+        ondev = (REPO / 'android/app/src/ondevice/java/dev/nxnative/android/Ondevice.java').read_text(encoding='utf-8')
+        game = (REPO / 'android/app/src/main/java/dev/nxnative/android/GameActivity.java').read_text(encoding='utf-8')
+        job = (REPO / 'android/app/src/ondevice/java/dev/nxnative/android/Job.java').read_text(encoding='utf-8')
+        self.assertIn('PackService.pauseForGame(', ondev)
+        self.assertIn('maybeResumeAfterGame();', ondev)
+        self.assertIn('!"game".equals(job.reason())', ondev)
+        self.assertIn('pausePrepareIfRunning();', game)
+        self.assertIn('"dev.nxnative.android.pack.GAME_START"', game)
+        self.assertIn('case "game":', job)
+
     def test_every_pause_logged(self):   # every way the job pauses or stops by itself writes a [pack] line to the step's log (stepLog), not only logcat
         src = SERVICE.read_text(encoding='utf-8')
-        for what in ('"pausing: timeout:', '"pausing: refused:', '"paused: " + stopReason', '"the tool did not stop within 20 s of the "', '"stopping: the step was ended by Android "',
+        for what in ('"pausing: timeout:', '"pausing: refused:', '"pausing: game:', '"paused: " + stopReason', '"the tool did not stop within 20 s of the "', '"stopping: the step was ended by Android "',
                      '"going on after Android ended the job\'s process', '"pause asked (from "', '"going on anyway: the heat pause is lifted'):
             self.assertIn('stepLog(', src[src.index(what) - 40:src.index(what)], what)
 

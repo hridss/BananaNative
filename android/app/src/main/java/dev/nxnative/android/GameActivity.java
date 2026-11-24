@@ -112,6 +112,7 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
         String id = String.valueOf(getIntent().getStringExtra("title_id"));
         // The run's exit record and the uncaught-exception handler (ExitWatch): first, so even a failure below reaches the launcher's notice. A new record only for a new run
         ExitWatch.game(this, id, getIntent().getStringExtra("name"), saved == null && !hostRunning);
+        pausePrepareIfRunning();
         try {
             Native.load(id);
         } catch (IllegalStateException e) {
@@ -1589,4 +1590,19 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
     FrameLayout rootView() { return rootView; }
     View panelView() { return panel; }
     boolean gamepadConnected() { return !pads.isEmpty(); }
+
+    /** Pause any active Prepare job (:pack) when a game starts from outside MainActivity (frontends, adb, recent tasks). */
+    private void pausePrepareIfRunning() {
+        android.app.ActivityManager am = (android.app.ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+        List<android.app.ActivityManager.RunningAppProcessInfo> ps = am == null ? null : am.getRunningAppProcesses();
+        if (ps == null) return;
+        for (android.app.ActivityManager.RunningAppProcessInfo p : ps) {
+            if (!p.processName.endsWith(":pack")) continue;
+            try {
+                startService(new Intent().setComponent(new android.content.ComponentName(this, "dev.nxnative.android.PackService"))
+                        .setAction("dev.nxnative.android.pack.GAME_START").putExtra("from", "game"));
+            } catch (RuntimeException ignored) { }
+            return;
+        }
+    }
 }

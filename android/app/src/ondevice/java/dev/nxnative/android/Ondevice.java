@@ -324,6 +324,7 @@ final class Ondevice {
      */
     static void playTakesLead(Context c) {
         sampleCtx = c.getApplicationContext();
+        PackService.pauseForGame(sampleCtx);
         String key = SAMPLES.playTakesLead();
         sampleNotBefore = SystemClock.elapsedRealtime() + SAMPLE_PLAY_HOLD_MS;
         if (key != null) stopSample(sampleCtx, key);
@@ -383,8 +384,8 @@ final class Ondevice {
         }
     }
 
-    /** Whether a game runs now (the :game process): the background code update waits for it, as the pack's code must not change under a running game */
-    private static boolean gameRunning(Context c) {
+    /** Whether a game runs now (the :game process): Prepare pauses and the background code update waits for it */
+    static boolean gameRunning(Context c) {
         android.app.ActivityManager am = (android.app.ActivityManager) c.getSystemService(Context.ACTIVITY_SERVICE);
         List<android.app.ActivityManager.RunningAppProcessInfo> ps = am == null ? null : am.getRunningAppProcesses();
         if (ps != null) for (android.app.ActivityManager.RunningAppProcessInfo p : ps) if (p.processName.endsWith(":game")) return true;
@@ -527,6 +528,7 @@ final class Ondevice {
         Job job;
         private String placedFor;   // which job (dump and pack) the list was last built for
         private String metaLine;   // the game's version and publisher from its .nup, shown before the state
+        private long gamePausedResumedAt = -1;
         boolean jobAlive;   // the service said its worker runs this job
 
         Panel(MainActivity a) {
@@ -638,7 +640,20 @@ final class Ondevice {
             if (!resumed) return;
             if (service == null || !jobAlive) load();
             show();
+            maybeResumeAfterGame();
             h.postDelayed(this::tick, 1000);
+        }
+
+        private void maybeResumeAfterGame() {
+            if (!resumed || job == null) return;
+            if (!"paused".equals(job.state()) || !"game".equals(job.reason())) { gamePausedResumedAt = -1; return; }
+            if (alive() || gameRunning(a) || Profile.missing(job.titleId(), job.name()) != null) return;
+            if (!android.os.Environment.isExternalStorageManager() && !CopyPlan.inApp(AppStorage.root(a), job.dump().getPath())) return;
+            long u = job.updated();
+            if (u == gamePausedResumedAt) return;
+            gamePausedResumedAt = u;
+            userAsked = false;
+            startService(job);
         }
 
         void load() {
@@ -748,7 +763,7 @@ final class Ondevice {
             bar.setVisibility(notIncluded != null ? View.GONE : View.VISIBLE);
             detail.setVisibility(notIncluded != null ? View.GONE : View.VISIBLE);
             why.set(failed || notIncluded != null ? job.errorDetail() : "");
-            boolean running = alive && ("running".equals(st) || "paused".equals(st) && !"user".equals(job.reason()) && !"timeout".equals(job.reason()));
+            boolean running = alive && ("running".equals(st) || "paused".equals(st) && !"user".equals(job.reason()) && !"timeout".equals(job.reason()) && !"game".equals(job.reason()));
             boolean noFix = notIncluded != null || failed && PrepareText.FIX_NONE.equals(job.fix());   // nothing in this app can make it work: no Retry that cannot succeed
             boolean broken = failed && !alive && job.brokenApk(Job.installed(a));   // this app build cannot do it: no Retry until another install; an older pack may still play
             go.setText(running ? Tx.s(R.string.prepare_pause) : "done".equals(st) && !job.apkChanged() ? Tx.s(R.string.common_prepare_again) : failed ? Tx.s(R.string.prepare_retry) : "pending".equals(st) ? Tx.s(R.string.prepare_start) : Tx.s(R.string.prepare_resume));
@@ -1179,7 +1194,7 @@ final class Ondevice {
         void manage() {
             if (job == null) return;
             Job j = job;
-            boolean running = alive() && ("running".equals(j.state()) || "paused".equals(j.state()) && !"user".equals(j.reason()) && !"timeout".equals(j.reason()));
+            boolean running = alive() && ("running".equals(j.state()) || "paused".equals(j.state()) && !"user".equals(j.reason()) && !"timeout".equals(j.reason()) && !"game".equals(j.reason()));
             LinearLayout box = new LinearLayout(a);
             box.setOrientation(LinearLayout.VERTICAL);
             TextView info = Ui.small(a, j.statusText(alive()) + "\n\nDump: " + j.dump() + "\nWorking files: " + j.dir() + "\nPack: " + j.pack() + "\nLogs: " + new File(j.dir(), "logs"));

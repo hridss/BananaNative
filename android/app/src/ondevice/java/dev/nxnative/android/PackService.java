@@ -54,6 +54,8 @@ import java.util.regex.Pattern;
  */
 public final class PackService extends Service {
     static final String ACTION_START = "dev.nxnative.android.pack.START", ACTION_PAUSE = "dev.nxnative.android.pack.PAUSE";
+    /** Sent when a game launches so Prepare stops cleanly instead of competing with :game */
+    static final String ACTION_GAME_START = "dev.nxnative.android.pack.GAME_START";
     /** Go on anyway: the heat pause is lifted (PackPolicy) until the job stops in this service; EXTRA_FROM says who asked */
     static final String ACTION_GO_ON = "dev.nxnative.android.pack.GO_ON";
     static final String EXTRA_JOB = "job";
@@ -81,7 +83,21 @@ public final class PackService extends Service {
     private static volatile PackService live;
     /** A Prepare job is running in this process (the engine takes one tool at a time: LayerService and the job share PackLock, which is what decides) */
     static boolean busy() { PackService s = live; return s != null && s.worker != null && s.worker.isAlive(); }
-    private volatile String stopReason;   // user, timeout: the job pauses and the service stops
+    /** Whether the packer process (:pack) is alive right now */
+    static boolean packRunning(Context c) {
+        android.app.ActivityManager am = c == null ? null : (android.app.ActivityManager) c.getSystemService(Context.ACTIVITY_SERVICE);
+        List<android.app.ActivityManager.RunningAppProcessInfo> ps = am == null ? null : am.getRunningAppProcesses();
+        if (ps != null) for (android.app.ActivityManager.RunningAppProcessInfo p : ps) if (p.processName.endsWith(":pack")) return true;
+        return false;
+    }
+    /** Ask a running Prepare service to pause because the user launched a game */
+    static void pauseForGame(Context c) {
+        if (c == null || !packRunning(c)) return;
+        try {
+            c.startService(new Intent(c, PackService.class).setAction(ACTION_GAME_START).putExtra(EXTRA_FROM, "launcher"));
+        } catch (RuntimeException ignored) { }
+    }
+    private volatile String stopReason;   // user, timeout, game: the job pauses and the service stops
     private volatile String autoReason;   // battery, thermal: the job waits and goes on by itself
     private volatile boolean inTool;
     private PrepareText.Failure failure;   // what the last step that failed said for the card (step() sets it with its reason; the worker thread only)
@@ -143,6 +159,24 @@ public final class PackService extends Service {
             else if (worker == null) stopSelf(startId);   // a stale notification: nothing runs here
             return START_STICKY;
         }
+        if (ACTION_GAME_START.equals(action)) {
+            String from = intent.getStringExtra(EXTRA_FROM);
+            boolean running = worker != null && worker.isAlive();
+            Job j = job;
+            stepLog(j, "pausing: game: a game started (from " + (from != null ? from : "an intent without \"from\"") + (running ? "" : ", nothing running") + "); " + readings());
+            if (running) {
+                if (j != null && !"done".equals(j.state()) && j.next() >= 0) {
+                    int cur = j.current();
+                    if (cur >= 0) j.ended(Job.STEPS[cur]);
+                    j.state("paused", "game", null);
+                    save(j, true);
+                }
+                if (!"game".equals(stopReason)) requestStop("game");
+                return START_NOT_STICKY;
+            }
+            stopSelf(startId);
+            return START_NOT_STICKY;
+        }
         String path = intent == null ? null : intent.getStringExtra(EXTRA_JOB);
         File f = path != null ? new File(path) : Job.remembered(this);
         Job j = null;
@@ -153,7 +187,6 @@ public final class PackService extends Service {
         }
         // A sticky restart (no intent: the process was killed) resumes only a job that was running; a start resumes one that is not done
         boolean go = j != null && (intent == null ? "running".equals(j.state()) : !"done".equals(j.state()) || j.apkChanged());
-        if (go && intent == null) stepLog(j, "going on after Android ended the job's process (a sticky restart; " + readings() + ")");
         if (!go && (worker == null || !worker.isAlive())) {
             // startForegroundService must be answered by startForeground even when there is nothing to do
             if (intent != null) startForeground(j);
@@ -162,9 +195,33 @@ public final class PackService extends Service {
             return START_NOT_STICKY;
         }
         if (worker != null && worker.isAlive()) {
-            startForeground(job);
-            return START_STICKY;
+            boolean forGame = "game".equals(PackPolicy.reason(batteryPct, charging, thermal, autoReason, heatOverride, Ondevice.gameRunning(this)));
+            if (forGame && !"game".equals(stopReason)) {
+                Job runningJob = job;
+                stepLog(runningJob, "pausing: game: a game is running; " + readings());
+                if (runningJob != null && !"done".equals(runningJob.state()) && runningJob.next() >= 0) {
+                    int cur = runningJob.current();
+                    if (cur >= 0) runningJob.ended(Job.STEPS[cur]);
+                    runningJob.state("paused", "game", null);
+                    save(runningJob, true);
+                }
+                requestStop("game");
+            }
+            if (intent != null) startForeground(job);
+            return forGame ? START_NOT_STICKY : START_STICKY;
         }
+        if ("game".equals(PackPolicy.reason(batteryPct, charging, thermal, autoReason, heatOverride, Ondevice.gameRunning(this)))) {
+            stepLog(j, "pausing: game: a game is running (" + (intent == null ? "sticky restart deferred" : "start deferred") + "); " + readings());
+            j.state("paused", "game", null);
+            j.reasonDetail(readings(), false);
+            save(j, true);
+            if (intent != null) startForeground(j);
+            stopForeground(STOP_FOREGROUND_DETACH);
+            nm.notify(NOTE, note(j));
+            stopSelf(startId);
+            return START_NOT_STICKY;
+        }
+        if (intent == null) stepLog(j, "going on after Android ended the job's process (a sticky restart; " + readings() + ")");
         job = j;
         if (!startForeground(j)) {
             // Android refused a foreground service here (a start from the background): the job stays as it is, the launcher's Resume starts it
@@ -240,6 +297,10 @@ public final class PackService extends Service {
                 Job j = job;
                 stepLog(j, "the tool did not stop within 20 s of the " + reason + " pause: ending the process (the step runs again on Resume)");
                 if (j != null) {
+                    if ("game".equals(reason)) {
+                        int cur = j.current();
+                        if (cur >= 0) j.ended(Job.STEPS[cur]);
+                    }
                     j.state("paused", reason, null);
                     save(j, true);
                     stopForeground(STOP_FOREGROUND_DETACH);
@@ -336,6 +397,11 @@ public final class PackService extends Service {
             while ((i = j.next()) >= 0) {
                 if (!waitWhileAuto(j)) break;
                 if (!waitForLayer(j, Job.STEPS[i])) break;
+                if ("game".equals(PackPolicy.reason(batteryPct, charging, thermal, autoReason, heatOverride, Ondevice.gameRunning(this)))) {
+                    stepLog(j, "pausing: game: a game is running; " + readings());
+                    stopReason = "game";
+                    break;
+                }
                 String s = Job.STEPS[i];
                 j.stepState(s, "running");
                 int starts = j.start(s);

@@ -5,6 +5,7 @@ import java.util.Locale;
 /**
  * PackService's automatic pause (ONDEVICE.md "The service and the screen"), with no Android classes so PackPolicyJvmTest runs it:
  * <ul>
+ * <li>a game is running (:game process): Prepare pauses so the packer stops competing for CPU and memory; the launcher resumes it when the player returns;</li>
  * <li>battery below 20 % and not charging: the job waits (the card says battery, never heat);</li>
  * <li>heat never pauses it: from thermal status SEVERE (3) the next step starts with ONE worker ({@link #workers}), never none. At critical status Android itself may close the
  *     app; the next start goes on from the step's kept results.</li>
@@ -18,8 +19,14 @@ final class PackPolicy {
     static final int NONE = 0, LIGHT = 1, MODERATE = 2, SEVERE = 3, CRITICAL = 4, EMERGENCY = 5, SHUTDOWN = 6;
     static final int BATTERY_MIN = 20;
 
-    /** Why the job waits ("battery"), null when it may run. The other arguments are kept for the callers and the tests: heat is not a reason */
+    /** Why the job waits ("game" or "battery"), null when it may run. Heat is not a reason */
     static String reason(int batteryPct, boolean charging, int thermal, String was, boolean heatOverride) {
+        return reason(batteryPct, charging, thermal, was, heatOverride, false);
+    }
+
+    /** Why the job waits ("game" when a game runs, else "battery"), null when it may run. The other arguments are kept for the callers and the tests: heat is not a reason */
+    static String reason(int batteryPct, boolean charging, int thermal, String was, boolean heatOverride, boolean gameRunning) {
+        if (gameRunning) return "game";
         return batteryPct < BATTERY_MIN && !charging ? "battery" : null;
     }
 

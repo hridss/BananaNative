@@ -101,6 +101,10 @@ ondevice/java/dev/nxnative/android/PackService.java	going on after Android ended
 ondevice/java/dev/nxnative/android/PackService.java	pausing: timeout: Android's daily limit for background work (6 h of dataSync) is reached; 
 ondevice/java/dev/nxnative/android/PackService.java	pausing: refused: Android did not let the job start in the background (
 ondevice/java/dev/nxnative/android/PackService.java	pause asked (from 
+ondevice/java/dev/nxnative/android/PackService.java	pausing: game: a game started (from 
+ondevice/java/dev/nxnative/android/PackService.java	pausing: game: a game is running; 
+ondevice/java/dev/nxnative/android/PackService.java	pausing: game: a game is running (
+ondevice/java/dev/nxnative/android/PackService.java	sticky restart deferred
 ondevice/java/dev/nxnative/android/PackService.java	 pause: ending the process (the step runs again on Resume)
 ondevice/java/dev/nxnative/android/PackService.java	the tool did not stop within 20 s of the 
 ondevice/java/dev/nxnative/android/PackService.java	 % and not charging
