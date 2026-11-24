@@ -45,37 +45,43 @@ def nro_size(h):   # an NRO header's total size, or 0 when the bytes are not one
     return n if 0x40 < n < 1 << 30 else 0
 
 
-def frame(mm, p, zstd):
+def frame(at, p, size, zstd):
     dec = zstd.ZstdDecompressor(); parts, q = [], p
-    while not dec.eof and q < len(mm) and q - p < (1 << 30):
-        parts.append(dec.decompress(mm[q:q + (8 << 20)])); q += 8 << 20
+    while not dec.eof and q < size and q - p < (1 << 30):
+        parts.append(dec.decompress(at(q, 8 << 20))); q += 8 << 20
     return b''.join(parts)
 
 
 def scan(job):
-    """NROs in [a, b) of one file: stored ones (NRO0 at +0x10) and zstd frames whose first block inflates to an NRO header. Returns [(sha256, path, offset, how, bytes)] of wanted ones"""
+    """NROs in [a, b) of one file: stored ones (NRO0 at +0x10) and zstd frames whose first block inflates to an NRO header. Returns [(sha256, path, offset, how, bytes)] of wanted ones.
+    The job reads its own range (and a frame head's reach past it), not a mapping of the whole file: a file of an NCA snapshot (.nx, nx.py) has no file to map, and its fileno() copies
+    all of it to a temporary file, which every job of the file did again (Mario Golf: Super Rush, 3.8 GB in 48 jobs, 10 at once: tens of GB of temporary files, then ENOSPC)"""
     path, a, b, want = job
     zstd = zstd_mod(); out = []
     with open(path, 'rb') as f:
-        mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
-        p = mm.find(b'NRO0', a, b)
+        size = f.seek(0, 2)
+        f.seek(a); buf = f.read(max(0, min(size, b + 0x48000) - a))
+        def at(off, n):   # n bytes of the file at off: from the job's range when they are in it
+            if a <= off and off + n <= a + len(buf): return buf[off - a:off - a + n]
+            f.seek(off); return f.read(n)
+        end = b - a
+        p = buf.find(b'NRO0', 0, end)
         while p != -1:
-            s = p - 0x10; n = nro_size(mm[s:s + 0x40]) if s >= 0 else 0
-            if n and s + n <= len(mm):
-                body = mm[s:s + n]; h = hashlib.sha256(body).digest()
+            s = a + p - 0x10; n = nro_size(at(s, 0x40)) if s >= 0 else 0
+            if n and s + n <= size:
+                body = at(s, n); h = hashlib.sha256(body).digest()
                 if h in want: out.append((h, path, s, 'stored', body))
-            p = mm.find(b'NRO0', p + 4, b)
-        p = mm.find(ZMAGIC, a, b)
+            p = buf.find(b'NRO0', p + 4, end)
+        p = buf.find(ZMAGIC, 0, end)
         while p != -1:
             try:
-                head = zstd.ZstdDecompressor().decompress(mm[p:p + 0x48000], max_length=0x40)
+                head = zstd.ZstdDecompressor().decompress(at(a + p, 0x48000), max_length=0x40)
                 if nro_size(head):
-                    body = frame(mm, p, zstd); h = hashlib.sha256(body).digest()
-                    if h in want: out.append((h, path, p, 'zstd', body))
+                    body = frame(at, a + p, size, zstd); h = hashlib.sha256(body).digest()
+                    if h in want: out.append((h, path, a + p, 'zstd', body))
             except Exception:
                 pass
-            p = mm.find(ZMAGIC, p + 4, b)
-        mm.close()
+            p = buf.find(ZMAGIC, p + 4, end)
     return out
 
 
