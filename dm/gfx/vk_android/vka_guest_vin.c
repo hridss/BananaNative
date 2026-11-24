@@ -126,3 +126,84 @@ out:
     free(loc); free(pos); free(role); free(a0); free(a1); free(mark);
     return res;
 }
+
+// Descriptor arrays indexed per invocation (docs/reference/rendering.md "Descriptor arrays indexed per vertex without NonUniform"): Hagi's GX vertex shaders pick a
+// transform-matrix block per vertex (position_matrix[4], normal_matrix[2]: arrays of uniform blocks, indexed by in_MatIdx). Vulkan defines such an access only when the
+// index is dynamically uniform, or the access is decorated NonUniform; NVIDIA's hardware reads any element either way, Adreno does not (skinned models drawn as spikes).
+// Every access chain into a descriptor array (a Uniform, StorageBuffer or UniformConstant variable of array type) whose first index is not a constant, and every load
+// through it, is decorated NonUniform, with the capabilities that need (ShaderNonUniform and the array kind's) and SPV_EXT_descriptor_indexing below SPIR-V 1.5.
+// kinds (out): bit 0 a uniform buffer array, 1 storage buffer, 2 sampled image / sampler, 3 storage image was so indexed. NULL: nothing to change (why "") or not done
+uint32_t *vkg_spv_nonuniform(const uint32_t *w, size_t n, size_t *out_n, unsigned *kinds, char *why, size_t wn) {
+    enum { OP_CAPABILITY = 17, OP_EXTENSION = 10, OP_MEMORY_MODEL = 14, OP_TYPE_IMAGE = 25, OP_TYPE_SAMPLER = 26, OP_TYPE_SAMPLED_IMAGE = 27, OP_TYPE_ARRAY = 28, OP_TYPE_RTARRAY = 29,
+           OP_TYPE_STRUCT = 30, OP_CONSTANT = 43, OP_SPEC_CONSTANT = 50, OP_MEMBER_DECORATE = 72, DEC_NON_UNIFORM = 5300, DEC_BLOCK = 2, DEC_BUFFER_BLOCK = 3,
+           CAP_SHADER_NON_UNIFORM = 5301, CAP_UBO_NU = 5306, CAP_SAMPLED_NU = 5307, CAP_SSBO_NU = 5308, CAP_STORAGE_IMAGE_NU = 5309, SC_UNIFORM_CONSTANT = 0, SC_UNIFORM = 2, SC_STORAGE_BUFFER = 12 };
+    why[0] = 0; *kinds = 0;
+    if (n < 5 || w[0] != 0x07230203u) { snprintf(why, wn, "not SPIR-V"); return NULL; }
+    uint32_t bound = w[3];
+    if (!bound || bound > (1u << 22)) { snprintf(why, wn, "id bound %u", bound); return NULL; }
+    uint8_t *cst = calloc(bound, 1), *kind = calloc(bound, 1), *dec = calloc(bound, 1);   // cst: a constant; kind: array variable kind + 1 / type kind; dec: to decorate (1), already decorated (2)
+    uint32_t *ptype = calloc(bound, 4), *elem = calloc(bound, 4);   // ptype: a pointer's pointee; elem: an array's element type
+    uint8_t *tkind = calloc(bound, 1), *block = calloc(bound, 1);   // tkind: 1 struct, 2 image, 3 sampler / sampled image, 4 array; block: a struct with Block / BufferBlock
+    uint32_t *res = NULL; size_t ndec = 0, ann_end = 0, cap_end = 0; int have_ext = 0, have_cap[6] = {0};
+    if (!cst || !kind || !dec || !ptype || !elem || !tkind || !block) { snprintf(why, wn, "out of memory"); goto out; }
+    for (size_t i = 5; i < n;) {
+        uint32_t op = w[i] & 0xffff, len = w[i] >> 16; const uint32_t *x = w + i;
+        if (!len || i + len > n) { snprintf(why, wn, "bad instruction length"); goto out; }
+        if (op == OP_CAPABILITY && len >= 2) { cap_end = i + len; uint32_t c = x[1];
+            if (c == CAP_SHADER_NON_UNIFORM) have_cap[0] = 1; else if (c == CAP_UBO_NU) have_cap[1] = 1; else if (c == CAP_SSBO_NU) have_cap[2] = 1; else if (c == CAP_SAMPLED_NU) have_cap[3] = 1; else if (c == CAP_STORAGE_IMAGE_NU) have_cap[4] = 1; }
+        else if (op == OP_EXTENSION && len >= 2 && !strncmp((const char *)(x + 1), "SPV_EXT_descriptor_indexing", (len - 1) * 4)) have_ext = 1;
+        else if (op == OP_DECORATE && len >= 3 && x[1] < bound) { if (x[2] == DEC_NON_UNIFORM) dec[x[1]] = 2; if (x[2] == DEC_BLOCK || x[2] == DEC_BUFFER_BLOCK) block[x[1]] = 1; }
+        else if ((op == OP_CONSTANT || op == OP_SPEC_CONSTANT) && len >= 3 && x[2] < bound) cst[x[2]] = 1;
+        else if (op == OP_TYPE_STRUCT && len >= 2 && x[1] < bound) tkind[x[1]] = 1;
+        else if (op == OP_TYPE_IMAGE && len >= 9 && x[1] < bound) tkind[x[1]] = x[7] == 2 ? 5 : 2;   // (Sampled 2: a storage image)
+        else if ((op == OP_TYPE_SAMPLER || op == OP_TYPE_SAMPLED_IMAGE) && len >= 2 && x[1] < bound) tkind[x[1]] = 3;
+        else if ((op == OP_TYPE_ARRAY || op == OP_TYPE_RTARRAY) && len >= 3 && x[1] < bound) { tkind[x[1]] = 4; elem[x[1]] = x[2]; }
+        else if (op == OP_TYPE_POINTER && len >= 4 && x[1] < bound) ptype[x[1]] = x[3];
+        else if (op == OP_VARIABLE && len >= 4 && x[2] < bound && x[1] < bound) {
+            uint32_t t = ptype[x[1]], sc = x[3];
+            if (t < bound && tkind[t] == 4 && elem[t] < bound) {
+                uint32_t e = elem[t];
+                if ((sc == SC_UNIFORM || sc == SC_STORAGE_BUFFER) && tkind[e] == 1) kind[x[2]] = sc == SC_STORAGE_BUFFER ? 2 : 1;   // (a Uniform BufferBlock array is a storage buffer array)
+                else if (sc == SC_UNIFORM_CONSTANT && tkind[e] == 3) kind[x[2]] = 3;
+                else if (sc == SC_UNIFORM_CONSTANT && tkind[e] == 2) kind[x[2]] = 3;   // separate sampled images
+                else if (sc == SC_UNIFORM_CONSTANT && tkind[e] == 5) kind[x[2]] = 4;   // storage images
+            }
+        }
+        if (!ann_end && (op == OP_TYPE_INT || op == OP_TYPE_FLOAT || op == OP_TYPE_VECTOR || op == OP_TYPE_POINTER || op == OP_TYPE_STRUCT || op == OP_TYPE_ARRAY || op == OP_TYPE_IMAGE ||
+                         op == OP_TYPE_SAMPLER || op == OP_TYPE_SAMPLED_IMAGE || op == OP_TYPE_RTARRAY || op == OP_CONSTANT || (op >= 19 && op <= 39))) ann_end = i;
+        i += len;
+    }
+    for (size_t i = 5; i < n; i += w[i] >> 16) {
+        uint32_t op = w[i] & 0xffff, len = w[i] >> 16; const uint32_t *x = w + i;
+        if ((op == OP_ACCESS_CHAIN || op == OP_IN_BOUNDS_ACCESS_CHAIN) && len >= 5 && x[3] < bound && kind[x[3]] && !(kind[x[3]] & 0x80) && x[4] < bound && !cst[x[4]]) {
+            if (x[2] < bound && !dec[x[2]]) { dec[x[2]] = 1; ndec++; }
+            *kinds |= 1u << (kind[x[3]] - 1);
+            kind[x[2]] = 0x80 | kind[x[3]];   // (loads through it are decorated too)
+        } else if (op == OP_LOAD && len >= 4 && x[3] < bound && (kind[x[3]] & 0x80) && x[2] < bound && !dec[x[2]]) { dec[x[2]] = 1; ndec++; }
+    }
+    if (!ndec) goto out;
+    if (!ann_end) { snprintf(why, wn, "no type section"); goto out; }
+    int ver15 = (w[1] >> 16 & 0xff) > 1 || (w[1] >> 8 & 0xff) >= 5;
+    uint32_t caps[5]; int nc = 0;
+    if (!have_cap[0]) caps[nc++] = CAP_SHADER_NON_UNIFORM;
+    if ((*kinds & 1) && !have_cap[1]) caps[nc++] = CAP_UBO_NU;
+    if ((*kinds & 2) && !have_cap[2]) caps[nc++] = CAP_SSBO_NU;
+    if ((*kinds & 4) && !have_cap[3]) caps[nc++] = CAP_SAMPLED_NU;
+    if ((*kinds & 8) && !have_cap[4]) caps[nc++] = CAP_STORAGE_IMAGE_NU;
+    static const char extname[] = "SPV_EXT_descriptor_indexing";   // 27 characters + NUL: 7 words
+    int addext = !ver15 && !have_ext;
+    res = malloc((n + nc * 2 + (addext ? 8 : 0) + ndec * 3) * 4);
+    if (!res) { snprintf(why, wn, "out of memory"); goto out; }
+    if (!cap_end) cap_end = 5;
+    size_t o = 0;
+    memcpy(res, w, cap_end * 4); o = cap_end;
+    for (int k = 0; k < nc; k++) { res[o++] = (2u << 16) | OP_CAPABILITY; res[o++] = caps[k]; }
+    if (addext) { res[o++] = (8u << 16) | OP_EXTENSION; memset(res + o, 0, 28); memcpy(res + o, extname, sizeof extname); o += 7; }
+    memcpy(res + o, w + cap_end, (ann_end - cap_end) * 4); o += ann_end - cap_end;
+    for (uint32_t id = 1; id < bound; id++) if (dec[id] == 1) { res[o++] = (3u << 16) | OP_DECORATE; res[o++] = id; res[o++] = DEC_NON_UNIFORM; }
+    memcpy(res + o, w + ann_end, (n - ann_end) * 4); o += n - ann_end;
+    *out_n = o;
+out:
+    free(cst); free(kind); free(dec); free(ptype); free(elem); free(tkind); free(block);
+    return res;
+}

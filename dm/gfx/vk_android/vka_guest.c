@@ -65,6 +65,14 @@ static int g_log;
             "    cbz x16, 1f\n    br x16\n1:\n    adrp x0, " PLAT_ASM_PAGE(gvn_##name) "\n    add x0, x0, " PLAT_ASM_PAGEOFF(gvn_##name) "\n    b " PLAT_ASM_SYM(gv_unbound) "\n"); \
     PLAT_TABLE(swhle) static const hle_ent gve_##name = {#name, (void *)(uintptr_t)gvt_##name};
 
+// The driver call a game thread is in, for a crash inside the driver (gv_fault: one line in the crash report). GV_IN at the top of a function here
+static __thread const char *gv_cur;
+static void gv_out(const char **p) { gv_cur = *p; }
+#define GV_IN(name) const char *gv_prev_ __attribute__((cleanup(gv_out))) = gv_cur; gv_cur = name
+static int gv_fault(void *addr, int is_write, void *uc) {
+    (void)uc; if (gv_cur) LOG("[gvk] fault at %p (%s) inside %s, called by the game", addr, is_write ? "write" : "read", gv_cur);
+    return 0;
+}
 __attribute__((visibility("hidden"), used)) uint64_t gv_unbound(const char *name);
 __attribute__((visibility("hidden"), used)) uint64_t gv_unbound(const char *name) {
     static _Atomic int n; if (atomic_fetch_add(&n, 1) < 16) GRED("%s called before the device was made (or the driver has no such entry point): returns 0", name);
@@ -94,7 +102,6 @@ __attribute__((visibility("hidden"), used)) uint64_t gv_unbound(const char *name
     X(vkCreateEvent, GV_Z2) X(vkDestroyEvent, GV_Z2) X(vkGetEventStatus, GV_Z_NONE) X(vkSetEvent, GV_Z_NONE) X(vkResetEvent, GV_Z_NONE) \
     X(vkCreateFence, GV_Z2) X(vkDestroyFence, GV_Z2) X(vkResetFences, GV_Z_NONE) X(vkGetFenceStatus, GV_Z_NONE) \
     X(vkCreateSemaphore, GV_Z2) X(vkDestroySemaphore, GV_Z2) X(vkGetSemaphoreCounterValue, GV_Z_NONE) X(vkSignalSemaphore, GV_Z_NONE) \
-    X(vkCreateQueryPool, GV_Z2) X(vkDestroyQueryPool, GV_Z2) X(vkResetQueryPool, GV_Z_NONE) \
     X(vkGetBufferDeviceAddress, GV_Z_NONE) X(vkGetBufferOpaqueCaptureAddress, GV_Z_NONE) X(vkGetDeviceMemoryOpaqueCaptureAddress, GV_Z_NONE) \
     X(vkCmdBindPipeline, GV_Z_NONE) X(vkCmdSetViewport, GV_Z_NONE) X(vkCmdSetScissor, GV_Z_NONE) X(vkCmdSetLineWidth, GV_Z_NONE) X(vkCmdSetDepthBias, GV_Z_NONE) \
     X(vkCmdSetBlendConstants, GV_Z_NONE) X(vkCmdSetDepthBounds, GV_Z_NONE) X(vkCmdSetStencilCompareMask, GV_Z_NONE) X(vkCmdSetStencilWriteMask, GV_Z_NONE) \
@@ -105,8 +112,8 @@ __attribute__((visibility("hidden"), used)) uint64_t gv_unbound(const char *name
     X(vkCmdCopyBuffer, GV_Z_NONE) X(vkCmdCopyImage, GV_Z_NONE) X(vkCmdBlitImage, GV_Z_NONE) X(vkCmdCopyBufferToImage, GV_Z_NONE) X(vkCmdCopyImageToBuffer, GV_Z_NONE) \
     X(vkCmdUpdateBuffer, GV_Z_NONE) X(vkCmdFillBuffer, GV_Z_NONE) X(vkCmdClearColorImage, GV_Z_NONE) X(vkCmdClearDepthStencilImage, GV_Z_NONE) \
     X(vkCmdClearAttachments, GV_Z_NONE) X(vkCmdResolveImage, GV_Z_NONE) X(vkCmdSetEvent, GV_Z_NONE) X(vkCmdResetEvent, GV_Z_NONE) X(vkCmdWaitEvents, GV_Z_NONE) \
-    X(vkCmdPipelineBarrier, GV_Z_NONE) X(vkCmdPipelineBarrier2, GV_Z_NONE) X(vkCmdBeginQuery, GV_Z_NONE) X(vkCmdEndQuery, GV_Z_NONE) X(vkCmdResetQueryPool, GV_Z_NONE) \
-    X(vkCmdWriteTimestamp, GV_Z_NONE) X(vkCmdCopyQueryPoolResults, GV_Z_NONE) X(vkCmdPushConstants, GV_Z_NONE) X(vkCmdBeginRenderPass, GV_Z_NONE) \
+    X(vkCmdPipelineBarrier, GV_Z_NONE) X(vkCmdPipelineBarrier2, GV_Z_NONE) \
+    X(vkCmdWriteTimestamp, GV_Z_NONE) X(vkCmdPushConstants, GV_Z_NONE) X(vkCmdBeginRenderPass, GV_Z_NONE) \
     X(vkCmdNextSubpass, GV_Z_NONE) X(vkCmdEndRenderPass, GV_Z_NONE) X(vkCmdExecuteCommands, GV_Z_NONE) \
     X(vkCmdBeginRenderPass2, GV_Z_NONE) X(vkCmdNextSubpass2, GV_Z_NONE) X(vkCmdEndRenderPass2, GV_Z_NONE)
 #define GV_TRAMP(name, z) GVT(name, z)
@@ -119,7 +126,7 @@ GV_PASS_D(GV_TRAMP)
     X(vkGetImageMemoryRequirements) X(vkGetImageMemoryRequirements2) X(vkCreateImage) X(vkDestroyImage) X(vkCreateRenderPass) X(vkCreateRenderPass2) \
     X(vkCreateDescriptorPool) X(vkDestroyDescriptorPool) X(vkResetDescriptorPool) X(vkAllocateDescriptorSets) X(vkFreeDescriptorSets) \
     X(vkCreateShaderModule) X(vkDestroyShaderModule) X(vkCreateGraphicsPipelines) X(vkCreateComputePipelines) X(vkWaitForFences) X(vkWaitSemaphores) \
-    X(vkCreateCommandPool) X(vkDestroyCommandPool) X(vkAllocateCommandBuffers) X(vkBeginCommandBuffer) X(vkEndCommandBuffer) X(vkCmdPipelineBarrier)
+    X(vkCreateCommandPool) X(vkDestroyCommandPool) X(vkAllocateCommandBuffers) X(vkBeginCommandBuffer) X(vkEndCommandBuffer) X(vkCmdPipelineBarrier) X(vkCmdBeginQuery) X(vkCmdEndQuery) X(vkCmdResetQueryPool) X(vkResetQueryPool) X(vkCreateQueryPool) X(vkDestroyQueryPool) X(vkCmdCopyQueryPoolResults) X(vkGetQueryPoolResults)
 #define GV_DECL(f) PFN_##f f;
 static struct { GV_REAL_D(GV_DECL) } R;
 
@@ -140,6 +147,7 @@ static int gv_up(void) {
 #undef FILL_I
 #undef FILL_D
 #undef FILL_R
+            dm_fault_hook_register(gv_fault);
             if (V.qf != 0) GRED("the device's graphics queue family is %u, not 0: the game's queue family indices (0) are not translated", V.qf);
         }
         atomic_store_explicit(&g_up, ok ? 1 : -1, memory_order_release);
@@ -398,6 +406,7 @@ GV(vkGetDeviceQueue2, void, VkDevice d, const VkDeviceQueueInfo2 *i, VkQueue *q)
 
 // ---------- Memory ----------
 GVB(vkAllocateMemory, VkResult, VkDevice d, const VkMemoryAllocateInfo *ai, const VkAllocationCallbacks *a, VkDeviceMemory *out) {
+    GV_IN("vkAllocateMemory");
     (void)d; (void)a; mem_model();
     VkMemoryAllocateInfo c = *ai;
     if (ai->memoryTypeIndex >= 3) { GRED("vkAllocateMemory: memory type %u of 3", ai->memoryTypeIndex); return VK_ERROR_OUT_OF_DEVICE_MEMORY; }
@@ -447,6 +456,7 @@ static void fmt_check(VkFormat f, int vertex, VkImageTiling tiling, VkImageUsage
     GRED("format %d %s: the device lacks format features %#x (has %#x)", f, vertex ? "as a vertex attribute" : tiling == VK_IMAGE_TILING_LINEAR ? "in a linear image" : "in an optimal image", miss, have);
 }
 GVB(vkCreateImage, VkResult, VkDevice d, const VkImageCreateInfo *ci, const VkAllocationCallbacks *a, VkImage *out) {
+    GV_IN("vkCreateImage");
     (void)d; (void)a; fmt_check(ci->format, 0, ci->tiling, ci->usage);
     VkResult r = R.vkCreateImage(V.dev, ci, NULL, out);
     if (r) {
@@ -470,6 +480,7 @@ GV(vkDestroyImage, void, VkDevice d, VkImage im, const VkAllocationCallbacks *a)
 // memory undefined and drop what was drawn: LOAD and STORE instead. DM_VK_GUEST_KEEP=0 leaves them as the game made them
 static int keep_on(void) { return VKA_ENV("DM_VK_GUEST_KEEP", 1) != 0; }
 GVB(vkCreateRenderPass, VkResult, VkDevice d, const VkRenderPassCreateInfo *ci, const VkAllocationCallbacks *a, VkRenderPass *out) {
+    GV_IN("vkCreateRenderPass");
     (void)d; (void)a;
     if (!keep_on() || !ci->attachmentCount) return R.vkCreateRenderPass(V.dev, ci, NULL, out);
     VkAttachmentDescription at[16], *p = ci->attachmentCount <= 16 ? at : malloc(ci->attachmentCount * sizeof *p);
@@ -521,10 +532,12 @@ GV(vkDestroyDescriptorPool, void, VkDevice d, VkDescriptorPool p, const VkAlloca
     R.vkDestroyDescriptorPool(V.dev, p, NULL);
 }
 GV(vkResetDescriptorPool, VkResult, VkDevice d, VkDescriptorPool p, VkDescriptorPoolResetFlags f) {
+    GV_IN("vkResetDescriptorPool");
     (void)d; pthread_mutex_lock(&g_obj_mu); int k = gv_map_find(&g_pool, (uint64_t)(uintptr_t)p); if (k >= 0) g_pool.v[k]++; pthread_mutex_unlock(&g_obj_mu);
     return R.vkResetDescriptorPool(V.dev, p, f);
 }
 GV(vkAllocateDescriptorSets, VkResult, VkDevice d, const VkDescriptorSetAllocateInfo *ai, VkDescriptorSet *out) {
+    GV_IN("vkAllocateDescriptorSets");
     (void)d; VkResult r = R.vkAllocateDescriptorSets(V.dev, ai, out);
     if (!r) {
         pthread_mutex_lock(&g_obj_mu);
@@ -535,6 +548,7 @@ GV(vkAllocateDescriptorSets, VkResult, VkDevice d, const VkDescriptorSetAllocate
     return r;
 }
 GV(vkFreeDescriptorSets, VkResult, VkDevice d, VkDescriptorPool p, uint32_t n, const VkDescriptorSet *sets) {
+    GV_IN("vkFreeDescriptorSets");
     (void)d; VkDescriptorSet keep[64]; uint32_t nk = 0, gone = 0; VkResult r = VK_SUCCESS;
     pthread_mutex_lock(&g_obj_mu);
     int pk = gv_map_find(&g_pool, (uint64_t)(uintptr_t)p); uint64_t gen = pk >= 0 ? g_pool.v[pk] : 0;
@@ -590,6 +604,20 @@ out:
 // Scaled vertex formats the device cannot fetch (vka_guest_vin.c): a vertex module's code is kept while the module lives, so a pipeline that feeds one of its inputs in
 // such a format gets a copy whose input reads the integer format and converts it
 uint32_t *vkg_spv_scaled(const uint32_t *w, size_t n, const uint8_t conv[32], size_t *out_n, char *why, size_t wn);   // vka_guest_vin.c
+uint32_t *vkg_spv_nonuniform(const uint32_t *w, size_t n, size_t *out_n, unsigned *kinds, char *why, size_t wn);   // vka_guest_vin.c
+// The device's non-uniform descriptor indexing (bits as vkg_spv_nonuniform's kinds; the replay's device enables every feature it has, vka_dev.c)
+static unsigned nu_have(void) {
+    static int v = -1;
+    if (v < 0) {
+        VkPhysicalDeviceVulkan12Features f12 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
+        VkPhysicalDeviceFeatures2 f2 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, .pNext = &f12};
+        vk.vkGetPhysicalDeviceFeatures2(V.pd, &f2);
+        v = (f12.shaderUniformBufferArrayNonUniformIndexing ? 1 : 0) | (f12.shaderStorageBufferArrayNonUniformIndexing ? 2 : 0) | (f12.shaderSampledImageArrayNonUniformIndexing ? 4 : 0) |
+            (f12.shaderStorageImageArrayNonUniformIndexing ? 8 : 0);
+        GLOG("non-uniform descriptor indexing on this device: uniform buffers %d, storage buffers %d, sampled images %d, storage images %d", v & 1, v >> 1 & 1, v >> 2 & 1, v >> 3 & 1);
+    }
+    return (unsigned)v;
+}
 static int g_vin_scaled = -1;   // 1: the device fetches every scaled format the check found (nothing kept), 0: some it cannot
 static int scaled_of(VkFormat f, VkFormat *ifmt) {   // 1 USCALED, 2 SSCALED (*ifmt: its UINT / SINT twin, two values on in every group), 0 neither
     static const VkFormat us[] = {VK_FORMAT_R8_USCALED, VK_FORMAT_R8G8_USCALED, VK_FORMAT_R8G8B8_USCALED, VK_FORMAT_B8G8R8_USCALED, VK_FORMAT_R8G8B8A8_USCALED,
@@ -617,9 +645,20 @@ static int has_vertex_entry(const uint32_t *w, size_t n) {
     return 0;
 }
 GVB(vkCreateShaderModule, VkResult, VkDevice d, const VkShaderModuleCreateInfo *ci, const VkAllocationCallbacks *a, VkShaderModule *out) {
+    GV_IN("vkCreateShaderModule");
     (void)d; (void)a;
     size_t nn = 0; uint32_t *fixed = fix_strides(ci->pCode, ci->codeSize / 4, &nn);
     VkShaderModuleCreateInfo c = *ci; if (fixed) { c.pCode = fixed; c.codeSize = nn * 4; GRED_ONCE("SPIR-V with ArrayStride on struct members (the Switch's driver takes it): the strides copied onto the array types"); }
+    {   // descriptor arrays indexed per invocation: declared NonUniform (vka_guest_vin.c)
+        size_t nu_n = 0; unsigned kinds = 0; char why[96];
+        uint32_t *nu = vkg_spv_nonuniform(c.pCode, c.codeSize / 4, &nu_n, &kinds, why, sizeof why);
+        if (nu && (kinds & ~nu_have())) { GRED_ONCE("a shader indexes descriptor arrays per invocation (kinds %#x) where the device cannot (%#x): left as made", kinds, nu_have()); free(nu); nu = NULL; }
+        if (nu) { free(fixed); fixed = nu; c.pCode = nu; c.codeSize = nu_n * 4; static _Atomic int told; if (!atomic_exchange(&told, 1)) GLOG("descriptor arrays indexed per invocation (kinds %#x): the accesses decorated NonUniform (and every such shader from now on)", kinds); }
+        else if (why[0]) GRED_ONCE("non-uniform descriptor indexing not declared: %s", why);
+    }
+    { static const char *cap; static int capn; if (!capn) { cap = getenv("DM_VK_GUEST_CAPTURE"); capn = 1; }   // DM_VK_GUEST_CAPTURE=<folder>: every module the game makes, as <hash>.spv
+      if (cap && *cap) { uint64_t h = 1469598103934665603ull; const uint8_t *b = (const uint8_t *)c.pCode; for (size_t i = 0; i < c.codeSize; i++) h = (h ^ b[i]) * 1099511628211ull;
+          char p[600]; snprintf(p, sizeof p, "%s/%016llx.spv", cap, (unsigned long long)h); FILE *fo = fopen(p, "wb"); if (fo) { fwrite(c.pCode, 1, c.codeSize, fo); fclose(fo); } } }
     uint64_t f = vka_fp_host(NULL); VkResult r = R.vkCreateShaderModule(V.dev, &c, NULL, out); vka_fp_back(f);
     if (!r && vin_scaled_needed() && has_vertex_entry(c.pCode, c.codeSize / 4)) {
         uint64_t *keep = malloc(8 + c.codeSize);
@@ -666,6 +705,49 @@ static int pso_fix_scaled(VkGraphicsPipelineCreateInfo *ci, vin_fix *fx) {
     static _Atomic int told; if (!atomic_exchange(&told, 1)) GLOG("scaled vertex input: a pipeline's scaled attributes fed as integers and converted in its vertex shader (and every such pipeline from now on)");
     return 1;
 }
+// Query ranges past the pool: Hagi resets its occlusion pool from the query in use to the pool's end, and when its index wraps it asks for a count of -2169 (first 0,
+// count 0xfffff787 of a 2,176-query pool, Super Mario Sunshine at Delfino Airstrip). NVIDIA's driver ignores queries outside the pool; Qualcomm's wrote past its query
+// memory (SIGSEGV in vulkan.adreno.so in vkCmdResetQueryPool, ~20 s into play). Queries outside a pool do not exist: every range is cut to the pool, a query outside it skipped
+static gv_map g_qpool;   // query pool → its query count
+static uint32_t qpool_n(VkQueryPool p) { pthread_mutex_lock(&g_obj_mu); int k = gv_map_find(&g_qpool, (uint64_t)(uintptr_t)p); uint32_t n = k >= 0 ? (uint32_t)g_qpool.v[k] : UINT32_MAX; pthread_mutex_unlock(&g_obj_mu); return n; }
+static int qrange(VkQueryPool p, uint32_t *first, uint32_t *n, const char *who) {   // 0: nothing of the range is in the pool
+    uint32_t size = qpool_n(p); if (size == UINT32_MAX) return 1;
+    uint64_t end = (uint64_t)*first + *n;
+    if (*first < size && end <= size) return 1;
+    static _Atomic int told; if (atomic_fetch_add(&told, 1) < 4) GRED("%s: queries %u + %u of a pool of %u (the Switch's driver ignores those outside the pool): cut to the pool", who, *first, *n, size);
+    if (*first >= size) return 0;
+    *n = size - *first; return 1;
+}
+GV(vkCreateQueryPool, VkResult, VkDevice d, const VkQueryPoolCreateInfo *ci, const VkAllocationCallbacks *a, VkQueryPool *out) {
+    (void)d; (void)a; VkResult r = R.vkCreateQueryPool(V.dev, ci, NULL, out);
+    if (!r) { pthread_mutex_lock(&g_obj_mu); gv_map_put(&g_qpool, (uint64_t)(uintptr_t)*out, ci->queryCount); pthread_mutex_unlock(&g_obj_mu); }
+    OLOG("query pool %#llx: type %d, %u queries: %d", (unsigned long long)(uintptr_t)*out, ci->queryType, ci->queryCount, r);
+    return r;
+}
+GV(vkDestroyQueryPool, void, VkDevice d, VkQueryPool p, const VkAllocationCallbacks *a) {
+    (void)d; (void)a; if (!p) return;
+    pthread_mutex_lock(&g_obj_mu); gv_map_del(&g_qpool, (uint64_t)(uintptr_t)p); pthread_mutex_unlock(&g_obj_mu);
+    R.vkDestroyQueryPool(V.dev, p, NULL);
+}
+GV(vkCmdResetQueryPool, void, VkCommandBuffer cb, VkQueryPool p, uint32_t first, uint32_t n) {
+    GV_IN("vkCmdResetQueryPool"); if (qrange(p, &first, &n, "vkCmdResetQueryPool") && n) R.vkCmdResetQueryPool(cb, p, first, n);
+}
+GV(vkResetQueryPool, void, VkDevice d, VkQueryPool p, uint32_t first, uint32_t n) {
+    (void)d; if (qrange(p, &first, &n, "vkResetQueryPool") && n) R.vkResetQueryPool(V.dev, p, first, n);
+}
+GV(vkCmdBeginQuery, void, VkCommandBuffer cb, VkQueryPool p, uint32_t q, VkQueryControlFlags f) {
+    GV_IN("vkCmdBeginQuery"); uint32_t one = 1; if (qrange(p, &q, &one, "vkCmdBeginQuery")) R.vkCmdBeginQuery(cb, p, q, f);
+}
+GV(vkCmdEndQuery, void, VkCommandBuffer cb, VkQueryPool p, uint32_t q) {
+    GV_IN("vkCmdEndQuery"); uint32_t one = 1; if (qrange(p, &q, &one, "vkCmdEndQuery")) R.vkCmdEndQuery(cb, p, q);
+}
+GV(vkCmdCopyQueryPoolResults, void, VkCommandBuffer cb, VkQueryPool p, uint32_t first, uint32_t n, VkBuffer b, VkDeviceSize off, VkDeviceSize stride, VkQueryResultFlags f) {
+    if (qrange(p, &first, &n, "vkCmdCopyQueryPoolResults") && n) R.vkCmdCopyQueryPoolResults(cb, p, first, n, b, off, stride, f);
+}
+GV(vkGetQueryPoolResults, VkResult, VkDevice d, VkQueryPool p, uint32_t first, uint32_t n, size_t size, void *data, VkDeviceSize stride, VkQueryResultFlags f) {
+    (void)d; if (!qrange(p, &first, &n, "vkGetQueryPoolResults") || !n) return VK_SUCCESS;
+    return R.vkGetQueryPoolResults(V.dev, p, first, n, size, data, stride, f);
+}
 // A pipeline with a logic op where the device has none: drawn without it, said once (Hagi makes a dozen VK_LOGIC_OP_INVERT pipelines at boot)
 static int pso_fix_logic(VkGraphicsPipelineCreateInfo *ci, VkPipelineColorBlendStateCreateInfo *cb) {
     if (V.logic_op || !ci->pColorBlendState || !ci->pColorBlendState->logicOpEnable) return 0;
@@ -674,6 +756,7 @@ static int pso_fix_logic(VkGraphicsPipelineCreateInfo *ci, VkPipelineColorBlendS
     return 1;
 }
 GVB(vkCreateGraphicsPipelines, VkResult, VkDevice d, VkPipelineCache c, uint32_t n, const VkGraphicsPipelineCreateInfo *ci, const VkAllocationCallbacks *a, VkPipeline *out) {
+    GV_IN("vkCreateGraphicsPipelines");
     (void)d; (void)a;
     VkGraphicsPipelineCreateInfo *cc = malloc(n * sizeof *cc); VkPipelineColorBlendStateCreateInfo *cbs = malloc(n * sizeof *cbs); vin_fix *fx = calloc(n, sizeof *fx);
     if (cc && cbs && fx) {
@@ -692,6 +775,7 @@ GVB(vkCreateGraphicsPipelines, VkResult, VkDevice d, VkPipelineCache c, uint32_t
     return r;
 }
 GVB(vkCreateComputePipelines, VkResult, VkDevice d, VkPipelineCache c, uint32_t n, const VkComputePipelineCreateInfo *ci, const VkAllocationCallbacks *a, VkPipeline *out) {
+    GV_IN("vkCreateComputePipelines");
     (void)d; (void)a;
     uint64_t f = vka_fp_host(NULL); VkResult r = R.vkCreateComputePipelines(V.dev, c, n, ci, NULL, out); vka_fp_back(f);
     if (r) { static _Atomic int nr; if (atomic_fetch_add(&nr, 1) < 16) GRED("vkCreateComputePipelines (%u): %d", n, r); }
@@ -702,6 +786,7 @@ GVB(vkCreateComputePipelines, VkResult, VkDevice d, VkPipelineCache c, uint32_t 
 // The game's queues are the replay's one queue, which the present thread and the replay also submit to: every call takes its lock
 static uint64_t g_nsubmit;
 GVB(vkQueueSubmit, VkResult, VkQueue q, uint32_t n, const VkSubmitInfo *si, VkFence f) {
+    GV_IN("vkQueueSubmit");
     (void)q; dm_gfx_enter();
     pthread_mutex_lock(&V.qmu);
     VkResult r = vka_hung() ? VK_ERROR_DEVICE_LOST : R.vkQueueSubmit(V.q, n, si, f);
@@ -713,6 +798,7 @@ GVB(vkQueueSubmit, VkResult, VkQueue q, uint32_t n, const VkSubmitInfo *si, VkFe
     return r;
 }
 GVB(vkQueueSubmit2, VkResult, VkQueue q, uint32_t n, const VkSubmitInfo2 *si, VkFence f) {
+    GV_IN("vkQueueSubmit2");
     (void)q; if (!R.vkQueueSubmit2) return VK_ERROR_EXTENSION_NOT_PRESENT;
     dm_gfx_enter(); pthread_mutex_lock(&V.qmu);
     VkResult r = vka_hung() ? VK_ERROR_DEVICE_LOST : R.vkQueueSubmit2(V.q, n, si, f); g_nsubmit++;
@@ -724,11 +810,13 @@ GVB(vkQueueBindSparse, VkResult, VkQueue q, uint32_t n, const VkBindSparseInfo *
     (void)q; pthread_mutex_lock(&V.qmu); VkResult r = R.vkQueueBindSparse(V.q, n, bi, f); pthread_mutex_unlock(&V.qmu); return r;
 }
 GVB(vkQueueWaitIdle, VkResult, VkQueue q) {
+    GV_IN("vkQueueWaitIdle");
     (void)q; if (vka_hung()) return VK_ERROR_DEVICE_LOST;
     pthread_mutex_lock(&V.qmu); VkResult r = R.vkQueueWaitIdle(V.q); pthread_mutex_unlock(&V.qmu); return r;
 }
 GVB(vkDeviceWaitIdle, VkResult, VkDevice d) { (void)d; return h_vkQueueWaitIdle(V.q); }
 GVB(vkWaitForFences, VkResult, VkDevice d, uint32_t n, const VkFence *f, VkBool32 all, uint64_t timeout) {
+    GV_IN("vkWaitForFences");
     (void)d; if (vka_hung()) return VK_ERROR_DEVICE_LOST;
     return R.vkWaitForFences(V.dev, n, f, all, timeout);
 }
@@ -813,6 +901,7 @@ static void swap_free(gv_swap *sc) {
     free(sc);
 }
 GVB(vkCreateSwapchainKHR, VkResult, VkDevice d, const VkSwapchainCreateInfoKHR *ci, const VkAllocationCallbacks *a, VkSwapchainKHR *out) {
+    GV_IN("vkCreateSwapchainKHR");
     (void)d; (void)a; if (!gv_up()) return VK_ERROR_INITIALIZATION_FAILED;
     gv_swap *sc = calloc(1, sizeof *sc); if (!sc) return VK_ERROR_OUT_OF_HOST_MEMORY;
     sc->n = ci->minImageCount < 2 ? 2 : ci->minImageCount > GV_NSWAP ? GV_NSWAP : ci->minImageCount;
@@ -847,6 +936,7 @@ GV(vkGetSwapchainImagesKHR, VkResult, VkDevice d, VkSwapchainKHR s, uint32_t *n,
 // transition that gives it back to the game) and paces itself to the host's frame rate (60, DM_FPS, the frame rate cap) on its own clock
 static uint64_t g_next_acq;
 GVB(vkAcquireNextImageKHR, VkResult, VkDevice d, VkSwapchainKHR s, uint64_t timeout, VkSemaphore sem, VkFence f, uint32_t *idx) {
+    GV_IN("vkAcquireNextImageKHR");
     (void)d; (void)timeout; gv_swap *sc = (gv_swap *)(uintptr_t)s;
     uint32_t i = sc->next++ % sc->n;
     int fps = mtl_fps_target(); int nxhost_fps_limit_get(void) __attribute__((weak));
@@ -865,6 +955,7 @@ uint64_t vka_present_guest(vka_img *im, double period_s, const int crop[4], uint
 static pthread_mutex_t g_pres_mu = PTHREAD_MUTEX_INITIALIZER;   // a present's fence reserved and signalled in order
 static uint64_t g_frames;
 GVB(vkQueuePresentKHR, VkResult, VkQueue q, const VkPresentInfoKHR *pi) {
+    GV_IN("vkQueuePresentKHR");
     (void)q; dm_gfx_enter();
     int crop[4]; dm_vi_layer_crop(crop);   // the vi layer crop (hle_vi.c): Super Mario Galaxy shows the top-left 1280x720 of its 1920x1080 swapchain in handheld mode
     double period = 1.0 / mtl_fps_target();
