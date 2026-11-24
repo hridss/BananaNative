@@ -2031,18 +2031,22 @@ void vka_tex_drop_pool(const void *pool) {
     pthread_mutex_lock(&g_tmu);
     int ndrop = 0;
     uint64_t bytes_dropped = 0;
+    // Each texture entry (serial → image) holds one reference, which mtl_tex_release gives back at the texture's Finalize; a finalized pool's textures may never be
+    // finalized, so their entries go here with their references. The others are holders' (the replay, its descriptors, pending uploads and writebacks): they give them
+    // back themselves, and the image goes with the last one. Setting refs to 1 here freed images those holders still dropped later, and their unref wrote into the freed
+    // block, by then another allocation of the process (Orbitals on Android: the host's arrays and the game's objects corrupted, malloc_debug free_track: a write at +232)
     for (int i = 0; i < g_nlive; ) {
         vka_img *im = g_live[i];
-        if (im->pool == pool) {
-            bytes_dropped += im->m.size;
-            ndrop++;
-            wb_cancel_locked(im);   // a queued copy-back goes with it: the count forced below would leave the queue holding a freed image
-            map_del_im(im);
-            im->refs = 1;
-            unref_locked(im);
-        } else {
-            i++;
-        }
+        if (im->pool != pool) { i++; continue; }
+        int n = vksm_del_im(&g_smap, im);
+        if (im->wb_pending) { wb_cancel_locked(im); n++; }   // a queued copy-back goes with the pool, and the queue's reference with it
+        if (!n) { i++; continue; }
+        atomic_fetch_add_explicit(&g_tgen, 1, memory_order_release);
+        ndrop++;
+        int last = im->refs <= n;
+        if (last) bytes_dropped += im->m.size;
+        while (n-- > 0 && im->refs > 0) unref_locked(im);
+        if (!last) i++;   // (the last reference took it out of g_live: index i holds the next one)
     }
     pthread_mutex_unlock(&g_tmu);
     if (ndrop) {
