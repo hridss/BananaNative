@@ -588,6 +588,14 @@ Finding, keying and translating shaders (`dm/gfx/tools/shader_split.py`, `dmsh_b
 
 ## Translation
 
+### else-if chains in the SPIR-V back end
+
+- **Symptom:** with `XLATE_DEBUG=0`, a shader with an `if / else if / else` (or `if / else if`) chain loses its `else if` and trailing `else` branches: the `ElseIf` and `Else` blocks are unreachable in the SPIR-V (still accepted by `spirv-val`) and SPIRV-Cross drops them. A loop whose exit is in such a branch never ends and the GPU is reset.
+- **Cause:** `AstOptimizer.RemoveEmptyBlocks` turns an `Else` whose only content is an `If` (and optional trailing `Else`) into an `AstBlockType.ElseIf` sibling, a GLSL pretty-printing transform that SPIR-V has no construct for. `SpirvGenerator` accepted only `AstBlockType.Else` as an `If` block's false target and had no `BlockEntered` handler for `ElseIf`, so the `If`'s false edge branched straight to the merge block. Debug builds emit an `AstComment` per decoded instruction, so their `Else` blocks are never singletons and no `ElseIf` forms there.
+- **Fix:** `RemoveEmptyBlocks` gets the target language from `StructuredProgram.MakeStructuredProgram` and does not form an `ElseIf` for SPIR-V, keeping the nested `Else { If }` blocks that `SpirvGenerator` emits as nested selections (PR #77, after nx2android `02e336f`). `SpirvGenerator` throws `InvalidOperationException` if an `ElseIf` block ever reaches it, and an `ElseIf` no longer counts as an `If`'s else (upstream nxnative `2f0210db`, PR #3253, whose own fix for the optimizer is the same).
+- **Check:** `dm/gfx/tests/test_spirv_else_if.py` (needs `DMSH_TEST_XLATE`) translates three synthetic sm86 pixel programs (three-way, four-way and an `if / else if` without trailing `else`) in normal and debug modes and checks that every block is reachable, that `spirv-val` accepts every module and that SPIRV-Cross keeps every branch's result.
+- **Found on:** [Xenoblade Chronicles 3](../../dm/games/010074F013262000/README.md#found-on-this-game) (nx2android's finding: its cloud shaders lost a loop's exit); upstream on synthetic programs.
+
 ### Tested tools and compiler-specific shader caches
 
 - **Symptom:** a shader build accepts tools that differ from `dmsh_chain.lock`; after an override build, returning to the tested Metal compiler can still restore the override's libraries.

@@ -16,7 +16,7 @@ Three projects from Ryujinx 1.3.2: `Ryujinx.Graphics.Shader`, `Ryujinx.Common` a
 
 - `Ryujinx.Graphics.Shader/StructuredIr/AstOptimizer.cs` (`Optimize`, `HasSideEffects`; PR #77 by Omnicrash): an assignment whose source has side effects (atomics, image atomics, calls) is neither propagated into its use (the use ran it a second time) nor removed when its value is unused (the atomic was lost). After nx2android `c6b211c` and `44eca7e` (MIT, below).
 
-- The same file, `RemoveEmptyBlocks`, with `StructuredIr/StructuredProgram.cs` (passes the target language): no `if` inside a lone `else` is lifted to an else-if for SPIR-V, whose generator branches from an `If` only into an `Else` that follows it, so the else-if's branch became unreachable (PR #77; after nx2android `02e336f`).
+- The same file, `RemoveEmptyBlocks`, with `StructuredIr/StructuredProgram.cs` (passes the target language): no `if` inside a lone `else` is lifted to an else-if for SPIR-V, whose generator branches from an `If` only into an `Else` that follows it, so the else-if's branch became unreachable (PR #77; after nx2android `02e336f`). `CodeGen/Spirv/SpirvGenerator.cs` throws if an `ElseIf` block still reaches it and no longer takes one for an `If`'s else (upstream nxnative `2f0210db`, PR #3253). See [else-if chains in the SPIR-V back end](../../../docs/reference/shaders.md#else-if-chains-in-the-spir-v-back-end).
 
 - `Ryujinx.Graphics.Shader/Instructions/InstEmitTexture.cs` and `Instructions/InstEmitAmpereMem.cs` (TMML): the LOD is clamped at 0 and converted unsigned to 24.8, as the hardware returns it; a negative LOD read as a huge unsigned one (PR #77; the finding of yuzu #10234 and nx2android `44eca7e`, written anew here).
 
