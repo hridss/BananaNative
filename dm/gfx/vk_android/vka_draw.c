@@ -57,6 +57,9 @@ static uint32_t g_claim_words;   // the draw's claim words (an upper bound of it
 // Whether draws and dispatches run. Without placed guest memory (an emulator's driver) the GPU sees no memory pool, so a game's draws would read nothing and only cost:
 // pipeline compiles there take minutes each. Off there by default, on with placed memory; DM_VK_DRAW=0 / 1 overrides, the selftest turns them on for its own memory
 static int g_force_draws;
+// A game's hook on each draw's vertices (dm/host/android/dbfz_aspect.c sets it): vertex shader key, stream 0's guest address and stride, the index buffer (0: not indexed),
+// its type (0 u8, 1 u16, 2 u32; -1 none), base vertex, first vertex of a non-indexed draw, count, and the viewport's size
+void (*vka_vertex_hook)(uint64_t vs, uint64_t vb, uint32_t stride, uint64_t ib, int itype, int32_t bv, int32_t first, int32_t count, float vpw, float vph);
 void vka_draw_force(int on) { g_force_draws = on; }
 static int draws_on(void) {
     int env = VKA_ENV("DM_VK_DRAW", -1); if (env > 0) env = 1;
@@ -2777,6 +2780,10 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
     if (restart) { uint32_t all = di->itype == 0 ? 0xff : di->itype == 1 ? 0xffff : 0xffffffffu; if (d->restart.index != all) VRED_ONCE("primitive restart index %#x is not the all-ones index Vulkan restarts at", d->restart.index); }
     if (!mesh) DY_SET1(pr, (uint32_t)(restart), vk.vkCmdSetPrimitiveRestartEnable(g_cb, DY.pr));
     DY.valid = 1;
+    // A game's vertex hook (NULL unless a game's host code sets it, dm/host/android/dbfz_aspect.c): it may rewrite the draw's vertices in guest memory before the GPU reads them
+    if (vka_vertex_hook && !mesh && sh[0] && d->nattr > 0 && !(di && di->ind) && !(dw && dw->ind))
+        vka_vertex_hook(sh[0]->key, d->vbuf[0].address, d->stream[0].stride, di ? di->ibuf : 0, di ? (int)di->itype : -1, di ? di->base_vertex : 0, dw ? (int32_t)dw->first : 0,
+                        dw ? (int32_t)dw->count : (int32_t)di->count, DY.vp.width, DY.vp.height < 0 ? -DY.vp.height : DY.vp.height);
     if (g_rtl_pass && rtl_room()) {   // DM_VK_RT_LOG: the draw's state
         char cm[200]; size_t cn = 0;
         for (uint32_t i = 0; i < R.ncolor && cn < sizeof cm; i++) if (R.cf[i]) cn += (size_t)snprintf(cm + cn, sizeof cm - cn, " c%u mask %x out %x blend %d(%d,%d,%d/%d,%d,%d)", i, k.att[i].mask,

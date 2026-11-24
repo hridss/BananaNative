@@ -1,0 +1,56 @@
+# DRAGON BALL FighterZ: Arc System Works / Bandai Namco, Unreal Engine 4 (legacy version 4 paks, game folder RED), SDK 4.5.0, NVN, movie module; update 1.33 (v1703936).
+# Started from the NSP script's provisional profile (dm/games/profile_guess.py), brought up on Android
+
+# ---- Identity ----
+title_id	0100A250097F0000
+program_id	0100A250097F0000
+
+# ---- App ----
+name	DRAGON BALL FighterZ
+ipa	DragonBallFighterZ.ipa
+app_category	public.app-category.games
+
+# ---- Versions ----
+build	v1703936	?	main=39adb54619956c8e93d3a37777f32ece	subsdk0=303578054faefc2198114b62e408c498	sdk=e01ad5381c948c4ec3b0bb210b08d5c8
+package	v1703936
+shader_versions	v1703936
+
+# ---- Files ----
+# every module main imports from
+modules	main subsdk0 sdk
+romfs_marker	RED/Content/Paks/pakchunk0-Switch.pak
+zip_store	.mp4:.pak:.metallib
+
+# ---- Memory ----
+# main sets a heap of at most the pool − 64 MB: a 3328 MB heap region
+mem_reserve	0x100000000
+mem_alias	0x10000000
+mem_stack	0x10000000
+app_pool	0xCD500000
+# the NPDM declares 0 MB of system resource: IsVirtualAddressMemoryEnabled is false, as on Horizon (Big Brain Academy: Brain vs. Brain sets a heap only then)
+sys_resource	0x0
+# Android: in battle the game makes and finalizes an 8 MiB shader-code pool every few seconds. File-backed (the default), each placement read it back from flash (2,065 major
+# faults, 10-34 ms) and each finalize gave it back on the render thread (8-19 ms): dropped frames at 60 fps. Retroid Pocket Nova, Turnip Gen8 V39, 2026-11-22
+mem_fileback	off
+pool_giveback	async
+
+# ---- Textures ----
+# Unreal Engine 4 fills CPU-uncached texture pools and never flushes (OCTOPATH TRAVELER, FINAL FANTASY TACTICS)
+tex_flush_upload	on
+tex_dirty_upload	on
+
+# ---- Shader split ----
+# Unreal Engine 4 with legacy version 4 paks keeps every shader inline in the cooked packages (shader_split.py ue_legacy_jobs), as OCTOPATH TRAVELER
+shader_groups	GlobalShaderCache=global #Engine/=engine #RED/=game
+shader_note	DRAGON BALL FighterZ shaders
+
+# ---- Aspect ratio ----
+# Game settings > Aspect ratio (dm/games/README.md "Aspect ratio without a variant"): the game renders at the picture's shape (dm/host/android/dbfz_aspect.c, patches.py OBS_DBFZ_RES):
+# Unreal's r.SetRes width becomes the shape times the height (1920x1440 docked at a taller shape, 2520x1080 at 21:9), so the render targets and the HUD's anchors follow
+# the screen. Taller: the cameras keep their horizontal reach and the battle's bottom HUD moves to the bottom edge. Wider: the cameras keep their 16:9 height of view
+# (more of the stage at the sides; the walls are the game's own) and the bottom HUD moves out to the side edges; menus keep their centred 16:9 layout, as the other
+# wide games here. The character select's camera dollies so its backdrop covers any shape. Any row adds Screen shape (the window's own shape). 16:9 stays the default
+aspect	21:9
+aspect	4:3
+aspect	10:9
+aspect	1:1

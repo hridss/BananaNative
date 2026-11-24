@@ -1,0 +1,7 @@
+# What this game needs of an Android phone, for the launcher's readiness check (android/README.md "Readiness check"; the format in dm/games/README.md "Readiness rows").
+# A status row also marks the game as supported on Android: gradle.properties' nxGames builds every such profile into the APK (dm/tools/tests/test_android_games.py).
+
+# Playable on Android: on a Retroid Pocket Nova (Adreno 740, 12 GB) the title, offline lobby, menus, character select and CPU vs CPU battles at 60 fps, at 16:9 and
+# at every Aspect ratio choice (the note). Drivers: Turnip Gen8 V39 is correct; the stock Qualcomm driver hangs the GPU at the lobby's warp and draws only the
+# sky in the lobby, so pick Turnip in Settings > GPU driver. No readiness fact names a driver version, so this is no row
+status	playable
