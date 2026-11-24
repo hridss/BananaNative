@@ -120,6 +120,7 @@ One row per profile; the notes are each profile's `README.md`.
 | [Kirby's Dream Buffet](0100A8E016236000/README.md) | `0100A8E016236000` | 1.0.0 | 13.3.0 | HAL Laboratory's engine (Basil, NintendoWare) | NVN |
 | [Kirby's Return to Dream Land Deluxe](01006B601380E000/README.md) | `01006B601380E000` | 1.0.0 (base) | 13.3.5 | HAL Laboratory's engine (NintendoWare G3d / Ui2d / Vfx2) | NVN |
 | [Luigi's Mansion 3](0100DCA0064A6000/README.md) | `0100DCA0064A6000` | 1.4.0 | 7.3.2 | Next Level Games' engine | NVN |
+| [Mario & Luigi: Brothership](01006D0017F7A000/README.md) | `01006D0017F7A000` | 1.0.0 | 12.3.2 | Unreal Engine 4.27.2, Wwise | NVN |
 | [Mario Kart 8 Deluxe](0100152000022000/README.md) | `0100152000022000` | 4.0.0, 4.0.1 | 4.4.0 | Nintendo (sead / agl / gsys, NintendoWare, Pia) | NVN |
 | [Mario Kart World](0400C3F00006E000/README.md) | `0400C3F00006E000` | 1.8.0 (Switch 2; plays on Android) | 21.4.0 (Ounce) | Nintendo EPD (sead / agl / gsys) | NVN2 |
 | [Mario + Rabbids Kingdom Battle](010067300059A000/README.md) | `010067300059A000` | 1.9.589692 | 4.4.0 | Ubisoft Snowdrop | NVN |
