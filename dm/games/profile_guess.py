@@ -315,11 +315,15 @@ def build_sources(exefs, romfs, modules):
             if 0 < i and i + 16 <= len(h):
                 nb = (struct.unpack_from('<I', h, i + 12)[0] + max(struct.unpack_from('<I', h, i + 4)[0], 1) - 1) // max(struct.unpack_from('<I', h, i + 4)[0], 1)
                 oodle_ue3 += h[i + 16 + 8 * nb:i + 17 + 8 * nb] == b'\x8c'
-    anvil_forges = 0   # Ubisoft Anvil / Scimitar forges ('scimitar\0', Immortals Fenyx Rising, The Ezio Collection): every entry's blocks are Oodle, decoded with the game's own decoder (shader_split.py forge_jobs)
+    import forge
+    anvil_forges = 0   # Ubisoft Anvil / Scimitar forges ('scimitar\0'): the Oodle versions (25, 28, 31) are decoded with the game's own decoder (shader_split.py forge_jobs); the v27 reader decodes LZO1X itself
     for d, _, names in os.walk(romfs):
         for n in names:
             if n.endswith('.forge'):
-                with open(os.path.join(d, n), 'rb') as f: anvil_forges += f.read(9) == b'scimitar\0'
+                with open(os.path.join(d, n), 'rb') as f: head = f.read(13)
+                if len(head) == 13 and forge.is_forge(head):
+                    version = forge.version(head)
+                    anvil_forges += version in forge.KNOWN_VERSIONS and version != forge.SCIMITAR_LZO_VERSION
     import frostbite   # Frostbite's superbundles (EA SPORTS FC 27): every item of the cas files is Oodle Leviathan, decoded with the game's own decoder
     return shader_sources(imports, glsl_src, glslc_mods, spirv, len(uepak.unreal_paks(str(romfs), inline=False)), trinity, len(uepak.unreal_paks(str(romfs), inline=True)), gl_names, gl_src, gl_files, oodle_pkz, nro_imp,
                           oodle_gfpak=oodle_gfpak, oodle_ue3=oodle_ue3, frostbite=frostbite.is_frostbite(str(romfs)), romfs_glsl=romfs_glsl, anvil_forges=anvil_forges)
