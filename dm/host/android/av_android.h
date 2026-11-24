@@ -1,6 +1,6 @@
 // Pure audio and picture helpers of the Android host (no Android headers, no host state), so tests/t_android_av.c checks them on the Mac:
 // a linear resampler for an AAudio stream that would not open at 48 kHz, channel mapping for an AAC decoder whose output layout differs from the track's,
-// the SPS picture size for MediaCodec's format, MediaCodec output buffer layouts copied into tight NV12 or RGBA, and what a stream keeps for a hardware decoder that fails inside it.
+// the SPS picture size for MediaCodec's format and the colour matrix and range of its pictures, MediaCodec output buffer layouts copied into tight NV12 or RGBA, and what a stream keeps for a hardware decoder that fails inside it.
 #pragma once
 #include <stdint.h>
 #include <stddef.h>
@@ -67,7 +67,11 @@ static inline unsigned nxb_u(nx_bits *b, unsigned n) {
 }
 static inline unsigned nxb_ue(nx_bits *b) { unsigned z = 0; while (!b->bad && !nxb_u(b, 1)) if (++z > 31) { b->bad = 1; return 0; } return b->bad ? 0 : ((1u << z) - 1) + nxb_u(b, z); }
 static inline int nxb_se(nx_bits *b) { unsigned k = nxb_ue(b); return k & 1 ? (int)((k + 1) / 2) : -(int)(k / 2); }
-static inline int avc_sps_size(const uint8_t *nal, size_t n, int *w, int *h) {
+// The stream's colour signal from the SPS's VUI (H.264 E.1.1, E.2.1): matrix_coefficients (1 BT.709, 5 / 6 BT.601, 2 unspecified) and video_full_range_flag, -1 for each one the
+// SPS does not declare (no VUI, no video_signal_type, no colour_description)
+typedef struct { int matrix, full; } nx_avc_colour;
+static inline int avc_sps_read(const uint8_t *nal, size_t n, int *w, int *h, nx_avc_colour *col) {
+    if (col) col->matrix = col->full = -1;
     if (n < 4 || (nal[0] & 31) != 7 || n > 1024) return 0;
     uint8_t rbsp[1024]; size_t m = 0;
     for (size_t i = 1; i < n; i++) { if (i >= 3 && nal[i] == 3 && !nal[i - 1] && !nal[i - 2]) continue; rbsp[m++] = nal[i]; }
@@ -102,7 +106,29 @@ static inline int avc_sps_size(const uint8_t *nal, size_t n, int *w, int *h) {
         cw -= (int)(l + r) * ux; chh -= (int)(t + bo) * uy;
     }
     if (b.bad || cw <= 0 || chh <= 0 || cw > 8192 || chh > 8192) return 0;
+    if (col && nxb_u(&b, 1)) {   // vui_parameters_present_flag
+        if (nxb_u(&b, 1) && nxb_u(&b, 8) == 255) nxb_u(&b, 32);   // aspect_ratio_info: Extended_SAR's sar_width, sar_height
+        if (nxb_u(&b, 1)) nxb_u(&b, 1);                           // overscan_info
+        if (nxb_u(&b, 1)) {                                       // video_signal_type: video_format, video_full_range_flag, colour_description
+            nxb_u(&b, 3); int full = (int)nxb_u(&b, 1), m = -1;
+            if (nxb_u(&b, 1)) { nxb_u(&b, 16); m = (int)nxb_u(&b, 8); }   // colour_primaries, transfer_characteristics, matrix_coefficients
+            if (!b.bad) { col->full = full; col->matrix = m; }
+        }
+    }
     *w = cw; *h = chh; return 1;
+}
+static inline int avc_sps_size(const uint8_t *nal, size_t n, int *w, int *h) { return avc_sps_read(nal, n, w, h, NULL); }
+
+// ---------- A decoded picture's colour matrix and range ----------
+// What an H.264 picture's NV12 holds, for the game's own YUV → RGB conversion (hle_movie.c md_format's nv12-colorspace) and the host's (nx_nv12_to_rgba): each of the two by the
+// stream's SPS when it declares it, else by what the decoder's output format reports (MediaFormat color-standard: 1 BT.709, 2 BT.601 PAL, 4 BT.601 NTSC; color-range: 1 full,
+// 2 limited; -1 not reported), else BT.709 from 720 lines up and limited range, the rule md_rgba uses for an undeclared VP9 stream. The SPS comes first: a decoder may fill in
+// defaults of its own for what the stream leaves out. A ByteBuffer picture holds the samples as decoded, so a full-range stream gives full-range NV12 (unlike VideoToolbox's
+// video-range pixel buffers). Matrices the game has no slot for (BT.2020, FCC, SMPTE 240M) count as undeclared
+static inline void nx_avc_pick_colour(const nx_avc_colour *sps, int mc_standard, int mc_range, int h, int *bt709, int *full) {
+    int m = sps ? sps->matrix : -1, f = sps ? sps->full : -1;
+    *bt709 = m == 1 ? 1 : m == 5 || m == 6 ? 0 : mc_standard == 1 ? 1 : mc_standard == 2 || mc_standard == 4 ? 0 : h >= 720;
+    *full = f >= 0 ? f : mc_range == 1 ? 1 : 0;
 }
 
 // ---------- MediaCodec output layouts ----------

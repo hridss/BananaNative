@@ -1,6 +1,6 @@
 // H.264 for the movie and video codec decoders (hle_movie_avc.h) on Android: the phone's AMediaCodec "video/avc" decoder, ByteBuffer output asked as NV12 (COLOR_FormatYUV420SemiPlanar),
 // copied out through the output format's stride, slice height and crop (av_android.h). The interface is the one hle_movie_avc.c gives on VideoToolbox: SPS / PPS from Configure
-// (csd-0 / csd-1, Annex B or length-prefixed) or the avcC box, or from the stream; one access unit per mavc_decode; pictures in presentation order from mavc_take, all of them with flush.
+// (csd-0 / csd-1, Annex B) or the avcC box, or from the stream; one access unit per mavc_decode; pictures in presentation order from mavc_take, all of them with flush.
 // MediaCodec reorders by itself and its pictures come in presentation order, so no reorder queue is needed: a picture is handed out as soon as the decoder gives it. The decoder is
 // asynchronous inside: mavc_decode waits briefly for a picture while none is held, and a flush sends end-of-stream and drains. A new SPS / PPS makes a new decoder, as on Apple
 #include "../dm.h"
@@ -15,14 +15,20 @@
 struct mavc {
     uint8_t sps[512], pps[512]; int nsps, npps, dirty;
     AMediaCodec *c; int cw, chh; char name[64];
-    nx_yuv_layout L; int bt709, full;
+    nx_yuv_layout L; int bt709, full;   // what the pictures' NV12 holds (nx_avc_pick_colour): for nx_nv12_to_rgba and md_format's nv12-colorspace (mavc_bt709, mavc_full)
+    nx_avc_colour col; int mc_std, mc_range;   // the SPS's VUI colour signal; the output format's color-standard / color-range, -1 until reported
     struct { uint8_t *nv12; int w, h; int64_t pts; } q[QMAX]; int nq;
     int pending, eos_sent, eos_done;
     uint8_t *au; size_t aucap;
     int red, red_fmt, rgba;
 };
 
-mavc *mavc_new(void) { mavc *a = calloc(1, sizeof *a); if (!a) die("movie: AVC decoder allocation failed"); return a; }
+mavc *mavc_new(void) {
+    mavc *a = calloc(1, sizeof *a); if (!a) die("movie: AVC decoder allocation failed");
+    a->col.matrix = a->col.full = a->mc_std = a->mc_range = -1; return a;
+}
+int mavc_bt709(const mavc *a, int h) { int b, f; nx_avc_pick_colour(&a->col, a->mc_std, a->mc_range, a->L.ch > 0 ? a->L.ch : h, &b, &f); return b; }
+int mavc_full(const mavc *a) { int b, f; nx_avc_pick_colour(&a->col, a->mc_std, a->mc_range, 0, &b, &f); return f; }
 static void close_codec(mavc *a) { if (a->c) { AMediaCodec_stop(a->c); AMediaCodec_delete(a->c); a->c = NULL; } a->pending = a->eos_sent = a->eos_done = 0; }
 void mavc_drop(mavc *a) {
     for (int i = 0; i < a->nq; i++) free(a->q[i].nv12);
@@ -39,26 +45,27 @@ static void keep_ps(mavc *a, const uint8_t *nal, size_t n) {
     if (n > sizeof a->sps) { if (!a->red++) LOG("[RED] movie: AVC parameter set of %zu bytes, too long", n); return; }
     if ((size_t)*dn == n && !memcmp(dst, nal, n)) return;
     memcpy(dst, nal, n); *dn = (int)n; a->dirty = 1;
+    if (t == 7) { int w, h; avc_sps_read(nal, n, &w, &h, &a->col); }
 }
-// NAL units of p: Annex B start codes, or else 4-byte lengths (as hle_movie_avc.c's each_nal)
+// NAL units of p, an Annex B byte stream, as hle_movie_avc.c's each_nal: 0 = p does not begin with a start code (zero bytes before it allowed), and fn saw nothing. Length prefixes
+// are not taken as a fallback: a 4-byte length from 256 to 511 begins 00 00 01, so a packet's framing cannot be told from its bytes, and the SDK's demuxer hands over Annex B
 static size_t next_sc(const uint8_t *p, size_t n, size_t i) { for (; i + 3 <= n; i++) if (!p[i] && !p[i + 1] && p[i + 2] == 1) return i; return n; }
-static void each_nal(const uint8_t *p, size_t n, void (*fn)(void *, const uint8_t *, size_t), void *ctx) {
+static int each_nal(const uint8_t *p, size_t n, void (*fn)(void *, const uint8_t *, size_t), void *ctx) {
     size_t s = next_sc(p, n, 0);
-    if (s < n && s <= 1) {
-        while (s < n) {
-            size_t b = s + 3, e = next_sc(p, n, b), end = e;
-            while (end > b && !p[end - 1]) end--;
-            if (end > b) fn(ctx, p + b, end - b);
-            s = e;
-        }
-    } else for (size_t i = 0; i + 4 <= n;) {
-        size_t len = (size_t)p[i] << 24 | (size_t)p[i + 1] << 16 | (size_t)p[i + 2] << 8 | p[i + 3]; i += 4;
-        if (!len || len > n - i) break;
-        fn(ctx, p + i, len); i += len;
+    if (s == n) return 0;
+    for (size_t i = 0; i < s; i++) if (p[i]) return 0;
+    while (s < n) {
+        size_t b = s + 3, e = next_sc(p, n, b), end = e;
+        while (end > b && !p[end - 1]) end--;
+        if (end > b) fn(ctx, p + b, end - b);
+        s = e;
     }
+    return 1;
 }
 static void ps_only(void *ctx, const uint8_t *nal, size_t n) { int t = nal[0] & 31; if (t == 7 || t == 8) keep_ps(ctx, nal, n); }
-void mavc_param_sets(mavc *a, const uint8_t *p, size_t n) { each_nal(p, n, ps_only, a); }
+void mavc_param_sets(mavc *a, const uint8_t *p, size_t n) {
+    if (!each_nal(p, n, ps_only, a) && !a->red++) LOG("[RED] movie: AVC parameter sets without an Annex B start code (%zu bytes), not taken", n);
+}
 void mavc_avcc(mavc *a, const uint8_t *p, size_t n) {
     if (n < 7 || p[0] != 1) { if (!a->red++) LOG("[RED] movie: unrecognized avcC record (%zu bytes, version %d)", n, n ? p[0] : -1); return; }
     size_t i = 5;
@@ -88,7 +95,7 @@ static int open_codec(mavc *a) {
     if (st != AMEDIA_OK) { if (!a->red++) LOG("[RED] movie: AMediaCodec refuses the AVC configuration (%d, %d×%d), no pictures", (int)st, w, h); AMediaCodec_delete(a->c); a->c = NULL; return 0; }
     char *name = NULL; AMediaCodec_getName(a->c, &name); snprintf(a->name, sizeof a->name, "%s", name ? name : "AMediaCodec"); if (name) AMediaCodec_releaseName(a->c, name);
     a->cw = w; a->chh = h;
-    a->L = (nx_yuv_layout){NXYUV_NV12, w, h, 0, 0, w, h}; a->bt709 = h >= 720; a->full = 0;
+    a->L = (nx_yuv_layout){NXYUV_NV12, w, h, 0, 0, w, h}; a->mc_std = a->mc_range = -1; nx_avc_pick_colour(&a->col, -1, -1, h, &a->bt709, &a->full);
     LOG("[movie] AVC: %s decoding %d×%d, profile %d", a->name, w, h, a->nsps > 1 ? a->sps[1] : 0);
     a->dirty = 0; return 1;
 }
@@ -104,12 +111,12 @@ static void out_format(mavc *a) {
     }
     if (l < 0 || t < 0 || r < l || b < t || r >= stride || b >= slice) { l = t = 0; r = w - 1; b = h - 1; }
     a->L = (nx_yuv_layout){nx_yuv_kind(cf), stride, slice, l, t, r - l + 1, b - t + 1};
-    a->bt709 = a->L.ch >= 720; if (AMediaFormat_getInt32(f, AMEDIAFORMAT_KEY_COLOR_STANDARD, &v)) a->bt709 = v == 1;   // COLOR_STANDARD_BT709
-    a->full = AMediaFormat_getInt32(f, AMEDIAFORMAT_KEY_COLOR_RANGE, &v) && v == 1;      // COLOR_RANGE_FULL
+    a->mc_std = AMediaFormat_getInt32(f, AMEDIAFORMAT_KEY_COLOR_STANDARD, &v) ? v : -1; a->mc_range = AMediaFormat_getInt32(f, AMEDIAFORMAT_KEY_COLOR_RANGE, &v) ? v : -1;
+    nx_avc_pick_colour(&a->col, a->mc_std, a->mc_range, a->L.ch, &a->bt709, &a->full);
     AMediaFormat_delete(f);
     if (a->L.kind == NXYUV_NONE && !a->red_fmt++) LOG("[RED] movie: %s outputs colour format %#x, which the host cannot read: no pictures", a->name, cf);
-    LOG("[movie] AVC output: %d×%d (crop %d,%d %d×%d), stride %d, slice height %d, colour format %#x, %s %s range", w, h, l, t, a->L.cw, a->L.ch, stride, slice, cf,
-        a->bt709 ? "BT.709" : "BT.601", a->full ? "full" : "limited");
+    LOG("[movie] AVC output: %d×%d (crop %d,%d %d×%d), stride %d, slice height %d, colour format %#x, %s %s range (SPS matrix %d range %d, decoder standard %d range %d)", w, h, l, t,
+        a->L.cw, a->L.ch, stride, slice, cf, a->bt709 ? "BT.709" : "BT.601", a->full ? "full" : "limited", a->col.matrix, a->col.full, a->mc_std, a->mc_range);
 }
 static void keep_picture(mavc *a, const uint8_t *p, size_t n, int64_t pts) {
     nx_yuv_layout L = a->L;
@@ -153,7 +160,8 @@ static void au_add(void *ctx, const uint8_t *nal, size_t n) {   // the access un
     uint8_t *o = a->au + c->len; o[0] = o[1] = o[2] = 0; o[3] = 1; memcpy(o + 4, nal, n); c->len += 4 + n;
 }
 int mavc_decode(mavc *a, const uint8_t *p, int n, int64_t pts_us) {
-    au_ctx c = {a, 0, 0}; each_nal(p, (size_t)n, au_add, &c);
+    au_ctx c = {a, 0, 0};
+    if (n > 0 && !each_nal(p, (size_t)n, au_add, &c)) { if (!a->red++) LOG("[RED] movie: AVC packet without an Annex B start code (%d bytes), not decoded", n); return -1; }
     if (!c.len) return 0;
     if ((a->dirty || !a->c) && !open_codec(a)) return -1;
     if (a->eos_sent) { AMediaCodec_flush(a->c); a->pending = a->eos_sent = a->eos_done = 0; }   // packets after the end of a stream without a seek: a new stream

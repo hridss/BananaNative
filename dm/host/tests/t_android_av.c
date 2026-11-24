@@ -1,5 +1,5 @@
 // The Android host's pure audio / picture helpers (android/av_android.h), on the Mac: the AAudio fallback resampler, AAC channel mapping, the SPS size MediaCodec is configured
-// with, MediaCodec output layouts into NV12 / RGBA, and what a stream keeps for a hardware decoder that fails inside it
+// with and the colour matrix and range its pictures hold, MediaCodec output layouts into NV12 / RGBA, and what a stream keeps for a hardware decoder that fails inside it
 #include "android/av_android.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -65,6 +65,37 @@ static void t_sps(void) {
     uint8_t pps[4] = {0x68, 0xee, 0x3c, 0x80}; int w, h;
     CHECK(!avc_sps_size(pps, 4, &w, &h), "a PPS is not an SPS");
     CHECK(!avc_sps_size((const uint8_t *)"\x67\x64", 2, &w, &h), "a truncated SPS");
+}
+static void t_colour(void) {
+    // SPS from libx264 (ffmpeg -c:v libx264, testsrc): 640x360 declaring BT.709 and full range; 1080p declaring BT.601 (bt470bg) and limited range; 720p declaring only full range
+    // (h264_metadata video_full_range_flag=1, no colour description); 720p with no VUI colour signal
+    static const struct { const char *hex; int w, h, matrix, full; } k[] = {
+        {"6764001eacd940a02ff97016e0404028000003000800000301e078b16cb0", 640, 360, 1, 1},
+        {"67640028acd940780227e5c05a810102a0000003002000000781e30632c0", 1920, 1080, 5, 0},
+        {"6764001facd9405005bb016c80000003008000001e078c18cb", 1280, 720, -1, 1},
+        {"6764001facd9405005bb0110000003001000000303c0f1831960", 1280, 720, -1, -1},
+    };
+    nx_avc_colour c[4];
+    for (size_t i = 0; i < 4; i++) {
+        uint8_t b[64]; size_t n = unhex(k[i].hex, b); int w = 0, h = 0;
+        int ok = avc_sps_read(b, n, &w, &h, &c[i]);
+        CHECK(ok && w == k[i].w && h == k[i].h && c[i].matrix == k[i].matrix && c[i].full == k[i].full, "SPS colour %zu: %d %d×%d matrix %d full %d, want %d×%d matrix %d full %d",
+              i, ok, w, h, c[i].matrix, c[i].full, k[i].w, k[i].h, k[i].matrix, k[i].full);
+    }
+    int b, f;
+    // the SPS first: BT.709 full at 360 lines, over a decoder reporting BT.601 limited
+    nx_avc_pick_colour(&c[0], 2, 2, 360, &b, &f); CHECK(b == 1 && f == 1, "declared BT.709 full: %d %d", b, f);
+    nx_avc_pick_colour(&c[1], 1, 1, 1080, &b, &f); CHECK(b == 0 && f == 0, "declared BT.601 limited at 1080 lines: %d %d", b, f);
+    // matrix unspecified: the decoder's report, else the height; the range from the SPS
+    nx_avc_pick_colour(&c[2], -1, -1, 720, &b, &f); CHECK(b == 1 && f == 1, "range only, 720 lines: %d %d", b, f);
+    nx_avc_pick_colour(&c[2], 4, 2, 720, &b, &f); CHECK(b == 0 && f == 1, "range only, decoder BT.601 NTSC: %d %d", b, f);
+    // nothing declared: the decoder's report, else BT.709 from 720 lines up and limited range
+    nx_avc_pick_colour(&c[3], -1, -1, 720, &b, &f); CHECK(b == 1 && f == 0, "undeclared 720 lines: %d %d", b, f);
+    nx_avc_pick_colour(&c[3], -1, -1, 480, &b, &f); CHECK(b == 0 && f == 0, "undeclared 480 lines: %d %d", b, f);
+    nx_avc_pick_colour(&c[3], 1, 1, 480, &b, &f); CHECK(b == 1 && f == 1, "decoder BT.709 full: %d %d", b, f);
+    nx_avc_pick_colour(&c[3], 6, 0, 1080, &b, &f); CHECK(b == 1 && f == 0, "decoder BT.2020 counts as undeclared: %d %d", b, f);
+    nx_avc_pick_colour(NULL, 2, -1, 1080, &b, &f); CHECK(b == 0 && f == 0, "no SPS, decoder BT.601 PAL: %d %d", b, f);
+    nx_avc_colour g = {9, 0}; nx_avc_pick_colour(&g, -1, -1, 480, &b, &f); CHECK(b == 0 && f == 0, "SPS BT.2020 counts as undeclared: %d %d", b, f);
 }
 static void t_yuv(void) {
     CHECK(nx_yuv_kind(21) == NXYUV_NV12 && nx_yuv_kind(19) == NXYUV_I420 && nx_yuv_kind(0x7fa30c04) == NXYUV_NV12 && nx_yuv_kind(0x7f000789) == NXYUV_NONE, "colour formats");
@@ -134,7 +165,7 @@ static void t_mck(void) {
     CHECK(!k.p && !k.n && !k.cap, "freed");
 }
 int main(void) {
-    t_resample(); t_chmap(); t_sps(); t_yuv(); t_rgba(); t_mck();
+    t_resample(); t_chmap(); t_sps(); t_colour(); t_yuv(); t_rgba(); t_mck();
     if (fails) { printf("t_android_av: %d failures\n", fails); return 1; }
     printf("t_android_av: ok\n");
     return 0;
