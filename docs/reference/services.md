@@ -687,6 +687,12 @@ Most service calls can be found before they crash, before the first boot or the 
 - **Fix:** both are taken over by name in `hle_offline.c`, next to the newer `ProfanityFilter` overloads: the check reports no profanity, and the mask leaves the text unchanged.
 - **Found on:** Cruis'n Blast (0100B41013C82000, SDK 10, version 1.0.7; no profile in this repository).
 
+### Offline HTML sessions without a web view (`web::OfflineWebSession`)
+
+- **Symptom:** SIGSEGV reading address 0 at boot in `applet::StartLibraryAppletImmediately` (`sdk+0x140784` in Super Mario Sunshine 1.1.4), called from `web::OfflineWebSession::Start` right after the save is mounted.
+- **Cause:** the SDK's `Start` creates the web applet through `am::GetSelfController()`, which the host never made. Sunshine starts its launcher pause menu (an offline HTML page) hidden at boot and shows it with `Appear` when the player suspends.
+- **Fix:** `dm/host/hle_web.c` takes the session over with upstream's stand-in (this host has no web view): the page loads at once, sends one empty content message (the game waits for one before `Appear`) and closes when it appears (exit reason 0, no last URL); `WaitForExit` gives the guest core up while it waits. The synchronous `web::ShowOfflineHtmlPage` stays cut (`hle_offline.c`).
+- **Found on:** Super Mario 3D All-Stars' Super Mario Sunshine (`010049900F546002`); Super Mario 64 imports the same.
 ## Display, window and operation mode
 
 ### `vi::CreateLayer` with the layer's size
@@ -1348,3 +1354,10 @@ Most service calls can be found before they crash, before the first boot or the 
 - **Cause:** `PlayReport::Send` returns a nontrivial `AsyncContext` in the caller's x8 storage that expects an initialized state and connects to `prepo:u` if unhandled.
 - **Fix:** in `dm/host/hle_offline.c`, `h_prepo_SendU` invokes the guest's `nn::prepo::AsyncContext::AsyncContext(Result)` constructor with `RES_OK` via x8, completing the asynchronous telemetry report offline without requiring a service session.
 - **Found on:** [The Legend of Zelda: Ocarina of Time](../../dm/games/0400486024DEC000/README.md).
+
+### `nn::jit` taken over by the host
+
+- **Symptom:** `nn::jit::Initialize` crashes reaching for the jit service (`sdk+0x2e5414` in Super Mario 64 1.1.4).
+- **Cause:** on Horizon the jit service loads the game's JIT plugin (an NRO the game reads from its own files) into a process of its own, maps the game's code memory read-write there and read + execute in the game, and runs the plugin's `nnjitpluginGenerateCode` / `nnjitpluginControl` for each request. The host has no service process.
+- **Fix:** `dm/host/hle_jit.c` (upstream's, without its capture and served image) takes over `Initialize`, `CreateJitEnvironment`, `GenerateCode`, `Control`, `GetJitEnvironmentInfo`, `DestroyJitEnvironment` and `Finalize`. `CreateJitEnvironment` finds the plugin among the rewritten NROs by SHA-256 (`nro_collect.py` collects it through the game's NRR), loads it alone (`loader.c` `nro_load_alone`: relocated against itself, left out of the game's symbol lookups; `nro_reset_data` starts every load from the data as rewritten and refuses a second load of a live module) and runs it as the service does. The code memory is one mapping for the plugin's writes and the game's calls: `MAP_JIT` on the Mac (writable only while the plugin runs on that thread), an anonymous read + write + execute mapping on Android (the game runs code it made earlier while the plugin writes more, so the memory cannot turn read + execute between requests). `GenerateCode` invalidates the instruction cache over the range returned. `DM_JIT_LOG=1` logs every request.
+- **Found on:** Super Mario 3D All-Stars' Super Mario 64 (`010049900F546001`): command 3 at boot turns 4,235 precompiled MIPS blocks into 14.2 MB of code (upstream's measurement on the Mac).

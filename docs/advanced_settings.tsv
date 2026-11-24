@@ -118,6 +118,7 @@ DM_IMPORTS	developer	Diagnostics			text			both
 DM_IMU_ACC_SIGN	developer	Input			text			both							
 DM_IMU_GYRO_SIGN	developer	Input			text			both							
 DM_IMU_NOISE	developer	Input			text			both							
+DM_JIT_LOG	developer	Diagnostics			text			both							
 DM_KBD	developer	Game			text			both							
 DM_KBD_PLAYER	internal	Game			text			both						Mac or iOS only	
 DM_KEYS	developer	Input			text			both							
@@ -579,7 +580,11 @@ DM_VK_GS_CLAIM	developer	Graphics			text			both
 DM_VK_GS_FILL	developer	Graphics			text		1 with Qualcomm's driver, 0 with others	both							
 DM_VK_GS_LINK	developer	Graphics			text			both							
 DM_VK_GS_SPV	internal	Diagnostics			text			both						test harness	
+DM_VK_GUEST_CAPTURE	developer	Diagnostics			text			both							
 DM_VK_GUEST_FPCR	developer	Diagnostics			text			both							
+DM_VK_GUEST_KEEP	developer	Diagnostics			text			both							
+DM_VK_GUEST_LOG	developer	Diagnostics			text			both							
+DM_VK_GUEST_SPLIT	developer	Diagnostics			text			both							
 DM_VK_GW_SORT_KEEP	developer	Graphics			text			both							
 DM_VK_HANG_EXIT	developer	Graphics			text			both							
 DM_VK_HANG_S	developer	Graphics			text			both							

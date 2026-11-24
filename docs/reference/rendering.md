@@ -1274,6 +1274,52 @@ The Vulkan layer (`dm/gfx/vk/hle_vk.m`) was written for Hades; Super Mario Galax
 - **Cause:** two geometry shaders (GX points and lines expanded to quads) are not translated (Metal has no geometry stage).
 - **Found on:** [Super Mario Galaxy](../../dm/games/010099C022B96000/README.md).
 
+## Guest Vulkan on Android
+
+Games that render with Vulkan themselves (Super Mario 3D All-Stars' Super Mario 64 and Super Mario Sunshine, Super Mario Galaxy, Hades, Minecraft, Re:ZERO) pass their Vulkan calls to the phone's own driver (`dm/gfx/vk_android/vka_guest.c`). The entries below are what the Switch's driver lets pass and the phone's does not; each fix makes the game's commands valid Vulkan, so it holds on every driver.
+
+### Guest Vulkan passed through to the device's driver (Android)
+
+- **Symptom:** a game that imports the Vulkan entry points is refused at its start on Android (the multi-program branch's "A game that renders with Vulkan is refused on Android"), or, without the refusal, the first `vkCreateInstance` runs into an unbound import.
+- **Cause:** the game imports `vk*` from the SDK's Vulkan loader (`subsdk0` or another module the profile does not load); on the Mac the host answers them with Vulkan on Metal (`dm/gfx/vk/hle_vk.m`), and the Android host had no such layer (`dm/gfx/nvn/android_stub.c`).
+- **Fix:** `vka_guest.c` registers the entry points in the host's import table and hands them to the device the NVN replay makes (`vka_dev.c`): the game's instance, physical device, device and queues are the replay's (`V.inst`, `V.pd`, `V.dev`, `V.q`), so the game holds real driver handles and most calls reach the driver through a three-instruction trampoline that only clears the allocator argument (the driver never calls the game's allocation callbacks). The game reads the Tegra X1's identity (vendor `0x10de`, API 1.1, one queue family of 16 queues, all the replay's one queue), the phone's limits (alignments never finer than the Tegra's) and features masked to the Tegra's; its three memory types stand for three of the phone's (requirements translated). The nn::vi surface is a token, a swapchain's images are images of the host's, and `vkQueuePresentKHR` submits the hand-over (waiting the game's semaphores, signalling the replay's timeline with a fence of its ledger) and queues the image on the replay's present thread (`vka_present_guest`): scaling, rotation, the overlay and pacing are the NVN path's; frame generation takes NVN window textures only, so it is off for these games. Queue calls take the replay's queue lock; calls that compile or wait run on the thread's big host stack and with the host's FPCR. A crash inside the driver names the call it happened in (`[gvk] fault … inside vkCmdResetQueryPool`). `DM_VK_GUEST_LOG=1` logs object creation; `DM_VK_GUEST_CAPTURE=<folder>` writes every SPIR-V module the game makes.
+- **Found on:** Super Mario 3D All-Stars' Super Mario Sunshine (`010049900F546002`): on the AYN Thor (Adreno 740), the opening movie, the title, the file select, a new file's plane scene and play at Delfino Airstrip at 30 fps on Qualcomm's driver and on Turnip.
+
+### A guest frame presented flipped (Android)
+
+- **Symptom:** the picture of a Vulkan game mirrored on the phone (on a pre-rotated panel a vertical flip shows as a left-right mirror).
+- **Cause:** the replay's window origin starts at NVN's default, lower left (`vka_exec.c` `g_origin_ll`), until the game calls `nvnDeviceSetWindowOriginMode`; a game that renders with Vulkan never does, so the present took its top-down swapchain image for bottom-up and flipped it.
+- **Fix:** the origin belongs to the frame being presented (`vka_present.c` `present_ll`): a guest swapchain image is top-down; the control line's screenshot follows the same flag.
+- **Found on:** Super Mario 3D All-Stars' Super Mario Sunshine (`010049900F546002`), the opening movie (reported by the user watching the phone).
+
+### Scaled vertex formats on a device without them
+
+- **Symptom:** a Vulkan game's picture stays black on one driver and draws on another; the log names `format 87 as a vertex attribute: the device lacks format features 0x40`.
+- **Cause:** `VK_FORMAT_*_USCALED` and `*_SSCALED` (an integer read as an unnormalized float) are optional vertex formats. NVIDIA's driver and Turnip fetch them; Qualcomm's driver on the Adreno 740 fetches none, and Hagi's GX positions, colours and texture coordinates come in them (`R16G16B16_SSCALED`, `R8G8B8A8_USCALED`, `R16G16_SSCALED`, `R8G8_USCALED`, …), so every draw read nothing.
+- **Fix:** an attribute in a scaled format the device cannot fetch is fed as its `UINT` / `SINT` twin, and the pipeline's vertex module is copied with that input read as an integer and converted after each load (`OpConvertUToF` / `OpConvertSToF`), which is what the fixed-function fetch does for a scaled format (`vka_guest_vin.c` `vkg_spv_scaled`; the code of each vertex module is kept while the module lives). `dm/gfx/tests/t_guest_spv.c` checks the rewrite.
+- **Found on:** Super Mario 3D All-Stars' Super Mario Sunshine (`010049900F546002`) on Qualcomm's driver: 431 of its 550 vertex modules.
+
+### Descriptor arrays indexed per vertex without NonUniform
+
+- **Symptom:** skinned models drawn as long spikes (Mario, the seagulls at the file select), on Qualcomm's driver and on Turnip.
+- **Cause:** Hagi's GX vertex shaders pick a transform-matrix block per vertex: `position_matrix[4]` and `normal_matrix[2]` are arrays of uniform blocks indexed with `in_MatIdx`. Vulkan defines such an access only when the index is dynamically uniform or the access is decorated `NonUniform`; NVIDIA's hardware reads any element either way, Adreno does not.
+- **Fix:** every access chain into a descriptor array whose first index is not a constant, and every load through it, is decorated `NonUniform`, with `ShaderNonUniform`, the array kind's capability and `SPV_EXT_descriptor_indexing` below SPIR-V 1.5 (`vkg_spv_nonuniform`), where the device has the matching `*ArrayNonUniformIndexing` feature (the replay enables every feature the device has; a shader that needs one the device lacks is said once and left as made).
+- **Found on:** Super Mario 3D All-Stars' Super Mario Sunshine (`010049900F546002`): 117 of its 1,154 modules.
+
+### Query ranges past their pool
+
+- **Symptom:** SIGSEGV in `vulkan.adreno.so` about 20 s into play, inside `vkCmdResetQueryPool` (`[gvk] fault … inside vkCmdResetQueryPool`), on Qualcomm's driver only.
+- **Cause:** Hagi resets its occlusion pool from the query in use to the pool's end (`first i, count 2176 − i`), and when its index wraps it asks for `first 0, count 0xfffff787` (−2169) of the 2,176-query pool. NVIDIA's driver ignores queries outside a pool; Qualcomm's wrote past its query memory.
+- **Fix:** query ranges of resets (`vkCmdResetQueryPool`, `vkResetQueryPool`), begins, ends and result reads are cut to the pool (queries outside a pool do not exist), with a red line the first times.
+- **Found on:** Super Mario 3D All-Stars' Super Mario Sunshine (`010049900F546002`) at Delfino Airstrip.
+
+### Switch-driver habits made valid for the phone's driver
+
+- `ArrayStride` on a struct member ([Vulkan shaders generated at run time](#vulkan-shaders-generated-at-run-time)): copied onto the array type and the member decoration dropped, so the module validates (`vkg_spv_strides`; all 552 of Super Mario Sunshine's modules with one pass `spirv-val`).
+- The second blend source at output location 1 ([Dual-source blending from output location 1](#dual-source-blending-from-output-location-1)): a pipeline that blends with `SRC1` gets a copy of its fragment module with that output at `Location 0 Index 1` (`vkg_spv_dual`).
+- A transfer command inside a render pass ([Copies inside a render pass](#copies-inside-a-render-pass)): it ends the pass and runs after a barrier, and the pass goes on in a compatible render pass that loads every attachment (`DM_VK_GUEST_SPLIT=0` leaves it inside). Not met in Super Mario Sunshine so far.
+- Attachments opened with `LOAD_OP_DONT_CARE` or stored with `STORE_OP_DONT_CARE` are loaded and stored (NVIDIA's driver discards nothing, and a tiler would start or end its tile memory undefined; `DM_VK_GUEST_KEEP=0` leaves them as made).
+- Descriptor sets freed after their pool was reset or destroyed are ignored, and so is `vkDestroyImage` of a swapchain's image (Super Mario 64 as it leaves, on the Mac).
 ## OpenGL layer
 
 Digimon Story Cyber Sleuth: Complete Edition (Media.Vision's MVGL engine, SDK 6.4.0) and Balatro (LÖVE 11.4, "love-nx", with SDL and LuaJIT) render with **NVIDIA's desktop OpenGL 4.5 core profile through EGL**, not NVN. The host implements GL itself on Metal (`dm/gfx/gl/hle_gl.m`), as it does Vulkan for Hades; NVIDIA's GL driver (`subsdk0`) is not loaded. Balatro's graphics module is LÖVE's own OpenGL backend, so its choices follow what the context reports.
