@@ -41,7 +41,7 @@ No rewriter patch: nothing here depends on a build.
 
 ## Tested on the phone
 
-2026-11-24, AYN Thor (Adreno 740, Android 13, 11 GB RAM), the player's own console dump as one `.nx` (programs 0-3, update 1.1.4), packed on a PC (`pack_android.py`: program 0 with its 3,900-shader library, 16 MB; `p1/` 21.5 MB with two NROs; `p2/` 59.2 MB with the `.nrolz` game; 128 MB in all), test app built from the working branch with this change merged:
+2026-11-24, AYN Thor (Adreno 740, Android 13, 11 GB RAM), the player's own console dump as one `.nx` (programs 0-3, update 1.1.4), packed on a PC (`pack_android.py`: program 0 with its 3,900-shader library, 16 MB; `p1/` 21.5 MB with two NROs; `p2/` 59.2 MB with the `.nrolz` game; 128 MB in all), the test app built from the working branch at its shader chain `ea01255b0e46` with this change merged (and the reader fix for this `.nx` of the `.nx` support, which upstream does not have yet). The first runs were on a build of the newer chain `ec7e76fe202a`, with the same results:
 
 | Driver | What ran | Result |
 |---|---|---|
