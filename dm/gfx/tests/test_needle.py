@@ -83,6 +83,13 @@ def pacx403(blocks, types=b'VertexShader\0PixelShader\0', deps=0):
 
 
 class NeedleTests(unittest.TestCase):
+    def test_pacx403_invalid_lz4_chunk(self):
+        d = bytearray(pacx403([]))
+        root, stored = struct.unpack_from('<II', d, 0x10)
+        d[root:root + stored] = bytes(stored)
+        with self.assertRaisesRegex(SystemExit, r'^\[RED\] corrupt\.pac: PACx 403 root: invalid LZ4 chunk'):
+            split.pacx4_parts(d, 'corrupt.pac')
+
     def test_pacx403_truncated_header_and_root_chunk_table(self):
         deps = 0x18
         d = pacx403([], deps=deps)
