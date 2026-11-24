@@ -6,7 +6,6 @@ import android.content.Intent;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
-import android.widget.Toast;
 
 import java.io.File;
 import java.io.IOException;
@@ -28,7 +27,7 @@ import java.util.concurrent.TimeUnit;
  * the process that ends), starts Home with {@link #EXTRA} and finishes; the host's exit ends the :game process. Home ({@link #take}) waits until that process is gone
  * (its save lock, its host), then starts the game's screen again: the same game, pack and save, with "program" (the pack's p&lt;n&gt;/ folder and DM_PROGRAM),
  * "launch_param" (DM_LAUNCH_PARAM), "prev_program" (DM_PREV_PROGRAM) or "relaunch" (DM_RELAUNCH=1), and the host's note ("note": why the program that ended could not
- * run, shown to the player). The request is read from the app's files, never from the intent, so another app cannot start a game with it; one older than a minute is
+ * run, which the game's screen shows as a notice). The request is read from the app's files, never from the intent, so another app cannot start a game with it; one older than a minute is
  * dropped.
  */
 final class ProgramSwitch {
@@ -52,11 +51,16 @@ final class ProgramSwitch {
     /** nxlaunch.c, on a thread attached for the call while the guest thread waits: the screen does its part on the UI thread, and the host ends when this returns */
     static void handoff(int index, int prev, byte[] note) {
         GameActivity a = screen;
+        for (int i = 0; a == null && i < 40; i++) {   // a host that hands over at once (a refused program) may call before the screen took the run (GameActivity sets screen after Native.start)
+            try { Thread.sleep(50); } catch (InterruptedException e) { Thread.currentThread().interrupt(); break; }
+            a = screen;
+        }
         if (a == null) { Log.w(TAG, "program switch to " + index + ": no game screen; the game ends"); return; }
+        final GameActivity s = a;
         CountDownLatch done = new CountDownLatch(1);
         String n = note == null ? null : new String(note, StandardCharsets.UTF_8);
         new Handler(Looper.getMainLooper()).post(() -> {
-            try { a.programHandoff(index, prev, n); }
+            try { s.programHandoff(index, prev, n); }
             catch (RuntimeException e) { Log.w(TAG, "program switch: " + e); }
             finally { done.countDown(); }
         });
@@ -124,8 +128,6 @@ final class ProgramSwitch {
         catch (IOException e) { req = parse(null); }
         if (!f.delete() && f.exists()) Log.w(TAG, "program switch: " + f + " could not be removed");
         if (!valid(req, System.currentTimeMillis())) { Log.w(TAG, "program switch: no current request in " + f + "; nothing started"); return true; }
-        String note = req.getOrDefault("note", "");
-        if (!note.isEmpty()) Toast.makeText(home, note, Toast.LENGTH_LONG).show();
         int pid;
         try { pid = Integer.parseInt(req.getOrDefault("pid", "0")); } catch (NumberFormatException e) { pid = 0; }
         final Map<String, String> r = req;

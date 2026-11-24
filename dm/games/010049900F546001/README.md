@@ -10,7 +10,7 @@ Nintendo's N64 layer ("EmuAppNX64") on the Japanese Shindou ROM with English tex
 
 ## Status
 
-- **Current (2026-11-24, Android):** packed into the game's pack (`p1/`: `main`, `sdk` and the two NROs the NRRs register, no shader library: it has no NVN shaders), and refused at its start: it renders with Vulkan, and the Android host has no guest Vulkan layer ([A game that renders with Vulkan is refused on Android](../../../docs/reference/services.md#a-game-that-renders-with-vulkan-is-refused-on-android)). The launcher program comes back and says why.
+- **Current (2026-11-24, Android):** packed into the game's pack (`p1/`: `main`, `sdk` and the two NROs the NRRs register, no shader library: it has no NVN shaders), and refused at its start: it renders with Vulkan, and the Android host has no guest Vulkan layer ([A game that renders with Vulkan is refused on Android](../../../docs/reference/services.md#a-game-that-renders-with-vulkan-is-refused-on-android)). The launcher program comes back and shows why as a notice (tested 2026-11-24 on the AYN Thor, Qualcomm's driver and Turnip: [the launcher's note](../010049900F546000/README.md#tested-on-the-phone)).
 - Upstream nxnative plays it on the Mac (the Mario head, the file select, a new file to the castle grounds, 30 fps), through its Vulkan layer on Metal (`dm/gfx/vk/hle_vk.m`) and its `nn::jit` take-over (`hle_jit.c`), and on iOS from an image of the plugin's output captured on a Mac (`jit_capture.py`).
 
 ## What it needs

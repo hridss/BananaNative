@@ -13,7 +13,7 @@ The profiles come from upstream nxnative, where the launcher, Super Mario 64 and
 
 ## Status
 
-- **Current (2026-11-24, AYN Thor, [Tested on the phone](#tested-on-the-phone)):** the launcher program boots to its menu; Super Mario 64 and Sunshine are refused at their start with the reason, and the launcher comes back.
+- **Current (2026-11-24, AYN Thor, [Tested on the phone](#tested-on-the-phone)):** the launcher program plays at 60 fps on Qualcomm's driver and on Turnip: the opening movie, the title, the menu with its movies and the soundtrack. Super Mario 64 and Sunshine are refused at their start with the reason, and the launcher program comes back; Galaxy's tile starts the launcher program again.
 
 ## How it is one game
 
@@ -41,8 +41,14 @@ No rewriter patch: nothing here depends on a build.
 
 ## Tested on the phone
 
-Pending.
+2026-11-24, AYN Thor (Adreno 740, Android 13, 11 GB RAM), the player's own console dump as one `.nx` (programs 0-3, update 1.1.4), packed on a PC (`pack_android.py`: program 0 with its 3,900-shader library, 16 MB; `p1/` 21.5 MB with two NROs; `p2/` 59.2 MB with the `.nrolz` game; 128 MB in all), test app built from the working branch with this change merged:
 
+| Driver | What ran | Result |
+|---|---|---|
+| Qualcomm's own (`DM_VK_DRIVER=system`, driver ID 8, version 0x802a4035 built 2023-12-27) | the opening movie, the title (the button icon drawn), the menu with each tile's movie and the soundtrack; A on Super Mario 64, on Sunshine and on Galaxy | 60 fps; frame time p50 16.7 ms, p95 18.2-19.6 ms, GPU p50 1.7-2.0 ms. Each game's start: its program refused with the red line, the launcher program back in about a second with the line as a notice; Galaxy: the launcher program again. No crash, no other red line |
+| Turnip v27.0.0-R3 (the launcher's pick, driver ID 18) | the same, Sunshine then Super Mario 64 | 60 fps; frame time p50 16.7 ms, p95 17.5-18.5 ms, GPU p50 about 1.1 ms. The same switches. No crash, no red line |
+
+Screenshots were taken of the menu, the title and the notice on both drivers (not committed: the game's own pictures).
 ## Found on this game
 
 General host changes first needed here; each applies to every game:

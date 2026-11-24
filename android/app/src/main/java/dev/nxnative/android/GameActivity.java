@@ -372,8 +372,13 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
         String drv = SkipNotice.driverName(runDriverLine, dir -> { for (GpuDriver.Info i : GpuDriver.installed(this)) if (i.dir.getPath().equals(dir)) return i.label(); return null; });   // the run's driver, not the settings' pick
         String st = Native.skipStatus();
         Native.note("skipped work: notice shown (" + pct + " % of draws; causes: " + SkipNotice.causes(st) + "; driver: " + drv + ")");
+        notice(SkipNotice.noMesh(st) ? SkipNotice.textNoMesh(pct) : SkipNotice.missingShaders(st) ? SkipNotice.textMissingShaders(pct) : SkipNotice.text(pct));
+    }
+
+    /** A small notice at the bottom of the game's screen (skipped work, the note of a program switch): a tap dismisses it, it fades after 20 s */
+    private void notice(CharSequence text) {
         TextView h = new TextView(this);
-        h.setText(SkipNotice.noMesh(st) ? SkipNotice.textNoMesh(pct) : SkipNotice.missingShaders(st) ? SkipNotice.textMissingShaders(pct) : SkipNotice.text(pct));
+        h.setText(text);
         h.setTextColor(Color.WHITE);
         h.setTextSize(13);
         float dp = getResources().getDisplayMetrics().density;
@@ -943,6 +948,7 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
             }
             if (testSave != null) Native.note("[nxlaunch] test app: DM_SAVE from env-" + id + ".txt: " + testSave);
             if (programNote != null) Native.note(programNote);
+            if (getIntent().getStringExtra("note") != null) notice(getIntent().getStringExtra("note"));   // why the program before could not run (ProgramSwitch): the host's note
             Native.note("frame generation: " + (Lsfg.on(this) ? "on" : "off") + "; " + Lsfg.note);
             if (Prefs.ramSaverLevel(this, id) == 2) Native.note("RAM saver: Strong (DM_VK_RAM_SAVER=2); frame generation " + (Lsfg.on(this) ? "on" : "off"));
             Native.note(gpuNote + " (picked in the launcher; a DM_VK_DRIVER line in env.txt wins, the host's [vk] driver line says which ran)");

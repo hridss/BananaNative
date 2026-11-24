@@ -9,7 +9,7 @@ NERD's Hagi layer, as in Super Mario Galaxy ([010099C022B96000](../010099C022B96
 
 ## Status
 
-- **Current (2026-11-24, Android):** packed into the game's pack (`p2/`: `main`, `subsdk0`, `sdk` and the `.nrolz` game as an NRO, no shader library: it has no NVN shaders), and refused at its start: it renders with Vulkan, and the Android host has no guest Vulkan layer ([A game that renders with Vulkan is refused on Android](../../../docs/reference/services.md#a-game-that-renders-with-vulkan-is-refused-on-android)). The launcher program comes back and says why.
+- **Current (2026-11-24, Android):** packed into the game's pack (`p2/`: `main`, `subsdk0`, `sdk` and the `.nrolz` game as an NRO, no shader library: it has no NVN shaders), and refused at its start: it renders with Vulkan, and the Android host has no guest Vulkan layer ([A game that renders with Vulkan is refused on Android](../../../docs/reference/services.md#a-game-that-renders-with-vulkan-is-refused-on-android)). The launcher program comes back and shows why as a notice (tested 2026-11-24 on the AYN Thor, Qualcomm's driver and Turnip: [the launcher's note](../010049900F546000/README.md#tested-on-the-phone)).
 - Upstream nxnative plays it on the Mac, 30 fps: the opening, the file select, a new file's plane scene and control at Delfino Airstrip, through its Vulkan layer on Metal (`dm/gfx/vk/hle_vk.m`).
 
 ## What it needs
