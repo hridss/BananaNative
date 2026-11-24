@@ -166,6 +166,7 @@ The first boot shows the language list: `A`, `LUp`, `A` picks English. The chara
 - [A translator call that needs reflection fails only on the phone](../../../docs/reference/shaders.md#a-translator-call-that-needs-reflection-fails-only-on-the-phone-android): 3,384 of 8,157 shaders failed on the phone (resolved).
 - [A library with failed shaders passed as finished](../../../docs/reference/shaders.md#a-library-with-failed-shaders-passed-as-finished-android): the card said Ready with them missing (resolved).
 - [The Joy-Con mouse pointer](../../../docs/reference/services.md#the-joy-con-mouse-pointer) and [GameShare guest displays](../../../docs/reference/services.md#gameshare-guest-displays): boot aborts.
+- [Local album screenshot saving](../../../docs/reference/services.md#local-album-screenshot-saving): the camera's export to the console album (4-argument `SaveScreenshot`, 1920×1080 RGBA8888) failed with "Unable to save"; it now writes a PNG that the Android app copies into the gallery (current; not yet confirmed in play on the phone).
 
 - [A compile that ended the process is tried again at every start](../../../docs/reference/memory.md#a-compile-that-ended-the-process-is-tried-again-at-every-start-android): the prewarm of compute shader `af8f64d9f5542ef2` aborted every start on System Driver v800.72; the next start leaves it out and runs at 7,778 maps.
 

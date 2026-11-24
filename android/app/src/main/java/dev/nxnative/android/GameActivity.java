@@ -813,12 +813,13 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
             // The DLC links live in internal app storage: the external files folder is shared storage (FUSE), which refuses symbolic links (errno not yet confirmed on a phone; a refused link is now a [RED] line), so
             // every link failed there and no game saw its DLC (docs/reference/packing.md "DLC links in shared storage"). Their targets stay where they are
             File aoc = aocLinks(mkdirs(new File(getFilesDir(), "aoc/" + id)), game, pack, nupFd);
+            File album = AlbumExport.dir(this, id);   // the host's album pictures (hle_album.c), copied into the gallery by AlbumExport
             Pack.removeDir(new File(files, "aoc/" + id));   // the folder earlier builds used (empty, or links on a device that took them)
             log = new File(LogProvider.dir(this), id + "-" + new SimpleDateFormat("yyyyMMdd-HHmmss", Locale.ROOT).format(new Date()) + ".log");
             pruneLogs(id);
             ExitWatch.log(log);
             List<String> env = new ArrayList<>(List.of(
-                    "DM_ROMFS=" + romfs, "DM_SAVE=" + save, "DM_TEMP=" + temp, "DM_ROOT=" + root, "DM_AOC_DIR=" + aoc,
+                    "DM_ROMFS=" + romfs, "DM_SAVE=" + save, "DM_TEMP=" + temp, "DM_ROOT=" + root, "DM_AOC_DIR=" + aoc, "DM_ALBUM_DIR=" + album,
                     "HOME=" + files, "TMPDIR=" + getCacheDir(), "DM_BUILD_COMMIT=" + BuildConfig.NX_COMMIT,
                     "DM_CTL=" + new File(files, "ctl.txt"), "NX_EXIT_RECORD=" + ExitWatch.record(this)));   // live control lines (android/TESTING.md "Live control", android/tools/nxctl.sh); DM_CTL= in env.txt turns it off
             // The shader layer lives in the pack (shaders/layer, kept between runs: LayerDir); a pack folder that cannot take it leaves the host's own place, DM_TEMP/shader_layer
@@ -905,6 +906,7 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
             String[] args = {"nxhost", packDir.getPath()};
             int r = Native.start(args, env.toArray(new String[0]), log.getPath(), files.getPath());
             if (r != 0) throw new IOException("the host did not start (" + r + (r == -1 ? ": a start was already tried in this process" : "") + ")");
+            AlbumExport.watch(this, album, bootName, id);   // pictures the game saves to the console album go to the gallery (Pictures/<app>/<game>)
             // Rumble (Game settings, Settings) once the host has its environment and the log (Native.start): its DM_RUMBLE / DM_RUMBLE_GAIN are read then, and the
             // setup lines reach the game's log. Pads registered before get their vibrator now
             if (Prefs.rumble(this, id)) { rumble = new Rumble(this); if (!rumble.start()) rumble = null; else for (int p : pads) rumble.route(p); }
@@ -929,7 +931,7 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
             for (String n : unknownNotes) Native.note(n);
             if (!unknownNotes.isEmpty()) android.widget.Toast.makeText(this, unknownNotes.get(0).replace("[RED] ", ""), android.widget.Toast.LENGTH_LONG).show();
             if (!refused.isEmpty()) {
-                String msg = "not taken: " + String.join(", ", refused) + ": the launcher sets the game's paths (DM_SAVE, DM_ROMFS, DM_TEMP, DM_ROOT, DM_AOC_DIR, DM_VK_LAYER_DIR, HOME)"
+                String msg = "not taken: " + String.join(", ", refused) + ": the launcher sets the game's paths (DM_SAVE, DM_ROMFS, DM_TEMP, DM_ROOT, DM_AOC_DIR, DM_ALBUM_DIR, DM_VK_LAYER_DIR, HOME)"
                         + (testApp() ? "; DM_SAVE is taken from env-<title ID>.txt only" : "");
                 Native.note("[RED] env: " + msg);
                 android.widget.Toast.makeText(this, Tx.s(R.string.game_environment_lines, msg), android.widget.Toast.LENGTH_LONG).show();
@@ -1155,7 +1157,7 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
     }
 
     /** Environment keys only the launcher sets: a line of env.txt, env-<id>.txt or the game's own lines that names one is refused (DM_SAVE: see allowSave) */
-    static final java.util.Set<String> PROTECTED = new java.util.HashSet<>(java.util.Arrays.asList("DM_SAVE", "DM_ROMFS", "DM_TEMP", "DM_ROOT", "DM_AOC_DIR", "DM_VK_LAYER_DIR", "HOME"));
+    static final java.util.Set<String> PROTECTED = new java.util.HashSet<>(java.util.Arrays.asList("DM_SAVE", "DM_ROMFS", "DM_TEMP", "DM_ROOT", "DM_AOC_DIR", "DM_ALBUM_DIR", "DM_VK_LAYER_DIR", "HOME"));
     private final List<String> refused = new ArrayList<>();
     private String testSave;   // DM_SAVE from env-<id>.txt in the test app: a test run's own save folder (a copied seed), never the user's
 

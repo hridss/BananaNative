@@ -12,6 +12,7 @@ DMSH_VK_REQUIRE_ALL	developer	Packing			text			both
 DMSH_VK_RESULTS	developer	Diagnostics			text			both							
 DMSH_VK_XLATE_J	developer	Packing			text			both							
 DM_AB	developer	Diagnostics			text			both							
+DM_ALBUM_DIR	internal	Game			text			both						set by the launcher	
 DM_ALIAS_SIZE	internal	Diagnostics			text			both						Mac or iOS only	
 DM_ALIAS_WINDOWS	developer	Diagnostics			text			both							
 DM_ALLOW_OTHER_METAL	internal	Game			text			both						Mac or iOS only	
