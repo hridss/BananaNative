@@ -326,6 +326,14 @@ Games read this count as a position in their own command memory and size their h
 - **Check:** `t_nvn` 5b''' (not run here: Metal harness) records over a called recording before submitting its caller, once with a longer record (the piece is skipped, the caller's own record runs, the linear copy holds only that) and once with a record of the same size (it runs).
 - **Found on:** [Advance Wars 1+2: Re-Boot Camp](../../dm/games/0100300012F2A000/README.md), when the enemy uses a CO power, about a minute into the reporter's save ([issue #2437](https://github.com/seedds/nxnative/issues/2437), bisected to f02d0474). The plugin's rotation and the two events per frame were traced on the Mac; the four-event frame is read from the reporter's register dump, not reproduced here.
 
+### A copied record named the source's texture snapshots
+
+- **Symptom:** none seen in a game yet; found by reading while tracing a crash in `vka_tex_get` from `rp_begin` (a render target pointer that held a compact Barrier record's header, Mario Golf: Super Rush on Qualcomm's driver, one run in three, not reproduced since). A copied list's render targets, copy and clear textures could read whatever the game recorded over the source afterwards.
+- **Cause:** a record with textures keeps a snapshot of each texture object after its payload and points at it (`hle_nvn.c` `tex_snap`). `CopyCommands` copies the called recording's records into the caller's command memory so that the source may be recorded over at once, but the copies kept their pointers into the source records' snapshots.
+- **Fix:** each copied record's snapshot pointers are moved to the same bytes of the copy (`nvn_obj.h` `nvn_snap_relocate`, from `CopyCommands`): SET_RT's colour and depth targets, COPY_B2T / COPY_T2B, COPY_T2T, CLEAR_TEX and DLSS; a pointer outside the record (an object that was not valid when recorded) stays. `t_snap_reloc` (`dm/gfx/tests`) records over the source after the copy and checks the copy's targets.
+- **Open:** a called list's pieces (`CallCommands`) are still read in place at submit, by design, and the replay keeps a SET_RT's pointers in its queue state across submissions (`vka_exec.c` `S.rt`), so a later submission that draws without setting its targets again reads snapshots in command memory the game may have recorded over since. `vka_draw.c` `rt_same` compares those pointers, so it takes two SET_RT records of the same targets as different.
+- **Found on:** none (reading; see Symptom).
+
 ### Recorded commands patched in place by the game (`OP_BIND_TEX1`)
 
 - **Symptom:** the title showed one stretched 64×64 icon over the 3D scene, a new game a white screen; post-process passes with stale texture handles; `[RED] bind record … overwritten after recording`.

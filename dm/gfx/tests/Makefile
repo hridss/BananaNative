@@ -136,6 +136,8 @@ check_t_cpu_tex: t_cpu_tex
 # DM_NVN_CAPTURE: the replayer (a tool, not a test: it needs a capture, docs/agents/05-debugging.md) and the CPU-only test of the capture format and record relocation
 nvn_replay: nvn_replay.m $(MTL_T_DEP)
 	clang $(CFLAGS) -fobjc-arc -o $@ nvn_replay.m $(filter-out ../nvn/hle_nvn.c,$(MTL_T_SRC)) $(FW)
+t_snap_reloc: t_snap_reloc.c ../nvn/nvn_obj.h
+	clang $(CFLAGS) -o $@ t_snap_reloc.c
 t_capture: t_capture.c ../nvn/nvn_capture.c ../nvn/nvn_capture.h ../nvn/nvn_obj.h
 	clang $(CFLAGS) -o $@ t_capture.c ../nvn/nvn_capture.c
 .PHONY: check_t_capture

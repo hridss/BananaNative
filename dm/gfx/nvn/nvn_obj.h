@@ -272,6 +272,36 @@ typedef struct { int64_t stride; int image; } p_copy_stride;   // image: SetCopy
 // NVN2's DLSS evaluation: the parameters at the time of the call, each texture snapped after the record (hle_nvn.c "NVN2's DLSS"; vka_exec.c dlss_eval)
 enum { DLSS_COLOR, DLSS_DEPTH, DLSS_MOTION, DLSS_OUTPUT, DLSS_BIAS, DLSS_EXPOSURE, DLSS_TEXTURES };
 typedef struct { const tex_t *tex[DLSS_TEXTURES]; uint64_t net; int32_t iw, ih, ow, oh, base[DLSS_TEXTURES][2]; float mv[2], jitter[2], pre_exposure; uint32_t flags, reset; } p_dlss;
+// A record with texture snapshots (hle_nvn.c tex_snap: SET_RT, COPY_B2T / T2B, COPY_T2T, CLEAR_TEX, DLSS) names each texture by a pointer to its snapshot, inside the record
+// where it was recorded. A copy of the record (CopyCommands) must name its own snapshots, as the game may record over the source as soon as it is copied:
+// nvn_snap_relocate moves each pointer into the source record [src, src + size) to the same byte of base (the copy); a pointer elsewhere (an object that was not valid to
+// snap, kept by its address) stays. size: the whole record, header included. Returns how many pointers moved
+static inline int nvn_snap_fields(uint8_t *rec, uint32_t size, uint8_t **f, int max) {   // the record's snapshot pointer fields (at most 8 + 1)
+    op_hdr h; memcpy(&h, rec, sizeof h); uint8_t *a = rec + 8; uint32_t plen = size >= 8 ? size - 8 : 0; int n = 0;
+    #define NVN_SNAP_F(T, fl) do { if (offsetof(T, fl) + 8 <= plen && n < max) f[n++] = a + offsetof(T, fl); } while (0)
+    switch (h.op) {
+    case OP_SET_RT: {
+        if (plen < sizeof(int32_t)) break;
+        int32_t k; memcpy(&k, a, 4); if (k < 0 || k > 8) break;
+        for (int i = 0; i < k; i++) NVN_SNAP_F(p_set_rt, color[i]);
+        NVN_SNAP_F(p_set_rt, depth); break; }
+    case OP_COPY_B2T: case OP_COPY_T2B: NVN_SNAP_F(p_copy_b2t, tex); break;
+    case OP_COPY_T2T: NVN_SNAP_F(p_copy_t2t, src); NVN_SNAP_F(p_copy_t2t, dst); break;
+    case OP_CLEAR_TEX: NVN_SNAP_F(p_clear_tex, tex); break;
+    case OP_DLSS: for (int k = 0; k < DLSS_TEXTURES; k++) NVN_SNAP_F(p_dlss, tex[k]); break;
+    default: break;
+    }
+    #undef NVN_SNAP_F
+    return n;
+}
+static inline int nvn_snap_relocate(uint8_t *copy, const uint8_t *src, uint32_t size, uint64_t base) {
+    uint8_t *f[9]; int n = nvn_snap_fields(copy, size, f, 9), moved = 0;
+    for (int i = 0; i < n; i++) {
+        uint64_t v; memcpy(&v, f[i], 8);
+        if (v >= (uint64_t)(uintptr_t)src && v - (uint64_t)(uintptr_t)src + sizeof(tex_t) <= size) { v = base + (v - (uint64_t)(uintptr_t)src); memcpy(f[i], &v, 8); moved++; }
+    }
+    return moved;
+}
 typedef struct { uint64_t addr, size; uint32_t value, _pad; } p_clear_buf;   // buffer filled with a 32-bit value (ClearBuffer)
 typedef struct { float rgba[4]; } p_blend_color;
 typedef struct { float ref; } p_alpha_ref;

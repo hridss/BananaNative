@@ -1551,7 +1551,7 @@ NVN(nvnCommandBufferCopyCommands, void, NVNcommandBuffer *c, int n, const NVNcom
         ctl_iter it = { (const uint8_t *)(uintptr_t)h[i], 0 }; uint64_t v; op_hdr r;
         while (ctl_next(&it, &v))
             for (const uint8_t *p = ctl_addr(v), *pe = p + ctl_chunk_bytes(v); nvn_piece_record((const void *)(uintptr_t)h[i], v, p, pe, &r); p += r.size) {
-                uint8_t *d = cmd_alloc(o, r.size); memcpy(d, p, r.size); cs_op(r.op, r.size);
+                uint8_t *d = cmd_alloc(o, r.size); memcpy(d, p, r.size); nvn_snap_relocate(d, p, r.size, (uint64_t)(uintptr_t)d); cs_op(r.op, r.size);   // (the copy's texture snapshots: its own)
                 if (r.op == OP_COPY_B2T && r.size >= 8 + sizeof(p_copy_b2t) && (((p_copy_b2t *)(d + 8))->flags & DM_COPY_KEPT)) {   // a copied staging upload keeps its own bytes, with the copy's lifetime
                     p_copy_b2t *cp = (p_copy_b2t *)(d + 8); p_copy_kept *k = (p_copy_kept *)copy_kept(cp); uint8_t *m = keep_take(o, d, r.size, k->n);
                     if (m) { memcpy(m, k->data, k->n); k->data = m; } else cp->flags &= ~DM_COPY_KEPT;
