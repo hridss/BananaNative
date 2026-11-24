@@ -1,7 +1,7 @@
-// SHA-256 in managed code for the Android translator (dmsh_xlate_android.csproj). Program.cs calls System.Security.Cryptography.SHA256.HashData (the --source-sha argument, and
-// VertexCounterLowering's code match); .NET on linux-bionic implements it with OpenSSL, which Android does not ship (the system's BoringSSL lacks symbols .NET wants:
+// SHA-256 in managed code for the Android translator (dmsh_xlate_android.csproj). Program.cs calls System.Security.Cryptography.SHA256.HashData (VertexCounterLowering's
+// code match); .NET on linux-bionic implements it with OpenSSL, which Android does not ship (the system's BoringSSL lacks symbols .NET wants:
 // "Cannot get required symbol a2d_ASN1_OBJECT from libssl", then abort). This type has the framework type's name, so Program.cs compiles against it unchanged (CS0436).
-// FIPS 180-4. Checked by the source-sha argument on the phone, which must print the lock file's xlate_source (a SHA-256 of the embedded sources).
+// FIPS 180-4. (The source-sha argument prints a digest stamped at build time, dmsh_chain.py --xlate-source-sha, which the phone compares with the lock file's xlate_source.)
 namespace System.Security.Cryptography
 {
     static class SHA256

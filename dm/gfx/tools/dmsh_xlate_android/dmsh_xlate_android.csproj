@@ -1,6 +1,7 @@
 <!-- dmsh_xlate for Android (android/ONDEVICE.md): the same Program.cs, compiled with .NET NativeAOT for linux-bionic-arm64, so the phone translates the game's shaders itself.
-     Not one of DMSH_CHAIN's files: it compiles ../dmsh_xlate/Program.cs unchanged and embeds that file and ../dmsh_xlate/dmsh_xlate.csproj as src0 / src1, so the embedded source
-     (the source-sha argument) is the Mac translator's. Its own files: Sha256.cs (a managed SHA-256: .NET on bionic looks for OpenSSL, which Android does not have) and Entry.cs
+     Not one of DMSH_CHAIN's files: it compiles ../dmsh_xlate/Program.cs unchanged and stamps the same source digest as the Mac translator (XlateSourceSha below, which build.sh passes:
+     dmsh_chain.py - -xlate-source-sha, over Program.cs, its csproj and dm/third_party/ryujinx), printed by the source-sha argument. It still embeds Program.cs and the csproj as
+     src0 / src1, which xlate_tree.py - -check-lib finds in the library's bytes. Its own files: Sha256.cs (a managed SHA-256: .NET on bionic looks for OpenSSL, which Android does not have) and Entry.cs
      (the exported entry of the shared library the app loads). build.sh builds both forms: an executable (adb shell tests) and libdmsh_xlate.so (the app). -->
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
@@ -58,4 +59,17 @@
     <ProjectReference Include="$(RyuSrc)/src/Ryujinx.Graphics.Shader/Ryujinx.Graphics.Shader.csproj" />
     <ProjectReference Include="$(RyuSrc)/src/Ryujinx.Common/Ryujinx.Common.csproj" />
   </ItemGroup>
+  <!-- The source digest Program.cs's source-sha argument prints (SourceSha), as ../dmsh_xlate/dmsh_xlate.csproj stamps it: "unknown" when not passed, which the shader tools refuse -->
+  <PropertyGroup>
+    <XlateSourceSha Condition="'$(XlateSourceSha)' == ''">unknown</XlateSourceSha>
+  </PropertyGroup>
+  <Target Name="WriteXlateSourceSha" BeforeTargets="CoreCompile">
+    <PropertyGroup>
+      <_XlateSourceShaFile>$(IntermediateOutputPath)XlateSourceSha.g.cs</_XlateSourceShaFile>
+    </PropertyGroup>
+    <WriteLinesToFile File="$(_XlateSourceShaFile)" Lines="static partial class SwshXlate { const string SourceSha = &quot;$(XlateSourceSha)&quot;%3B }" Overwrite="true" WriteOnlyWhenDifferent="true" />
+    <ItemGroup>
+      <Compile Include="$(_XlateSourceShaFile)" />
+    </ItemGroup>
+  </Target>
 </Project>

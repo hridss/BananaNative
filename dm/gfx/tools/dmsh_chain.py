@@ -6,9 +6,10 @@
 # and their digest (inputs below) stamps the library: <cache dir>/b-<V>/inputs.tsv says which game and which inputs it was built from. c1_full.tsv / cb_extent.tsv name V and that digest in their
 # header (table_head), and the host takes them only when both match its library; build_ipa.sh packs a library only when its digest is the profile's.
 # The build (dmsh_build.py) writes into <cache dir>/b-<V>/ and the reflection json records chain = V; at compile time the host takes V from dm/gfx/nvn/dmsh_chain.h, loads only from b-<V>/ and verifies each json.
-# Usage: dmsh_chain.py                 print V (default options)
-#       dmsh_chain.py --header        rewrite dm/gfx/nvn/dmsh_chain.h (run after changing any file listed above, and commit it with the change)
-#       dmsh_chain.py --inputs        print the digest of the current game profile's inputs (DM_GAME), as b-<V>/inputs.tsv records it
+# Usage: dmsh_chain.py                    print V (default options)
+#       dmsh_chain.py --header            rewrite dm/gfx/nvn/dmsh_chain.h (run after changing any file listed above, and commit it with the change)
+#       dmsh_chain.py --inputs            print the digest of the current game profile's inputs (DM_GAME), as b-<V>/inputs.tsv records it
+#       dmsh_chain.py --xlate-source-sha  print the digest of dmsh_xlate's own sources and vendored Ryujinx inputs (the translator builds stamp it: dotnet publish -p:XlateSourceSha=<it>; dmsh_xlate_android/build.sh passes it itself)
 #       (checking the tools against dmsh_chain.lock, and rewriting it, is tool_lock.py's: the checks decide no output, so they are outside V and the shaders' cache keys)
 # Environment: XLATE_DEBUG / XLATE_REDUCED (same meaning as in dmsh_build.py, default 1 / 1; non-default options yield a different V, which the host will not load)
 import os, sys, ast, hashlib
@@ -112,8 +113,30 @@ def write_stamp(lib, game_id, digest):
 def table_head(lib):   # the header c1_full.tsv / cb_extent.tsv start with: the library's chain version and its inputs ("none" when it has no stamp, which nothing takes)
     return f'# chain {os.path.basename(os.path.normpath(lib))} inputs {read_stamp(lib).get("inputs", "none")}'
 
-def xlate_source_sha():   # same convention as dmsh_xlate --source-sha: the embedded Program.cs and csproj concatenated in that order
-    return hashlib.sha256(b''.join(open(os.path.join(HERE, 'dmsh_xlate', f), 'rb').read() for f in ('Program.cs', 'dmsh_xlate.csproj'))).hexdigest()[:16]
+XLATE_RYU_SUFFIXES = ('.cs', '.csproj', '.glsl', '.props')
+
+def xlate_source_files(gfx_dir=None):
+    """All in-repo source files compiled into dmsh_xlate, sorted by POSIX path relative to dm/."""
+    gfx = Path(gfx_dir) if gfx_dir is not None else Path(GFX)
+    dm_dir = gfx.parent
+    files = [gfx / 'tools/dmsh_xlate/Program.cs', gfx / 'tools/dmsh_xlate/dmsh_xlate.csproj']
+    ryu = dm_dir / 'third_party/ryujinx'
+    if ryu.is_dir():
+        for root, dirs, names in os.walk(ryu):
+            dirs[:] = sorted(d for d in dirs if d not in ('bin', 'obj') and not d.startswith('.'))
+            for name in sorted(names):
+                if name.startswith('.') or not name.endswith(XLATE_RYU_SUFFIXES):
+                    continue
+                files.append(Path(root) / name)
+    return sorted(files, key=lambda p: p.relative_to(dm_dir).as_posix())
+
+def xlate_source_sha(gfx_dir=None):   # stamped into the translator when it is published (-p:XlateSourceSha=..., printed by dmsh_xlate --source-sha): Program.cs, dmsh_xlate.csproj and all compiled dm/third_party/ryujinx inputs
+    gfx = Path(gfx_dir) if gfx_dir is not None else Path(GFX)
+    dm_dir = gfx.parent
+    h = hashlib.sha256()
+    for p in xlate_source_files(gfx):
+        h.update(p.relative_to(dm_dir).as_posix().encode() + b'\0' + p.read_bytes() + b'\0')
+    return h.hexdigest()[:16]
 
 def header_text(v):
     return (f'// Generated file (dm/gfx/tools/dmsh_chain.py --header): the B shader library translation chain version this source tree expects (default options), one for every game;\n'
@@ -126,5 +149,6 @@ if __name__ == '__main__':
         open(HEADER, 'w').write(header_text(version()))
         print(version())
     elif a == ['--inputs']: print(inputs(load_game()))
+    elif a == ['--xlate-source-sha']: print(xlate_source_sha())
     elif not a: print(version())
     else: sys.exit(__doc__ if __doc__ else 'usage: see the file header')

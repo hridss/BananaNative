@@ -11,9 +11,10 @@ NDK=${ANDROID_NDK_HOME:-$(ls -d ~/Library/Android/sdk/ndk/* 2>/dev/null | sort -
 export PATH=$(ls -d $NDK/toolchains/llvm/prebuilt/*/bin | head -1):$PATH
 mkdir -p $O; O=${O:A}
 mkdir -p $HERE/obj && python3 $HERE/../xlate_tree.py > $HERE/obj/tree.sha   # embedded as the library's --tree-sha (vk_android_build.py checks it)
+SRC_SHA=$(python3 $HERE/../dmsh_chain.py --xlate-source-sha)   # stamped as the library's --source-sha (Program.cs, its csproj and dm/third_party/ryujinx; the lock's xlate_source)
 pub() {   # pub <form dir> [msbuild properties...]
   local f=$1; shift; rm -rf $HERE/obj/Release/net10.0/linux-bionic-arm64/native   # the two forms share obj/: link each afresh
-  dotnet publish $HERE/dmsh_xlate_android.csproj -c Release -nologo -v quiet -o $O/$f "$@"
+  dotnet publish $HERE/dmsh_xlate_android.csproj -c Release -nologo -v quiet -o $O/$f -p:XlateSourceSha=$SRC_SHA "$@"
 }
 [[ $WHAT == exe || $WHAT == all ]] && pub exe
 [[ $WHAT == lib || $WHAT == all ]] && { pub lib -p:NativeLib=Shared -p:OutputType=Library; mv -f $O/lib/dmsh_xlate.so $O/lib/libdmsh_xlate.so; }

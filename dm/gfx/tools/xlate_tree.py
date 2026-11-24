@@ -4,7 +4,8 @@
 # the repository root, in sorted order. dmsh_xlate_android/build.sh embeds it in libdmsh_xlate.so (resource "tree", printed by --tree-sha); vk_android_build.py
 # refuses a translator library whose digest is not this tree's. The program form's check is the lock's dll fingerprints (tool_lock); the library form has no dlls,
 # and its embedded Program.cs digest (--source-sha) alone let a library built before a Ryujinx change pass (found 2026-11-03: a Mac library from before the
-# Ampere tensor fix made 28 compute shaders differ). Not a DMSH_CHAIN file: it changes no translation.
+# Ampere tensor fix made 28 compute shaders differ). --source-sha now covers dm/third_party/ryujinx as well (dmsh_chain.xlate_source_sha, upstream nxnative f856c78d);
+# this digest also covers the library's own files in dmsh_xlate_android/. Not a DMSH_CHAIN file: it changes no translation.
 # The APK build checks the same before it packs a stage's library (android/app/build.gradle nxPackXlateCheck, --check-lib): the library is arm64 Android code that
 # cannot run on the build machine, but NativeAOT keeps its managed resources verbatim, so the tree digest ("tree": 16 hex digits and a newline) and Program.cs
 # ("src0") are in its bytes. An APK built from a stage made before a translator change failed every phone's shaders step at that check (2026-11-10).
@@ -60,7 +61,7 @@ def check_lib(path):
         bad.append(f'{path}: its embedded dmsh_xlate/Program.cs is not this tree\'s')
     with open(dmsh_chain.LOCK) as f: lock = dict(l.rstrip('\n').split('\t', 1) for l in f if '\t' in l and not l.startswith('#'))
     if lock.get('xlate_source') != dmsh_chain.xlate_source_sha():
-        bad.append(f'{dmsh_chain.LOCK}: xlate_source {lock.get("xlate_source")}, this tree\'s Program.cs is {dmsh_chain.xlate_source_sha()}')
+        bad.append(f'{dmsh_chain.LOCK}: xlate_source {lock.get("xlate_source")}, this tree\'s translator sources are {dmsh_chain.xlate_source_sha()}')
     return bad
 
 

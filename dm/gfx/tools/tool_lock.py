@@ -37,6 +37,8 @@ def xlate_command(path):
     return [dotnet, dll]
 
 NO_RUN = 'does not run'
+# the source digest is stamped at publish time (dmsh_xlate.csproj XlateSourceSha); a build without it prints 'unknown'
+REBUILD = 'rebuild dmsh_xlate: dotnet publish -c Release -p:XlateSourceSha=$(python3 dm/gfx/tools/dmsh_chain.py --xlate-source-sha)'
 def xlate_embedded():
     """The source digest the translator embeds (dmsh_xlate --source-sha), or 'does not run (<its first error line>)': without a .NET 10 runtime for the architecture it starts as (a Python
     under Rosetta starts the universal apphost as x86_64) it exits 131 with nothing on stdout, which read as an empty digest and a stale translator (docs/reference/packing.md)"""
@@ -55,7 +57,7 @@ def check_tools():
     now = tools_now(); ran = not now['xlate_source'].startswith(NO_RUN)
     bad = [f'{k}: lock {want.get(k)} / actual {v}' for k, v in now.items() if want.get(k) != v and (ran or k != 'xlate_source')]
     if not ran: bad.append(no_run_message(now['xlate_source']))
-    elif now['xlate_source'] != xlate_source_sha(): bad.append(f'the translator was not built from the in-repo source: embedded source {now["xlate_source"]} / in repo {xlate_source_sha()} (rebuild dmsh_xlate)')
+    elif now['xlate_source'] != xlate_source_sha(): bad.append(f'the translator was not built from the in-repo source: embedded source {now["xlate_source"]} / in repo {xlate_source_sha()} ({REBUILD})')
     return bad
 
 if __name__ == '__main__':
@@ -69,7 +71,7 @@ if __name__ == '__main__':
                      '(and commit it with the lock), then run --update-lock without XLATE')
         t = tools_now()
         if t['xlate_source'].startswith(NO_RUN): sys.exit('[RED] ' + no_run_message(t['xlate_source']))
-        if t['xlate_source'] != xlate_source_sha(): sys.exit(f'[RED] the translator was not built from the in-repo source (embedded {t["xlate_source"]} / in repo {xlate_source_sha()}): rebuild dmsh_xlate first')
+        if t['xlate_source'] != xlate_source_sha(): sys.exit(f'[RED] the translator was not built from the in-repo source (embedded {t["xlate_source"]} / in repo {xlate_source_sha()}): {REBUILD} first')
         open(LOCK, 'w').write('# Translation chain tool fingerprints (written by tool_lock.py --update-lock; regenerate after changing tools and commit it)\n' + ''.join(f'{k}\t{v}\n' for k, v in t.items()))
         print('wrote', LOCK)
     elif a == ['--check-tools']:
