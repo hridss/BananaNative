@@ -1237,14 +1237,25 @@ def cpk_jobs(files, parts=64, names=None):
         if cur: jobs.append((p, r, tuple(cur)))
     return jobs, {p for p, _, _ in with_head}
 
-def cpk_shaders(path, rel, ents, out):
-    """A range of CPK entries (cpk_jobs), each decoded (CRILAYLA or stored) and scanned like a loose file"""
-    import cpk
+def cpk_shaders(path, rel, ents, out, trees):
+    """Scan CPK entries, including Unity asset bundles, and return their pass pairs and entries needing borrowed trees."""
+    import cpk, unityfs
+    pairs, deferred = set(), []
     for e in ents:
         try: d = cpk.read(path, e)
         except (ValueError, IndexError) as x:   # a compression cpk.py does not decode: the entry is left out, and the split goes on
             print(f'[RED] /{rel}/{e[0]}: {x}; not scanned', flush=True); continue
-        scan_blob(d, f'/{rel}/{e[0]}', out)
+        where = f'/{rel}/{e[0]}'
+        if COMMON is None or not is_unity_asset(d):
+            scan_blob(d, where, out)
+            continue
+        member = []
+        try: pairs |= unity_shaders(d, where, member, trees)
+        except unityfs.NoTree:
+            deferred.append(e)
+            continue
+        out.extend(member)
+    return pairs, deferred
 
 def runtime_nros(romfs, mainnso):
     """[(name, bytes)] the NROs the game runs that no RomFS file holds, read like main: DM_NRO_DIR's *.nro when it is set (the desktop packer's collection, the NSP script's
@@ -3218,6 +3229,10 @@ def unity_pass_pairs(o, programs):
                 pairs.update((v, f) for v in stages['vs'] for f in cover)
     return pairs
 
+def is_unity_asset(d):
+    import unityfs
+    return d[:8] == b'UnityFS\0' or (d[8:11] == b'\0\0\0' and unityfs.is_serialized(d))
+
 def unity_shaders(d, label, out, trees):
     """Shaders and compute shaders in a UnityFS bundle or serialized file → out and legacy pass pairs; raises NoTree when no type tree is available"""
     import unityfs
@@ -3704,8 +3719,15 @@ def unreadable_why(e, name):
     why = str(e).removeprefix('[RED] ') if isinstance(e, SystemExit) else f'{type(e).__name__}: {e}'
     return why if why.lstrip('/').startswith(name.lstrip('/')) else f'{name}: {why}'   # most red lines name the file already
 
+def deferred_unity(args, trees):
+    """scan_file's extra for Unity inputs to retry after collecting type trees from other files: the job to scan again and the trees found so far. A list, not a class
+    of this module, so that ResultUnpickler (ScanCache, scan_batch_spilled) builds it without allowing a class: a worker would pickle one under __mp_main__"""
+    return ['defer', args, trees]
+
+def is_deferred(extra): return isinstance(extra, list) and extra[:1] == ['defer']
+
 def scan_file(args):
-    """→ (relative path, {key: …}, pairs, extra); extra = this file's Unity type trees, 'defer' (no type tree, scanned again in the second pass), or ('unreadable', why).
+    """→ (relative path, {key: …}, pairs, extra); extra = Unity type trees, a Unity scan to retry with borrowed trees (deferred_unity), or ('unreadable', why).
     A file no reader can read (a format revision the reader does not know: its red line, or the exception it raised) is left out, and the split goes on: one such
     archive used to end the whole split with nothing written (PR #282: one of Mario Strikers: Battle League's 879 Next Level Games archives). main reports them"""
     try: return scan_file_in(args)
@@ -3767,7 +3789,9 @@ def scan_file_in(args):
         cra_shaders(path, rel, args[2], found)
         return rel, uniq_keys(found), var_pairs(found), trees
     if len(args) > 2 and head[:4] == CPK:   # entries of a CRI CPK (cpk_jobs)
-        cpk_shaders(path, rel, args[2], found)
+        pairs, deferred = cpk_shaders(path, rel, args[2], found, trees if not TREES else dict(TREES))
+        extra = deferred_unity((path, rel, tuple(deferred)), trees) if deferred else trees
+        return rel, uniq_keys(found), var_pairs(found) | {(a, b, 'prog') for a, b in pairs}, extra
         return rel, uniq_keys(found), var_pairs(found), trees
     if len(args) > 2 and head[:4] == KPKA:   # entries of an RE Engine PAK (kpka_jobs)
         kpka_shaders(path, rel, args[2], found)
@@ -3869,10 +3893,10 @@ def scan_whole(path, rel, head, found, trees):   # scan_file_in for a file no ar
             d = head_d if len(head_d) >= struct.unpack_from('<I', d, 10)[0] else xnb_decompress(d)
         else:
             d = xnb_decompress(d)
-    if d[:8] == b'UnityFS\0' or (d[8:11] == b'\0\0\0' and __import__('unityfs').is_serialized(d)):
+    if is_unity_asset(d):
         import unityfs
         try: pairs = unity_shaders(d, '/' + rel, found, trees if not TREES else dict(TREES))
-        except unityfs.NoTree: return rel, {}, set(), 'defer'
+        except unityfs.NoTree: return rel, {}, set(), deferred_unity(args, trees)
         return rel, uniq_keys(found), var_pairs(found) | {(a, b, 'prog') for a, b in pairs}, trees
     elif not may_hold_shaders(d): return rel, {}, set(), {}
     else:
@@ -4356,7 +4380,9 @@ def split_tables(results, big, files, dumps, J, common, zdicts, cache, targeted=
     stage('sorting the shaders found')
     trees, defer = {}, []
     for rel, uniq, pr, extra in results:
-        if extra == 'defer': defer.append(rel)
+        if is_deferred(extra):
+            defer.append(extra[1])
+            trees.update(extra[2])
         elif isinstance(extra, dict): trees.update(extra)
     # targeted, the second pass is tried too (Fire Emblem Engage's Unity default resources borrow a tree the targeted bundles or KNOWN_TREES hold: the targeted scan used to be
     # abandoned for all 206,874 files); only a file still without a tree falls back, and the tables are compared with the profile's afterwards as always (profile_differs)
@@ -4364,13 +4390,12 @@ def split_tables(results, big, files, dumps, J, common, zdicts, cache, targeted=
         # a hash no bundle supplied takes the layout unityfs.py has for it (KNOWN_TREES); only here, so files a bundle lends a tree to keep their place in the tables (Ace Attorney's built-ins)
         import unityfs
         for k in unityfs.KNOWN_TREES: trees.setdefault(k, unityfs.known_tree(*k))
-        byrel = {r: p for p, r in files}
-        with pool(J, common, trees, zdicts) as ex: again = ([scan_file((byrel[r], r)) for r in defer] if isinstance(ex, InProcess) else   # workers' large results through a file (scan_batch_spilled)
-                     [x for v in ex.map(scan_batch_spilled, [[(byrel[r], r)] for r in defer]) for x in unspill(v)])
+        with pool(J, common, trees, zdicts) as ex: again = ([scan_file(a) for a in defer] if isinstance(ex, InProcess) else   # workers' large results through a file (scan_batch_spilled)
+                     [x for v in ex.map(scan_batch_spilled, [[a] for a in defer]) for x in unspill(v)])
         for rel, uniq, pr, extra in again:
-            if extra == 'defer' and targeted: raise Fallback(f'found Unity serialized files without type trees ({rel}), whose trees may come from files it left out')
-            if extra == 'defer': red(f'{rel}: Unity serialized file without type trees, and no bundle has a Shader type tree of the same hash to borrow')
-        results = [r for r in results if r[3] != 'defer'] + again
+            if is_deferred(extra) and targeted: raise Fallback(f'found Unity serialized files without type trees ({rel}), whose trees may come from files it left out')
+            if is_deferred(extra): red(f'{rel}: Unity serialized file without type trees, and no bundle has a Shader type tree of the same hash to borrow')
+        results += again   # a first-pass result that deferred some of its members (a CPK range) keeps the shaders it found
     if dumps:
         have = {k for _, uniq, _, _ in results for k in uniq}
         dumps = [d for d in dumps if skey(d[2], d[3]) not in have]

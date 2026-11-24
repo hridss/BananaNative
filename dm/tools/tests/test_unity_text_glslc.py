@@ -5,11 +5,14 @@ file without the magic is byte-identical for other games, and that only the Text
 import os
 import struct
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / 'dm/gfx/tools'))
+import cpk  # noqa: E402
 _had = os.environ.get('DM_GAME'); os.environ['DM_GAME'] = '01007BB017812000'   # shader_split loads a profile at import; other tests expect no default game
 import shader_split as ss
 import unityfs
@@ -17,6 +20,36 @@ if _had is None: del os.environ['DM_GAME']
 else: os.environ['DM_GAME'] = _had
 
 GLSLC_MAGIC = bytes.fromhex('91688619')   # the magic glslc_shaders scans for (a literal in shader_split, not a named constant)
+
+
+def utf_table(name, cols, rows):
+    """A CRI @UTF table: every column stored per row, (column name, type) in cols (4 u32, 6 u64, 0xa string), one dict per row"""
+    size = {4: 4, 6: 8, 0xa: 4}
+    strings = bytearray(b'<NULL>\0')
+    def string(s):
+        o = len(strings); strings.extend(s.encode() + b'\0'); return o
+    name_at = string(name)
+    col_bytes = b''.join(bytes([0x50 | t]) + struct.pack('>I', string(c)) for c, t in cols)
+    body = bytearray()
+    for r in rows:
+        for c, t in cols:
+            body += struct.pack('>I', string(r[c])) if t == 0xa else struct.pack('>Q' if t == 6 else '>I', r[c])
+    ro = 0x18 + len(col_bytes); so = ro + len(body)
+    head = struct.pack('>HHIIIHHI', 1, ro, so, so + len(strings), name_at, len(cols), sum(size[t] for _, t in cols), len(rows))
+    t = head + col_bytes + bytes(body) + bytes(strings)
+    return b'@UTF' + struct.pack('>I', len(t)) + t
+
+
+def cpk_file(files):
+    """A CRI CPK holding files (name → bytes) stored under the directory 'd', its TOC right after the header (TocOffset 0x800), the data 0x800-aligned from ContentOffset"""
+    def chunk(magic, table): return magic + b'\xff\0\0\0' + struct.pack('<I', len(table)) + bytes(4) + table
+    content, data, at = 0x2000, bytearray(), {}
+    for nm, b in files.items():
+        at[nm] = content + len(data); data += b + bytes(-len(b) % 0x800)
+    rows = [{'DirName': 'd', 'FileName': nm, 'FileSize': len(b), 'ExtractSize': len(b), 'FileOffset': at[nm] - 0x800} for nm, b in files.items()]
+    toc = chunk(b'TOC ', utf_table('CpkTocInfo', [('DirName', 0xa), ('FileName', 0xa), ('FileSize', 4), ('ExtractSize', 4), ('FileOffset', 6)], rows))
+    head = chunk(b'CPK ', utf_table('CpkHeader', [('ContentOffset', 6), ('TocOffset', 6)], [{'ContentOffset': content, 'TocOffset': 0x800}]))
+    return bytes((bytes(head.ljust(0x800, b'\0')) + toc).ljust(content, b'\0') + data)
 
 
 def glslc_output():
@@ -105,6 +138,22 @@ class UnityTextGlslc(unittest.TestCase):
         # the magic gate: a serialized file whose TextAssets hold no GLSLC magic yields nothing, as it did before the change
         d = serialized_file([('notes', b'hello world')])
         self.assertEqual(ss.unity_text_glslc(d, 'resources.assets'), [])
+
+    def test_reads_unity_bundle_inside_cpk(self):
+        asset = serialized_file([('vfxsb', glslc_output())])
+        info = bytes(16) + struct.pack('>iIIHiqqI', 1, len(asset), len(asset), 0, 1, 0, len(asset), 0) + b'resources.assets\0'
+        head = b'UnityFS\0' + struct.pack('>I', 6) + b'5.x.x\0' + b'2021.2.17f1\0'
+        bundle = head + struct.pack('>qIII', len(head) + 20 + len(info) + len(asset), len(info), len(info), 0) + info + asset
+        with tempfile.TemporaryDirectory() as temp, patch.object(ss, 'COMMON', {}), patch.object(ss, 'TREES', {}):
+            path = str(Path(temp) / 'data.cpk')
+            Path(path).write_bytes(cpk_file({'shaders.bundle': bundle}))
+            rel, shaders, pairs, trees = ss.scan_file((path, 'data.cpk', tuple(cpk.files(path))))
+        self.assertEqual(rel, 'data.cpk')
+        self.assertEqual([row[:2] for row in shaders.values()], [
+            ('/data.cpk/d/shaders.bundle:resources.assets#vfxsb#GLSLC@0x0', 'vs'),
+        ])
+        self.assertEqual(pairs, set())
+        self.assertEqual(trees, {})
 
 
 if __name__ == '__main__':
