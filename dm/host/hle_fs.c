@@ -670,6 +670,9 @@ HLE_FORCE("_ZN2nn2fs17MountAddOnContentEPKciPvm", "fsp-srv; add-on content → D
 #define SYSDATA_MIIMODEL 0x0100000000000802ull
 #define SYSDATA_MIIMODEL_SW2 0x0400000000000849ull
 int dm_mii_standin(const char *dir);
+// The host's own files kept for every game across runs: $DM_SYSTEM_DIR (default $DM_ROOT/run/platform/system; Android: the launcher's DM_ROOT, <external files>/root): the Miis
+// AppendMii made, in host/MiiDatabase.dat (hle_mii.c). A console's own system data and Mii database are not read from it here
+const char *dm_system_dir(char *buf, size_t n) { return envdir("DM_SYSTEM_DIR", "run/platform/system", buf, n); }
 static int sysdata_dir(char *dir, size_t n, uint64_t id) {
     char t[1024];
     if ((id != SYSDATA_MIIMODEL && id != SYSDATA_MIIMODEL_SW2) || snprintf(dir, n, "%s_sysdata/mii", envdir("DM_TEMP", "run/platform/temp", t, sizeof t)) >= (int)n) return 0;

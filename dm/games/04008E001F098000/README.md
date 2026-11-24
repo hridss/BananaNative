@@ -60,7 +60,7 @@ The work folder `04008E001F098000-work` beside the dump has `run/boot.sh <log> <
 
 - A point played on the Mac in this tree (needs a motion controller, or scripted moves that serve).
 - Sports other than tennis.
-- Mii heads need the player's own console files: without the system data the game mounts as `MiiResource` (`0400000000000849`) the host's stand-in for it draws none ([Miis](#miis)). With that archive and the console's Mii database under the removed `DM_SYSTEM_DIR` (A console's own Mii database and system data) it lists the player's Miis and draws their heads (FifteenPen, PR #2274, M4 Pro); not run in this tree, which has no console files.
+- Mii heads need the player's own console files: without the system data the game mounts as `MiiResource` (`0400000000000849`) the host's stand-in for it draws none ([Miis](#miis)). With that archive and the console's Mii database under upstream's `DM_SYSTEM_DIR` (A console's own Mii database and system data; this tree's `DM_SYSTEM_DIR` holds only the host's own file of Miis made in the editor's place and reads no console files) it lists the player's Miis and draws their heads (FifteenPen, PR #2274, M4 Pro); not run in this tree, which has no console files.
 - The 6 refused mesh shaders, above.
 - iPhone and iPad: no IPA built.
 

@@ -435,6 +435,7 @@ DM_SPLIT_SPILL	developer	Diagnostics			text			both
 DM_SPLIT_TARGETED	developer	Packing			text			both							
 DM_SVC	developer	Diagnostics			text			both							
 DM_SYMCHECK	developer	Diagnostics			text			both							
+DM_SYSTEM_DIR	developer	Diagnostics			text			both							
 DM_TBUF_ALIGN	internal	Diagnostics			text			both						Mac or iOS only	
 DM_TEAM_ID	developer	Game			text			both							
 DM_TELEPORT	developer	Diagnostics			text			both							
