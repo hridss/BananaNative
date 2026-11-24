@@ -393,6 +393,41 @@ static void t_vibration(void) {
     CHECK(!h_hid_VibPermit(), "disconnecting the last output disables vibration");
     dm_haptics_init(vibration_sink, 0); dm_haptics_route(0, 1);
     CHECK(!h_hid_VibPermit() && h_hid_VibHandles(h, 2, &id, STYLE_HANDHELD) == 2, "rumble disabled: not permitted, the handles still exist (a console whose vibration setting is off)");
+
+    // JoyDual handles (type 5) reach both motors of a whole controller (FullKey docked or Handheld),
+    // including merged controllers and controllers that connect after handles were cached at boot.
+    uint32_t jd[2] = {0}, jdh[2] = {0}, jd2[2] = {0};
+    g_mode = 1; ids((uint32_t[]){0, 1, 2, NPAD_HANDHELD}, 4); dm_pad_players(1);
+    dm_haptics_init(vibration_sink, 1); dm_haptics_route(0, 1);
+    CHECK(h_hid_VibHandles(jd, 2, &(uint32_t){0}, STYLE_JOYDUAL) == 2 && jd[0] == 5 && jd[1] == 0x10005,
+          "JoyDual handles on player 1 FullKey pad");
+    CHECK(h_hid_VibMounted(&jd[0]) && h_hid_VibMounted(&jd[1]) && h_hid_VibMountedOunce(&jd[0]),
+          "JoyDual handles are mounted on a docked FullKey controller");
+    CHECK(!h_hid_VibMounted(&(uint32_t){6}) && !h_hid_VibMounted(&(uint32_t){0x10007}),
+          "single Joy-Con handles are not mounted on a FullKey controller");
+    h_hid_SendVibs(jd, pair, 2);
+    CHECK(vibration[0].motor[0].amplitude_low == 0.1f && vibration[0].motor[1].amplitude_low == 0.6f,
+          "JoyDual handles drive left and right motors of a FullKey controller");
+    CHECK(h_hid_VibHandles(jd2, 2, &(uint32_t){2}, STYLE_JOYDUAL) == 2 && !h_hid_VibMounted(&jd2[0]),
+          "cached JoyDual handles on a disconnected slot start unmounted");
+    vibration_calls = 0; h_hid_SendVibs(jd2, pair, 2);
+    CHECK(!vibration_calls, "disconnected JoyDual handles drive no output");
+    dm_pad_players(5); dm_haptics_route(2, 1);
+    CHECK(h_hid_VibMounted(&jd2[0]) && h_hid_VibMounted(&jd2[1]), "JoyDual handles mount once player 3 joins as FullKey");
+    h_hid_SendVibs(jd2, pair, 2);
+    CHECK(dm_haptics_actual(2, 0).amplitude_low == 0.1f && dm_haptics_actual(2, 1).amplitude_low == 0.6f,
+          "cached JoyDual handles drive player 3 once connected");
+    dm_pad_players(1); dm_haptics_route(2, 0);
+    CHECK(h_hid_VibHandles(jdh, 2, &(uint32_t){NPAD_HANDHELD}, STYLE_JOYDUAL) == 2 && jdh[0] == 0x2005 && jdh[1] == 0x12005 && !h_hid_VibMounted(&jdh[0]),
+          "handheld JoyDual handles stay unmounted while docked");
+    g_mode = 0;
+    CHECK(h_hid_VibMounted(&jdh[0]) && h_hid_VibMounted(&jdh[1]) && !h_hid_VibMounted(&jd[0]),
+          "handheld mode mounts handheld JoyDual handles and unmounts docked ones");
+    dm_vibration hh_pair[] = {{0.3f, 160, 0, 320}, {0.8f, 160, 0, 320}};
+    vibration_calls = 0; h_hid_SendVibs(jdh, hh_pair, 2);
+    CHECK(vibration_calls == 1 && vibration[0].motor[0].amplitude_low == 0.3f && vibration[0].motor[1].amplitude_low == 0.8f,
+          "handheld JoyDual handles drive left and right motors in handheld mode");
+    g_mode = 1;
 }
 
 static void *vibration_sender(void *arg) {
@@ -736,6 +771,7 @@ static void t_joy_styles(void) {
     h_hid_VibInfo(info, &h[0]); CHECK(info[0] == 1 && info[1] == 2, "a right Joy-Con's actuator is a right one");
     CHECK(!h_hid_VibMounted(&(uint32_t){0x7}) && h_hid_VibMounted(&(uint32_t){0x10003}) && !h_hid_VibMounted(&(uint32_t){0x3}),
           "a right Joy-Con has no left device; a kept full-key handle reaches only its right motor");
+    { int m; CHECK(!vib_targets(5, &m) && !vib_targets(0x10005, &m), "JoyDual handles do not bypass single-Joy-Con exposure"); }
     dm_vibration v = {0.5, 160, 0, 320}; h_hid_SendVib(&h[0], &v);
     CHECK(vibration[0].motor[1].amplitude_low == 0.5f && dm_haptics_actual(0, 1).amplitude_low == 0.5f, "a right Joy-Con's rumble drives the pad's right motor");
     dm_pad_set_player(1, DM_BTN_RIGHT, 0, 0, 0, 0);

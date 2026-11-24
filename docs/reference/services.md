@@ -585,6 +585,14 @@ Most service calls can be found before they crash, before the first boot or the 
 - **Check:** `t_hid` (`t_vibration`): both positions on a disconnected npad, unknown info for an invalid handle, handles for an empty slot, an inactive style and an invalid npad ID.
 - **Found on:** The Legend of Heroes: Trails into Reverie 1.0.4 in upstream nxnative (no profile here).
 
+### JoyDual vibration handles on a whole controller
+
+- **Symptom:** no vibration on a Pro Controller, DualSense, or handheld controller even though `GetVibrationDeviceHandles` returns valid handles and `DM_RUMBLE_LOG=1` shows nonzero values sent to `0x5` / `0x10005` (or `0x2005` / `0x12005`) with `with no output` matching the send count.
+- **Cause:** `vib_valid` (`hle_hid.c`) required the handle's style to match the npad's style, except for cached FullKey handles on a Joy-Con style, so JoyDual handles (type 5) were rejected whenever the npad showed FullKey or Handheld. A game that builds its vibration graph once at boot using `STYLE_JOYDUAL` handles for every npad (`Handheld`, `No1..No8`) therefore had every send dropped on a whole controller.
+- **Fix:** `vib_valid` accepts `type == 5` (JoyDual) handles on npads showing `STYLE_FULLKEY` or `STYLE_HANDHELD`, routing device 0 to the left motor and device 1 to the right motor; a single Joy-Con's exposure is unchanged.
+- **Found on:** Metroid Prime 4: Beyond (`010019A01E2F2000`, no profile here) 1.1.0 in upstream nxnative ([PR #2580](https://github.com/seedds/nxnative/pull/2580), `main+0xaab6f8` requests only `STYLE_JOYDUAL` handles at boot; physical DualSense rumble was confirmed by the PR author with JoyDual routing). Not run on Android.
+- **Check:** `t_hid` (`t_vibration`, `t_joy_styles`) verifies JoyDual handles on docked FullKey, late-joining FullKey, Handheld, and single-Joy-Con-exposed pads.
+
 ### Controller haptic engines without advanced players
 
 - **Symptom:** a controller (an Xbox Wireless Controller, a GameSir Super Nova, a GameSir Cyclone) never vibrates in a game on the Mac or the iPhone, though iOS Settings' Identify buzzes it; the log repeats `[RED] haptics: controller left handle create player: Couldn’t communicate with a helper application. (NSCocoaErrorDomain 4097)`. The engine itself starts.

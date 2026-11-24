@@ -1132,7 +1132,12 @@ static uint32_t vib_valid(uint32_t h, int *motor) {
     if (h >> 24 || dev > 1 || type < 3 || type > 7) return 0;
     int p = player_of(id);
     uint32_t st = style_for_player(id, p);
-    if (!st || (st != (1u << (type - 3)) && !(type == 3 && (st == STYLE_JOYDUAL || st == (dev ? STYLE_JOYRIGHT : STYLE_JOYLEFT))))) return 0;
+    // A cached full-key handle still reaches a pair's motors or the exposed side of a single Joy-Con, and a JoyDual handle reaches both motors of a whole controller
+    // (FullKey or Handheld): Metroid Prime 4: Beyond builds its vibration graph at boot from JoyDual handles for every npad (upstream nxnative PR #2580)
+    bool ok = st && (st == (1u << (type - 3)) ||
+                     (type == 3 && (st == STYLE_JOYDUAL || st == (dev ? STYLE_JOYRIGHT : STYLE_JOYLEFT))) ||
+                     (type == 5 && (st == STYLE_FULLKEY || st == STYLE_HANDHELD)));
+    if (!ok) return 0;
     if (type >= 6 && dev != (type == 7)) return 0;   // a single Joy-Con's one device is its own side
     if (motor) *motor = (int)dev;
     return p == 0 ? 1u | merged_players() : 1u << p;
