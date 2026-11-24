@@ -75,7 +75,8 @@ void crash_off(const char *tag, uint64_t a) {   // Also used by diag.c
     module_t *m = module_of((void *)a);
     Dl_info di;
     if (m) fprintf(stderr, " %s%s%s+%#llx", tag, *tag ? "=" : "", m->name, a - (uint64_t)m->base);
-    else if (dladdr((void *)a, &di) && di.dli_sname) fprintf(stderr, " %s%s%s+%#lx", tag, *tag ? "=" : "", di.dli_sname, (unsigned long)(a - (uint64_t)di.dli_saddr));
+    // iOS names the frames of its system frameworks "<redacted>": that is no symbol, so they take the file-and-offset form below (nxnative issue #3240)
+    else if (dladdr((void *)a, &di) && di.dli_sname && strcmp(di.dli_sname, "<redacted>")) fprintf(stderr, " %s%s%s+%#lx", tag, *tag ? "=" : "", di.dli_sname, (unsigned long)(a - (uint64_t)di.dli_saddr));
     // A library with no symbol there (a stripped vendor GPU driver, also one a custom-driver loader opened in a linker namespace of its own): a crash inside a driver says which library
     else if (dladdr((void *)a, &di) && di.dli_fname && di.dli_fbase) {   // a stripped library (the host builds hidden): its file and the offset in it, for a symbolizer on the unstripped build
         const char *s = strrchr(di.dli_fname, '/');

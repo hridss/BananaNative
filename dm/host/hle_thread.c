@@ -817,8 +817,8 @@ void svc_thread_dump(void) {
                         if (!m && pc >> 39) pc &= (1ull << 39) - 1;   // a return address signed by pointer authentication: its high bits are the code, not the address (39-bit user addresses)
 #endif
                         if (m) p += snprintf(line + p, sizeof line - p, " %s+%#llx", m->name, pc - (uint64_t)m->base);
-                        else if (dladdr((void *)pc, &di) && di.dli_sname) p += snprintf(line + p, sizeof line - p, " %s+%#lx", di.dli_sname, (unsigned long)(pc - (uint64_t)di.dli_saddr));
-                        else if (dladdr((void *)pc, &di) && di.dli_fname && di.dli_fbase) { const char *b = strrchr(di.dli_fname, '/'); p += snprintf(line + p, sizeof line - p, " %s+%#lx", b ? b + 1 : di.dli_fname, (unsigned long)(pc - (uint64_t)di.dli_fbase)); }   // a stripped library: its offset, for addr2line on the unstripped one
+                        else if (dladdr((void *)pc, &di) && di.dli_sname && strcmp(di.dli_sname, "<redacted>")) p += snprintf(line + p, sizeof line - p, " %s+%#lx", di.dli_sname, (unsigned long)(pc - (uint64_t)di.dli_saddr));   // iOS's "<redacted>" is no symbol
+                        else if (dladdr((void *)pc, &di) && di.dli_fname && di.dli_fbase) { const char *b = strrchr(di.dli_fname, '/'); p += snprintf(line + p, sizeof line - p, " %s+%#lx(%#llx)", b ? b + 1 : di.dli_fname, (unsigned long)(pc - (uint64_t)di.dli_fbase), (unsigned long long)pc); }   // a stripped library: its offset, for addr2line on the unstripped one, and the raw PC
                         else p += snprintf(line + p, sizeof line - p, " %#llx", pc);
                         uint64_t fr[2];
                         if (!fp || plat_mem_read(fp, fr, 16) || fr[0] <= fp) break;
