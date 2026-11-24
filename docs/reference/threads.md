@@ -4,6 +4,14 @@ Guest threads, their synchronization and how the host schedules them. Each entry
 
 ## Thread creation and cores
 
+### Concurrent first use of scheduler settings
+
+- **Symptom:** TSan reports races when guest threads first yield, sleep briefly, or enter rewritten spin waits together; a concurrent caller could also see `DM_YIELD_BACKOFF`'s default cap before its configured cap and start threshold were parsed.
+- **Cause:** `hle_thread.c` lazily parsed `DM_YIELD_BACKOFF`, `DM_SPIN` and `DM_SPIN_POLL` on unlocked hot paths (`yield_backoff_ns`, `dm_spin_wait`), and `yield_backoff_ns` wrote the default cap (`>= 0`) before parsing the environment string.
+- **Fix:** `yield_spin_init` reads the three settings once in `svc_thread_main_init`, before any other guest thread exists (alongside `qos_map_init` and `DM_PREEMPT`), with safe compile-time defaults on the file-scope statics. Hot-path readers drop their lazy-init branches with no per-call synchronization; defaults, parsing, logging and scheduling behavior are unchanged.
+- **Check:** `make -C dm/host/tests GAME=<id> scheduler-config` (and `scheduler-config-tsan`) runs eight simultaneous workers across `yield_backoff_ns`, `thr_yield` and `dm_spin_wait` in fresh processes for default, custom, disabled and empty environment settings; `t_pollwait` and `t_preempt` also pass.
+- **Found on:** a code audit (upstream nxnative PR #2031), with host unit tests; no game failure is known.
+
 ### Publishing a new thread's scheduler fields
 
 - **Symptom:** TSan reports `thread_main` writing `host_work` while `thr_runnable` reads it during a same-core yield (`t_notify_sched`, issue #411).
