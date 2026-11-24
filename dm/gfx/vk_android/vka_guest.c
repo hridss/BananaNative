@@ -84,13 +84,13 @@ __attribute__((visibility("hidden"), used)) uint64_t gv_unbound(const char *name
     X(vkGetPhysicalDeviceSparseImageFormatProperties, GV_Z_NONE) X(vkGetPhysicalDeviceSparseImageFormatProperties2, GV_Z_NONE) \
     X(vkGetPhysicalDeviceExternalBufferProperties, GV_Z_NONE) X(vkGetPhysicalDeviceExternalSemaphoreProperties, GV_Z_NONE) X(vkGetPhysicalDeviceExternalFenceProperties, GV_Z_NONE)
 #define GV_PASS_D(X) \
-    X(vkFreeMemory, GV_Z2) X(vkMapMemory, GV_Z_NONE) X(vkUnmapMemory, GV_Z_NONE) X(vkFlushMappedMemoryRanges, GV_Z_NONE) X(vkInvalidateMappedMemoryRanges, GV_Z_NONE) \
+    X(vkFlushMappedMemoryRanges, GV_Z_NONE) X(vkInvalidateMappedMemoryRanges, GV_Z_NONE) \
     X(vkGetDeviceMemoryCommitment, GV_Z_NONE) \
     X(vkCreateBuffer, GV_Z2) X(vkDestroyBuffer, GV_Z2) X(vkBindBufferMemory, GV_Z_NONE) X(vkBindBufferMemory2, GV_Z_NONE) \
     X(vkCreateBufferView, GV_Z2) X(vkDestroyBufferView, GV_Z2) \
-    X(vkGetImageSubresourceLayout, GV_Z_NONE) X(vkBindImageMemory, GV_Z_NONE) X(vkBindImageMemory2, GV_Z_NONE) \
+    \
     X(vkGetImageSparseMemoryRequirements, GV_Z_NONE) X(vkGetImageSparseMemoryRequirements2, GV_Z_NONE) \
-    X(vkCreateImageView, GV_Z2) X(vkDestroyImageView, GV_Z2) X(vkCreateSampler, GV_Z2) X(vkDestroySampler, GV_Z2) \
+    X(vkDestroyImageView, GV_Z2) X(vkCreateSampler, GV_Z2) X(vkDestroySampler, GV_Z2) \
     X(vkCreateSamplerYcbcrConversion, GV_Z2) X(vkDestroySamplerYcbcrConversion, GV_Z2) \
     X(vkCreateDescriptorSetLayout, GV_Z2) X(vkDestroyDescriptorSetLayout, GV_Z2) X(vkGetDescriptorSetLayoutSupport, GV_Z_NONE) \
     X(vkUpdateDescriptorSets, GV_Z_NONE) X(vkCreateDescriptorUpdateTemplate, GV_Z2) X(vkDestroyDescriptorUpdateTemplate, GV_Z2) X(vkUpdateDescriptorSetWithTemplate, GV_Z_NONE) \
@@ -98,7 +98,7 @@ __attribute__((visibility("hidden"), used)) uint64_t gv_unbound(const char *name
     X(vkCreateFramebuffer, GV_Z2) X(vkDestroyFramebuffer, GV_Z2) \
     X(vkCreatePipelineCache, GV_Z2) X(vkDestroyPipelineCache, GV_Z2) X(vkGetPipelineCacheData, GV_Z_NONE) X(vkMergePipelineCaches, GV_Z_NONE) X(vkDestroyPipeline, GV_Z2) \
     X(vkCreateCommandPool, GV_Z2) X(vkDestroyCommandPool, GV_Z2) X(vkResetCommandPool, GV_Z_NONE) X(vkTrimCommandPool, GV_Z_NONE) \
-    X(vkAllocateCommandBuffers, GV_Z_NONE) X(vkFreeCommandBuffers, GV_Z_NONE) X(vkEndCommandBuffer, GV_Z_NONE) X(vkResetCommandBuffer, GV_Z_NONE) \
+    X(vkAllocateCommandBuffers, GV_Z_NONE) X(vkFreeCommandBuffers, GV_Z_NONE) X(vkResetCommandBuffer, GV_Z_NONE) \
     X(vkCreateEvent, GV_Z2) X(vkDestroyEvent, GV_Z2) X(vkGetEventStatus, GV_Z_NONE) X(vkSetEvent, GV_Z_NONE) X(vkResetEvent, GV_Z_NONE) \
     X(vkCreateFence, GV_Z2) X(vkDestroyFence, GV_Z2) X(vkResetFences, GV_Z_NONE) X(vkGetFenceStatus, GV_Z_NONE) \
     X(vkCreateSemaphore, GV_Z2) X(vkDestroySemaphore, GV_Z2) X(vkGetSemaphoreCounterValue, GV_Z_NONE) X(vkSignalSemaphore, GV_Z_NONE) \
@@ -112,7 +112,7 @@ __attribute__((visibility("hidden"), used)) uint64_t gv_unbound(const char *name
     \
     \
     X(vkCmdClearAttachments, GV_Z_NONE) X(vkCmdSetEvent, GV_Z_NONE) X(vkCmdResetEvent, GV_Z_NONE) X(vkCmdWaitEvents, GV_Z_NONE) \
-    X(vkCmdPipelineBarrier, GV_Z_NONE) X(vkCmdPipelineBarrier2, GV_Z_NONE) \
+    X(vkCmdPipelineBarrier2, GV_Z_NONE) \
     X(vkCmdWriteTimestamp, GV_Z_NONE) X(vkCmdPushConstants, GV_Z_NONE) \
     X(vkCmdExecuteCommands, GV_Z_NONE) \
     X(vkCmdBeginRenderPass2, GV_Z_NONE) X(vkCmdNextSubpass2, GV_Z_NONE) X(vkCmdEndRenderPass2, GV_Z_NONE)
@@ -126,7 +126,7 @@ GV_PASS_D(GV_TRAMP)
     X(vkGetImageMemoryRequirements) X(vkGetImageMemoryRequirements2) X(vkCreateImage) X(vkDestroyImage) X(vkCreateRenderPass) X(vkCreateRenderPass2) \
     X(vkCreateDescriptorPool) X(vkDestroyDescriptorPool) X(vkResetDescriptorPool) X(vkAllocateDescriptorSets) X(vkFreeDescriptorSets) \
     X(vkCreateShaderModule) X(vkDestroyShaderModule) X(vkCreateGraphicsPipelines) X(vkCreateComputePipelines) X(vkWaitForFences) X(vkWaitSemaphores) \
-    X(vkCreateCommandPool) X(vkDestroyCommandPool) X(vkAllocateCommandBuffers) X(vkBeginCommandBuffer) X(vkEndCommandBuffer) X(vkCmdPipelineBarrier) X(vkDestroyRenderPass) X(vkCmdBeginRenderPass) X(vkCmdEndRenderPass) X(vkCmdNextSubpass) X(vkCmdCopyBuffer) X(vkCmdCopyImage) X(vkCmdBlitImage) X(vkCmdCopyBufferToImage) X(vkCmdCopyImageToBuffer) X(vkCmdUpdateBuffer) X(vkCmdFillBuffer) X(vkCmdClearColorImage) X(vkCmdClearDepthStencilImage) X(vkCmdResolveImage) X(vkCmdBeginQuery) X(vkCmdEndQuery) X(vkCmdResetQueryPool) X(vkResetQueryPool) X(vkCreateQueryPool) X(vkDestroyQueryPool) X(vkCmdCopyQueryPoolResults) X(vkGetQueryPoolResults)
+    X(vkCreateCommandPool) X(vkDestroyCommandPool) X(vkAllocateCommandBuffers) X(vkBeginCommandBuffer) X(vkEndCommandBuffer) X(vkCmdPipelineBarrier) X(vkMapMemory) X(vkUnmapMemory) X(vkFreeMemory) X(vkBindImageMemory) X(vkBindImageMemory2) X(vkGetImageSubresourceLayout) X(vkCreateImageView) X(vkDestroyRenderPass) X(vkCmdBeginRenderPass) X(vkCmdEndRenderPass) X(vkCmdNextSubpass) X(vkCmdCopyBuffer) X(vkCmdCopyImage) X(vkCmdBlitImage) X(vkCmdCopyBufferToImage) X(vkCmdCopyImageToBuffer) X(vkCmdUpdateBuffer) X(vkCmdFillBuffer) X(vkCmdClearColorImage) X(vkCmdClearDepthStencilImage) X(vkCmdResolveImage) X(vkResetCommandBuffer) X(vkCmdBeginQuery) X(vkCmdEndQuery) X(vkCmdResetQueryPool) X(vkResetQueryPool) X(vkCreateQueryPool) X(vkDestroyQueryPool) X(vkCmdCopyQueryPoolResults) X(vkGetQueryPoolResults)
 #define GV_DECL(f) PFN_##f f;
 static struct { GV_REAL_D(GV_DECL) } R;
 
@@ -315,7 +315,13 @@ GV(vkGetPhysicalDeviceQueueFamilyProperties2, void, VkPhysicalDevice pd, uint32_
     if (!*n) return;
     *n = 1; qfam(&p[0].queueFamilyProperties);
 }
-GV(vkGetPhysicalDeviceFormatProperties, void, VkPhysicalDevice pd, VkFormat format, VkFormatProperties *p) { (void)pd; vk.vkGetPhysicalDeviceFormatProperties(V.pd, format, p); }
+GV(vkGetPhysicalDeviceFormatProperties, void, VkPhysicalDevice pd, VkFormat format, VkFormatProperties *p) {
+    (void)pd; vk.vkGetPhysicalDeviceFormatProperties(V.pd, format, p);
+    if (format == VK_FORMAT_R4G4_UNORM_PACK8 && !(p->linearTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT)) {   // a linear R4G4 image gets a twin (vkCreateImage)
+        VkFormatProperties q; vk.vkGetPhysicalDeviceFormatProperties(V.pd, VK_FORMAT_R4G4B4A4_UNORM_PACK16, &q);
+        p->linearTilingFeatures = q.linearTilingFeatures & (VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT);
+    }
+}
 GV(vkGetPhysicalDeviceFormatProperties2, void, VkPhysicalDevice pd, VkFormat format, VkFormatProperties2 *p) {
     (void)pd; PFN_vkGetPhysicalDeviceFormatProperties2 f = (PFN_vkGetPhysicalDeviceFormatProperties2)vk.vkGetInstanceProcAddr(V.inst, "vkGetPhysicalDeviceFormatProperties2");
     if (f) f(V.pd, format, p); else vk.vkGetPhysicalDeviceFormatProperties(V.pd, format, &p->formatProperties);
@@ -426,11 +432,14 @@ GV(vkGetBufferMemoryRequirements, void, VkDevice d, VkBuffer b, VkMemoryRequirem
 GV(vkGetBufferMemoryRequirements2, void, VkDevice d, const VkBufferMemoryRequirementsInfo2 *i, VkMemoryRequirements2 *m) {
     (void)d; mem_model(); R.vkGetBufferMemoryRequirements2(V.dev, i, m); m->memoryRequirements.memoryTypeBits = bits_g(m->memoryRequirements.memoryTypeBits);
 }
+static int twin_req(VkImage im, VkMemoryRequirements *m);   // (the twins, below)
 GV(vkGetImageMemoryRequirements, void, VkDevice d, VkImage im, VkMemoryRequirements *m) {
-    (void)d; mem_model(); R.vkGetImageMemoryRequirements(V.dev, im, m); m->memoryTypeBits = bits_g(m->memoryTypeBits);
+    (void)d; mem_model(); if (twin_req(im, m)) return;
+    R.vkGetImageMemoryRequirements(V.dev, im, m); m->memoryTypeBits = bits_g(m->memoryTypeBits);
 }
 GV(vkGetImageMemoryRequirements2, void, VkDevice d, const VkImageMemoryRequirementsInfo2 *i, VkMemoryRequirements2 *m) {
-    (void)d; mem_model(); R.vkGetImageMemoryRequirements2(V.dev, i, m); m->memoryRequirements.memoryTypeBits = bits_g(m->memoryRequirements.memoryTypeBits);
+    (void)d; mem_model(); if (twin_req(i->image, &m->memoryRequirements)) { dedicated_req(m->pNext); return; }
+    R.vkGetImageMemoryRequirements2(V.dev, i, m); m->memoryRequirements.memoryTypeBits = bits_g(m->memoryRequirements.memoryTypeBits);
     dedicated_req(m->pNext);
 }
 
@@ -455,9 +464,68 @@ static void fmt_check(VkFormat f, int vertex, VkImageTiling tiling, VkImageUsage
     for (int i = 0; i < NFC; i++) { uint64_t s = atomic_load(&seen[i]); if (s == key) return; if (!s) { uint64_t z = 0; if (atomic_compare_exchange_strong(&seen[i], &z, key)) break; if (atomic_load(&seen[i]) == key) return; } }
     GRED("format %d %s: the device lacks format features %#x (has %#x)", f, vertex ? "as a vertex attribute" : tiling == VK_IMAGE_TILING_LINEAR ? "in a linear image" : "in an optimal image", miss, have);
 }
+// ---------- Formats the device cannot sample: a twin image (R4G4) ----------
+// VK_FORMAT_R4G4_UNORM_PACK8 is optional, and Qualcomm's driver on the Adreno 740 has no use of it at all; Super Mario 64 keeps N64 textures in linear R4G4 images the CPU writes
+// (upstream's reference, "Packed 16-bit and 8-bit formats"). Such an image is made as an R4G4B4A4_UNORM_PACK16 twin with memory of its own: the game sees the 1-byte layout it
+// asked for (requirements, subresource layout) and binds its memory as the twin's source; before each submission every twin whose source bytes changed since its last unpack
+// is unpacked into it (r and g from the high and low nibble; views read b 0 and a 1). Only linear, single-level, single-layer 2D images the CPU writes
+typedef struct twin { struct twin *next; VkImage img; VkDeviceMemory own; uint8_t *dst; VkDeviceSize dpitch, spitch; uint32_t w, h; VkDeviceMemory src; VkDeviceSize soff; uint64_t hash; int unpacked; } twin;
+static twin *g_twins; static pthread_mutex_t g_twin_mu = PTHREAD_MUTEX_INITIALIZER;
+static gv_map g_map;   // device memory → the address the game mapped it at, minus the map offset (its byte 0)
+static twin *twin_of(VkImage im) { pthread_mutex_lock(&g_twin_mu); twin *t = g_twins; while (t && t->img != im) t = t->next; pthread_mutex_unlock(&g_twin_mu); return t; }
+static int needs_twin(const VkImageCreateInfo *ci) {
+    if (ci->format != VK_FORMAT_R4G4_UNORM_PACK8) return 0;
+    VkFormatProperties p; vk.vkGetPhysicalDeviceFormatProperties(V.pd, ci->format, &p);
+    return !((ci->tiling == VK_IMAGE_TILING_LINEAR ? p.linearTilingFeatures : p.optimalTilingFeatures) & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT);
+}
+static VkResult twin_make(const VkImageCreateInfo *ci, VkImage *out) {
+    if (ci->tiling != VK_IMAGE_TILING_LINEAR || ci->imageType != VK_IMAGE_TYPE_2D || ci->mipLevels != 1 || ci->arrayLayers != 1) {
+        GRED("format R4G4 (the device has none) in a %s image of %u levels, %u layers: only linear single-level 2D images get a twin", ci->tiling == VK_IMAGE_TILING_LINEAR ? "linear" : "optimal", ci->mipLevels, ci->arrayLayers);
+        return VK_ERROR_FORMAT_NOT_SUPPORTED;
+    }
+    twin *t = calloc(1, sizeof *t); if (!t) return VK_ERROR_OUT_OF_HOST_MEMORY;
+    VkImageCreateInfo c = *ci; c.format = VK_FORMAT_R4G4B4A4_UNORM_PACK16; c.flags &= ~VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT; c.pNext = NULL; c.initialLayout = VK_IMAGE_LAYOUT_PREINITIALIZED;
+    VkResult r = R.vkCreateImage(V.dev, &c, NULL, &t->img);
+    VkMemoryRequirements mr = {0}; if (!r) R.vkGetImageMemoryRequirements(V.dev, t->img, &mr);
+    VkMemoryAllocateInfo ai = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, .allocationSize = mr.size, .memoryTypeIndex = vka_mem_type(mr.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 0)};
+    if (!r && ai.memoryTypeIndex == UINT32_MAX) r = VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    if (!r) r = R.vkAllocateMemory(V.dev, &ai, NULL, &t->own);
+    if (!r) r = R.vkBindImageMemory(V.dev, t->img, t->own, 0);
+    void *p = NULL; if (!r) r = R.vkMapMemory(V.dev, t->own, 0, VK_WHOLE_SIZE, 0, &p);
+    if (r) { GRED("R4G4 twin %ux%u: %d", ci->extent.width, ci->extent.height, r); if (t->img) R.vkDestroyImage(V.dev, t->img, NULL); if (t->own) R.vkFreeMemory(V.dev, t->own, NULL); free(t); return r; }
+    VkImageSubresource sub = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0}; VkSubresourceLayout lay; R.vkGetImageSubresourceLayout(V.dev, t->img, &sub, &lay);
+    t->dst = (uint8_t *)p + lay.offset; t->dpitch = lay.rowPitch; t->w = ci->extent.width; t->h = ci->extent.height;
+    t->spitch = (t->w + 63) & ~(VkDeviceSize)63;   // the game's 1-byte rows (what vkGetImageSubresourceLayout reports to it)
+    pthread_mutex_lock(&g_twin_mu); t->next = g_twins; g_twins = t; pthread_mutex_unlock(&g_twin_mu);
+    static _Atomic int told; if (atomic_fetch_add(&told, 1) < 3) GLOG("R4G4 image %ux%u (the device has no R4G4): an R4G4B4A4 twin, unpacked from the game's bytes before each submission that follows a change", t->w, t->h);
+    *out = t->img; return VK_SUCCESS;
+}
+static void twin_sync(void) {   // before a submission (the twins' images are read by the GPU only after it)
+    pthread_mutex_lock(&g_twin_mu);
+    for (twin *t = g_twins; t; t = t->next) {
+        if (!t->src) continue;
+        pthread_mutex_lock(&g_obj_mu); int k = gv_map_find(&g_map, (uint64_t)(uintptr_t)t->src); const uint8_t *base = k >= 0 ? (const uint8_t *)(uintptr_t)g_map.v[k] : NULL; pthread_mutex_unlock(&g_obj_mu);
+        if (!base) continue;
+        const uint8_t *s = base + t->soff; uint64_t h = 1469598103934665603ull;
+        for (uint32_t y = 0; y < t->h; y++) for (uint32_t x = 0; x < t->w; x++) h = (h ^ s[y * t->spitch + x]) * 1099511628211ull;
+        if (t->unpacked && h == t->hash) continue;
+        for (uint32_t y = 0; y < t->h; y++) {
+            const uint8_t *sr = s + y * t->spitch; uint16_t *dr = (uint16_t *)(t->dst + y * t->dpitch);
+            for (uint32_t x = 0; x < t->w; x++) dr[x] = (uint16_t)((sr[x] & 0xf0) << 8 | (sr[x] & 0x0f) << 8 | 0x000f);   // R4G4: r bits 7-4, g 3-0 → R4G4B4A4: r 15-12, g 11-8, a 3-0
+        }
+        t->hash = h; t->unpacked = 1;
+    }
+    pthread_mutex_unlock(&g_twin_mu);
+}
+static int twin_req(VkImage im, VkMemoryRequirements *m) {   // a twin's source: the game's 1-byte rows in host-visible memory (the Tegra's types 1 and 2)
+    twin *t = twin_of(im); if (!t) return 0;
+    m->size = t->spitch * t->h; m->alignment = 256; m->memoryTypeBits = 0x6; return 1;
+}
 GVB(vkCreateImage, VkResult, VkDevice d, const VkImageCreateInfo *ci, const VkAllocationCallbacks *a, VkImage *out) {
     GV_IN("vkCreateImage");
-    (void)d; (void)a; fmt_check(ci->format, 0, ci->tiling, ci->usage);
+    (void)d; (void)a;
+    if (needs_twin(ci)) return twin_make(ci, out);
+    fmt_check(ci->format, 0, ci->tiling, ci->usage);
     VkResult r = R.vkCreateImage(V.dev, ci, NULL, out);
     if (r) {
         static _Atomic int n; if (atomic_fetch_add(&n, 1) < 16)
@@ -471,7 +539,59 @@ GV(vkDestroyImage, void, VkDevice d, VkImage im, const VkAllocationCallbacks *a)
     (void)d; (void)a; if (!im) return;
     pthread_mutex_lock(&g_obj_mu); int swap = gv_map_find(&g_swapimg, (uint64_t)(uintptr_t)im) >= 0; pthread_mutex_unlock(&g_obj_mu);
     if (swap) { GRED_ONCE("the game destroys an image of its swapchain: left to the swapchain"); return; }
+    pthread_mutex_lock(&g_twin_mu); twin **pp = &g_twins; while (*pp && (*pp)->img != im) pp = &(*pp)->next; twin *tw = *pp; if (tw) *pp = tw->next; pthread_mutex_unlock(&g_twin_mu);
     R.vkDestroyImage(V.dev, im, NULL);
+    if (tw) { R.vkFreeMemory(V.dev, tw->own, NULL); free(tw); }
+}
+
+GV(vkBindImageMemory, VkResult, VkDevice d, VkImage im, VkDeviceMemory m, VkDeviceSize off) {
+    (void)d; twin *t = twin_of(im); if (t) { t->src = m; t->soff = off; t->unpacked = 0; return VK_SUCCESS; }
+    return R.vkBindImageMemory(V.dev, im, m, off);
+}
+GV(vkBindImageMemory2, VkResult, VkDevice d, uint32_t n, const VkBindImageMemoryInfo *bi) {
+    (void)d; VkBindImageMemoryInfo keep[32]; uint32_t nk = 0; VkResult r = VK_SUCCESS;
+    for (uint32_t i = 0; i < n; i++) {
+        twin *t = twin_of(bi[i].image); if (t) { t->src = bi[i].memory; t->soff = bi[i].memoryOffset; t->unpacked = 0; continue; }
+        keep[nk++] = bi[i];
+        if (nk == 32) { r = R.vkBindImageMemory2(V.dev, nk, keep); nk = 0; if (r) return r; }
+    }
+    return nk ? R.vkBindImageMemory2(V.dev, nk, keep) : r;
+}
+GV(vkGetImageSubresourceLayout, void, VkDevice d, VkImage im, const VkImageSubresource *s, VkSubresourceLayout *l) {
+    (void)d; twin *t = twin_of(im);
+    if (t) { l->offset = 0; l->rowPitch = t->spitch; l->size = t->spitch * t->h; l->arrayPitch = l->depthPitch = l->size; return; }
+    R.vkGetImageSubresourceLayout(V.dev, im, s, l);
+}
+static VkComponentSwizzle swz_of(VkComponentSwizzle s, VkComponentSwizzle self, const VkComponentSwizzle base[4]) {   // a view swizzle composed over the twin's (r, g, 0, 1)
+    if (s == VK_COMPONENT_SWIZZLE_IDENTITY) s = self;
+    return s >= VK_COMPONENT_SWIZZLE_R && s <= VK_COMPONENT_SWIZZLE_A ? base[s - VK_COMPONENT_SWIZZLE_R] : s;
+}
+GV(vkCreateImageView, VkResult, VkDevice d, const VkImageViewCreateInfo *ci, const VkAllocationCallbacks *a, VkImageView *out) {
+    (void)d; (void)a;
+    if (ci->format == VK_FORMAT_R4G4_UNORM_PACK8 && twin_of(ci->image)) {
+        static const VkComponentSwizzle base[4] = {VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_ZERO, VK_COMPONENT_SWIZZLE_ONE};
+        VkImageViewCreateInfo c = *ci; c.format = VK_FORMAT_R4G4B4A4_UNORM_PACK16;
+        c.components.r = swz_of(ci->components.r, VK_COMPONENT_SWIZZLE_R, base); c.components.g = swz_of(ci->components.g, VK_COMPONENT_SWIZZLE_G, base);
+        c.components.b = swz_of(ci->components.b, VK_COMPONENT_SWIZZLE_B, base); c.components.a = swz_of(ci->components.a, VK_COMPONENT_SWIZZLE_A, base);
+        return R.vkCreateImageView(V.dev, &c, NULL, out);
+    }
+    return R.vkCreateImageView(V.dev, ci, NULL, out);
+}
+// Mapped memory: where the game mapped each allocation (the twins read their source through it)
+GV(vkMapMemory, VkResult, VkDevice d, VkDeviceMemory m, VkDeviceSize off, VkDeviceSize size, VkMemoryMapFlags f, void **pp) {
+    (void)d; VkResult r = R.vkMapMemory(V.dev, m, off, size, f, pp);
+    if (!r && *pp) { pthread_mutex_lock(&g_obj_mu); gv_map_put(&g_map, (uint64_t)(uintptr_t)m, (uint64_t)(uintptr_t)*pp - off); pthread_mutex_unlock(&g_obj_mu); }
+    return r;
+}
+GV(vkUnmapMemory, void, VkDevice d, VkDeviceMemory m) {
+    (void)d; pthread_mutex_lock(&g_obj_mu); gv_map_del(&g_map, (uint64_t)(uintptr_t)m); pthread_mutex_unlock(&g_obj_mu);
+    R.vkUnmapMemory(V.dev, m);
+}
+GV(vkFreeMemory, void, VkDevice d, VkDeviceMemory m, const VkAllocationCallbacks *a) {
+    (void)d; (void)a; if (!m) return;
+    pthread_mutex_lock(&g_obj_mu); gv_map_del(&g_map, (uint64_t)(uintptr_t)m); pthread_mutex_unlock(&g_obj_mu);
+    pthread_mutex_lock(&g_twin_mu); for (twin *t = g_twins; t; t = t->next) if (t->src == m) t->src = VK_NULL_HANDLE; pthread_mutex_unlock(&g_twin_mu);
+    R.vkFreeMemory(V.dev, m, NULL);
 }
 
 // ---------- Render passes ----------
@@ -539,7 +659,7 @@ GV(vkDestroyRenderPass, void, VkDevice d, VkRenderPass rp, const VkAllocationCal
     R.vkDestroyRenderPass(V.dev, rp, NULL);
 }
 // Per command buffer: the open pass, for the transfer commands inside one (a buffer is recorded by one thread at a time)
-typedef struct { VkRenderPass rp, resume; VkFramebuffer fb; VkRect2D area; VkSubpassContents contents; uint32_t subpass; int open; } cb_pass;
+typedef struct { VkRenderPass rp, resume; VkFramebuffer fb; VkRect2D area; VkSubpassContents contents; uint32_t subpass; int open, rec; uint64_t begins; VkCommandBuffer late; int late_open, late_ready; } cb_pass;
 static gv_map g_cbp;   // command buffer → cb_pass (malloc'd, kept for the buffer's life)
 static _Atomic uint64_t g_split_n;
 static cb_pass *cbp(VkCommandBuffer cb, int make) {
@@ -547,7 +667,29 @@ static cb_pass *cbp(VkCommandBuffer cb, int make) {
     if (!s && make && (s = calloc(1, sizeof *s))) gv_map_put(&g_cbp, (uint64_t)(uintptr_t)cb, (uint64_t)(uintptr_t)s);
     pthread_mutex_unlock(&g_obj_mu); return s;
 }
-GV(vkBeginCommandBuffer, VkResult, VkCommandBuffer cb, const VkCommandBufferBeginInfo *bi) { cb_pass *s = cbp(cb, 0); if (s) s->open = 0; return R.vkBeginCommandBuffer(cb, bi); }
+// Commands recorded after vkEndCommandBuffer: Super Mario 64 records a layout barrier for a texture the CPU just wrote (PREINITIALIZED -> SHADER_READ_ONLY) into a command
+// buffer it has already ended. NVIDIA's driver appends it (Turnip lets it pass too); Qualcomm's dereferenced null (SIGSEGV in its vkCmdPipelineBarrier at boot). Vulkan cannot
+// append to an ended buffer: such a command goes into a side buffer of the host's, which is submitted right after that buffer the next time it goes to the queue (vkQueueSubmit),
+// and is reset when the game begins its buffer again
+static VkCommandPool g_late_pool; static pthread_mutex_t g_late_mu = PTHREAD_MUTEX_INITIALIZER;   // (the side buffers' pool: recording into any of them takes the lock)
+static int late_any;   // a side buffer was ever opened (the submissions then look for theirs)
+static VkCommandBuffer late_open(cb_pass *s) {   // with g_late_mu held
+    if (!g_late_pool) { VkCommandPoolCreateInfo pi = {VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO, .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT, .queueFamilyIndex = V.qf};
+                        if (R.vkCreateCommandPool(V.dev, &pi, NULL, &g_late_pool)) return VK_NULL_HANDLE; }
+    if (!s->late) { VkCommandBufferAllocateInfo ai = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO, .commandPool = g_late_pool, .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY, .commandBufferCount = 1};
+                    if (R.vkAllocateCommandBuffers(V.dev, &ai, &s->late)) { s->late = VK_NULL_HANDLE; return VK_NULL_HANDLE; } }
+    if (!s->late_open) { VkCommandBufferBeginInfo bi = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
+                         if (s->late_ready) R.vkResetCommandBuffer(s->late, 0); s->late_ready = 0;
+                         if (R.vkBeginCommandBuffer(s->late, &bi)) return VK_NULL_HANDLE; s->late_open = 1; }
+    return s->late;
+}
+GV(vkBeginCommandBuffer, VkResult, VkCommandBuffer cb, const VkCommandBufferBeginInfo *bi) {
+    cb_pass *s = cbp(cb, 1);
+    if (s) { s->open = 0; s->rec = 1; s->begins++;
+             if (s->late && (s->late_open || s->late_ready)) { pthread_mutex_lock(&g_late_mu); if (s->late_open) R.vkEndCommandBuffer(s->late); R.vkResetCommandBuffer(s->late, 0); s->late_open = s->late_ready = 0; pthread_mutex_unlock(&g_late_mu); } }
+    return R.vkBeginCommandBuffer(cb, bi);
+}
+GV(vkEndCommandBuffer, VkResult, VkCommandBuffer cb) { cb_pass *s = cbp(cb, 0); if (s) s->rec = 0; return R.vkEndCommandBuffer(cb); }
 GV(vkCmdBeginRenderPass, void, VkCommandBuffer cb, const VkRenderPassBeginInfo *bi, VkSubpassContents c) {
     cb_pass *s = cbp(cb, 1);
     if (s) { s->rp = bi->renderPass; s->fb = bi->framebuffer; s->area = bi->renderArea; s->contents = c; s->subpass = 0; s->open = 1;
@@ -586,6 +728,18 @@ GV(vkCmdFillBuffer, void, VkCommandBuffer cb, VkBuffer d, VkDeviceSize off, VkDe
 GV(vkCmdClearColorImage, void, VkCommandBuffer cb, VkImage im, VkImageLayout l, const VkClearColorValue *c, uint32_t n, const VkImageSubresourceRange *r) { SPLIT(R.vkCmdClearColorImage(cb, im, l, c, n, r)); }
 GV(vkCmdClearDepthStencilImage, void, VkCommandBuffer cb, VkImage im, VkImageLayout l, const VkClearDepthStencilValue *c, uint32_t n, const VkImageSubresourceRange *r) { SPLIT(R.vkCmdClearDepthStencilImage(cb, im, l, c, n, r)); }
 GV(vkCmdResolveImage, void, VkCommandBuffer cb, VkImage s, VkImageLayout sl, VkImage d, VkImageLayout dl, uint32_t n, const VkImageResolve *r) { SPLIT(R.vkCmdResolveImage(cb, s, sl, d, dl, n, r)); }
+
+GV(vkCmdPipelineBarrier, void, VkCommandBuffer cb, VkPipelineStageFlags ss, VkPipelineStageFlags ds, VkDependencyFlags df, uint32_t nm, const VkMemoryBarrier *mb,
+   uint32_t nb, const VkBufferMemoryBarrier *bb, uint32_t ni, const VkImageMemoryBarrier *ib) {
+    GV_IN("vkCmdPipelineBarrier");
+    { cb_pass *s = cbp(cb, 0);
+      if (s && !s->rec && s->begins) {
+          GRED_ONCE("the game records commands into a command buffer it has ended (vkCmdPipelineBarrier): they run right after it, from a buffer of the host's");
+          late_any = 1; pthread_mutex_lock(&g_late_mu); VkCommandBuffer l = late_open(s); if (l) R.vkCmdPipelineBarrier(l, ss, ds, df, nm, mb, nb, bb, ni, ib); pthread_mutex_unlock(&g_late_mu);
+          return;
+      } }
+    R.vkCmdPipelineBarrier(cb, ss, ds, df, nm, mb, nb, bb, ni, ib);
+}
 
 // ---------- Descriptor pools and sets ----------
 // A game frees descriptor sets whose pool it already reset or destroyed (Super Mario 64 as it leaves); the Switch's driver lets it pass, the phone's would free memory
@@ -847,13 +1001,37 @@ GVB(vkCreateComputePipelines, VkResult, VkDevice d, VkPipelineCache c, uint32_t 
 // ---------- Queues ----------
 // The game's queues are the replay's one queue, which the present thread and the replay also submit to: every call takes its lock
 static uint64_t g_nsubmit;
+// The submissions with the side buffers of their command buffers right after each (sv: the copies, freed by the caller); 0 = none to add
+static int late_splice(uint32_t n, const VkSubmitInfo *si, VkSubmitInfo **sv, VkCommandBuffer **cbv) {
+    uint32_t total = 0, add = 0;
+    for (uint32_t i = 0; i < n; i++) for (uint32_t k = 0; k < si[i].commandBufferCount; k++) { total++; cb_pass *s = cbp(si[i].pCommandBuffers[k], 0); if (s && (s->late_open || s->late_ready)) add++; }
+    if (!add) return 0;
+    VkSubmitInfo *c = malloc(n * sizeof *c); VkCommandBuffer *b = malloc((total + add) * sizeof *b);
+    if (!c || !b) { free(c); free(b); return 0; }
+    uint32_t o = 0;
+    pthread_mutex_lock(&g_late_mu);
+    for (uint32_t i = 0; i < n; i++) {
+        c[i] = si[i]; c[i].pCommandBuffers = b + o;
+        for (uint32_t k = 0; k < si[i].commandBufferCount; k++) {
+            b[o++] = si[i].pCommandBuffers[k];
+            cb_pass *s = cbp(si[i].pCommandBuffers[k], 0);
+            if (s && s->late_open) { R.vkEndCommandBuffer(s->late); s->late_open = 0; s->late_ready = 1; b[o++] = s->late; }   // (once: a later submission of the same buffer without a new begin does not take it again)
+        }
+        c[i].commandBufferCount = (uint32_t)(b + o - c[i].pCommandBuffers);
+    }
+    pthread_mutex_unlock(&g_late_mu);
+    *sv = c; *cbv = b; return 1;
+}
 GVB(vkQueueSubmit, VkResult, VkQueue q, uint32_t n, const VkSubmitInfo *si, VkFence f) {
-    GV_IN("vkQueueSubmit");
+    GV_IN("vkQueueSubmit"); twin_sync();
+    VkSubmitInfo *sv = NULL; VkCommandBuffer *cbv = NULL;
+    if (late_any && late_splice(n, si, &sv, &cbv)) si = sv;
     (void)q; dm_gfx_enter();
     pthread_mutex_lock(&V.qmu);
     VkResult r = vka_hung() ? VK_ERROR_DEVICE_LOST : R.vkQueueSubmit(V.q, n, si, f);
     g_nsubmit++;
     pthread_mutex_unlock(&V.qmu);
+    free(sv); free(cbv);
     dm_gfx_leave();
     if (r == VK_ERROR_DEVICE_LOST) vka_device_lost("the game's vkQueueSubmit");
     else if (r) { static _Atomic int k; if (atomic_fetch_add(&k, 1) < 8) GRED("vkQueueSubmit (%u batches): %d", n, r); }
