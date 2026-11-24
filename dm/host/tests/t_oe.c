@@ -11,6 +11,25 @@ uint64_t now_ns(void) { return 0; }
 void dm_audio_suspend(int on) { (void)on; }   // stubs for the bg item of DM_OE_SCRIPT (hle_audio.c / hle_os.c / hle_nvn.c)
 void guest_clock_freeze_for(int reason, int on) { (void)reason; (void)on; }
 void dm_gfx_suspend(int on) { (void)on; }
+void dm_host_shutdown(const char *why) { (void)why; fflush(stdout); _exit(42); }   // oe::ExecuteProgram's graceful exit: the child that called it ends with 42
+#ifdef DM_GAME_MULTI
+const dm_game_t *dm_game_cur(void) {   // main.c's: the program DM_PROGRAM names, program 0 without it
+    const char *e = getenv("DM_PROGRAM"); int p = e ? atoi(e) : 0;
+    for (size_t i = 0; i < sizeof dm_games / sizeof *dm_games; i++) if (dm_games[i].program == p) return &dm_games[i];
+    return &dm_games[0];
+}
+#endif
+// Programs (hle_oe.c oe_start): the call ends the program, so each runs in a child, whose DM_EXEC_OUT record the parent reads: the program's index (4 bytes), then the parameters
+static int exec_child(int index, const void *param, size_t n, int relaunch, const char *rec) {
+    unlink(rec); fflush(stdout); pid_t p = fork(); if (p < 0) return -1;
+    if (!p) { alarm(10); setenv("DM_EXEC_OUT", rec, 1); if (relaunch) h_oe_Relaunch(); else h_oe_ExecProgram(index, param, n); _exit(1); }
+    int st; if (waitpid(p, &st, 0) != p) return -1;
+    return WIFEXITED(st) ? WEXITSTATUS(st) : -1;
+}
+static long read_rec(const char *rec, int32_t *ix, uint8_t *buf, size_t cap) {   // the parameters' length, -1 without a record
+    FILE *f = fopen(rec, "rb"); if (!f) return -1;
+    long n = fread(ix, 4, 1, f) == 1 ? (long)fread(buf, 1, cap, f) : -1; fclose(f); return n;
+}
 // The notification event (hle_thread.c binds a kernel event): the unit test only tracks whether it is signalled
 static int ev_bound, ev_sig, defres_sig;   // defres_sig: signals of any other event (the default display resolution change event)
 void hle_bind_system_event(void *g, int autoclear) { (void)autoclear; if (g == g_mq_ev) ev_bound = 1; }
@@ -249,6 +268,39 @@ int main(void) {
     CHECK(h_oe_GetRegion() == 2, "fr-FR is a European console");
     setenv("DM_LANG", "es-MX", 1); CHECK(h_oe_GetRegion() == 1, "es-MX is an American console");
     unsetenv("DM_LANG");
+    {   // programs of one application: the record oe::ExecuteProgram and RequestToRelaunchApplication leave for the front end, the parameters and the previous program it hands on
+        char rec[512], lp[512]; const char *tmp = getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp";
+        snprintf(rec, sizeof rec, "%s/t_oe_exec_%d.bin", tmp, (int)getpid()); snprintf(lp, sizeof lp, "%s/t_oe_param_%d.bin", tmp, (int)getpid());
+        const uint8_t par[16] = {'f', 'r', 0, 0, 0, 0, 0, 0, 0x29, 0x5c, 0x8f, 0x3f, 0x29, 0x5c, 0x0f, 0x40};
+        int cur = (int)(DM_GAME_PROGRAM_ID & 0xf); int32_t ix = -1; uint8_t got[64]; long n;
+        CHECK(exec_child(cur, par, sizeof par, 0, rec) == 42 && (n = read_rec(rec, &ix, got, sizeof got)) == 16 && ix == cur && !memcmp(got, par, 16),
+              "ExecuteProgram of this program: the record names it with its 16 bytes of parameters, and the program ends");
+#ifdef DM_GAME_MULTI
+        int first = 0;
+#else
+        int first = cur;   // a host of one program starts only itself
+#endif
+        CHECK(exec_child(0, NULL, 0, 1, rec) == 42 && read_rec(rec, &ix, got, sizeof got) == 0 && ix == first,
+              "RequestToRelaunchApplication: the record names the first program (this one for a host of one program), no parameters");
+#ifdef DM_GAME_MULTI
+        int other = dm_games[sizeof dm_games / sizeof *dm_games - 1].program;
+        CHECK(exec_child(other, par, sizeof par, 0, rec) == 42 && read_rec(rec, &ix, got, sizeof got) == 16 && ix == other && !memcmp(got, par, 16),
+              "ExecuteProgram of another program of the host's table: recorded with its parameters");
+        CHECK(exec_child(15, par, sizeof par, 0, rec) == 42 && read_rec(rec, &ix, got, sizeof got) == 0 && ix == 0,
+              "ExecuteProgram of a program the table lacks: the first program, without the parameters");
+#else
+        CHECK(exec_child(cur + 1, par, sizeof par, 0, rec) == 42 && read_rec(rec, &ix, got, sizeof got) < 0,
+              "ExecuteProgram of another program in a host of one program: no record (nothing can start it), the program ends");
+#endif
+        FILE *f = fopen(lp, "wb"); if (f) { fwrite(par, 1, sizeof par, f); fclose(f); }
+        setenv("DM_LAUNCH_PARAM", lp, 1); size_t sz = 0; uint8_t buf[64] = {0};
+        CHECK(h_oe_PopLaunchParam(&sz, buf, sizeof buf) == 1 && sz == 16 && !memcmp(buf, par, 16), "TryPopLaunchParameter: the parameters of DM_LAUNCH_PARAM");
+        CHECK(h_oe_PopLaunchParam(&sz, buf, sizeof buf) == 0 && sz == 0, "TryPopLaunchParameter: popped once");
+        unsetenv("DM_LAUNCH_PARAM");
+        setenv("DM_PREV_PROGRAM", "1", 1); CHECK(h_oe_PrevProgram() == 1, "GetPreviousProgramIndex: DM_PREV_PROGRAM");
+        unsetenv("DM_PREV_PROGRAM"); CHECK(h_oe_PrevProgram() == -1, "GetPreviousProgramIndex: -1 without it, started from HOME");
+        unlink(rec); unlink(lp);
+    }
     { uint64_t v = h_oe_GetLang(); char c[9] = {0}; memcpy(c, &v, 8); CHECK(!strcmp(c, "en-US"), "no DM_LANG is en-US"); }
     printf("== oe %d checks, %d failed ==\n", checks, fails); return fails != 0;
 }

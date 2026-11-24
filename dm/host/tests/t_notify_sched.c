@@ -13,6 +13,7 @@ static int observed_wait(pthread_cond_t *, pthread_mutex_t *);
 #endif
 #include HLE_OE_SOURCE
 #undef pthread_cond_wait
+void dm_host_shutdown(const char *why) { (void)why; }   // oe::ExecuteProgram: not exercised here
 static _Atomic int waiting, resumed, finish;
 static uint32_t message;
 static thr_t *notifier;

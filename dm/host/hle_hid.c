@@ -214,7 +214,8 @@ void hid_keys_init(void) {
 //   saves a host texture's level 0 raw, every slice (a cube's six faces) (nvn_mtl.m dm_gfx_texraw), "drag <x0> <y0> <x1> <y1> [seconds=0.3]" moves one finger in a straight line between the two normalized picture
 //   points over that time and lifts it (the touch screen's pans and swipes, hle_touch.c gesture_sample), "dump" logs what each guest thread waits on and the graphics wait points
 //   (crash_dump_now, as the iOS app's DM_LOG_PORT dump; scripts/regress.py asks for it before stopping a hung game), "fps <n>" sets the frame rate cap while the game runs
-//   (0 = the game's own, 15 to 60: hle_fpslock.c dm_fps_target_set), "#…" is ignored.
+//   (0 = the game's own, 15 to 60: hle_fpslock.c dm_fps_target_set), "program <n>" makes oe::ExecuteProgram(n) with no parameters (a multi-program application's way between its
+//   programs, hle_oe.c), "#…" is ignored.
 //   Look at a screen, decide, press, look again: menus whose timing moves from run to run (loading) need no blind timed script.
 // On Android (the launcher sets DM_CTL=<app files>/ctl.txt, android/tools/nxctl.sh appends to it) the reader starts at the file's end, so a previous run's lines are not
 // replayed; "env" lines go to the replay (dm_gfx_ctl_env: applied at the next frame boundary, VKA_ENV switches read again), and the replay takes "capture <n>",
@@ -235,9 +236,8 @@ static void ctl_press_player(int p, char *keys) {
 }
 static void *ctl_main(void *arg) {
     const char *path = arg; long off = 0; char line[1100];
-#if defined(__ANDROID__)
-    { FILE *f = fopen(path, "r"); if (f) { if (!fseek(f, 0, SEEK_END)) off = ftell(f); fclose(f); } }
-#endif
+    // Android: always; elsewhere after a program switch (oe::ExecuteProgram started this program in the last one's place, hle_oe.c), whose presses the last program acted on
+    if (PLAT_ANDROID || getenv("DM_PREV_PROGRAM") || getenv("DM_RELAUNCH")) { FILE *f = fopen(path, "r"); if (f) { if (!fseek(f, 0, SEEK_END)) off = ftell(f); fclose(f); } }
     for (;;) {
         FILE *f = fopen(path, "r");
         if (f && !fseek(f, 0, SEEK_END) && ftell(f) < off) off = 0;
@@ -247,6 +247,7 @@ static void *ctl_main(void *arg) {
                 off += (long)n; line[--n] = 0; if (n && line[n - 1] == '\r') line[--n] = 0;
                 if (!n || line[0] == '#') continue;
                 if (!strcmp(line, "dump")) { crash_dump_now("DM_CTL dump"); continue; }
+                if (!strncmp(line, "program ", 8)) { void dm_oe_execute(int index, const void *param, size_t n); LOG("DM_CTL: oe::ExecuteProgram(%d)", atoi(line + 8)); dm_oe_execute(atoi(line + 8), NULL, 0); continue; }
                 if ((line[0] == 'P' || line[0] == 'p') && line[1] >= '2' && line[1] <= '8' && line[2] == ' ' && line[1] - '1' < DM_PLAYERS) { ctl_press_player(line[1] - '1', line + 3); continue; }
                 if (!strncmp(line, "shot ", 5)) { dm_gfx_shot_at(1, line + 5); LOG("DM_CTL: screenshot of the next frame → %s", line + 5); continue; }
                 if (!strncmp(line, "texlist ", 8)) { void dm_gfx_texlist(int target); dm_gfx_texlist(atoi(line + 8)); continue; }

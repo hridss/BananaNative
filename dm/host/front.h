@@ -54,3 +54,11 @@ void dm_touch_script(const dm_touch *t, int n);   // scripted touches (DM_KEYS, 
 // Timing: when a save write fails (disk full etc.) within one of the game's save transactions (between two Commits), so that this Commit is refused and the previously committed save is unchanged, it is called once per refused transaction;
 // the next transaction that succeeds commits as usual, and the front end need not do any recovery. err = the first failing errno (ENOSPC = 28 means out of space). Called on the game thread; the front end switches to the main thread itself and must not block
 void front_save_failed(int err);
+
+// A program hands over to another (oe::ExecuteProgram, RequestToRelaunchApplication; hle_oe.c): called on the guest thread after the program's index and parameters are written to DM_EXEC_OUT and
+// before the graceful exit; index = the program that starts, name = its profile's name (NULL: not known). dm_oe_handoff gives the program the next one names as its previous (-1 for a
+// relaunch) and the host's note (NULL, or why this program could not run: the front end tells the player). The Android launcher starts the game's screen again with that program
+// (dm/host/plat/front_android.c, nxhost_program_callback); the iPhone's names it on screen and schedules a notification that opens the app again. It returns when the front end has
+// what it needs. The default (hle_oe.c, weak) returns at once
+void front_program_handoff(int index, const char *name);
+void dm_oe_handoff(int *prev, const char **note);

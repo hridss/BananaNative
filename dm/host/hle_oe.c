@@ -6,6 +6,7 @@
 
 // The operation mode is runtime state (the front end can change it: iOS overheat downgrade switches to handheld): the single source is here, taken once from DM_OPMODE at startup, the environment variable is not read again afterwards
 #include <stdatomic.h>
+#include <unistd.h>
 static _Atomic int g_opmode = -1;
 int dm_opmode(void) {
     int m = g_opmode;
@@ -116,14 +117,105 @@ HLE_FORCE("_ZN2nn2oe15EnableRecordingEv", "video recording switch; the host has 
 // Applet resource user ID (ARUID, the number am assigns to this process): the host has no am, and the SDK's own getter returns 0. SDK 20's OpenAudioRenderer (the CPU rendering + manual execution path, sdk+0x221730)
 //   aborts when it gets 0 (The Legend of Zelda: Breath of the Wild 1.9.0); SDK 16 did not check. Report a fixed non-zero ID, used only as an identifier
 HLE_FORCE("_ZN2nn6applet23GetAppletResourceUserIdEv", "applet resource user ID; the host returns a fixed non-zero value", uint64_t, h_applet_Aruid, void) { return 0x80; }
-// Launch parameter (present only when another program launched this one with one; returns bool): the host never passes one
-HLE_FORCE("_ZN2nn2oe21TryPopLaunchParameterEPmPvm", "launch parameter: none", unsigned, h_oe_PopLaunchParam, size_t *out, void *buf, size_t n) { (void)buf; (void)n; if (out) *out = 0; return 0; }
+// Launch parameter (present only when another program launched this one with one; returns bool): DM_LAUNCH_PARAM=<file>, the parameters oe::ExecuteProgram handed over on the way
+// here (below; the Android launcher writes the file from the record), else what the profile's launch_param describes, for a program of a multi-program application run by itself:
+// Super Mario 3D All-Stars' games quit without the launcher's language and two volumes (fields: lang8, the language code GetDesiredLanguage gives; f32:<value>; u32:<value>;
+// hex:<bytes>). Handed over once, as a popped parameter
+static uint64_t h_oe_GetLang(void);
+HLE_FORCE("_ZN2nn2oe21TryPopLaunchParameterEPmPvm", "launch parameter: what the program that started this one handed over, else the profile's launch_param; once", unsigned, h_oe_PopLaunchParam, size_t *out, uint8_t *buf, size_t n) {
+    static _Atomic int popped; if (out) *out = 0;
+    const char *f = getenv("DM_LAUNCH_PARAM");
+    if ((!(f && *f) && !*DM_GAME_LAUNCH_PARAM) || atomic_exchange(&popped, 1)) return 0;
+    if (f && *f) {
+        FILE *fp = fopen(f, "rb");
+        if (!fp) { LOG("[RED] oe::TryPopLaunchParameter: cannot open DM_LAUNCH_PARAM %s", f); return 0; }
+        size_t got = buf ? fread(buf, 1, n, fp) : 0; fclose(fp);
+        LOG("oe::TryPopLaunchParameter: %zu bytes from %s", got, f);
+        if (!got) return 0;   // started with no parameter
+        if (out) *out = got;
+        return 1;
+    }
+    uint8_t p[256]; size_t len = 0; char spec[512]; snprintf(spec, sizeof spec, "%s", DM_GAME_LAUNCH_PARAM);
+    char *save = NULL;
+    for (char *t = strtok_r(spec, " ", &save); t && len < sizeof p - 8; t = strtok_r(NULL, " ", &save)) {
+        if (!strcmp(t, "lang8")) { uint64_t v = h_oe_GetLang(); memcpy(p + len, &v, 8); len += 8; }
+        else if (!strncmp(t, "f32:", 4)) { float v = strtof(t + 4, NULL); memcpy(p + len, &v, 4); len += 4; }
+        else if (!strncmp(t, "u32:", 4)) { uint32_t u = (uint32_t)strtoul(t + 4, NULL, 0); memcpy(p + len, &u, 4); len += 4; }
+        else if (!strncmp(t, "hex:", 4)) for (const char *h = t + 4; h[0] && h[1] && len < sizeof p; h += 2) { unsigned b; if (sscanf(h, "%2x", &b) == 1) p[len++] = (uint8_t)b; }
+        else LOG("[RED] launch_param: field %s not understood", t);
+    }
+    if (len > n) len = n;
+    if (buf) memcpy(buf, p, len);
+    if (out) *out = len;
+    LOG("oe::TryPopLaunchParameter: %zu bytes from the profile (%s)", len, DM_GAME_LAUNCH_PARAM);
+    return 1;
+}
 // Tears of the Kingdom (SDK 20.5.22): the index of the program that launched this one in a multi-program application. The SDK asks the applet proxy, which the host never opens
-// (null read in applet::GetPreviousProgramIndex right after the window setup); -1 = launched from the home menu
-HLE_FORCE("_ZN2nn2oe23GetPreviousProgramIndexEv", "previous program index: launched from HOME, -1", int, h_oe_PrevProgram, void) { return -1; }
-// Launch another program of a multi-program application (Octopath Traveler 0 imports it); on hardware it does not return. The host has only this program: logged, and the game carries on
-HLE_FORCE("_ZN2nn2oe14ExecuteProgramEiPKvm", "launch another program of the application: the host runs only this one (logged)", void, h_oe_ExecProgram, int index, const void *param, size_t n) {
-    (void)param; LOG("[RED] oe::ExecuteProgram(%d, %zu bytes of parameters): the host runs only this program; the game carries on", index, n);
+// (null read in applet::GetPreviousProgramIndex right after the window setup); DM_PREV_PROGRAM, the program that started this one with oe::ExecuteProgram, else -1, launched from HOME
+HLE_FORCE("_ZN2nn2oe23GetPreviousProgramIndexEv", "previous program index: the program that started this one (DM_PREV_PROGRAM), else launched from HOME, -1", int, h_oe_PrevProgram, void) {
+    const char *e = getenv("DM_PREV_PROGRAM"); return e && *e ? atoi(e) : -1;
+}
+// ---------- Programs of a multi-program application (docs/reference/services.md "Multi-program applications: oe::ExecuteProgram") ----------
+// oe::ExecuteProgram ends this program and starts the named one in its place, as Horizon does. The call never returns on Horizon, and the code after it is not code to run: a trap
+// (Super Mario 3D All-Stars' launcher, main+0x10a58) or the next function (ROMANCE OF THE THREE KINGDOMS 8 REMAKE, main+0xa31914); returning ran it.
+// oe::RequestToRelaunchApplication is the same start of program 0 with no parameter and no previous program (GetPreviousProgramIndex -1, as from HOME).
+// A host built over the application's programs (game.py header_multi, DM_GAME_MULTI) has each one's profile; a host of one program can start only itself again.
+// The front end starts the next program, the host only records it: with DM_EXEC_OUT=<file> (the Android launcher for every game; the iPhone's app holding several programs, main.m)
+// the program index (4 bytes, little-endian) and the parameters go to that file, front_program_handoff tells the front end (which program, the previous one, a note; the Android
+// launcher starts the game's screen again with DM_PROGRAM, DM_LAUNCH_PARAM and DM_PREV_PROGRAM, or DM_RELAUNCH=1), and this program ends with the graceful exit. A program the
+// application lacks (Super Mario 3D All-Stars' Galaxy, 32-bit ARM, which an arm64 host cannot run): its first program starts instead, with no parameters, as after a restart from
+// HOME. Without DM_EXEC_OUT the program ends; the iPhone's app of one program asks the player to open it again (front_program_handoff)
+static const char *prog_name(int index) {   // the profile's name of a program of this host (game.py header_multi), NULL when it has no such program
+#ifdef DM_GAME_MULTI
+    for (size_t i = 0; i < sizeof dm_games / sizeof *dm_games; i++) if (dm_games[i].program == index) return dm_games[i].name;
+#endif
+    (void)index; return NULL;
+}
+static _Atomic int g_handoff_prev = -1;   // the program the next one names as its previous (-1 for a relaunch, as from HOME), for the front end (dm_oe_handoff)
+static const char *_Atomic g_handoff_note;   // why this program hands over, when it is not the game's own call (dm_program_refuse): the front end tells the player
+void dm_oe_handoff(int *prev, const char **note) { if (prev) *prev = g_handoff_prev; if (note) *note = g_handoff_note; }
+__attribute__((weak)) void front_program_handoff(int index, const char *name) { (void)index; (void)name; }   // front.h; the iPhone's and the Android front ends have it
+static void oe_start(int index, const void *param, size_t n, int relaunch) {
+    if (relaunch) { index = 0; param = NULL; n = 0; }
+    const char *what = relaunch ? "oe::RequestToRelaunchApplication" : "oe::ExecuteProgram";
+    char hex[3 * 32 + 1] = "", call[192]; for (size_t i = 0; i < n && i < 32; i++) snprintf(hex + 3 * i, 4, " %02x", ((const uint8_t *)param)[i]);
+    if (relaunch) snprintf(call, sizeof call, "%s", what); else snprintf(call, sizeof call, "%s(%d, %zu bytes of parameters:%s)", what, index, n, hex);
+    int cur = (int)(DM_GAME_PROGRAM_ID & 0xf);   // the program index is the program ID less the application's
+#ifdef DM_GAME_MULTI
+    int ok = 1, ix = prog_name(index) ? index : 0;
+    if (ix != index) { LOG("[RED] %s: this application has no such program here; its first program starts instead", call); n = 0; }
+#else
+    int ok = relaunch || index == cur, ix = cur;   // a host of one program can start only itself again
+#endif
+    const char *rec = getenv("DM_EXEC_OUT");
+    if (rec && *rec && ok) {
+        FILE *fp = fopen(rec, "wb"); int32_t i32 = ix;
+        if (!fp || fwrite(&i32, 4, 1, fp) != 1 || (n && fwrite(param, n, 1, fp) != 1)) LOG("[RED] %s: cannot write DM_EXEC_OUT %s", call, rec);
+        if (fp) fclose(fp);
+        g_handoff_prev = relaunch ? -1 : cur;
+        LOG("%s: program %d recorded, this program ends", call, ix);
+        front_program_handoff(ix, prog_name(ix));
+    } else if (PLAT_IOS && (relaunch || index == cur)) {   // the iPhone, an app of one program
+        LOG("[RED] %s: this program cannot start itself again here; it ends", call);
+        front_program_handoff(cur, prog_name(cur));
+    } else LOG("[RED] %s: the host has only this program; it ends", call);
+    dm_host_shutdown(what);
+    for (;;) pause();   // another thread is ending the host
+}
+void dm_oe_execute(int index, const void *param, size_t n) { oe_start(index, param, n, 0); }
+HLE_FORCE("_ZN2nn2oe14ExecuteProgramEiPKvm", "end this program and start another of the application (the front end starts it: DM_EXEC_OUT); never returns", void, h_oe_ExecProgram, int index, const void *param, size_t n) { dm_oe_execute(index, param, n); }
+// Super Smash Bros. Ultimate 13.0.5 calls it after Options > Language > Yes ("the software will restart"), once the new language is saved. The SDK asks the am application proxy, which the
+// host never opens: applet::RequestToLaunchApplication read through the null proxy (sdk+0x804c8, SIGSEGV at address 0)
+HLE_FORCE("_ZN2nn2oe28RequestToRelaunchApplicationEv", "end this application and start it again from its first program, no launch parameter (the front end starts it: DM_EXEC_OUT); never returns", void, h_oe_Relaunch, void) { oe_start(0, NULL, 0, 1); }
+// A program this host cannot run (main.c: a game that renders with Vulkan on Android, which has no guest Vulkan yet): why goes to the log as a red line and to the front end with
+// the handoff; a program n > 0 of a multi-program application started by the front end hands over to its first program, as the game's own way back to it would (the player is
+// back in its menu and is told why), anything else ends here with die's message
+void dm_program_refuse(const char *why) {
+    LOG("[RED] %s", why);
+#ifdef DM_GAME_MULTI
+    if ((DM_GAME_PROGRAM_ID & 0xf) && getenv("DM_EXEC_OUT") && *getenv("DM_EXEC_OUT")) { g_handoff_note = why; oe_start(0, NULL, 0, 0); }
+#endif
+    die("%s", why);
 }
 HLE_FORCE("_ZN2nn2oe16DisableRecordingEv", "video recording switch; the host has no system recording", void, h_oe_DisableRec, void) {}
 // Silence the game's sound in system video captures (through am; FINAL FANTASY RESONANCE imports both): the host records nothing

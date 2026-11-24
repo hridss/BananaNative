@@ -71,6 +71,20 @@ static void fastboot_apply(void) {
     }
     free(s);
 }
+#ifdef DM_GAME_MULTI
+// A host over the programs of a multi-program application (game.py header_multi): the profile of the program DM_PROGRAM names, program 0 without it (or with one it does not have).
+// One run is one program: a switch starts the host again (hle_oe.c)
+const dm_game_t *dm_game_cur(void) {
+    static const dm_game_t *_Atomic cur;
+    const dm_game_t *g = cur;
+    if (!g) {
+        const char *e = getenv("DM_PROGRAM"); int p = e ? atoi(e) : 0; g = &dm_games[0];
+        for (size_t i = 0; i < sizeof dm_games / sizeof *dm_games; i++) if (dm_games[i].program == p) g = &dm_games[i];
+        cur = g;
+    }
+    return g;
+}
+#endif
 static void host_preload(int argc, char **argv) {
     g_t0_ns = proc_start_mono_ns();
     fastboot_apply();
@@ -114,8 +128,21 @@ static void host_preload(int argc, char **argv) {
     if (add && *add) { g_argc = game_args_add(g_argv, g_argc, 63, strdup(add)); LOG("game arguments added: %s", add); }
     static char pm[512];   // an Android pack names the modules it was made with (pack.tsv "modules"): a game whose registered builds have different module sets loads those of its dump's build
     if (!n) n = pack_modules(argv[1], pm, sizeof pm, names, DM_GAME_NMOD);
-    if (!n) { static const char *def[] = DM_GAME_MODULES; for (int k = 0; k < DM_GAME_NMOD; k++) names[n++] = def[k]; }   // default module list from the game profile's modules (Mario: main sdk)
+    if (!n) { const char *def[] = DM_GAME_MODULES; for (int k = 0; k < DM_GAME_NMOD; k++) names[n++] = def[k]; }   // (not static: the running program's list in a host over several programs, game.py header_multi)   // default module list from the game profile's modules (Mario: main sdk)
     load_modules(argv[1], names, n);
+#ifdef DM_GAME_MULTI
+    LOG("program %d of a multi-program application: %s (%s)", dm_game_cur()->program, DM_GAME_NAME, DM_GAME_ID);
+#endif
+#if PLAT_ANDROID
+    // A game that renders with Vulkan imports the Vulkan entry points from the SDK's NintendoSDK_Vulkan module, which the host does not load: on the Mac the host supplies them
+    // (dm/gfx/vk/hle_vk.m, Vulkan on Metal); Android has no such layer yet (dm/gfx/nvn/android_stub.c stands in), so the first call would run into an unbound import.
+    // Refused here with the reason instead (Super Mario 3D All-Stars' Super Mario 64 and Sunshine: back to the application's first program, which says why)
+    if (dm_game_imports("vkCreateInstance") || dm_game_imports("vkGetInstanceProcAddr")) {
+        void dm_program_refuse(const char *why);
+        char why[256]; snprintf(why, sizeof why, "%s renders with Vulkan (it imports the Vulkan entry points), which the host on Android does not have yet (guest Vulkan): it cannot run here", DM_GAME_NAME);
+        dm_program_refuse(strdup(why));
+    }
+#endif
     dm_cheats_init();   // the Atmosphère cheat files for this build (hle_cheats.c): picked by first 16 hex digits of main's build ID, which the loader knows now
     dm_sdk_major();   // logs the SDK version, which SDK-dependent behaviour follows (loader.c)
     uint64_t ta = now_ns();
