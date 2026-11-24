@@ -1932,6 +1932,7 @@ NVN_NOPROTO(nvnWindowBuilderSetAcquireTimeout, void, NVNwindowBuilder *b, uint64
 NVN_NOPROTO(nvnWindowBuilderGetAcquireTimeout, uint64_t, const NVNwindowBuilder *b) { return ((const win_builder_t *)b)->acq_timeout; }
 NVN_NOPROTO(nvnWindowSetAcquireTimeout, void, NVNwindow *w, uint64_t ns) { ((win_t *)w)->acq_timeout = ns; }
 NVN_NOPROTO(nvnWindowGetAcquireTimeout, uint64_t, const NVNwindow *w) { return ((const win_t *)w)->acq_timeout; }
+NVN(nvnWindowBuilderGetPresentInterval, int, const NVNwindowBuilder *b) { return WB(b)->interval; }   // Unreal Engine 5.4 and 5.6 read it back (nxnative 9507c221; Orbitals)
 NVN(nvnWindowInitialize, NVNboolean, NVNwindow *w, const NVNwindowBuilder *b) {
     const win_builder_t *s = (const win_builder_t *)b; win_t *o = (win_t *)w;
     memset(o, 0, sizeof *o); o->magic = MAGIC('W', 'I', 'N', 'D'); o->native = s->native; o->ntex = s->ntex; o->interval = s->interval; o->acq_timeout = s->acq_timeout;
