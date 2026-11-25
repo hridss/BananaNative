@@ -1598,14 +1598,46 @@ static void set_no_nulls(void) {
         }
     }
 }
+// DM_VK_PUSH_AFTER_SET (live; 1 on Qualcomm's driver, 0 elsewhere). On Qualcomm's driver (0x80320048 on the Adreno 830), once set 0 was bound as a descriptor set, the next
+// push with a layout pushed earlier in the command buffer changes what the last draw pushed with that layout BEFORE the set bind reads: Ocarina of Time drew one object
+// with a later object's matrix block, its colour draw failed the pass's EQUAL depth test and the sky showed in its place. A draw takes the set path when it has more
+// descriptors than maxPushDescriptors (32 there; Ocarina's root material has 33), so pushes and set binds alternate within a frame. One push with another push layout
+// between the set bind and that push avoids it: a layout of the host's own (one uniform buffer at binding 0, vertex stage) pushed with the zero buffer; the draw's own
+// push follows whole (the set bind forgot g_pd). At most one such push per set-bound draw. docs/reference/rendering.md "A push after a set bind changed what an earlier
+// pushed draw read on Qualcomm's driver (Android)"
+static int g_set_then_push;   // graphics: set 0 was bound as a descriptor set since the last push (sets_push)
+static void push_after_set(void) {
+    static VkPipelineLayout pl; static int tried;
+    if (!tried) {
+        tried = 1;
+        VkDescriptorSetLayoutBinding b = {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, NULL};
+        VkDescriptorSetLayoutCreateInfo si = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, .flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR, .bindingCount = 1, .pBindings = &b};
+        VkDescriptorSetLayout sl = VK_NULL_HANDLE;
+        if (!vk.vkCreateDescriptorSetLayout(V.dev, &si, NULL, &sl)) {
+            VkPipelineLayoutCreateInfo pi = {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, .setLayoutCount = 1, .pSetLayouts = &sl};
+            if (vk.vkCreatePipelineLayout(V.dev, &pi, NULL, &pl)) pl = VK_NULL_HANDLE;
+        }
+        if (pl) VLOG("push after a set bind: one push with the host's own layout goes before the first push that follows a set bound as set 0 (DM_VK_PUSH_AFTER_SET)");
+        else VRED("push after a set bind: no push layout of the host's own (DM_VK_PUSH_AFTER_SET does nothing)");
+    }
+    if (!pl || !g_zero.buf) return;
+    VkDescriptorBufferInfo zb = {g_zero.buf, g_zero.off, 256};
+    VkWriteDescriptorSet zw = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstBinding = 0, .descriptorCount = 1, .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, .pBufferInfo = &zb};
+    vk.vkCmdPushDescriptorSetKHR(g_cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pl, 0, 1, &zw);
+}
 // The writes of g_w bound: pushed (only what changed since the last push) or as a set, and the texture pool set
 static int sets_push(const vka_layout *lay, VkPipelineBindPoint bp, int any_pool) {
     uint64_t t2_ = g_prof ? cntvct() : 0;
     if (lay->push) { int ps = g_w.n ? push_same(bp, lay->layout) : 1;
+                     if (ps != 1 && bp == VK_PIPELINE_BIND_POINT_GRAPHICS && g_set_then_push) {
+                         g_set_then_push = 0;
+                         if (VKA_ENV("DM_VK_PUSH_AFTER_SET", V.driver_id == VK_DRIVER_ID_QUALCOMM_PROPRIETARY)) push_after_set();
+                     }
                      if (ps == 0) vk.vkCmdPushDescriptorSetKHR(g_cb, bp, lay->layout, 0, g_w.n, g_w.w);
                      else if (ps == 2) vk.vkCmdPushDescriptorSetKHR(g_cb, bp, lay->layout, 0, g_dwn, g_dw); }
     else {
         g_pd[bp == VK_PIPELINE_BIND_POINT_COMPUTE].n = 0;   // set 0 bound as a set: the last push is no longer what the draws see
+        if (bp == VK_PIPELINE_BIND_POINT_GRAPHICS) g_set_then_push = 1;   // (DM_VK_PUSH_AFTER_SET)
         VkDescriptorSet set = set_alloc(lay->set0); if (!set) return 0;
         for (uint32_t i = 0; i < g_w.n; i++) g_w.w[i].dstSet = set;
         set_no_nulls();

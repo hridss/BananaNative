@@ -24,7 +24,7 @@ int main(void) {
     CHECK((v = val(r, n, "DM_VK_FSR3_WAVE")) && !strcmp(v, "1"), "Turnip: FSR 3.1 quad shuffles");
     CHECK((v = val(r, n, "DM_VK_SUBGROUP_GS")) && !strcmp(v, "0"), "Turnip: one-lane geometry subgroups");
     CHECK((v = val(r, n, "DM_VK_SHUFFLE_LDS")) && !strcmp(v, "1"), "Turnip: shuffles through workgroup memory");
-    CHECK(!val(r, n, "DM_VK_MESH") && !val(r, n, "DM_VK_GS_FILL") && !val(r, n, "DM_VK_ONE_LANE") && !val(r, n, "DM_VK_OQ_SPLIT_PASS") && !val(r, n, "DM_VK_PREWARM"),
+    CHECK(!val(r, n, "DM_VK_MESH") && !val(r, n, "DM_VK_GS_FILL") && !val(r, n, "DM_VK_PUSH_AFTER_SET") && !val(r, n, "DM_VK_ONE_LANE") && !val(r, n, "DM_VK_OQ_SPLIT_PASS") && !val(r, n, "DM_VK_PREWARM"),
           "Turnip: no Qualcomm rule");
     CHECK(n == 6, "Turnip: 6 rules, got %d", n);
 
@@ -32,6 +32,7 @@ int main(void) {
     n = vka_auto_rules(&(vka_auto_in){.driver_id = VKA_DRV_QCOM, .mesh_ext = 1, .memu = 1, .vin_dyn_ext = 1, .prof_one_lane = 2, .prof_prepass_cut = 3, .prof_oq_split = 1}, r, 16);
     CHECK((v = val(r, n, "DM_VK_MESH")) && !strcmp(v, "0"), "Qualcomm: mesh extension off");
     CHECK((v = val(r, n, "DM_VK_GS_FILL")) && !strcmp(v, "1"), "Qualcomm: GS fill");
+    CHECK((v = val(r, n, "DM_VK_PUSH_AFTER_SET")) && !strcmp(v, "1"), "Qualcomm: a push of the host's own layout after a set bind");
     CHECK((v = val(r, n, "DM_VK_ONE_LANE")) && !strcmp(v, "1"), "Qualcomm: profile's one-lane shaders");
     CHECK((v = val(r, n, "DM_VK_OQ_SPLIT_PASS")) && !strcmp(v, "1"), "Qualcomm: profile's occlusion split pass");
     CHECK(!val(r, n, "DM_VK_MESH_PREPASS_SKIP"), "Qualcomm through compute: the prepass cut does not apply");
@@ -39,9 +40,9 @@ int main(void) {
     // ... with its mesh shaders (DM_VK_MESH=1): the prepass cut is on
     n = vka_auto_rules(&(vka_auto_in){.driver_id = VKA_DRV_QCOM, .mesh_ext = 1, .prof_prepass_cut = 3}, r, 16);
     CHECK((v = val(r, n, "DM_VK_MESH_PREPASS_SKIP")) && !strcmp(v, "1"), "Qualcomm with mesh shaders: prepass cut");
-    // ... a profile without those keys and a device without the mesh extension: only GS fill
+    // ... a profile without those keys and a device without the mesh extension: only GS fill and the push after a set bind
     n = vka_auto_rules(&(vka_auto_in){.driver_id = VKA_DRV_QCOM, .memu = 1}, r, 16);
-    CHECK(n == 1 && !strcmp(r[0].key, "DM_VK_GS_FILL"), "Qualcomm, no mesh extension, empty profile: GS fill only (%d)", n);
+    CHECK(n == 2 && !strcmp(r[0].key, "DM_VK_GS_FILL") && !strcmp(r[1].key, "DM_VK_PUSH_AFTER_SET"), "Qualcomm, no mesh extension, empty profile: GS fill and the push after a set bind only (%d)", n);
 
     // Qualcomm before 512.800: prewarm off, vertex input in the pipeline (only where the device has the dynamic state)
     n = vka_auto_rules(&(vka_auto_in){.driver_id = VKA_DRV_QCOM, .qcom_old = 1, .vin_dyn_ext = 1, .memu = 1}, r, 16);

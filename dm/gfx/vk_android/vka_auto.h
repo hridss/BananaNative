@@ -42,6 +42,7 @@ static inline int vka_auto_rules(const vka_auto_in *in, vka_auto_rule *o, int ma
     VKA_AUTO_ADD(t, "DM_VK_SHUFFLE_LDS", 1, NULL);                                                           // vka_shader.c shuffle_plan
     VKA_AUTO_ADD(q && in->prof_one_lane, "DM_VK_ONE_LANE", 1, "the profile's subgroup_one_lane");            // vka_shader.c one_lane_env
     VKA_AUTO_ADD(q, "DM_VK_GS_FILL", 1, NULL);                                                               // vka_shader.c gs_fill
+    VKA_AUTO_ADD(q, "DM_VK_PUSH_AFTER_SET", 1, NULL);                                                        // vka_draw.c sets_push
     VKA_AUTO_ADD(q && !in->memu && in->prof_prepass_cut, "DM_VK_MESH_PREPASS_SKIP", 1, "the profile's mesh_prepass_cut, mesh shaders on");   // vka_draw.c mesh_cut
     VKA_AUTO_ADD(q && in->prof_oq_split, "DM_VK_OQ_SPLIT_PASS", 1, "the profile's occlusion_split_pass");   // vka_exec.c oq_report
 #undef VKA_AUTO_ADD
