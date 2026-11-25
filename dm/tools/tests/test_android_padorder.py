@@ -20,14 +20,25 @@ class Wiring(unittest.TestCase):
         self.assertIn('order.plays(e.getDeviceId())', t)   # keys and axes of a device without a player wait for PadOrder.active
         self.assertNotIn('Native.deviceAdded(id, d.getName(), false)', t)   # every device goes through PadOrder
         self.assertIn('Native.devicePair(', t)   # a left and a right Joy-Con as one player (PadOrder.pairUp)
-        self.assertIn('Native.devicePairsClear()', t)   # each start pairs the halves it finds again
-        self.assertIn('Prefs.pairJoycons(this)', t)
+        self.assertIn('Native.devicePairsClear()', t)   # each start pairs the halves it finds again; the panel's split too
+        self.assertIn('Native.deviceDisconnect(', t)    # the panel's Disconnect
+        self.assertIn('Prefs.pairJoycons(this, titleId())', t)   # the setting, this game's own first (Game settings › Controls)
+        self.assertIn('order.split()', t)   # the panel's Split into two controllers
+
+    def test_panel_shows_players(self):
+        t = (REPO / 'android/app/src/main/java/dev/nxnative/android/SidePanel.java').read_text()
+        self.assertIn('controllersRows()', t)
+        self.assertIn('ga.players()', t)
+        self.assertIn('game_split_joycons', t)   # Split into two controllers
+        self.assertIn('game_merge_joycons', t)   # Merge into one controller
 
     def test_bindings(self):
         self.assertIn('Java_dev_nxnative_android_Native_deviceFirst', (REPO / 'android/app/src/main/cpp/nxlaunch.c').read_text())
         self.assertIn('"deviceFirst", "(ILjava/lang/String;)I"', (REPO / 'dm/host/android/jni_android.c').read_text())
         self.assertIn('Java_dev_nxnative_android_Native_devicePair', (REPO / 'android/app/src/main/cpp/nxlaunch.c').read_text())
         self.assertIn('"devicePair", "(II)I"', (REPO / 'dm/host/android/jni_android.c').read_text())
+        self.assertIn('Java_dev_nxnative_android_Native_deviceDisconnect', (REPO / 'android/app/src/main/cpp/nxlaunch.c').read_text())
+        self.assertIn('"deviceDisconnect", "(I)I"', (REPO / 'dm/host/android/jni_android.c').read_text())
 
 
 @unittest.skipUnless(shutil.which('javac') and shutil.which('java'), 'no JDK')

@@ -251,6 +251,9 @@
     <string name="game_classic_render_passes">Klasyczne przebiegi renderowania</string>
     <string name="game_clear">Wyczyść</string>
     <string name="game_controller_panel">Panel kontrolera</string>
+    <string name="game_disconnect_controller">Rozłącz</string>
+    <string name="game_merge_joycons">Połącz w jeden kontroler</string>
+    <string name="game_split_joycons">Rozdziel na dwa kontrolery</string>
     <string name="game_could_not_save_link_play">Nie udało się zapisać ustawień Link Play.</string>
     <string name="game_details">Szczegóły</string>
     <string name="game_don_t_show_this_again">Nie pokazuj ponownie</string>

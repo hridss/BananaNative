@@ -1,0 +1,157 @@
+# The launcher APK (android/app; android/README.md "Build the APK") built on a Linux runner: the on-device packer's stage first (android/ondevice/build.sh: CPython 3.14,
+# Capstone, lz4, the translator and SPIRV-Tools for arm64-v8a), then Gradle, which compiles the host for each game the APK carries and packs both into it.
+# Without `live` every APK is the debug-signed test build (dev.nxnative.android). A live run builds the release (dev.bananative.android, -PnxLive=true) with the release
+# key from the repository's secrets: NX_SIGN_STORE_B64 (release.jks as base64), NX_SIGN_ALIAS and NX_SIGN_PASS, plus the version and release kind given with it.
+# The stage is most of the job's time; -PnxPackEngine=fake builds the screens alone (its packs never start) and skips it. Manual, or on a v* tag (test build).
+name: android-apk
+
+on:
+  workflow_dispatch:
+    inputs:
+      live:
+        description: 'Build the release app (dev.bananative.android) signed with the NX_SIGN_* secrets; also give version, version_code and release_kind'
+        required: false
+        type: boolean
+        default: false
+      version:
+        description: 'live only: -PnxVersion, X.Y.Z (a -preview suffix with release_kind preview)'
+        required: false
+        default: ''
+      version_code:
+        description: 'live only: -PnxVersionCode, a positive integer above the last release''s'
+        required: false
+        default: ''
+      release_kind:
+        description: 'live only: -PnxReleaseKind, the release notes'' Update type'
+        required: false
+        type: choice
+        options: [major, hotfix, critical, preview]
+        default: major
+      games:
+        description: 'Title IDs for -PnxGames, comma separated (empty: every game gradle.properties names)'
+        required: false
+        default: ''
+      pack_engine:
+        description: 'native: the APK carries the on-device packer; fake: a simulated one (screens only)'
+        required: false
+        type: choice
+        options: [native, fake]
+        default: native
+      app:
+        description: 'Test app suffix for -PnxApp (empty: dev.nxnative.android; not with live)'
+        required: false
+        default: ''
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  # What android/app/build.gradle names: compileSdk 36, ndkVersion 28.2.13676358, CMake 3.22.1; AGP 8.13 needs JDK 17+, this takes the image's 21.
+  ANDROID_NDK_VERSION: 28.2.13676358
+  LIVE: ${{ inputs.live || 'false' }}
+  NX_VERSION: ${{ inputs.version }}
+  VERSION_CODE: ${{ inputs.version_code }}
+  RELEASE_KIND: ${{ inputs.release_kind }}
+  PACK_ENGINE: ${{ inputs.pack_engine || 'native' }}
+  GAMES: ${{ inputs.games }}
+  APP_SUFFIX: ${{ inputs.app }}
+
+# Actions are pinned to commit SHAs (the tag in the comment), as in tests.yml.
+# Time: about 60-90 minutes with the packer (the stage's NativeAOT translator and SPIRV-Tools builds, then the host compiled once per game); a fake-engine build
+# is the Gradle half alone.
+jobs:
+  apk:
+    name: Build the APK
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check the release inputs
+        if: env.LIVE == 'true'
+        run: |
+          fail=0
+          if [ -z "$NX_VERSION" ]; then echo "::error::live: give version (X.Y.Z)"; fail=1; fi
+          case "$VERSION_CODE" in
+            ''|*[!0-9]*) echo "::error::live: version_code must be a positive integer, not '$VERSION_CODE'"; fail=1 ;;
+            *) if [ "$VERSION_CODE" -eq 0 ]; then echo "::error::live: version_code must be at least 1"; fail=1; fi ;;
+          esac
+          if [ "$PACK_ENGINE" != native ]; then echo "::error::live: a release carries the on-device packer: pack_engine must be native"; fail=1; fi
+          if [ -n "$APP_SUFFIX" ]; then echo "::error::live: a release is not a suffixed test app: leave app empty"; fail=1; fi
+          exit $fail
+      - name: JDK 21
+        run: |
+          if [ -n "$JAVA_HOME_21_X64" ]; then echo "JAVA_HOME=$JAVA_HOME_21_X64" >> "$GITHUB_ENV"; fi
+          java -version
+      - name: Android SDK (platform 36, NDK, CMake)
+        run: |
+          SDK="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          SDKM="$SDK/cmdline-tools/latest/bin/sdkmanager"
+          [ -x "$SDKM" ] || SDKM="$SDK/cmdline-tools/bin/sdkmanager"
+          yes | "$SDKM" --licenses > /dev/null || true
+          "$SDKM" --install "platforms;android-36" "build-tools;36.0.0" "ndk;$ANDROID_NDK_VERSION" "cmake;3.22.1"
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$SDK/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
+          echo "sdk.dir=$SDK" > android/app/local.properties
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        if: env.PACK_ENGINE != 'fake'
+        with:
+          dotnet-version: '10.0.x'   # dm/gfx/tools/dmsh_xlate_android: NativeAOT, net10.0
+      - name: The on-device packer's stage (android/ondevice/build.sh)
+        if: env.PACK_ENGINE != 'fake'
+        run: |
+          # zsh runs the build scripts; ninja and CMake build Capstone and SPIRV-Tools; zlib1g-dev is what .NET's NativeAOT links against; shasum checks the
+          # stage's downloads (libdigest-sha-perl; macOS has it built in)
+          missing=0
+          for c in zsh ninja shasum; do command -v "$c" > /dev/null || missing=1; done
+          dpkg -s zlib1g-dev > /dev/null 2>&1 || missing=1
+          if [ "$missing" = 1 ]; then
+            sudo apt-get update
+            sudo apt-get install -y zsh ninja-build zlib1g-dev libdigest-sha-perl
+          fi
+          zsh android/ondevice/build.sh "$RUNNER_TEMP/pack-stage"
+          echo "NX_PACK_STAGE=$RUNNER_TEMP/pack-stage/stage" >> "$GITHUB_ENV"
+      - name: Release signing key
+        if: env.LIVE == 'true'
+        env:
+          NX_SIGN_STORE_B64: ${{ secrets.NX_SIGN_STORE_B64 }}
+          ALIAS: ${{ secrets.NX_SIGN_ALIAS }}
+          PASS: ${{ secrets.NX_SIGN_PASS }}
+        run: |
+          for v in NX_SIGN_STORE_B64 ALIAS PASS; do
+            if [ -z "${!v}" ]; then echo "::error::live: the $v secret is not set (Settings › Secrets and variables › Actions)"; exit 1; fi
+          done
+          umask 077
+          printf '%s' "$NX_SIGN_STORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          echo "NX_SIGN_STORE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+          echo "NX_SIGN_ALIAS=$ALIAS" >> "$GITHUB_ENV"
+          echo "NX_SIGN_PASS=$PASS" >> "$GITHUB_ENV"
+      - name: Build the APK (./gradlew apk)
+        run: |
+          args=("-PnxPackEngine=$PACK_ENGINE")
+          if [ -n "$GAMES" ]; then args+=("-PnxGames=$GAMES"); fi
+          if [ "$LIVE" = 'true' ]; then
+            args+=("-PnxLive=true" "-PnxVersion=$NX_VERSION" "-PnxVersionCode=$VERSION_CODE" "-PnxReleaseKind=$RELEASE_KIND")
+          elif [ -n "$APP_SUFFIX" ]; then
+            args+=("-PnxApp=$APP_SUFFIX")
+          fi
+          cd android/app
+          ./gradlew "${args[@]}" apk
+          ls -la out
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.live && 'banana-native-release' || 'nxnative-android-apk' }}
+          path: android/app/out/*.apk
+          retention-days: 14

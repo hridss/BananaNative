@@ -48,8 +48,14 @@ final class Native {
     /** Two halves of one controller (a left and a right Joy-Con) as one player: the player it has (0..7), -1 when none yet, -2 when the host cannot pair them. */
     static native int devicePair(int left, int right);
 
-    /** Every pair forgotten (the launcher pairs the halves it finds again at each start). */
+    /** Every pair forgotten (the launcher pairs the halves it finds again at each start). The host gives each half a player of its own (the in-game panel's split). */
     static native void devicePairsClear();
+
+    /** A controller's player let go (the in-game panel's Disconnect): the player it had, -1 when none. It reconnects on its next press. */
+    static native int deviceDisconnect(int device);
+
+    /** Whether the game supports both single-Joy-Con styles, so the in-game panel offers Split into two controllers (it reads them once the game set its styles). */
+    static native boolean splitSupported();
 
     /** A gamepad / D-pad key; true when it is a pad button (the event is consumed). */
     static native boolean key(int device, int keyCode, boolean down);

@@ -40,8 +40,13 @@ public final class PadOrderJvmTest {
             if (l.id < 0 || r.id < 0 || l.id == r.id) return -2;
             mate.put(l.id, r.id); mate.put(r.id, l.id);
             int pl = player(l.id), pr = player(r.id);
-            if (pl >= 0 && pr >= 0 && pl != pr) owner[pr] = -1;   // both had one: the left keeps its own
-            return pl >= 0 ? pl : pr;
+            if (pl >= 0 && pr >= 0 && pl != pr) owner[Math.max(pl, pr)] = -1;   // both had one: the pair keeps the lower
+            return player(l.id);
+        }
+        /** The host's split (nxhost_input_pairs_clear): the halves are their own controllers, each with a player */
+        void split(PadOrder.Pad a, PadOrder.Pad b) {
+            mate.remove(a.id); mate.remove(b.id);
+            add(a); add(b);
         }
     }
 
@@ -55,7 +60,11 @@ public final class PadOrderJvmTest {
             JOYCON_R = new PadOrder.Pad(51, "d-jc-r", "Joy-Con (R)", true, true, 0x057e, PadOrder.HALF_RIGHT),
             JOYCON_L2 = new PadOrder.Pad(52, "d-jc-l2", "Joy-Con (L)", true, false, 0x057e, PadOrder.HALF_LEFT),
             JOYCON_R2 = new PadOrder.Pad(53, "d-jc-r2", "Joy-Con (R)", true, true, 0x057e, PadOrder.HALF_RIGHT),
-            PRO = new PadOrder.Pad(54, "d-pro", "Pro Controller", true, true, 0x057e, 0);
+            PRO = new PadOrder.Pad(54, "d-pro", "Pro Controller", true, true, 0x057e, 0),
+            JOYCON_L_V = new PadOrder.Pad(56, "d-jc-lv", "Nintendo Switch Left Joy-Con", true, false, 0x1111, PadOrder.HALF_LEFT),
+            JOYCON_R_V = new PadOrder.Pad(57, "d-jc-rv", "Nintendo Switch Right Joy-Con", true, true, 0x2222, PadOrder.HALF_RIGHT),
+            SPLIT_L = new PadOrder.Pad(60, "d-hl", "Left controller", true, false, 0x1111, PadOrder.HALF_LEFT),
+            SPLIT_R = new PadOrder.Pad(61, "d-hr", "Right controller", true, true, 0x2222, PadOrder.HALF_RIGHT);
 
     public static void main(String[] args) {
         check(PadOrder.rank(GAMESIR, "") == PadOrder.CONTROLLER && PadOrder.rank(XIAOMI, "") == PadOrder.OTHER && PadOrder.rank(XIAOMI_FULL, "") == PadOrder.OTHER, "ranks");
@@ -130,10 +139,24 @@ public final class PadOrderJvmTest {
         check(h.player(3) == 0 && h.player(22) == 1 && o.plays(3), "a silent device chosen: player 1");
 
         // Two Joy-Cons: the halves of one controller, one player, as in a grip (PadOrder.pairUp; the host's side is pad_pair.h in t_hid.c)
-        h = new Slots(); o = new PadOrder(h, "", true);
+        h = new Slots(); o = new PadOrder(h, "", true);   // a left and a right Joy-Con: one player, and the Player 1 choice lists them as one controller
         o.start(Arrays.asList(JOYCON_L, JOYCON_R));
         check(h.player(50) == 0 && h.player(51) == 0 && o.plays(50) && o.plays(51), "a left and a right Joy-Con: one player for both");
-        check(o.first() == JOYCON_R || o.first() == JOYCON_L, "the pair is player 1");
+        check(o.first() != null && o.first().name.equals("Joy-Con (L/R)"), "the pair is player 1");
+        check(o.known().size() == 1 && o.known().get(0).name.equals("Joy-Con (L/R)"), "the pair lists once: " + (o.known().isEmpty() ? "" : o.known().get(0).name));
+        check(o.first().name.equals("Joy-Con (L/R)"), "player 1 shows the pair: " + o.first().name);
+        check(PadOrder.pairName("Nintendo Switch Left Joy-Con", "Nintendo Switch Right Joy-Con").equals("Nintendo Switch Left/Right Joy-Con"), "a pair's name");
+        check(PadOrder.pairName("Joy-Con (L)", "Joy-Con (R)").equals("Joy-Con (L/R)"), "a pair's name 2");
+        check(PadOrder.pairName("Same", "Same").equals("Same") && PadOrder.pairName("A", "B").equals("A/B"), "a pair's name 3");
+        check(o.players().size() == 1 && o.players().get(0).name.equals("Joy-Con (L/R)"), "the panel's players: the pair as one");
+        h.split(JOYCON_L, JOYCON_R);   // the host's nxhost_input_pairs_clear: each half a player
+        o.split();
+        check(o.players().size() == 2 && o.plays(50) && o.plays(51) && !o.hasPair(), "split: two players, both play");
+        check(o.halvesToMerge() != null, "the halves can be merged again");
+        h.pair(JOYCON_L, JOYCON_R); o.link(JOYCON_L, JOYCON_R);
+        check(o.players().size() == 1 && o.players().get(0).name.equals("Joy-Con (L/R)") && o.hasPair(), "merged: the pair again");
+        o.forgot(51);
+        check(!o.plays(51) && !o.plays(50), "a pair disconnected from the panel plays neither half");
         o.active(JOYCON_L);
         check(h.owner[1] == -1, "either half's input: no second player");
 
@@ -155,6 +178,14 @@ public final class PadOrderJvmTest {
         check(h.player(50) >= 0 && h.player(52) >= 0 && h.player(50) != h.player(52) && h.mate.isEmpty(), "two left halves: two players");
         o.connected(PRO);
         check(h.mate.isEmpty() && h.player(54) >= 0, "a whole controller is never half of a pair");
+
+        h = new Slots(); o = new PadOrder(h, "", true);   // two Joy-Cons pair by name whatever Android reports of their vendor
+        o.start(Arrays.asList(JOYCON_L_V, JOYCON_R_V));
+        check(h.player(56) == h.player(57) && h.player(56) >= 0, "Joy-Cons of different reported vendors: one player");
+
+        h = new Slots(); o = new PadOrder(h, "", true);   // other makers' halves of different vendors never pair
+        o.start(Arrays.asList(SPLIT_L, SPLIT_R));
+        check(h.player(60) >= 0 && h.player(61) >= 0 && h.player(60) != h.player(61) && h.mate.isEmpty(), "two different makers' halves: two players");
         System.out.println("ok");
     }
 }

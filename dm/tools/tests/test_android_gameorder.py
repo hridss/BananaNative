@@ -36,7 +36,7 @@ class GameOrderSource(unittest.TestCase):
         self.assertRegex(card, r'setOnLongClickListener\(v -> \{ optionsMenu\(g\)')
         menu = self.main[self.main.index('private void optionsMenu(Game g)'):]
         menu = menu[:menu.index('// ---- Move')]
-        for key in ('home_move_game', 'game_cover_set', 'home_delete_game_menu'):
+        for key in ('home_move_game', 'game_cover_set', 'home_add_to_home_screen', 'home_delete_game_menu'):
             self.assertIn('R.string.' + key, menu)
 
     def test_move_mode_keys(self):

@@ -250,6 +250,9 @@
     <string name="game_classic_render_passes">Render pass classici</string>
     <string name="game_clear">Cancella</string>
     <string name="game_controller_panel">Pannello del controller</string>
+    <string name="game_disconnect_controller">Disconnetti</string>
+    <string name="game_merge_joycons">Unisci in un controller</string>
+    <string name="game_split_joycons">Separa in due controller</string>
     <string name="game_could_not_save_link_play">Impossibile salvare le impostazioni di Link Play.</string>
     <string name="game_details">Dettagli</string>
     <string name="game_don_t_show_this_again">Non mostrare più</string>

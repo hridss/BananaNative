@@ -248,6 +248,9 @@
     <string name="game_classic_render_passes">经典渲染通道</string>
     <string name="game_clear">清除</string>
     <string name="game_controller_panel">手柄面板</string>
+    <string name="game_disconnect_controller">断开连接</string>
+    <string name="game_merge_joycons">合并为一个手柄</string>
+    <string name="game_split_joycons">拆分为两个手柄</string>
     <string name="game_could_not_save_link_play">无法保存 Link Play 设置。</string>
     <string name="game_details">详情</string>
     <string name="game_don_t_show_this_again">不再显示</string>

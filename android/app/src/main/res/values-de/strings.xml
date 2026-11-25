@@ -249,6 +249,9 @@
     <string name="game_classic_render_passes">Klassische Render-Passes</string>
     <string name="game_clear">Leeren</string>
     <string name="game_controller_panel">Controller-Panel</string>
+    <string name="game_disconnect_controller">Trennen</string>
+    <string name="game_merge_joycons">Zu einem Controller zusammenführen</string>
+    <string name="game_split_joycons">In zwei Controller aufteilen</string>
     <string name="game_could_not_save_link_play">Link-Play-Einstellungen konnten nicht gespeichert werden.</string>
     <string name="game_details">Details</string>
     <string name="game_don_t_show_this_again">Nicht mehr anzeigen</string>

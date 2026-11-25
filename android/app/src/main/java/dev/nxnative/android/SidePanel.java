@@ -797,9 +797,9 @@ final class SidePanel extends FrameLayout {
         Overlay.rows(act, box, null);
     }
 
-    /** Controls: Player 1, the on-screen controls, rumble, the phone's Motion sensitivity and the Button mapping shortcut */
+    /** Controls: Controllers (players, Split / Merge of a Joy-Con pair), the on-screen controls, rumble, the phone's Motion sensitivity and the Button mapping shortcut */
     private void controls() {
-        playerOneRow();
+        controllersRows();
 
         head(Tx.s(R.string.common_on_screen_controls));
         rows.controls(box);
@@ -1155,7 +1155,11 @@ final class SidePanel extends FrameLayout {
      * Player 1 (PadOrder): the gamepad on player 1, and a choice of the gamepads connected or Automatic (an external controller before a phone's own gamepad-like
      * device). Applies at once and is kept for every game, by the device's descriptor.
      */
-    private void playerOneRow() {
+    /**
+     * Controllers: Player 1 (the chooser: Automatic, or a device), the other players the game has and their controllers (tap one to disconnect it), and Split / Merge
+     * for the halves of one Joy-Con pair, live: a 2-player game gets its second controller, or the two halves play as one, without a restart
+     */
+    private void controllersRows() {
         if (!(act instanceof GameActivity)) return;
         GameActivity ga = (GameActivity) act;
         java.util.List<PadOrder.Pad> pads = ga.gamepads();
@@ -1175,6 +1179,25 @@ final class SidePanel extends FrameLayout {
                 restyle(ID_ONE);
             }).setNegativeButton(Tx.s(R.string.common_cancel), null).show());
         });
+        // The other players the game has (its 2-player mode shows here): their controller, tapped to disconnect it
+        for (java.util.Map.Entry<Integer, PadOrder.Pad> e : ga.players().entrySet()) {
+            int player = e.getKey();
+            if (player == 0) continue;
+            PadOrder.Pad p = e.getValue();
+            Button r = row(android.view.View.generateViewId(), Tx.s(R.string.game_player_n, String.valueOf(player + 1)), p.name);
+            r.setOnClickListener(v -> padDialog(new AlertDialog.Builder(act).setTitle(Tx.s(R.string.game_player_n, String.valueOf(player + 1))).setMessage(p.name)
+                    .setPositiveButton(Tx.s(R.string.game_disconnect_controller), (d, w) -> { ga.disconnectPlayer(p.id); d.dismiss(); close(); })
+                    .setNegativeButton(Tx.s(R.string.common_cancel), null).show()));
+        }
+        if (ga.hasPair()) {
+            if (ga.splitSupported()) {   // only a game that reads single Joy-Cons can use the two halves apart
+                Button r = row(android.view.View.generateViewId(), Tx.s(R.string.game_split_joycons), "");
+                r.setOnClickListener(v -> { ga.splitJoycons(); close(); });   // each half a controller now: the game's 2-player mode sees the second one
+            }
+        } else if (ga.halvesToMerge() != null) {
+            Button r = row(android.view.View.generateViewId(), Tx.s(R.string.game_merge_joycons), "");
+            r.setOnClickListener(v -> { ga.mergeJoycons(); close(); });
+        }
     }
 
     /** Twice a second while open: what the game runs at, which caps it can hold, and the frame generation's state */

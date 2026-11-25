@@ -496,6 +496,9 @@ final class GameSettings {
         controls.add(new Ui.Setting(a, "📳", Tx.s(R.string.common_rumble), v -> ownChoice(a, g, Tx.s(R.string.common_rumble), new String[] {Tx.s(R.string.game_on), Tx.s(R.string.game_off)}, Prefs.ownRumble(a, id) ? (Prefs.rumble(a, id) ? 0 : 1) : -1,
                 Prefs.rumble(a) ? Tx.s(R.string.game_on) : Tx.s(R.string.game_off), w -> Prefs.rumbleOwn(a, id, w < 0 ? null : w == 0), again))
                 .value(ownLabel(Prefs.ownRumble(a, id), Prefs.rumble(a, id) ? Tx.s(R.string.game_on) : Tx.s(R.string.game_off))).chevron(a));
+        controls.add(new Ui.Setting(a, "🤝", Tx.s(R.string.settings_pair_joycons), v -> ownChoice(a, g, Tx.s(R.string.settings_pair_joycons), new String[] {Tx.s(R.string.game_on), Tx.s(R.string.game_off)}, Prefs.ownPairJoycons(a, id) ? (Prefs.pairJoycons(a, id) ? 0 : 1) : -1,
+                Prefs.pairJoycons(a) ? Tx.s(R.string.game_on) : Tx.s(R.string.game_off), w -> Prefs.pairJoyconsOwn(a, id, w < 0 ? null : w == 0), again))
+                .value(ownLabel(Prefs.ownPairJoycons(a, id), Prefs.pairJoycons(a, id) ? Tx.s(R.string.game_on) : Tx.s(R.string.game_off))).chevron(a));
         controls.add(new Ui.Setting(a, "🎮", Tx.s(R.string.common_on_screen_controls), v -> ownChoice(a, g, Tx.s(R.string.common_on_screen_controls), Tx.arr(R.array.arr_touch_mode), TouchControls.ownMode(a, id) ? TouchControls.mode(a, id) : -1,
                 Tx.arr(R.array.arr_touch_mode)[TouchControls.mode(a)], w -> TouchControls.mode(a, id, w < 0 ? null : w), again))
                 .value(ownLabel(TouchControls.ownMode(a, id), Tx.arr(R.array.arr_touch_mode)[TouchControls.mode(a, id)])).chevron(a));

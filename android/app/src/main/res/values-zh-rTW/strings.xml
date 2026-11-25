@@ -248,6 +248,9 @@
     <string name="game_classic_render_passes">經典算繪通道</string>
     <string name="game_clear">清除</string>
     <string name="game_controller_panel">控制器面板</string>
+    <string name="game_disconnect_controller">中斷連線</string>
+    <string name="game_merge_joycons">合併為一個控制器</string>
+    <string name="game_split_joycons">拆分為兩個控制器</string>
     <string name="game_could_not_save_link_play">無法儲存 Link Play 設定。</string>
     <string name="game_details">詳情</string>
     <string name="game_don_t_show_this_again">不再顯示</string>

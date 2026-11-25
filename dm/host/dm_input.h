@@ -27,6 +27,14 @@ void dm_pad_set_player(int player, uint64_t buttons, int32_t lx, int32_t ly, int
 void dm_pad_players(uint32_t mask);   // bit p: player p + 1 has a controller; player 1 always counts as connected (the keyboard, the touch gamepad, DM_KEYS)
 uint32_t dm_pad_usable(void);   // bit p: the game reads player p + 1 (its npad is supported; every player in a one-player game), for pad_slot_fill
 void dm_pad_usable_callback(void (*fn)(void));   // the front end's: called on a guest thread when the supported npads change and when the controller applet opens
+// A player's controller is one half of a split Joy-Con pair (Android's in-game panel: Split into two controllers): -1 the left half, 1 the right, 0 a whole pad. The
+// front end registers its answer; hle_hid.c shows that player in the half's single-Joy-Con style (JoyLeft / JoyRight) and does not fold a whole pad's buttons onto it.
+// A game that supports neither single style cannot use a half: see dm_hid_half_supported
+void dm_pad_half_callback(int (*fn)(int player));
+// Whether the game supports both single-Joy-Con styles, so a pair can be split for it (the in-game panel offers Split only then)
+int dm_hid_half_supported(void);
+// The players' shown styles changed (a split or a merge): the style events of the connected npads fire, as on a controller's connect
+void dm_hid_styles_refresh(void);
 // The game's assignments (hle_hid.c SwapNpadAssignment, DisconnectNpad), on a guest thread: DM_PAD_SWAP the controllers of players a and b trade places, DM_PAD_DISCONNECT
 // player a's controller lets go of it until it presses a button again
 enum { DM_PAD_SWAP = 0, DM_PAD_DISCONNECT = 1 };

@@ -250,6 +250,9 @@
     <string name="game_classic_render_passes">Passes de rendu classiques</string>
     <string name="game_clear">Effacer</string>
     <string name="game_controller_panel">Panneau de la manette</string>
+    <string name="game_disconnect_controller">Déconnecter</string>
+    <string name="game_merge_joycons">Fusionner en une manette</string>
+    <string name="game_split_joycons">Séparer en deux manettes</string>
     <string name="game_could_not_save_link_play">Impossible d\'enregistrer les paramètres de Link Play.</string>
     <string name="game_details">Détails</string>
     <string name="game_don_t_show_this_again">Ne plus afficher</string>

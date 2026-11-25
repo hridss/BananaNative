@@ -20,7 +20,14 @@ NXHOST_API int nxhost_input_device_first(int device, const char *name);
 // event. Every pair is forgotten by nxhost_input_pairs_clear (the launcher makes them again at each start). The player (0..7), -1 when the pair has none yet, or -2 when
 // the two cannot be paired (a negative id, every pair in use)
 NXHOST_API int nxhost_input_pair(int left, int right);
+// Every pair forgotten, and each half a controller of its own with its own player (the in-game panel's Split into two controllers)
 NXHOST_API void nxhost_input_pairs_clear(void);
+// A controller's player let go (the in-game panel's Disconnect): it has no player until its next button press, which connects it again, as the game's DisconnectNpad.
+// The player it had, -1 when none
+NXHOST_API int nxhost_input_device_disconnect(int device);
+// Whether the game supports both single-Joy-Con styles (JoyLeft and JoyRight): only then can a Joy-Con pair be split for it, and the launcher offers Split only then.
+// Call it once the game runs (its supported styles are known after it sets them) and again when that may change
+NXHOST_API bool nxhost_input_split_supported(void);
 // KeyEvent from dispatchKeyEvent: keycode and down (ACTION_DOWN; repeats may be passed). True when it is a pad button: the launcher returns true and does not pass it on
 NXHOST_API bool nxhost_input_key(int device, int keycode, bool down);
 // MotionEvent from dispatchGenericMotionEvent (SOURCE_JOYSTICK / SOURCE_GAMEPAD): one axis (MotionEvent.AXIS_*), or every axis of one event at once (published once)

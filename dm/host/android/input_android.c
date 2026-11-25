@@ -23,6 +23,7 @@
 static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;   // pads, slots, touch, shake
 static pad_slots g_slots;
 static int g_labelled[DM_PLAYERS];
+static int g_half_side[DM_PLAYERS];   // a split pair's player: -1 its left half, 1 its right, 0 a whole pad (the panel's Split into two controllers)
 static nxin_pad g_pad[DM_PLAYERS];
 static float g_dz = -1;
 static nxin_touch g_touch; static int g_touch_init;
@@ -64,6 +65,10 @@ static float deadzone(void) {
     if (g_dz < 0) { const char *e = getenv("DM_PAD_DEADZONE"); g_dz = e ? (float)atof(e) : 0.1f; }
     return g_dz;
 }
+static int half_of(int p) { return p >= 0 && p < DM_PLAYERS ? g_half_side[p] : 0; }   // hle_hid.c: the player's shown style and button folding
+// A split half's buttons and sticks go to the game exactly as the device reports them: the console's single-Joy-Con mode does not turn them either (libnx:
+// hidSetNpadJoyAssignmentModeSingleByDefault remaps the left Joy-Con's four buttons to X / Y / A / B and leaves the axes alone); the game turns them itself from the
+// JoyLeft / JoyRight style the host reports (style_for_player)
 static void publish_pad(int p) {   // under g_mu
     uint64_t b; int32_t lx, ly, rx, ry;
     nxin_pad_out(&g_pad[p], deadzone(), &b, &lx, &ly, &rx, &ry);
@@ -95,6 +100,7 @@ static const nxin_map *pad_map(void) {   // under g_mu
 // nxhost_input_device_player (its rumble follows: GameActivity.padPlayers)
 static void move_state(int from, int to) {   // under g_mu: a controller's state follows it from player from to player to (pad_slots has moved it already)
     g_pad[to] = g_pad[from]; g_labelled[to] = g_labelled[from]; g_pm_cal[to] = g_pm_cal[from]; g_pm_log[to] = g_pm_log[from]; g_since[to] = g_since[from];
+    g_half_side[to] = g_half_side[from]; g_half_side[from] = 0;
     memset(&g_pad[from], 0, sizeof g_pad[from]); g_labelled[from] = 0; pad_motion_cal_reset(&g_pm_cal[from]); g_pm_log[from] = 0;
     dm_pad_set_player(from, 0, 0, 0, 0, 0); dm_motion_clear(from);
     dm_pad_players(pad_slot_mask(&g_slots)); publish_pad(to);
@@ -116,6 +122,7 @@ static void on_assign(int op, int a, int b) {
         pad_slot_swap(&g_slots, a, b);
         nxin_pad tp = g_pad[a]; g_pad[a] = g_pad[b]; g_pad[b] = tp;
         int tl = g_labelled[a]; g_labelled[a] = g_labelled[b]; g_labelled[b] = tl;
+        int th = g_half_side[a]; g_half_side[a] = g_half_side[b]; g_half_side[b] = th;
         pad_motion_cal tc = g_pm_cal[a]; g_pm_cal[a] = g_pm_cal[b]; g_pm_cal[b] = tc;
         int tg = g_pm_log[a]; g_pm_log[a] = g_pm_log[b]; g_pm_log[b] = tg;
         uint64_t ts = g_since[a]; g_since[a] = g_since[b]; g_since[b] = ts;
@@ -145,10 +152,10 @@ static int take(int device, const char *name, int labelled) {   // under g_mu
     if (!had) {
         const char *e = getenv("DM_PAD_LABELLED");
         g_labelled[p] = e ? atoi(e) : labelled; memset(&g_pad[p], 0, sizeof g_pad[p]); g_pad[p].map = pad_map();   // 1: all four face buttons by label; 2: A and B by label, X and Y by position
-        g_since[p] = now_ns();
+        g_since[p] = now_ns(); g_half_side[p] = 0;   // a controller that takes a player of its own is a whole pad (a split half's side is set by the split)
         dm_pad_players(pad_slot_mask(&g_slots));
         LOG("input: device %d (%s) is player %d%s", device, name && *name ? name : "unnamed", p + 1, g_labelled[p] == 1 ? ", face buttons by label" : g_labelled[p] == 2 ? ", A and B by label, X and Y by position" : "");
-        static int registered; if (!registered) { registered = 1; dm_pad_usable_callback(on_usable); dm_pad_assign_callback(on_assign); }
+        static int registered; if (!registered) { registered = 1; dm_pad_usable_callback(on_usable); dm_pad_assign_callback(on_assign); dm_pad_half_callback(half_of); }
     }
     return p;
 }
@@ -158,13 +165,16 @@ int nxhost_input_device_added(int device, const char *name, int labelled) {
 void nxhost_input_device_removed(int device) {
     pthread_mutex_lock(&g_mu);
     const void *was = owner(device);   // the pair's slot, if the pair has one
+    int pm = pad_pair_mate(&g_pairs, device);
+    int ms = pm >= 0 ? pad_pair_side(&g_pairs, pm) : 0;   // the half that stays: its side becomes its single-Joy-Con style
     int mate = pad_pair_remove(&g_pairs, device);
     if (mate >= 0) {   // one half went: the other half is a controller of its own now, and keeps the player
         int q = pad_slot_of(&g_slots, was);
         if (q >= 0) {
             if (was == raw_owner(device)) g_slots.owner[q] = raw_owner(mate);   // the half that held the player went: the other takes the slot over
             memset(&g_pad[q], 0, sizeof g_pad[q]); dm_pad_set_player(q, 0, 0, 0, 0, 0);
-            dm_pad_players(pad_slot_mask(&g_slots)); dm_motion_clear(q); pad_motion_cal_reset(&g_pm_cal[q]); g_pm_log[q] = 0;
+            g_half_side[q] = ms;   // a Joy-Con alone: the game gets that half's single-Joy-Con style
+            dm_pad_players(pad_slot_mask(&g_slots)); dm_hid_styles_refresh(); dm_motion_clear(q); pad_motion_cal_reset(&g_pm_cal[q]); g_pm_log[q] = 0;
             LOG("input: device %d (player %d) removed: device %d is the controller alone now", device, q + 1, mate);
         }
         if (g_joining) { pad_join_gone(&g_join, was); pthread_cond_broadcast(&g_join_cv); }
@@ -174,8 +184,8 @@ void nxhost_input_device_removed(int device) {
     }
     int p = pad_slot_free(&g_slots, was);
     if (p >= 0) {
-        memset(&g_pad[p], 0, sizeof g_pad[p]); dm_pad_set_player(p, 0, 0, 0, 0, 0);
-        dm_pad_players(pad_slot_mask(&g_slots)); dm_motion_clear(p); pad_motion_cal_reset(&g_pm_cal[p]); g_pm_log[p] = 0;
+        memset(&g_pad[p], 0, sizeof g_pad[p]); dm_pad_set_player(p, 0, 0, 0, 0, 0); g_half_side[p] = 0;
+        dm_pad_players(pad_slot_mask(&g_slots)); dm_hid_styles_refresh(); dm_motion_clear(p); pad_motion_cal_reset(&g_pm_cal[p]); g_pm_log[p] = 0;
         LOG("input: device %d (player %d) removed", device, p + 1);
         // The same controller listed again as a new device a moment before this one went (Bluetooth): it takes this player back (pad_slot_back)
         int q = pad_slot_back(&g_slots, p, g_since, now_ns(), 3000000000ull);
@@ -194,9 +204,10 @@ int nxhost_input_device_first(int device, const char *name) {
     int p = take(device, name, 0), from = p, moved = -1;   // take: connected (labels as its added call gave them, or none)
     if (p > 0) {
         int lab = g_labelled[0]; g_labelled[0] = g_labelled[p]; g_labelled[p] = lab;
+        int hs = g_half_side[0]; g_half_side[0] = g_half_side[p]; g_half_side[p] = hs;   // a split half keeps its single-Joy-Con style where it goes
         p = pad_slot_first(&g_slots, owner(device), name, &moved);
         for (int q = 0; q < DM_PLAYERS; q++) if (q == 0 || q == from) { memset(&g_pad[q], 0, sizeof g_pad[q]); g_pad[q].map = pad_map(); publish_pad(q); }
-        dm_pad_players(pad_slot_mask(&g_slots));
+        dm_pad_players(pad_slot_mask(&g_slots)); dm_hid_styles_refresh();
         if (moved > 0) LOG("input: device %d (%s) is player 1; player 1's device moves to player %d", device, name && *name ? name : "unnamed", moved + 1);
         else LOG("input: device %d (%s) is player 1", device, name && *name ? name : "unnamed");
     }
@@ -218,13 +229,46 @@ int nxhost_input_pair(int left, int right) {
         LOG("input: device %d (player %d) joins device %d as one controller: its own player is freed", drop == pl ? left : right, drop + 1, drop == pl ? right : left);
     }
     int p = pad_slot_of(&g_slots, owner(left));
+    if (pl >= 0) g_half_side[pl] = 0;   // a pair is a whole controller again: unrotated sticks, a whole pad's buttons
+    if (pr >= 0) g_half_side[pr] = 0;
+    if (p >= 0) g_half_side[p] = 0;
     dm_pad_players(pad_slot_mask(&g_slots));
     if (p >= 0) publish_pad(p);
+    dm_hid_styles_refresh();
     LOG("input: devices %d and %d are one controller: the left and the right half%s", left, right, p >= 0 ? "" : " (no player yet)");
     pthread_mutex_unlock(&g_mu);
     return p;
 }
-void nxhost_input_pairs_clear(void) { pthread_mutex_lock(&g_mu); pad_pairs_clear(&g_pairs); pthread_mutex_unlock(&g_mu); }
+void nxhost_input_pairs_clear(void) {
+    pthread_mutex_lock(&g_mu);
+    int dev[PAD_PAIRS * 2], side[PAD_PAIRS * 2], n = 0;
+    for (int i = 0; i < PAD_PAIRS; i++) if (g_pairs.left[i] >= 0) {
+        dev[n] = g_pairs.left[i]; side[n++] = -1;
+        dev[n] = g_pairs.right[i]; side[n++] = 1;
+    }
+    pad_pairs_clear(&g_pairs);
+    for (int i = 0; i < n; i++) {
+        take(dev[i], NULL, 0);   // each half a player of its own: the one that held the pair's keeps it, the other takes the next free
+        int p = pad_slot_of(&g_slots, owner(dev[i]));
+        if (p >= 0) g_half_side[p] = side[i];   // shown as that half's single Joy-Con (hle_hid: JoyLeft / JoyRight)
+    }
+    if (n) { dm_pad_players(pad_slot_mask(&g_slots)); dm_hid_styles_refresh(); LOG("input: %d Joy-Con pair(s) split: %d controller(s), each a player and shown as a single Joy-Con", n / 2, n); }
+    pthread_mutex_unlock(&g_mu);
+}
+// Whether the game supports both single-Joy-Con styles (hle_hid.c: the styles it set), so the panel can offer Split into two controllers
+bool nxhost_input_split_supported(void) { return dm_hid_half_supported() != 0; }
+// The in-game panel lets a controller go: its player is free, the device has none until its next press connects it again (take; its name keeps its slot)
+int nxhost_input_device_disconnect(int device) {
+    pthread_mutex_lock(&g_mu);
+    int p = pad_slot_free(&g_slots, owner(device));
+    if (p >= 0) {
+        memset(&g_pad[p], 0, sizeof g_pad[p]); dm_pad_set_player(p, 0, 0, 0, 0, 0); g_half_side[p] = 0;
+        dm_pad_players(pad_slot_mask(&g_slots)); dm_hid_styles_refresh(); dm_motion_clear(p); pad_motion_cal_reset(&g_pm_cal[p]); g_pm_log[p] = 0;
+        LOG("input: the in-game panel disconnects device %d (player %d): it has no player until its next press", device, p + 1);
+    }
+    pthread_mutex_unlock(&g_mu);
+    return p;
+}
 bool nxhost_input_key(int device, int keycode, bool down) {
     pthread_mutex_lock(&g_mu);
     const nxin_map *m = pad_map(); int src = nxin_src_of_key(keycode);
@@ -368,23 +412,23 @@ static const char *name_of(const void *o) {   // under g_mu
 // press again. Their buttons start released (the input was held), motion calibrations go with them
 static void join_apply(void) {   // under g_mu
     pad_slots ns; memset(&ns, 0, sizeof ns);
-    int lab[DM_PLAYERS] = {0}, plog[DM_PLAYERS] = {0}; pad_motion_cal cal[DM_PLAYERS]; uint64_t since[DM_PLAYERS] = {0};
+    int lab[DM_PLAYERS] = {0}, hs[DM_PLAYERS] = {0}, plog[DM_PLAYERS] = {0}; pad_motion_cal cal[DM_PLAYERS]; uint64_t since[DM_PLAYERS] = {0};
     for (int p = 0; p < DM_PLAYERS; p++) {
         pad_motion_cal_reset(&cal[p]);
         const void *o = g_join.player[p]; int q = o && o != HANDHELD ? pad_slot_of(&g_slots, o) : -1;
         if (q < 0) continue;
         ns.owner[p] = o; memcpy(ns.last[p], g_slots.last[q], sizeof ns.last[p]); ns.pressed[p] = g_slots.pressed[q];
-        lab[p] = g_labelled[q]; cal[p] = g_pm_cal[q]; plog[p] = g_pm_log[q]; since[p] = g_since[q];
+        lab[p] = g_labelled[q]; hs[p] = g_half_side[q]; cal[p] = g_pm_cal[q]; plog[p] = g_pm_log[q]; since[p] = g_since[q];
     }
     for (int q = 0; q < DM_PLAYERS; q++) if (g_slots.owner[q] && pad_slot_of(&ns, g_slots.owner[q]) < 0)
         LOG("controller applet: device %d (%s) did not join: not connected until it presses a button", device_of(g_slots.owner[q]), name_of(g_slots.owner[q]));
     g_slots = ns;
     for (int p = 0; p < DM_PLAYERS; p++) {
-        g_labelled[p] = lab[p]; g_pm_cal[p] = cal[p]; g_pm_log[p] = plog[p]; g_since[p] = since[p];
+        g_labelled[p] = lab[p]; g_half_side[p] = hs[p]; g_pm_cal[p] = cal[p]; g_pm_log[p] = plog[p]; g_since[p] = since[p];
         memset(&g_pad[p], 0, sizeof g_pad[p]); g_pad[p].map = pad_map(); publish_pad(p); dm_motion_clear(p);
         if (g_join.player[p]) LOG("controller applet: player %d is device %d (%s)", p + 1, device_of(g_join.player[p]), name_of(g_join.player[p]));
     }
-    dm_pad_players(pad_slot_mask(&g_slots));
+    dm_pad_players(pad_slot_mask(&g_slots)); dm_hid_styles_refresh();
 }
 int android_controller_support(const void *arg, int *count) {
     nxhost_ctrl_fn fn = atomic_load(&g_ctrl_fn);

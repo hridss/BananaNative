@@ -28,6 +28,8 @@ static void j_device_removed(JNIEnv *env, jclass c, jint dev) { (void)env; (void
 static jint j_device_player(JNIEnv *env, jclass c, jint dev) { (void)env; (void)c; return nxhost_input_device_player(dev); }
 static jint j_device_pair(JNIEnv *env, jclass c, jint left, jint right) { (void)env; (void)c; return nxhost_input_pair(left, right); }
 static void j_device_pairs_clear(JNIEnv *env, jclass c) { (void)env; (void)c; nxhost_input_pairs_clear(); }
+static jint j_device_disconnect(JNIEnv *env, jclass c, jint dev) { (void)env; (void)c; return nxhost_input_device_disconnect(dev); }
+static jboolean j_split_supported(JNIEnv *env, jclass c) { (void)env; (void)c; return nxhost_input_split_supported() ? JNI_TRUE : JNI_FALSE; }
 static jint j_device_first(JNIEnv *env, jclass c, jint dev, jstring name) {
     (void)c; const char *u = name ? (*env)->GetStringUTFChars(env, name, NULL) : NULL;
     int p = nxhost_input_device_first(dev, u); if (u) (*env)->ReleaseStringUTFChars(env, name, u); return p;
@@ -108,6 +110,8 @@ static const JNINativeMethod k_methods[] = {
     {"devicePlayer", "(I)I", (void *)j_device_player},
     {"devicePair", "(II)I", (void *)j_device_pair},
     {"devicePairsClear", "()V", (void *)j_device_pairs_clear},
+    {"deviceDisconnect", "(I)I", (void *)j_device_disconnect},
+    {"splitSupported", "()Z", (void *)j_split_supported},
     {"deviceFirst", "(ILjava/lang/String;)I", (void *)j_device_first},
     {"key", "(IIZ)Z", (void *)j_key},
     {"axes", "(I[I[F)Z", (void *)j_axes},

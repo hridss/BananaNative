@@ -851,7 +851,7 @@ public final class MainActivity extends Activity {
         padPanel.value(padPanelLabel(Prefs.panelPad(this)));
         ctl.addView(padPanel.view);
         // Two Joy-Cons as one controller (PadOrder): a left and a right half take one player together, as in a grip; off: each half a player of its own
-        ctl.addView(new Ui.Setting(this, "🤝", Tx.s(R.string.settings_pair_joycons), null).toggle(this, Prefs.pairJoycons(this), (b, on) -> Prefs.pairJoycons(this, on))
+        ctl.addView(new Ui.Setting(this, "🤝", Tx.s(R.string.settings_pair_joycons), null).toggle(this, Prefs.pairJoycons(this), (b, on) -> Prefs.pairJoyconsDefault(this, on))
                 .value(Tx.s(R.string.settings_pair_joycons_note)).view);
         resRow = new Ui.Setting(this, "🖼️", Tx.s(R.string.common_resolution), v -> gameRes()).chevron(this);
         perf.addView(resRow.view);
@@ -1202,8 +1202,9 @@ public final class MainActivity extends Activity {
     private List<Game> shownGames() { return GameOrder.sort(games, Prefs.gameOrder(this), Game::orderId); }
 
     /**
-     * A game's options, from a long press on its tile (Hold X or Y on a controller): Move (a reorder mode, below), Set cover image (and Reset cover when it has one: CoverUi)
-     * and Remove game (GameDelete). A tile being prepared keeps its job sheet on a long press (workTile)
+     * A game's options, from a long press on its tile (Hold X or Y on a controller): Move (a reorder mode, below), Set cover image (and Reset cover when it has one: CoverUi),
+     * Add to home screen (Shortcuts: a pinned shortcut that starts this game) and Remove game (GameDelete). A tile being prepared keeps its job sheet on a long
+     * press (workTile)
      */
     private void optionsMenu(Game g) {
         if (moveId != null) return;
@@ -1214,6 +1215,7 @@ public final class MainActivity extends Activity {
         if (CoverUi.has(this, g)) { labels.add(Tx.s(R.string.game_cover_reset)); acts.add(() -> CoverUi.reset(this, g)); }
         labels.add(Tx.s(R.string.home_rename_game)); acts.add(() -> renameGame(g));
         if (Game.renamed(this, g)) { labels.add(Tx.s(R.string.home_reset_name)); acts.add(() -> { Game.rename(this, g, ""); refresh(); }); }
+        if (Profile.of(g.titleId) != null && Shortcuts.supported(this)) { labels.add(Tx.s(R.string.home_add_to_home_screen)); acts.add(() -> Shortcuts.pin(this, g)); }
         labels.add(Tx.s(R.string.home_delete_game_menu)); acts.add(() -> GameDelete.ask(this, g));
         new PadFocus.Builder(this).setTitle(g.name).setItems(labels.toArray(new String[0]), (d, w) -> acts.get(w).run()).show();
     }

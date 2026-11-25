@@ -250,6 +250,9 @@
     <string name="game_classic_render_passes">Pasadas de render clásicas</string>
     <string name="game_clear">Borrar</string>
     <string name="game_controller_panel">Panel del mando</string>
+    <string name="game_disconnect_controller">Desconectar</string>
+    <string name="game_merge_joycons">Combinar en un mando</string>
+    <string name="game_split_joycons">Separar en dos mandos</string>
     <string name="game_could_not_save_link_play">No se pudieron guardar los ajustes de Link Play.</string>
     <string name="game_details">Detalles</string>
     <string name="game_don_t_show_this_again">No volver a mostrar</string>

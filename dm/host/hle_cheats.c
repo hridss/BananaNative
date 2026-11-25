@@ -364,7 +364,7 @@ static int ins_dec(cheat_t *c, const uint32_t *p, int n, ins_t *o) {
         case 8:     // 8kkkkkkk: a 28-bit mask, every key of it held on any controller (the reference ORs the held keys of
                     // the handheld and players 1..8; dm_cheats_keys ORs every input source the same way). The DM_BTN_*
                     // bit order (nn::hid::NpadButton), the sticks' directions on 16..23 (dm_input.h); the Joy-Cons' SL / SR
-                    // on 24..27 can never be held here, no input source of this host reports them, so such a mask is never met
+                    // on 24..27 are set for a split half's edge buttons (hle_hid.c fill), so a mask of them can be met with a single Joy-Con
             o->val = w & 0x0FFFFFFFu;
             break;
         case 9: {   // 9TCRSIs0 (VVVVVVVV (VVVVVVVV)): reg[r] = reg[s] op operand, the operand reg[x] or, for I != 0, an

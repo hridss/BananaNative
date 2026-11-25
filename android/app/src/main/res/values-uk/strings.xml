@@ -251,6 +251,9 @@
     <string name="game_classic_render_passes">Класичні проходи рендерингу</string>
     <string name="game_clear">Очистити</string>
     <string name="game_controller_panel">Панель геймпада</string>
+    <string name="game_disconnect_controller">Від\'єднати</string>
+    <string name="game_merge_joycons">Об\'єднати в один контролер</string>
+    <string name="game_split_joycons">Розділити на два контролери</string>
     <string name="game_could_not_save_link_play">Не вдалося зберегти налаштування Link Play.</string>
     <string name="game_details">Деталі</string>
     <string name="game_don_t_show_this_again">Більше не показувати</string>

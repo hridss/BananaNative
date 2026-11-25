@@ -249,6 +249,9 @@
     <string name="game_classic_render_passes">Klasik çizim geçişleri</string>
     <string name="game_clear">Temizle</string>
     <string name="game_controller_panel">Kumanda paneli</string>
+    <string name="game_disconnect_controller">Bağlantıyı kes</string>
+    <string name="game_merge_joycons">Tek kontrolcüde birleştir</string>
+    <string name="game_split_joycons">İki kontrolcüye ayır</string>
     <string name="game_could_not_save_link_play">Link Play ayarları kaydedilemedi.</string>
     <string name="game_details">Ayrıntılar</string>
     <string name="game_don_t_show_this_again">Bunu bir daha gösterme</string>

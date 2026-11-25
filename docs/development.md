@@ -311,6 +311,17 @@ Raising `LLVM_VERSION` takes a new baseline in the same change
 (`tidy --rebaseline`; `dm/tools/tests/test_lint_c.py` checks that the two name
 the same release).
 
+`.github/workflows/android-apk.yml` builds the launcher APK on a Linux runner, by
+hand or on a `v*` tag, as [android/README.md](../android/README.md#build-the-apk)
+builds it: the on-device packer's stage (`android/ondevice/build.sh`), then
+`./gradlew apk` with `NX_PACK_STAGE` set. Without `live` every APK it makes is the
+debug-signed test build (`dev.nxnative.android`); a live run builds the release
+(`dev.bananative.android`, `-PnxLive=true`) from the version, versionCode and
+release kind given to it and the release key in the repository's
+`NX_SIGN_STORE_B64` (the keystore as base64), `NX_SIGN_ALIAS` and `NX_SIGN_PASS`
+secrets, which are never in the repository. `-PnxPackEngine=fake` builds the
+screens alone without the stage, and `-PnxGames=<title ID>,…` builds fewer hosts.
+
 ## The packing script in detail
 
 `scripts/build_ipa_from_nsp.py` (`-h` lists every option) takes one game's dump folder, made from your own console: `base/exefs` and `base/romfs`, optional `updates/<version>/` and `dlc/<DLC title ID>/<n>/romfs` ([`scripts/pack_dump.py`](../scripts/pack_dump.py) lists the layout). A dump has no control data, so the app name comes from the profile (or `--app-name`) and the app has no icon. The file name is historical: the script reads no NSP, XCI or NSZ files and takes no keys.

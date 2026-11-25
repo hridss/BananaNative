@@ -334,7 +334,18 @@ static uint32_t pad_style(void) {
     return s & STYLE_FULLKEY ? STYLE_FULLKEY : s & STYLE_JOYDUAL ? STYLE_JOYDUAL : s & STYLE_JOYRIGHT ? STYLE_JOYRIGHT : s & STYLE_JOYLEFT ? STYLE_JOYLEFT : STYLE_FULLKEY;
 }
 static int single_joy(uint32_t style) { return style == STYLE_JOYLEFT || style == STYLE_JOYRIGHT; }
-static uint32_t style_for_player(uint32_t id, int p) { return p < 0 || !styles_set() ? 0 : id == NPAD_HANDHELD ? STYLE_HANDHELD : pad_style(); }
+// A player whose controller is one half of a split Joy-Con pair (dm_pad_half_callback, the Android in-game panel's Split) is shown in that half's single-Joy-Con style
+// even when the game takes FullKey: one stick and half the buttons cannot make a whole controller. A game that does not support the half's style cannot use it
+static int (*_Atomic g_half_fn)(int player);
+void dm_pad_half_callback(int (*fn)(int player)) { atomic_store(&g_half_fn, fn); }
+static int half_side(int p) { int (*fn)(int) = atomic_load(&g_half_fn); return fn ? fn(p) : 0; }
+static uint32_t style_for_player(uint32_t id, int p) {
+    if (p < 0 || !styles_set()) return 0;
+    if (id == NPAD_HANDHELD) return STYLE_HANDHELD;
+    int h = half_side(p);
+    if (h) { uint32_t s = h < 0 ? STYLE_JOYLEFT : STYLE_JOYRIGHT; if (g_styles_supported & s) return s; }
+    return pad_style();
+}
 static uint32_t style_of(uint32_t id) { return style_for_player(id, player_of(id)); }
 static int32_t ax(uint64_t v, int i) { return (int16_t)(v >> (16 * i)); }
 static int32_t pick(int32_t a, int32_t b) { return (a < 0 ? -a : a) >= (b < 0 ? -b : b) ? a : b; }   // whichever of two sources is deflected more
@@ -390,6 +401,14 @@ uint32_t dm_pad_usable(void) {
 static void (*_Atomic g_usable_fn)(void);
 void dm_pad_usable_callback(void (*fn)(void)) { atomic_store(&g_usable_fn, fn); }
 static void usable_changed(void) { void (*fn)(void) = atomic_load(&g_usable_fn); if (fn) fn(); }
+// A split or a merge changes the shown style of the players' controllers: tell the game, as on a connect (hle_hid's style events)
+void dm_hid_styles_refresh(void) {
+    for (uint32_t id = 0; id < DM_PLAYERS; id++) if (style_of(id)) style_changed(id);
+    if (style_of(NPAD_HANDHELD)) style_changed(NPAD_HANDHELD);
+}
+// Whether the game supports both single-Joy-Con styles and runs docked: only then can a Joy-Con pair be split into two controllers it can read (in handheld mode
+// player 1 is the console's built-in Handheld controller, not a single Joy-Con, so the halves cannot be its two players)
+int dm_hid_half_supported(void) { return dm_opmode() != 0 && styles_set() && (g_styles_supported & STYLE_JOYLEFT) && (g_styles_supported & STYLE_JOYRIGHT); }
 
 // DM_REC=<file>: player 1's physical input (keyboard / touch, its controller and the controllers merged into it, as fill reads them) written as DM_KEYS steps, so a run plays again
 // with DM_KEYS=@<file> from the same save and build: a bug report's path without the game's data, or a regress route recorded instead of written. DM_KEYS and DM_CTL have
@@ -511,11 +530,24 @@ static uint64_t single_joy_fold(uint32_t style, uint64_t b, int32_t a[4]) {
     a[0] = a[1] = a[2] = a[3] = 0; a[2 * side] = x; a[2 * side + 1] = y;
     return f;
 }
+// Which style's state the game reads for each player, once: a split half's buttons reach it only in the style it asks for (hle_hid shows such a player as JoyLeft or JoyRight)
+static _Atomic uint64_t g_style_read;
+static void note_style_read(int p, uint32_t style) {
+    static const uint32_t styles[5] = {STYLE_FULLKEY, STYLE_HANDHELD, STYLE_JOYDUAL, STYLE_JOYLEFT, STYLE_JOYRIGHT};
+    if (p < 0 || p >= DM_PLAYERS) return;
+    for (int i = 0; i < 5; i++) if (style == styles[i]) {
+        uint64_t bit = 1ull << (i * DM_PLAYERS + p);
+        if (atomic_fetch_or(&g_style_read, bit) & bit) return;
+        LOG("hid: the game reads player %d's %s state", p + 1, i == 0 ? "full-key" : i == 1 ? "handheld" : i == 2 ? "dual Joy-Con" : i == 3 ? "left Joy-Con" : "right Joy-Con");
+        return;
+    }
+}
 static void fill(NpadState *s, uint32_t id, uint32_t style) {
     styles_now(1, "the game reads a controller's state without having set its supported styles");   // a no-op once they are set
     memset(s, 0, sizeof *s);
     s->sampling = atomic_fetch_add(&g_sampling, 1) + 1;
     int pl = player_of(id);
+    note_style_read(pl, style);
     uint32_t shown = style_for_player(id, pl);
     if (!(shown & style)) return;   // no controller of this id / style: attributes = 0
     // Player 1: keyboard / touch, script, its controller and the players merged into it; another player: its own controller path
@@ -536,7 +568,18 @@ static void fill(NpadState *s, uint32_t id, uint32_t style) {
         uint64_t c = atomic_load(&g_sc_axes); for (int i = 0; i < 4; i++) a[i] = pick(a[i], ax(c, i));
     }
     b &= 0xffffull;
-    if (single_joy(shown)) b = single_joy_fold(shown, b, a);
+    // A split half's SL / SR: the NpadButton bits (LeftSL 24, LeftSR 25, RightSL 26, RightSR 27) that a single-Joy-Con game reads, and L / R as well (SL acts as
+    // L, SR as R on either half, as the console documents for a single Joy-Con). The left half's SL arrives as R, its SR as ZR; the right half's SL arrives as L
+    // (already) and its SR as ZL
+    int hs = half_side(pl);
+    if (hs < 0) {
+        if (b & DM_BTN_R) { b |= 1u << 24; b |= DM_BTN_L; }
+        if (b & DM_BTN_ZR) { b |= 1u << 25; b |= DM_BTN_R; }
+    } else if (hs > 0) {
+        if (b & DM_BTN_L) b |= 1u << 26;
+        if (b & DM_BTN_ZL) { b |= 1u << 27; b |= DM_BTN_R; }
+    }
+    if (single_joy(shown) && !half_side(pl)) b = single_joy_fold(shown, b, a);   // a physical half already reports its own side's buttons and stick
     s->lx = a[0]; s->ly = a[1]; s->rx = a[2]; s->ry = a[3];
     if (s->lx < -STICK_THRESH) b |= 1u << 16;
     if (s->ly > STICK_THRESH) b |= 1u << 17;

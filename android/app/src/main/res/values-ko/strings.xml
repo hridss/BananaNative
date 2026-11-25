@@ -248,6 +248,9 @@
     <string name="game_classic_render_passes">클래식 렌더 패스</string>
     <string name="game_clear">지우기</string>
     <string name="game_controller_panel">컨트롤러 패널</string>
+    <string name="game_disconnect_controller">연결 해제</string>
+    <string name="game_merge_joycons">하나의 컨트롤러로 합치기</string>
+    <string name="game_split_joycons">두 개의 컨트롤러로 나누기</string>
     <string name="game_could_not_save_link_play">Link Play 설정을 저장하지 못했어요.</string>
     <string name="game_details">세부 정보</string>
     <string name="game_don_t_show_this_again">다시 보지 않기</string>

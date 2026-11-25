@@ -120,10 +120,13 @@ final class PadOrder {
      * they are paired with the host, and both count as playing when either has a player. False when there was nothing to pair
      */
     private boolean pairUp(Pad p) {
-        if (!pairHalves || p.half == 0 || mate.containsKey(p.id) || !p.external) return false;
+        if (!pairHalves || p.half == 0 || mate.containsKey(p.id)) return false;
         for (Pad q : pads.values()) {
-            if (q.id == p.id || q.half != -p.half || !q.external || mate.containsKey(q.id)) continue;
-            if (p.vendor != 0 && q.vendor != 0 && q.vendor != p.vendor) continue;   // another maker's half, unless Android reports no vendor for one
+            if (q.id == p.id || q.half != -p.half || mate.containsKey(q.id)) continue;
+            boolean joycons = joycon(p) && joycon(q);
+            // Another maker's halves only when both are external (never a phone's own device); a Joy-Con is one by its name whatever Android calls it external
+            if (!joycons && !(p.external && q.external)) continue;
+            if (!joycons && p.vendor != 0 && q.vendor != 0 && q.vendor != p.vendor) continue;   // another maker's half, unless Android reports no vendor for one
             Pad l = p.half < 0 ? p : q, r = p.half > 0 ? p : q;
             if (host.pair(l, r) < -1) return false;   // the host could not pair them
             mate.put(l.id, r.id); mate.put(r.id, l.id);
@@ -131,6 +134,12 @@ final class PadOrder {
             return true;
         }
         return false;
+    }
+
+    /** Android's name for a Joy-Con, in any generation ("Joy-Con (L)", "JOYCON(R)", "Joy Con L") */
+    private static boolean joycon(Pad p) {
+        String n = p.name.toLowerCase(java.util.Locale.ROOT);
+        return n.contains("joy-con") || n.contains("joy con") || n.contains("joycon");
     }
 
     /** Player 1 for p when it is free or its device ranks worse; joining by its input, also when player 1's device is no controller (BUILT_IN or OTHER) */
@@ -153,11 +162,103 @@ final class PadOrder {
         return null;
     }
 
-    /** The gamepad-like devices connected, for the Player 1 choice */
-    List<Pad> known() { return new ArrayList<>(pads.values()); }
+    /** The gamepad-like devices connected, for the Player 1 choice: a paired pair once, as its left half */
+    List<Pad> known() {
+        List<Pad> out = new ArrayList<>();
+        for (Pad p : pads.values()) {
+            if (mate.containsKey(p.id) && p.half > 0) continue;   // the pair's left half lists it
+            out.add(pairedView(p));
+        }
+        return out;
+    }
 
-    /** The device on player 1, null for none */
-    Pad first() { return holderOfFirst(); }
+    /** The device on player 1 as its controller (a pair's left half), null for none */
+    Pad first() {
+        Pad p = holderOfFirst();
+        return p == null ? null : pairedView(p);
+    }
+
+    /** The pair p is part of, as one controller (the left half's descriptor and both names joined); p itself when it is not paired */
+    private Pad pairedView(Pad p) {
+        Integer m = mate.get(p.id);
+        if (m == null) return p;
+        Pad q = pads.get(m);
+        return q == null ? p : pairPad(p.half < 0 ? p : q);
+    }
+
+    /** Every half of a pair a controller of its own now (the host split them, GameActivity.splitJoycons): both play, each on its player */
+    void split() {
+        mate.clear();
+        for (Pad p : pads.values()) if (p.half != 0 && host.player(p.id) >= 0) playing.add(p.id);
+    }
+
+    /** The pair a and b, made with the host (GameActivity.mergeJoycons) */
+    void link(Pad a, Pad b) {
+        mate.put(a.id, b.id); mate.put(b.id, a.id);
+        if (playing.contains(a.id) || playing.contains(b.id)) { playing.add(a.id); playing.add(b.id); }
+    }
+
+    /** A device's player let go (the in-game panel's Disconnect): it has none until its next press connects it again (GameActivity.disconnectPlayer) */
+    void forgot(int id) {
+        playing.remove(id);
+        Integer m = mate.get(id); if (m != null) playing.remove(m);
+    }
+
+    /** The players with a controller (a pair as one), for the in-game panel's Controllers (GameActivity.players) */
+    Map<Integer, Pad> players() {
+        Map<Integer, Pad> out = new LinkedHashMap<>();
+        for (Pad p : pads.values()) {
+            int pl = host.player(p.id);
+            if (pl < 0 || out.containsKey(pl)) continue;
+            out.put(pl, pairedView(p));
+        }
+        return out;
+    }
+
+    /** The Pad of a device (a pair as one), null when it is not connected */
+    Pad pad(int id) { Pad p = pads.get(id); return p == null ? null : pairedView(p); }
+
+    /** A left and a right half connected and not paired, to merge (GameActivity.mergeJoycons), or null */
+    Pad[] halvesToMerge() {
+        Pad l = null, r = null;
+        for (Pad p : pads.values()) {
+            if (mate.containsKey(p.id)) continue;
+            if (p.half < 0 && l == null) l = p; else if (p.half > 0 && r == null) r = p;
+        }
+        return l != null && r != null ? new Pad[] {l, r} : null;
+    }
+
+    /** Whether two halves are paired now (the panel offers Split) */
+    boolean hasPair() { return !mate.isEmpty(); }
+
+    /** A pair as one controller for the Player 1 choice: the left half's descriptor (either half chooses the pair) and both names joined */
+    private Pad pairPad(Pad p) {
+        Pad q = pads.get(mate.get(p.id));
+        if (q == null) return p;
+        String key = chosen.equals(q.key) ? q.key : p.key;   // a choice kept as either half's descriptor checks the pair's one entry
+        return new Pad(p.id, key, pairName(p.name, q.name), p.external, p.full, p.vendor, p.half);
+    }
+
+    /** The two halves' names as one controller's, at word level: the common first and last words kept, the different middle joined with a slash ("Nintendo Switch Left/Right Joy-Con", "Joy-Con (L/R)") */
+    static String pairName(String a, String b) {
+        if (a == null) a = "";
+        if (b == null) b = "";
+        if (a.isEmpty() || b.isEmpty() || a.equals(b)) return a.isEmpty() ? b : a;
+        String[] x = a.split(" "), y = b.split(" ");
+        int p = 0, s = 0;
+        while (p < x.length && p < y.length && x[p].equals(y[p])) p++;
+        while (s < x.length - p && s < y.length - p && x[x.length - 1 - s].equals(y[y.length - 1 - s])) s++;
+        String ma = words(x, p, x.length - s), mb = words(y, p, y.length - s);
+        if (ma.startsWith("(") && ma.endsWith(")") && mb.startsWith("(") && mb.endsWith(")")) ma = "(" + ma.substring(1, ma.length() - 1) + "/" + mb.substring(1, mb.length() - 1) + ")";
+        else ma = ma + "/" + mb;
+        String pre = words(x, 0, p), suf = words(x, x.length - s, x.length);
+        return (pre.isEmpty() ? "" : pre + " ") + ma + (suf.isEmpty() ? "" : " " + suf);
+    }
+    private static String words(String[] w, int from, int to) {
+        StringBuilder s = new StringBuilder();
+        for (int i = from; i < to; i++) s.append(i > from ? " " : "").append(w[i]);
+        return s.toString();
+    }
 
     /** The Player 1 choice: a descriptor ("" = automatic). The chosen device, if it is connected, becomes player 1; automatic gives it to the best-ranked one */
     void choose(String key) {
