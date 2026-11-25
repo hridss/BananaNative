@@ -250,9 +250,13 @@ final class Profile {
      */
     String windowLabel(String choice, String name) {
         String r = scalePick(choice);
-        if (r == null || r.startsWith(choice + "=")) return name;
-        String c = r.substring(0, r.indexOf('='));
-        return size(c) == null ? name : name + " \u00b7 draws " + c + " here";
+        if (r == null) return name;
+        int eq = r.indexOf('='); if (eq <= 0) return name;
+        int sl = r.indexOf('/');
+        String c = r.substring(0, eq);
+        String out = r.startsWith(choice + "=") || size(c) == null ? name : name + " · draws " + c + " here";
+        if (sl > eq) out += " (" + modeName(r.substring(sl + 1).equals("handheld") ? 1 : 0) + ")";
+        return out;
     }
 
     static String modeName(int k) { return k == 0 ? Words.s("game_docked", "Docked") : Words.s("game_handheld", "Handheld"); }

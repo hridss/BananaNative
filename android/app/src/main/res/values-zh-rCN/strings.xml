@@ -248,6 +248,7 @@
     <string name="game_classic_render_passes">经典渲染通道</string>
     <string name="game_clear">清除</string>
     <string name="game_controller_panel">手柄面板</string>
+    <string name="game_controls_in_game_page">按键映射、按键标签和游戏语言在游戏页 › 控制里设置，重启后生效。</string>
     <string name="game_disconnect_controller">断开连接</string>
     <string name="game_merge_joycons">合并为一个手柄</string>
     <string name="game_split_joycons">拆分为两个手柄</string>

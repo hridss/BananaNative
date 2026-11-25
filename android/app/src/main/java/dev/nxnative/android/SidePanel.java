@@ -88,7 +88,7 @@ final class SidePanel extends FrameLayout {
     }
 
     // The ids of the choices a rebuild gives the focus back to (restyle)
-    private static final int ID_SIZE = 5000, ID_TEXT = 5100, ID_FIT = 5200, ID_MAP = 5300, ID_ONE = 5400, ID_LABEL = 5450, ID_RES = 5500, ID_RES_PRESET = 5590;
+    private static final int ID_SIZE = 5000, ID_TEXT = 5100, ID_FIT = 5200, ID_ONE = 5400, ID_LABEL = 5450, ID_RES = 5500, ID_RES_PRESET = 5590;
 
     SidePanel(Activity a, Rows rows) {
         super(a);
@@ -797,13 +797,15 @@ final class SidePanel extends FrameLayout {
         Overlay.rows(act, box, null);
     }
 
-    /** Controls: Controllers (players, Split / Merge of a Joy-Con pair), the on-screen controls, rumble, the phone's Motion sensitivity and the Button mapping shortcut */
+    /** Controls, live only (the scheme: Settings holds the defaults, a game's page its stored overrides, this panel what applies now): Controllers (players, Split / Merge
+     *  of a Joy-Con pair), the on-screen controls, rumble and the phone's Motion sensitivity. Button mapping, button labels and the game language are next-start settings
+     *  of the game page, said in one line here instead of repeated editors */
     private void controls() {
         controllersRows();
 
         head(Tx.s(R.string.common_on_screen_controls));
         rows.controls(box);
-        // Rumble: the game's vibration on the controller or the phone, this game's setting (Game settings › Rumble), applied at once (GameActivity.rumble)
+        head(Tx.s(R.string.common_rumble));
         android.widget.CheckBox rum = new android.widget.CheckBox(act);
         rum.setText(Tx.s(R.string.game_rumble_the_game_s_vibration));
         rum.setChecked(Prefs.rumble(act, game()));
@@ -814,7 +816,7 @@ final class SidePanel extends FrameLayout {
         box.addView(StepSlider.view(act, Tx.s(R.string.game_motion_sensitivity), Prefs.MOTION_NAMES, Prefs.motionSens(act, game()), "Slower", "Faster", motionHead::setText,
                 i -> { Prefs.motionSens(act, game(), i); Native.motionSens(Prefs.MOTION_PCT[i] / 100f); }));
 
-        nextStartRows();
+        note(Tx.s(R.string.game_controls_in_game_page));
     }
 
     /**
@@ -946,10 +948,10 @@ final class SidePanel extends FrameLayout {
             box.addView(g);
             return;
         }
-        Button r = row(ID_RES, winTitle, (Prefs.ownWindow(act, game()) ? "" : "Default · ") + Prefs.windowName(cur, false));
+        Button r = row(ID_RES, winTitle, (Prefs.ownWindow(act, game()) ? "" : "Default · ") + (p != null ? p.windowLabel(cur, Prefs.windowName(cur, false)) : Prefs.windowName(cur, false)));
         r.setOnClickListener(v -> {
             String[] labels = new String[Prefs.WINDOWS.length + 1];
-            labels[0] = Tx.s(R.string.game_default_value, Prefs.windowName(Prefs.defaultWindow(act, game()), false));
+            { Profile dp = Profile.of(game()); String dw = Prefs.windowName(Prefs.defaultWindow(act, game()), false); labels[0] = Tx.s(R.string.game_default_value, dp != null ? dp.windowLabel(Prefs.defaultWindow(act, game()), dw) : dw); }
             { Profile lp = Profile.of(game()); for (int li = 0; li < Prefs.WINDOWS.length; li++) labels[li + 1] = lp != null ? lp.windowLabel(Prefs.WINDOWS[li], Prefs.WINDOW_NAMES[li]) : Prefs.WINDOW_NAMES[li]; }   // a choice the game draws at another size says so (Profile.windowLabel)
             int checked = Prefs.ownWindow(act, game()) ? 1 + Math.max(0, java.util.Arrays.asList(Prefs.WINDOWS).indexOf(cur)) : 0;
             new AlertDialog.Builder(act).setTitle(winTitle).setSingleChoiceItems(labels, checked, (d, w) -> {
@@ -1072,41 +1074,6 @@ final class SidePanel extends FrameLayout {
             });
             box.addView(g);
         }
-    }
-
-    /**
-     * A shortcut to this game's Button mapping (DM_PAD_MAP), which the host reads only at its start: one compact row under the "Next start" heading, "Button mapping"
-     * then the mapping's summary in grey and a chevron. A borderless Button, so that look() gives it the panel's row height and text size and the D-pad can focus it.
-     * Game language is set in the launcher only (Game settings › Game language).
-     */
-    private void nextStartRows() {
-        if (!(act instanceof GameActivity)) return;
-        GameActivity ga = (GameActivity) act;
-        head(Tx.s(R.string.game_next_start));
-        Profile prof = Profile.of(game());
-        if (prof != null && !prof.options.isEmpty()) {
-            for (Profile.Option opt : prof.options) {
-                if (opt.live || opt.settingsOnly) continue;   // a settings-only option is the launcher's Game options alone
-                android.widget.CheckBox cb = new android.widget.CheckBox(act);
-                cb.setText(opt.label);
-                Profile.Option source = Profile.findImpliedBy(prof.options, opt, env -> Prefs.gameOption(act, game(), env));
-                if (source != null) {
-                    cb.setChecked(true);
-                    cb.setEnabled(false);
-                } else {
-                    cb.setChecked(Prefs.gameOption(act, game(), opt.env));
-                    cb.setOnCheckedChangeListener((b, on) -> {
-                        Prefs.gameOption(act, game(), opt.env, on);
-                        if (opt.hasImplies()) build();
-                    });
-                }
-                box.addView(cb);
-            }
-        }
-        String sum = PadMapUi.label(act, game());
-        Button map = row(ID_MAP, Tx.s(R.string.common_button_mapping), sum);
-        map.setContentDescription(Tx.s(R.string.game_button_mapping_applies, sum));
-        map.setOnClickListener(v -> PadMapUi.forGame(act, ga.game(), () -> restyle(ID_MAP)));
     }
 
     /** A row's press and focus highlight, in the focus frame's rounded shape (focusMoved): the theme's selectableItemBackground is square and showed past the frame's corners */

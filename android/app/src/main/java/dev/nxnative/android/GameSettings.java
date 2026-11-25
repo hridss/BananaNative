@@ -766,7 +766,7 @@ final class GameSettings {
         Profile p = Profile.of(id);
         if (p != null && p.modeOf(w) >= 0) return p.modeLabel(p.modeOf(w));   // the two-choice form (Profile.modes): Docked or Handheld
         String l = Prefs.windowName(w, false);
-        return l;
+        return p != null ? p.windowLabel(w, l) : l;
     }
 
     static String capLabel(MainActivity a, String id) {
@@ -965,7 +965,7 @@ final class GameSettings {
             return;
         }
         String[] labels = new String[Prefs.WINDOWS.length + 1];
-        labels[0] = Tx.s(R.string.game_default_value, Prefs.windowName(Prefs.defaultWindow(a, g.titleId), false));
+        { Profile dp = Profile.of(g.titleId); String dw = Prefs.windowName(Prefs.defaultWindow(a, g.titleId), false); labels[0] = Tx.s(R.string.game_default_value, dp != null ? dp.windowLabel(Prefs.defaultWindow(a, g.titleId), dw) : dw); }
         { Profile lp = Profile.of(g.titleId); for (int li = 0; li < Prefs.WINDOWS.length; li++) labels[li + 1] = lp != null ? lp.windowLabel(Prefs.WINDOWS[li], Prefs.WINDOW_NAMES[li]) : Prefs.WINDOW_NAMES[li]; }   // a choice the game draws at another size says so (Profile.windowLabel)
         int checked = Prefs.ownWindow(a, g.titleId) ? 1 + Math.max(0, Arrays.asList(Prefs.WINDOWS).indexOf(Prefs.gameWindow(a, g.titleId))) : 0;
         new PadFocus.Builder(a).setTitle(windowTitle(g) + " · " + g.name).setSingleChoiceItems(labels, checked, (x, w) -> {

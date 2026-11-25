@@ -249,6 +249,7 @@
     <string name="game_classic_render_passes">Klassische Render-Passes</string>
     <string name="game_clear">Leeren</string>
     <string name="game_controller_panel">Controller-Panel</string>
+    <string name="game_controls_in_game_page">Tastenbelegung, Tastenbezeichnungen und Spielsprache stehen auf der Spielseite unter Steuerung; sie gelten ab dem nächsten Start.</string>
     <string name="game_disconnect_controller">Trennen</string>
     <string name="game_merge_joycons">Zu einem Controller zusammenführen</string>
     <string name="game_split_joycons">In zwei Controller aufteilen</string>

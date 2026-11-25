@@ -248,6 +248,7 @@
     <string name="game_classic_render_passes">經典算繪通道</string>
     <string name="game_clear">清除</string>
     <string name="game_controller_panel">控制器面板</string>
+    <string name="game_controls_in_game_page">按鍵映射、按鍵標籤和遊戲語言在遊戲頁 › 控制裡設定，重新啟動後生效。</string>
     <string name="game_disconnect_controller">中斷連線</string>
     <string name="game_merge_joycons">合併為一個控制器</string>
     <string name="game_split_joycons">拆分為兩個控制器</string>

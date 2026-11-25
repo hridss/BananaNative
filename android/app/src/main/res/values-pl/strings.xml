@@ -251,6 +251,7 @@
     <string name="game_classic_render_passes">Klasyczne przebiegi renderowania</string>
     <string name="game_clear">Wyczyść</string>
     <string name="game_controller_panel">Panel kontrolera</string>
+    <string name="game_controls_in_game_page">Przypisanie przycisków, etykiety i język gry są na stronie gry › Sterowanie; działają od następnego uruchomienia.</string>
     <string name="game_disconnect_controller">Rozłącz</string>
     <string name="game_merge_joycons">Połącz w jeden kontroler</string>
     <string name="game_split_joycons">Rozdziel na dwa kontrolery</string>

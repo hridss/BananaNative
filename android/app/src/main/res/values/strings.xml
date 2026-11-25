@@ -266,6 +266,7 @@
     <string name="game_classic_render_passes">Classic render passes</string>
     <string name="game_clear">Clear</string>
     <string name="game_controller_panel">Controller panel</string>
+    <string name="game_controls_in_game_page">Button mapping, button labels and the game language are in the game page › Controls; they apply at the next start.</string>
     <string name="game_disconnect_controller">Disconnect</string>
     <string name="game_merge_joycons">Merge into one controller</string>
     <string name="game_split_joycons">Split into two controllers</string>

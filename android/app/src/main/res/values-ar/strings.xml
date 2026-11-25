@@ -253,6 +253,7 @@
     <string name="game_classic_render_passes">تمريرات العرض الكلاسيكية</string>
     <string name="game_clear">مسح</string>
     <string name="game_controller_panel">لوحة ذراع التحكم</string>
+    <string name="game_controls_in_game_page">تعيين الأزرار وتسمياتها ولغة اللعبة في صفحة اللعبة › التحكم؛ تُطبَّق عند التشغيل التالي.</string>
     <string name="game_disconnect_controller">قطع الاتصال</string>
     <string name="game_merge_joycons">الدمج في وحدة تحكم واحدة</string>
     <string name="game_split_joycons">التقسيم إلى وحدتي تحكم</string>
