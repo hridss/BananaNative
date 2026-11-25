@@ -15,6 +15,12 @@ NXHOST_API int nxhost_input_device_player(int device);   // -1 when the device h
 // The device becomes player 1 (connected first if it was not; name as for added): player 1's holder moves to the device's old player (pad_slot_first). Both players' buttons
 // and sticks are let go. 0, or -1 with every player taken
 NXHOST_API int nxhost_input_device_first(int device, const char *name);
+// Two devices as the two halves of one controller (a left and a right Joy-Con, pad_pair.h): both take one player, the left half's single stick is the left stick and the
+// right half's the right one, and a half that goes leaves the player to the other half, which plays alone from then on. Make the pair before the second device's first
+// event. Every pair is forgotten by nxhost_input_pairs_clear (the launcher makes them again at each start). The player (0..7), -1 when the pair has none yet, or -2 when
+// the two cannot be paired (a negative id, every pair in use)
+NXHOST_API int nxhost_input_pair(int left, int right);
+NXHOST_API void nxhost_input_pairs_clear(void);
 // KeyEvent from dispatchKeyEvent: keycode and down (ACTION_DOWN; repeats may be passed). True when it is a pad button: the launcher returns true and does not pass it on
 NXHOST_API bool nxhost_input_key(int device, int keycode, bool down);
 // MotionEvent from dispatchGenericMotionEvent (SOURCE_JOYSTICK / SOURCE_GAMEPAD): one axis (MotionEvent.AXIS_*), or every axis of one event at once (published once)

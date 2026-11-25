@@ -63,6 +63,8 @@ void nxhost_motion_sens(float factor);
 #pragma weak nxhost_fps_cap_status
 #pragma weak nxhost_input_device_player
 #pragma weak nxhost_input_device_first
+#pragma weak nxhost_input_pair
+#pragma weak nxhost_input_pairs_clear
 #pragma weak nxhost_rumble_callback
 #pragma weak nxhost_rumble_route
 #pragma weak nxhost_fps_limit_set
@@ -510,6 +512,12 @@ JNIEXPORT jint JNICALL Java_dev_nxnative_android_Native_selftest(JNIEnv *env, jc
 
 JNIEXPORT jint JNICALL Java_dev_nxnative_android_Native_devicePlayer(JNIEnv *env, jclass cls, jint device) {
     (void)env; (void)cls; return nxhost_input_device_player ? nxhost_input_device_player(device) : -1;
+}
+JNIEXPORT jint JNICALL Java_dev_nxnative_android_Native_devicePair(JNIEnv *env, jclass cls, jint left, jint right) {
+    (void)env; (void)cls; return nxhost_input_pair ? nxhost_input_pair(left, right) : -2;
+}
+JNIEXPORT void JNICALL Java_dev_nxnative_android_Native_devicePairsClear(JNIEnv *env, jclass cls) {
+    (void)env; (void)cls; if (nxhost_input_pairs_clear) nxhost_input_pairs_clear();
 }
 JNIEXPORT jint JNICALL Java_dev_nxnative_android_Native_deviceFirst(JNIEnv *env, jclass cls, jint device, jstring name) {   // PadOrder: this device is player 1
     (void)cls; if (!nxhost_input_device_first) return -1;

@@ -45,6 +45,12 @@ final class Native {
 
     static native void deviceRemoved(int device);
 
+    /** Two halves of one controller (a left and a right Joy-Con) as one player: the player it has (0..7), -1 when none yet, -2 when the host cannot pair them. */
+    static native int devicePair(int left, int right);
+
+    /** Every pair forgotten (the launcher pairs the halves it finds again at each start). */
+    static native void devicePairsClear();
+
     /** A gamepad / D-pad key; true when it is a pad button (the event is consumed). */
     static native boolean key(int device, int keyCode, boolean down);
 

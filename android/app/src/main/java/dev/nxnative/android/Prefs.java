@@ -128,6 +128,10 @@ final class Prefs {
     static String padFirst(Context c) { return of(c).getString("pad_first", ""); }
     static void padFirst(Context c, String key) { of(c).edit().putString("pad_first", key == null ? "" : key).commit(); }
 
+    /** Two Joy-Cons as one controller (PadOrder): a left and a right half take one player together, as in a grip; on by default. Off: each half is a controller of its own, for two players with one Joy-Con each */
+    static boolean pairJoycons(Context c) { return of(c).getBoolean("pair_joycons", true); }
+    static void pairJoycons(Context c, boolean on) { of(c).edit().putBoolean("pair_joycons", on).commit(); }
+
     /** Button mapping (PadMap, DM_PAD_MAP): Settings' default ("" = none: the host's default), then each game's own (unset = Settings'; "" = none for this game) */
     static String padMap(Context c) { return of(c).getString("pad_map", ""); }
     static void padMapDefault(Context c, String spec) { of(c).edit().putString("pad_map", spec == null ? "" : spec).commit(); }

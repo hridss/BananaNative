@@ -178,6 +178,8 @@
     <string name="settings_needs_no_game">Nie wymaga gry</string>
     <string name="settings_on_the_controller_or_the">Na kontrolerze lub na telefonie bez niego</string>
     <string name="settings_overlay">Nakładka</string>
+    <string name="settings_pair_joycons">Dwa Joy-Cony, jeden kontroler</string>
+    <string name="settings_pair_joycons_note">Lewy i prawy Joy-Con działają jako jeden kontroler, jak w uchwycie. Wyłączone: każdy jest osobnym kontrolerem, dla dwóch graczy z jednym Joy-Conem każdy</string>
     <string name="settings_picture_from_the_release_notes">Obraz z notatek wydania</string>
     <string name="settings_update_channel">Kanał aktualizacji</string>
     <string name="settings_channel_stable">Stable</string>

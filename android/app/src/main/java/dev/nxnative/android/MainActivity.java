@@ -850,6 +850,9 @@ public final class MainActivity extends Activity {
                 .setNegativeButton(Tx.s(R.string.common_cancel), null).show());
         padPanel.value(padPanelLabel(Prefs.panelPad(this)));
         ctl.addView(padPanel.view);
+        // Two Joy-Cons as one controller (PadOrder): a left and a right half take one player together, as in a grip; off: each half a player of its own
+        ctl.addView(new Ui.Setting(this, "🤝", Tx.s(R.string.settings_pair_joycons), null).toggle(this, Prefs.pairJoycons(this), (b, on) -> Prefs.pairJoycons(this, on))
+                .value(Tx.s(R.string.settings_pair_joycons_note)).view);
         resRow = new Ui.Setting(this, "🖼️", Tx.s(R.string.common_resolution), v -> gameRes()).chevron(this);
         perf.addView(resRow.view);
         if (!Profile.anyResolution()) resRow.view.setVisibility(View.GONE);   // no game of this APK has a window_fn or graphics_scale lever: the default would do nothing

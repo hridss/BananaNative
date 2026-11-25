@@ -56,6 +56,27 @@ static void t_pad(void) {
     }
     CHECK(nxin_pad_axis(&p, AA_X, 0.0f / 0.0f) && p.lx == 0, "NaN reads 0");
 }
+// A half of a paired controller (pad_pair.h): its one stick on its side's stick, whichever pair Android reports it on; the rest as a whole pad
+static void t_half(void) {
+    nxin_pad l = {0};
+    int ax[10] = {AA_X, AA_Y, AA_RX, AA_RY, AA_Z, AA_RZ, AA_HAT_X, AA_HAT_Y, AA_LTRIGGER, AA_RTRIGGER};
+    float v[10] = {0.6f, -0.4f, 0, 0, 0, 0, 0, 0, 0, 0};
+    CHECK(nxin_pad_axes_side(&l, -1, ax, v, 10) && l.lx == 0.6f && l.ly == -0.4f && l.rx == 0 && l.ry == 0, "the left half's X / Y are the left stick: %f %f", l.lx, l.ly);
+    nxin_pad r = {0}; v[0] = v[1] = 0; v[2] = 0.3f; v[3] = -0.7f;
+    CHECK(nxin_pad_axes_side(&r, 1, ax, v, 10) && r.rx == 0.3f && r.ry == -0.7f && r.lx == 0 && r.ly == 0, "the right half's RX / RY are the right stick: %f %f", r.rx, r.ry);
+    v[0] = 0.5f; v[1] = 0.5f; v[2] = 0; v[3] = 0;   // Android's generic HID mapping puts a half's one stick on X / Y
+    CHECK(nxin_pad_axes_side(&r, 1, ax, v, 10) && r.rx == 0.5f && r.ry == 0.5f && r.lx == 0, "the right half's X / Y are the right stick too: %f %f", r.rx, r.ry);
+    v[0] = 0.2f; v[1] = 0; v[2] = 0.6f; v[3] = 0;   // both pairs in one event: the one deflected more is the stick
+    nxin_pad q = {0};
+    CHECK(nxin_pad_axes_side(&q, 1, ax, v, 10) && q.rx == 0.6f && q.ry == 0, "the deflected pair wins: %f %f", q.rx, q.ry);
+    float u[10] = {0, 0, 0, 0, 0, 0, -1, 1, 0.8f, 0};   // the hat and the triggers as on a whole pad
+    nxin_pad t = {0};
+    CHECK(nxin_pad_axes_side(&t, -1, ax, u, 10) && t.lx == 0 && t.ly == 0 && t.hat_x == -1 && t.hat_y == 1 && t.lt == 0.8f, "hat and trigger on a half");
+    int bad[1] = {40}; CHECK(!nxin_pad_axes_side(&t, -1, bad, u, 1), "no used axis on a half");
+    int z[6] = {AA_X, AA_Y, AA_RX, AA_RY, AA_Z, AA_RZ}; float zv[6] = {0.1f, 0.2f, 0, 0, 0.9f, -0.9f};
+    nxin_pad w = {0};
+    CHECK(nxin_pad_axes_side(&w, 0, z, zv, 6) && w.rx == 0.9f && w.ry == -0.9f && w.lx == 0.1f && w.ly == 0.2f, "side 0 is a whole pad");
+}
 static int ctl(const nxin_touch *t, uint64_t b) { for (int i = 0; i < t->n; i++) if (t->c[i].kind == NXT_BUTTON && t->c[i].buttons == b) return i; return -1; }
 static int stick(const nxin_touch *t, int s) { for (int i = 0; i < t->n; i++) if (t->c[i].kind == NXT_STICK && t->c[i].stick == s) return i; return -1; }
 static void t_touch(void) {
@@ -189,7 +210,7 @@ static void t_fit(void) {
 }
 int main(void) {
     t_map(); t_fit();
-    t_keys(); t_pad(); t_touch(); t_layout(); t_motion(); t_shake();
+    t_keys(); t_pad(); t_half(); t_touch(); t_layout(); t_motion(); t_shake();
     if (fails) { printf("t_android_input: %d failures\n", fails); return 1; }
     printf("t_android_input: ok\n");
     return 0;

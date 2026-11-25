@@ -1264,8 +1264,14 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
                 return pl;
             }
             @Override public int player(int id) { return Native.devicePlayer(id); }
-        }, Prefs.padFirst(this));
+            @Override public int pair(PadOrder.Pad l, PadOrder.Pad r) {
+                int pl = Native.devicePair(l.id, r.id);
+                if (pl >= -1) { padConnected(l.id); padConnected(r.id); }   // -1: paired, no player yet
+                return pl;
+            }
+        }, Prefs.padFirst(this), Prefs.pairJoycons(this));
         ui.postDelayed(padPlayers, 1000);
+        Native.devicePairsClear();   // the pairs the launcher makes are this screen's: the halves it finds are paired again below
         java.util.List<PadOrder.Pad> now = new java.util.ArrayList<>();
         for (int id : inputManager.getInputDeviceIds()) { InputDevice d = InputDevice.getDevice(id); if (gamepadLike(d)) now.add(pad(d)); }
         order.start(now);   // best first: an external controller is player 1 before a phone's own gamepad-like device (PadOrder)
@@ -1467,7 +1473,26 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
         boolean[] keys = d.hasKeys(KeyEvent.KEYCODE_BUTTON_A, KeyEvent.KEYCODE_BUTTON_B);
         boolean full = keys[0] && keys[1] && d.getMotionRange(MotionEvent.AXIS_X, InputDevice.SOURCE_JOYSTICK) != null
                 && d.getMotionRange(MotionEvent.AXIS_Y, InputDevice.SOURCE_JOYSTICK) != null;
-        return new PadOrder.Pad(d.getId(), d.getDescriptor(), d.getName(), d.isExternal(), full, d.getVendorId());
+        return new PadOrder.Pad(d.getId(), d.getDescriptor(), d.getName(), d.isExternal(), full, d.getVendorId(), half(d));
+    }
+
+    /**
+     * Which half of a split controller the device is (PadOrder pairs a left and a right half as one controller): the face buttons and no D-pad (neither its keys nor a
+     * hat axis) is the right half (a Joy-Con R), the D-pad and no face buttons the left one (a Joy-Con L); a pad with both, or with neither, is whole. When Android's
+     * buttons do not tell them apart, the name Android gives a Joy-Con does ("Joy-Con (L)", "Joy-Con 2 (R)"); never another device's.
+     */
+    private static int half(InputDevice d) {
+        boolean[] f = d.hasKeys(KeyEvent.KEYCODE_BUTTON_A, KeyEvent.KEYCODE_BUTTON_B, KeyEvent.KEYCODE_BUTTON_X, KeyEvent.KEYCODE_BUTTON_Y);
+        boolean[] p = d.hasKeys(KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT);
+        boolean face = f[0] || f[1] || f[2] || f[3], dpad = p[0] || p[1] || p[2] || p[3];
+        boolean hat = d.getMotionRange(MotionEvent.AXIS_HAT_X, InputDevice.SOURCE_JOYSTICK) != null;
+        if (face && !dpad && !hat) return PadOrder.HALF_RIGHT;
+        if (!face && (dpad || hat)) return PadOrder.HALF_LEFT;
+        String n = d.getName() == null ? "" : d.getName();
+        if (!n.contains("Joy-Con") && !n.contains("Joy Con")) return 0;
+        if (n.contains("(L)") || n.endsWith(" L")) return PadOrder.HALF_LEFT;
+        if (n.contains("(R)") || n.endsWith(" R")) return PadOrder.HALF_RIGHT;
+        return 0;
     }
     /** A pad key that gives a device without a player one (the keys the host takes: gamepad buttons and the D-pad) */
     private static boolean padKey(int code) {
@@ -1499,7 +1524,7 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
         Native.deviceRemoved(id); deviceAxes.remove(id);
         if (padMotion != null) padMotion.detach(id);
         if (order != null) order.removed(id);
-        if (pads.remove(id)) controls.setGamepad(!pads.isEmpty());
+        if (pads.remove(id)) { controls.setGamepad(!pads.isEmpty()); if (rumble != null) rumble.reroute(pads); }   // a pair's other half may have had the player's vibrator
     }
     private void padConnected(int id) {
         if (!pads.add(id)) return;

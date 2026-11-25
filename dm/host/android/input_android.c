@@ -5,6 +5,7 @@
 #include "../hle_haptics.h"
 #include "../pad_slots.h"
 #include "../pad_join.h"
+#include "../pad_pair.h"
 #include "input_android.h"
 #include "pad_motion.h"
 #include <android/looper.h>
@@ -46,7 +47,19 @@ static void known_set(int device, const char *name, int labelled) {   // under g
 static int known_of(int device) { for (int i = 0; i < 32; i++) if (g_known[i].name[0] && g_known[i].device == device) return i; return -1; }
 
 static void touch_once(void) { if (!g_touch_init) { nxin_touch_init(&g_touch); g_touch_init = 1; } }
-static const void *owner(int device) { return (const void *)(intptr_t)((int64_t)device + 0x100000000ll); }   // never NULL, even for device 0
+// The two halves of one controller (pad_pair.h): a Joy-Con L and a Joy-Con R, which the launcher pairs when they connect
+static pad_pairs g_pairs = {{-1, -1, -1, -1}, {-1, -1, -1, -1}};
+static const void *raw_owner(int device) { return (const void *)(intptr_t)((int64_t)device + 0x100000000ll); }   // never NULL, even for device 0
+// The slot's owner: for a paired device, whichever half holds the player (the one that took it first), else the left half
+static int pair_member(int device) {
+    int mate = pad_pair_mate(&g_pairs, device);
+    if (mate < 0) return device;
+    int l = pad_pair_side(&g_pairs, device) < 0 ? device : mate, r = l == device ? mate : device;
+    if (pad_slot_of(&g_slots, raw_owner(l)) >= 0) return l;
+    if (pad_slot_of(&g_slots, raw_owner(r)) >= 0) return r;
+    return l;
+}
+static const void *owner(int device) { return raw_owner(pair_member(device)); }
 static float deadzone(void) {
     if (g_dz < 0) { const char *e = getenv("DM_PAD_DEADZONE"); g_dz = e ? (float)atof(e) : 0.1f; }
     return g_dz;
@@ -124,7 +137,8 @@ static void on_assign(int op, int a, int b) {
 }
 static int take(int device, const char *name, int labelled) {   // under g_mu
     int had = pad_slot_of(&g_slots, owner(device)) >= 0, k = known_of(device);
-    if (name && !had) known_set(device, name, labelled);
+    // A paired half is known by its name too, though it never takes a slot of its own (its pair has one): the game may let the pair go, and its next press connects it again
+    if (name && (!had || pad_pair_mate(&g_pairs, device) >= 0)) known_set(device, name, labelled);
     else if (!name && !had && k >= 0) { name = g_known[k].name; labelled = g_known[k].labelled; }   // connected again after the game or the join screen let it go
     int p = pad_slot_take(&g_slots, owner(device), name);
     if (p < 0) { if (!had) LOG("[RED] input: device %d (%s): every player is taken", device, name ? name : "?"); return -1; }
@@ -143,7 +157,22 @@ int nxhost_input_device_added(int device, const char *name, int labelled) {
 }
 void nxhost_input_device_removed(int device) {
     pthread_mutex_lock(&g_mu);
-    int p = pad_slot_free(&g_slots, owner(device));
+    const void *was = owner(device);   // the pair's slot, if the pair has one
+    int mate = pad_pair_remove(&g_pairs, device);
+    if (mate >= 0) {   // one half went: the other half is a controller of its own now, and keeps the player
+        int q = pad_slot_of(&g_slots, was);
+        if (q >= 0) {
+            if (was == raw_owner(device)) g_slots.owner[q] = raw_owner(mate);   // the half that held the player went: the other takes the slot over
+            memset(&g_pad[q], 0, sizeof g_pad[q]); dm_pad_set_player(q, 0, 0, 0, 0, 0);
+            dm_pad_players(pad_slot_mask(&g_slots)); dm_motion_clear(q); pad_motion_cal_reset(&g_pm_cal[q]); g_pm_log[q] = 0;
+            LOG("input: device %d (player %d) removed: device %d is the controller alone now", device, q + 1, mate);
+        }
+        if (g_joining) { pad_join_gone(&g_join, was); pthread_cond_broadcast(&g_join_cv); }
+        int k = known_of(device); if (k >= 0) g_known[k].name[0] = 0;
+        pthread_mutex_unlock(&g_mu);
+        return;
+    }
+    int p = pad_slot_free(&g_slots, was);
     if (p >= 0) {
         memset(&g_pad[p], 0, sizeof g_pad[p]); dm_pad_set_player(p, 0, 0, 0, 0, 0);
         dm_pad_players(pad_slot_mask(&g_slots)); dm_motion_clear(p); pad_motion_cal_reset(&g_pm_cal[p]); g_pm_log[p] = 0;
@@ -156,7 +185,7 @@ void nxhost_input_device_removed(int device) {
                 (int)((intptr_t)g_slots.owner[p] - 0x100000000ll), g_slots.last[p], q + 1, p + 1, device);
         }
     }
-    if (g_joining) { pad_join_gone(&g_join, owner(device)); pthread_cond_broadcast(&g_join_cv); }
+    if (g_joining) { pad_join_gone(&g_join, was); pthread_cond_broadcast(&g_join_cv); }
     int k = known_of(device); if (k >= 0) g_known[k].name[0] = 0;
     pthread_mutex_unlock(&g_mu);
 }
@@ -174,6 +203,28 @@ int nxhost_input_device_first(int device, const char *name) {
     pthread_mutex_unlock(&g_mu); return p;
 }
 int nxhost_input_device_player(int device) { pthread_mutex_lock(&g_mu); int p = pad_slot_of(&g_slots, owner(device)); pthread_mutex_unlock(&g_mu); return p; }
+// A left and a right Joy-Con as one controller (pad_pair.h): both feed one player. Made before the second half's first event, so it never takes a player of its own.
+// If both halves already have players (paired while playing), the pair keeps the lower one and the other is freed. The player (0..7), -1 when the pair has none yet, or
+// -2 when the two cannot be paired
+int nxhost_input_pair(int left, int right) {
+    pthread_mutex_lock(&g_mu);
+    if (!pad_pair_add(&g_pairs, left, right)) { pthread_mutex_unlock(&g_mu); return -2; }
+    int pl = pad_slot_of(&g_slots, raw_owner(left)), pr = pad_slot_of(&g_slots, raw_owner(right));
+    if (pl >= 0 && pr >= 0 && pl != pr) {
+        int drop = pl < pr ? pr : pl;
+        pad_slot_free(&g_slots, drop == pl ? raw_owner(left) : raw_owner(right));
+        memset(&g_pad[drop], 0, sizeof g_pad[drop]); dm_pad_set_player(drop, 0, 0, 0, 0, 0);
+        dm_motion_clear(drop); pad_motion_cal_reset(&g_pm_cal[drop]); g_pm_log[drop] = 0;
+        LOG("input: device %d (player %d) joins device %d as one controller: its own player is freed", drop == pl ? left : right, drop + 1, drop == pl ? right : left);
+    }
+    int p = pad_slot_of(&g_slots, owner(left));
+    dm_pad_players(pad_slot_mask(&g_slots));
+    if (p >= 0) publish_pad(p);
+    LOG("input: devices %d and %d are one controller: the left and the right half%s", left, right, p >= 0 ? "" : " (no player yet)");
+    pthread_mutex_unlock(&g_mu);
+    return p;
+}
+void nxhost_input_pairs_clear(void) { pthread_mutex_lock(&g_mu); pad_pairs_clear(&g_pairs); pthread_mutex_unlock(&g_mu); }
 bool nxhost_input_key(int device, int keycode, bool down) {
     pthread_mutex_lock(&g_mu);
     const nxin_map *m = pad_map(); int src = nxin_src_of_key(keycode);
@@ -201,13 +252,14 @@ bool nxhost_input_key(int device, int keycode, bool down) {
     return true;
 }
 bool nxhost_input_axes(int device, const int *axes, const float *values, int n) {
-    nxin_pad probe = {0};
-    if (!nxin_pad_axes(&probe, axes, values, n)) return false;
     pthread_mutex_lock(&g_mu);
+    int side = pad_pair_side(&g_pairs, device);   // a half's one stick goes to its side's stick
+    nxin_pad probe = {0};
+    if (!nxin_pad_axes_side(&probe, side, axes, values, n)) { pthread_mutex_unlock(&g_mu); return false; }
     if (g_held) { pthread_mutex_unlock(&g_mu); return true; }
     // A known controller without a player (the game or the join screen let it go) connects again on a button press, as on a console, not on a stick
     int p = pad_slot_of(&g_slots, owner(device)) < 0 && known_of(device) >= 0 ? -1 : take(device, NULL, 0);
-    if (p >= 0) { nxin_pad_axes(&g_pad[p], axes, values, n); publish_pad(p); }
+    if (p >= 0) { nxin_pad_axes_side(&g_pad[p], side, axes, values, n); publish_pad(p); }
     pthread_mutex_unlock(&g_mu);
     return true;
 }
@@ -403,6 +455,8 @@ static int pad_motion_off(void) { static int off = -1; if (off < 0) off = env_of
 bool nxhost_input_motion(int device, const float acc[3], const float gyro[3]) {
     if (pad_motion_off()) return false;
     pthread_mutex_lock(&g_mu);
+    // A pair's two halves each have a sensor; one source for the player, the right half's (the one in the aiming hand), so two orientations never interleave
+    if (pad_pair_side(&g_pairs, device) < 0) { pthread_mutex_unlock(&g_mu); return true; }
     int p = pad_slot_of(&g_slots, owner(device));
     if (p >= 0 && !g_held) {
         float a[3], w[3]; pad_motion_feed(&g_pm_cal[p], acc, gyro, now_ns(), a, w);

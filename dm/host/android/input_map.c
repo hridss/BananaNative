@@ -88,6 +88,23 @@ int nxin_pad_axes(nxin_pad *p, const int *axes, const float *v, int n) {
     for (int i = 0; i < n; i++) if (!(z && (axes[i] == AA_RX || axes[i] == AA_RY))) used |= nxin_pad_axis(p, axes[i], v[i]);
     return used;
 }
+int nxin_pad_axes_side(nxin_pad *p, int side, const int *axes, const float *v, int n) {
+    if (!side) return nxin_pad_axes(p, axes, v, n);
+    float stick[3][2] = {{0}}; int has[3] = {0};   // X / Y, RX / RY, Z / RZ
+    int used = 0;
+    for (int i = 0; i < n; i++) {
+        int k = axes[i] == AA_X || axes[i] == AA_Y ? 0 : axes[i] == AA_RX || axes[i] == AA_RY ? 1 : axes[i] == AA_Z || axes[i] == AA_RZ ? 2 : -1;
+        if (k < 0) { used |= nxin_pad_axis(p, axes[i], v[i]); continue; }
+        stick[k][axes[i] == AA_X || axes[i] == AA_RX || axes[i] == AA_Z ? 0 : 1] = clamp1(v[i]);
+        has[k] = 1;
+    }
+    int best = -1; float most = -1;
+    for (int k = 0; k < 3; k++) if (has[k]) { float m = stick[k][0] * stick[k][0] + stick[k][1] * stick[k][1]; if (m > most) { most = m; best = k; } }
+    if (best < 0) return used;
+    if (side > 0) { p->rx = stick[best][0]; p->ry = stick[best][1]; }
+    else { p->lx = stick[best][0]; p->ly = stick[best][1]; }
+    return 1;
+}
 void nxin_stick(float x, float y, float dz, int32_t *ox, int32_t *oy) {
     if (!(dz >= 0)) dz = 0; if (dz > 0.9f) dz = 0.9f;
     x = clamp1(x); y = clamp1(y);

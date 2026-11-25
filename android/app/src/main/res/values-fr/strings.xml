@@ -178,6 +178,8 @@
     <string name="settings_needs_no_game">Ne demande aucun jeu</string>
     <string name="settings_on_the_controller_or_the">Sur la manette, ou sur le téléphone sans manette</string>
     <string name="settings_overlay">Surimpression</string>
+    <string name="settings_pair_joycons">Deux Joy-Con, une manette</string>
+    <string name="settings_pair_joycons_note">Un Joy-Con gauche et un droit jouent comme une seule manette, comme dans une poignée. Désactivé : chacun est une manette à part, pour deux joueurs avec un Joy-Con chacun</string>
     <string name="settings_picture_from_the_release_notes">Image des notes de version</string>
     <string name="settings_update_channel">Canal de mise à jour</string>
     <string name="settings_channel_stable">Stable</string>

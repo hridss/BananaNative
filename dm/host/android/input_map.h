@@ -46,6 +46,10 @@ int nxin_pad_axis(nxin_pad *p, int axis, float v);                     // 1 when
 // One MotionEvent's axes (only those the device has: InputDevice.getMotionRange). A device that has Z / RZ has its right stick there (Android's key layouts put it there,
 // with the triggers on LTRIGGER / RTRIGGER), and its RX / RY are left out, so a pad that also reports RX / RY as idle or as triggers does not pull the stick back. Returns 1 when any is used
 int nxin_pad_axes(nxin_pad *p, const int *axes, const float *values, int n);
+// One half of a paired controller (side -1 the left, 1 the right; 0: a whole pad, as nxin_pad_axes). A half has one stick, which Android may report as X / Y, RX / RY
+// or Z / RZ: the pair deflected most is the half's stick, and it is the left stick for the left half and the right stick for the right one. The other axes (triggers, hat)
+// are as on a whole pad. 1 when any value was used
+int nxin_pad_axes_side(nxin_pad *p, int side, const int *axes, const float *values, int n);
 // Buttons and sticks for dm_pad_set_player: stick y up, ±DM_STICK_MAX, a radial dead zone (0..0.9) rescaled to the full range
 void nxin_pad_out(nxin_pad *p, float deadzone, uint64_t *buttons, int32_t *lx, int32_t *ly, int32_t *rx, int32_t *ry);
 void nxin_stick(float x, float y, float deadzone, int32_t *ox, int32_t *oy);   // one stick, Android axes in (y down), Switch axes out (y up)

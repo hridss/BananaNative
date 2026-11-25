@@ -178,6 +178,8 @@
     <string name="settings_needs_no_game">Oyun gerektirmez</string>
     <string name="settings_on_the_controller_or_the">Kumandada veya kumandasız telefonda</string>
     <string name="settings_overlay">Bindirme</string>
+    <string name="settings_pair_joycons">İki Joy-Con, tek kontrolcü</string>
+    <string name="settings_pair_joycons_note">Sol ve sağ Joy-Con, tutucudaki gibi tek kontrolcü olarak çalışır. Kapalı: her biri ayrı bir kontrolcüdür; iki oyuncu birer Joy-Con kullanır</string>
     <string name="settings_picture_from_the_release_notes">Sürüm notlarından resim</string>
     <string name="settings_update_channel">Güncelleme kanalı</string>
     <string name="settings_channel_stable">Stable</string>

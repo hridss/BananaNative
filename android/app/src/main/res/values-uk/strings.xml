@@ -178,6 +178,8 @@
     <string name="settings_needs_no_game">Не потребує гри</string>
     <string name="settings_on_the_controller_or_the">На геймпаді або на екрані телефона без нього</string>
     <string name="settings_overlay">Оверлей</string>
+    <string name="settings_pair_joycons">Два Joy-Con — один контролер</string>
+    <string name="settings_pair_joycons_note">Лівий і правий Joy-Con працюють як один контролер, як у тримачі. Вимкнено: кожен є окремим контролером, для двох гравців по одному Joy-Con</string>
     <string name="settings_picture_from_the_release_notes">Зображення з приміток до релізу</string>
     <string name="settings_update_channel">Канал оновлень</string>
     <string name="settings_channel_stable">Stable</string>

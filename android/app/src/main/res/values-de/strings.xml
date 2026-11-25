@@ -178,6 +178,8 @@
     <string name="settings_needs_no_game">Braucht kein Spiel</string>
     <string name="settings_on_the_controller_or_the">Am Controller oder am Handy ohne Controller</string>
     <string name="settings_overlay">Overlay</string>
+    <string name="settings_pair_joycons">Zwei Joy-Cons, ein Controller</string>
+    <string name="settings_pair_joycons_note">Ein linker und ein rechter Joy-Con spielen als ein Controller, wie im Grip. Aus: Jeder ist ein eigener Controller, für zwei Spieler mit je einem Joy-Con</string>
     <string name="settings_picture_from_the_release_notes">Bild aus den Versionshinweisen</string>
     <string name="settings_update_channel">Update-Kanal</string>
     <string name="settings_channel_stable">Stable</string>

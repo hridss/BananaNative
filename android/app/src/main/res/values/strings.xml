@@ -193,6 +193,8 @@
     <string name="settings_needs_no_game">Needs no game</string>
     <string name="settings_on_the_controller_or_the">On the controller, or the phone without one</string>
     <string name="settings_overlay">Overlay</string>
+    <string name="settings_pair_joycons">Two Joy-Cons, one controller</string>
+    <string name="settings_pair_joycons_note">A left and a right Joy-Con play as one controller, as in a grip. Off: each is a controller of its own, for two players with one Joy-Con each</string>
     <string name="settings_picture_from_the_release_notes">Picture from the release notes</string>
     <string name="settings_update_channel">Update channel</string>
     <string name="settings_channel_stable">Stable</string>

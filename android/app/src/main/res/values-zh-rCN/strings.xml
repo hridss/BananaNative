@@ -178,6 +178,8 @@
     <string name="settings_needs_no_game">无需游戏</string>
     <string name="settings_on_the_controller_or_the">使用手柄，或不带手柄时使用手机</string>
     <string name="settings_overlay">浮层</string>
+    <string name="settings_pair_joycons">两个 Joy-Con，一个手柄</string>
+    <string name="settings_pair_joycons_note">左右两个 Joy-Con 作为一个手柄使用，如同装在握把里。关闭：各自是一个手柄，用于两人各持一个 Joy-Con 游玩</string>
     <string name="settings_picture_from_the_release_notes">来自更新说明的图片</string>
     <string name="settings_update_channel">更新渠道</string>
     <string name="settings_channel_stable">Stable</string>

@@ -178,6 +178,8 @@
     <string name="settings_needs_no_game">게임 없이 가능</string>
     <string name="settings_on_the_controller_or_the">컨트롤러에서, 컨트롤러가 없으면 휴대폰에서</string>
     <string name="settings_overlay">오버레이</string>
+    <string name="settings_pair_joycons">Joy-Con 두 개, 컨트롤러 하나</string>
+    <string name="settings_pair_joycons_note">왼쪽과 오른쪽 Joy-Con을 그립에 끼운 것처럼 하나의 컨트롤러로 사용합니다. 끄기: 각각 별도의 컨트롤러가 되어 두 명이 Joy-Con을 하나씩 사용할 수 있습니다</string>
     <string name="settings_picture_from_the_release_notes">릴리스 노트의 그림</string>
     <string name="settings_update_channel">업데이트 채널</string>
     <string name="settings_channel_stable">Stable</string>

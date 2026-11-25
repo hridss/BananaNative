@@ -178,6 +178,8 @@
     <string name="settings_needs_no_game">لا يحتاج إلى لعبة</string>
     <string name="settings_on_the_controller_or_the">على ذراع التحكم، أو على الهاتف بدونها</string>
     <string name="settings_overlay">الطبقة العلوية</string>
+    <string name="settings_pair_joycons">عصابتا Joy-Con، وحدة تحكم واحدة</string>
+    <string name="settings_pair_joycons_note">تعمل عصا Joy-Con اليسرى واليمنى كوحدة تحكم واحدة، كما في المقبض. إيقاف: كل واحدة وحدة تحكم مستقلة، للاعبين اثنين مع Joy-Con لكل منهما</string>
     <string name="settings_picture_from_the_release_notes">صورة من ملاحظات الإصدار</string>
     <string name="settings_update_channel">قناة التحديث</string>
     <string name="settings_channel_stable">Stable</string>

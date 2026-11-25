@@ -11,6 +11,7 @@ static int hid_usleep(useconds_t usec);
 #undef clock_gettime
 #undef usleep
 #include "../pad_slots.h"
+#include "../pad_pair.h"
 
 static int checks, fails, g_mode = 1, g_signals;
 static void *g_signalled;
@@ -86,6 +87,20 @@ static void t_slots(void) {
     memset(&s, 0, sizeof s);
     CHECK(pad_slot_first(&s, &a, "x", &moved) == 0 && moved == -1, "player 1 free: taken, nothing moves");
     CHECK(pad_slot_first(&s, NULL, "x", &moved) == -1, "no owner, no slot");
+}
+
+// A left and a right half of one controller (pad_pair.h; the launcher pairs the Joy-Con L and Joy-Con R Android reports, input_android.c): both halves one player,
+// either half can hold the pair's own, and a half that goes leaves the pair: the other half plays alone
+static void t_pairs(void) {
+    pad_pairs p; pad_pairs_clear(&p);
+    CHECK(pad_pair_mate(&p, 5) < 0 && pad_pair_side(&p, 5) == 0, "none paired");
+    CHECK(pad_pair_add(&p, 5, 6) && pad_pair_mate(&p, 5) == 6 && pad_pair_mate(&p, 6) == 5, "a left and a right half");
+    CHECK(pad_pair_side(&p, 5) == -1 && pad_pair_side(&p, 6) == 1, "the left half and the right one");
+    CHECK(pad_pair_remove(&p, 5) == 6 && pad_pair_mate(&p, 6) < 0 && pad_pair_side(&p, 6) == 0, "a half that goes unpairs both");
+    CHECK(pad_pair_add(&p, 5, 6) && pad_pair_add(&p, 6, 7) && pad_pair_mate(&p, 5) < 0 && pad_pair_mate(&p, 6) == 7, "a device is in one pair at most");
+    CHECK(!pad_pair_add(&p, 8, 8) && !pad_pair_add(&p, -1, 9) && !pad_pair_add(&p, 9, -1), "not with itself or a missing device");
+    pad_pairs_clear(&p);
+    CHECK(pad_pair_mate(&p, 6) < 0, "cleared");
 }
 
 static void t_npads(void) {
@@ -751,6 +766,7 @@ static void t_joy_styles(void) {
 int main(void) {
     CHECK(setenv("DM_RUMBLE_LOG", "1", 1) == 0, "enable rumble diagnostics");
     t_slots();
+    t_pairs();
     t_npads();
     t_script();
     t_vibration();
