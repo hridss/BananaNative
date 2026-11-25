@@ -122,10 +122,12 @@ render_cond	on
 # Qualcomm Vulkan: keep consecutive counted depth queries in separate render passes. Off by default since 2026-11-13: on an Adreno 840
 # (Qualcomm 0x8034a02c) it cost 88 ms instead of 36-38 ms of GPU time a frame (5 fps instead of 25); opt in with DM_VK_OQ_SPLIT_PASS=1 (README, cave geometry).
 occlusion_split_pass	off
-# With the split on (Keep cave walls), close the pass only at every 4th such report. Measured 2026-11-23 on an AYN Odin 3 (Adreno 830,
-# Qualcomm 0x80320048): every 4th kept the Deku Tree, Kokiri village and Hyrule Field geometry intact in play (8th: mild flicker, 16th: strong)
-# and cut the field's render passes from about 1,565 to 573 a frame (12.5 -> 18.2 fps; 20.1 with no split). README, cave geometry.
-occlusion_split_every	4
+# With the split on (Keep cave walls), close the pass only at every 3rd such report. Measured 2026-11-23 and 2026-11-24 on an AYN Odin 3
+# (Adreno 830, Qualcomm 0x80320048): every 4th cut the field's render passes from about 1,565 to 573 a frame (12.5 -> 18.2 fps; 20.1 with no
+# split) but still dropped single distant objects for a frame (a tree stump in Hyrule Field in 11 of 48 screenshots, canopy pieces in Kokiri
+# Forest in 15 of 80); every 3rd showed neither (0 of 32, 0 of 30) for about 1 fps more in the field (16.2 against 17.2 fps, 763 against 610
+# passes). 8th: mild flicker, 16th: strong. README, cave geometry.
+occlusion_split_every	3
 pool_skip_retired	on
 tex_release	2
 gpu_timestamps	segment

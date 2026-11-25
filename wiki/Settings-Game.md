@@ -38,7 +38,7 @@ Ocarina of Time has these, each with a line saying what it does. They apply at t
 | **Max resolution** | Keeps the 3D scene at full size: sharper, more GPU work. Best with Resolution > Quality | turns on Texture pool ×2 with it |
 | **Texture pool ×2** | Twice the game's starting graphics memory. Max resolution needs it | |
 | **Unlocked frame rate** | Game logic follows real time, so speed holds when fps changes. Does not raise fps | |
-| **Keep cave walls (Qualcomm)** | Fixes walls, rocks and trees that vanish with Qualcomm's driver (Death Mountain Trail, the Deku Tree, Hyrule Field). Costs about 2 fps in the field on an Odin 3; try it if you see holes. No effect on Turnip | |
+| **Keep cave walls (Qualcomm)** | Fixes walls, rocks and trees that vanish with Qualcomm's driver (Death Mountain Trail, the Deku Tree, Hyrule Field). Costs about 3 fps in the field on an Odin 3; try it if you see holes. No effect on Turnip | |
 
 Default for all: off. See the game's page in [Games](Games) for the current state.
 

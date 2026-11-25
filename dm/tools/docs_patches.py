@@ -169,7 +169,7 @@ SWITCH_BINDING = [
     ('occlusion_split_pass', 'on', {'what': 'split Qualcomm depth passes after counted occlusion queries', 'now': 'game', 'goal': 'host', 'purpose': 'rendering',
      'why': 'separate passes restore disappearing cave geometry on Qualcomm 891.14. The exact interaction between the queries and the depth attachment remains open'}),
     ('occlusion_split_every', '', {'what': 'the Qualcomm occlusion split closes the depth pass at only every n-th report', 'now': 'game', 'goal': 'host', 'purpose': 'frame rate',
-     'why': 'every 4th keeps the geometry in play on an Adreno 830 at a fraction of the store / reload rounds; the number was measured on this game, and the cause it works around is open'}),
+     'why': 'every 3rd keeps the geometry in play on an Adreno 830 at a fraction of the store / reload rounds (every 4th still drops single distant objects for a frame); the number was measured on this game, and the cause it works around is open'}),
     ('event_wait', 'off', {'what': 'GPU event and sync waits across queues passed on the Vulkan replay', 'now': 'game', 'goal': 'host', 'purpose': 'frame rate',
      'why': 'parked waits cost this game a third of its frame rate and lose the device on Turnip V39; waits that cost no extra submissions would let every game keep them'}),
     ('tex_dyn_slots', '', {'what': "buffer-texture handles indexed through c2's tables", 'now': 'game', 'goal': 'host', 'purpose': 'shaders',
